@@ -28,11 +28,11 @@ Mession/
 
 ```mermaid
 flowchart LR
-    C[Client] -->|TCP :8001\nLength(4) + MsgType(1) + Payload| G[GatewayServer]
+    C[Client] -->|TCP 8001 Len4 MsgType1 PayloadN| G[GatewayServer]
 
-    G -->|长连接 / 后端协议| L[LoginServer :8002]
-    G -->|长连接 / 后端协议| W[WorldServer :8003]
-    S[SceneServer :8004] -->|长连接 / 后端协议| W
+    G -->|后端长连接| L[LoginServer 8002]
+    G -->|后端长连接| W[WorldServer 8003]
+    S[SceneServer 8004] -->|后端长连接| W
 
     subgraph Gateway
         G1[客户端连接管理]
@@ -50,7 +50,7 @@ flowchart LR
     subgraph World
         W1[后端连接管理]
         W2[玩家进入世界]
-        W3[Actor / Replication]
+        W3[Actor and Replication]
         W4[同步到 Scene]
     end
 
@@ -70,8 +70,8 @@ flowchart TB
     subgraph GatewayServer
         GConn[客户端连接管理]
         GRoute[登录/游戏路由]
-        GLoginLink[MServerConnection -> Login]
-        GWorldLink[MServerConnection -> World]
+        GLoginLink[MServerConnection to Login]
+        GWorldLink[MServerConnection to World]
     end
 
     subgraph LoginServer
@@ -88,7 +88,7 @@ flowchart TB
     end
 
     subgraph SceneServer
-        SLink[MServerConnection -> World]
+        SLink[MServerConnection to World]
         SScene[场景与实体管理]
     end
 
@@ -131,7 +131,7 @@ sequenceDiagram
 
     Client->>Gateway: 登录包
     Gateway->>Login: MT_PlayerLogin
-    Login-->>Gateway: MT_PlayerLogin(SessionKey)
+    Login-->>Gateway: MT_PlayerLogin with SessionKey
     Gateway-->>Client: LoginResponse
     Gateway->>World: MT_PlayerLogin
 
@@ -157,7 +157,7 @@ flowchart LR
 
     CMove[Client Move Packet] --> G4[Gateway 转发游戏包]
     G4 --> W2[World 更新玩家状态]
-    W2 --> W3[Replication / Scene Sync]
+    W2 --> W3[Replication and Scene Sync]
     W3 --> S2[Scene 更新实体位置]
 ```
 
@@ -170,10 +170,10 @@ flowchart LR
     end
 
     subgraph ServerSide
-        G[GatewayServer\n:8001]
-        L[LoginServer\n:8002]
-        W[WorldServer\n:8003]
-        S[SceneServer\n:8004]
+        G[GatewayServer 8001]
+        L[LoginServer 8002]
+        W[WorldServer 8003]
+        S[SceneServer 8004]
     end
 
     C -->|客户端 TCP| G
@@ -187,19 +187,19 @@ flowchart LR
 ```mermaid
 flowchart TD
     P0[统一包格式]
-    P1[Length(4)]
-    P2[MsgType(1)]
-    P3[Payload(N)]
+    P1[Length 4]
+    P2[MsgType 1]
+    P3[Payload N]
 
     P0 --> P1
     P0 --> P2
     P0 --> P3
 
-    P2 --> CMsg[客户端消息类型\n例: Login / Move]
-    P2 --> SMsg[服务器消息类型\nEServerMessageType]
+    P2 --> CMsg[客户端消息类型 例如 Login Move]
+    P2 --> SMsg[服务器消息类型 EServerMessageType]
 
-    SMsg --> HS[MT_ServerHandshake / Ack]
-    SMsg --> HB[MT_Heartbeat / Ack]
+    SMsg --> HS[MT ServerHandshake and Ack]
+    SMsg --> HB[MT Heartbeat and Ack]
     SMsg --> PL[MT_PlayerLogin]
     SMsg --> PS[MT_PlayerSwitchServer]
     SMsg --> PD[MT_PlayerDataSync]
