@@ -6,12 +6,33 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# 编译选项
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 -Wall -Wextra -DDEBUG")
-else()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wextra")
-endif()
+# 统一编译选项
+function(configure_mession_compile_options TargetName)
+    target_compile_definitions(${TargetName}
+        PRIVATE
+            $<$<CONFIG:Debug>:DEBUG>
+    )
+
+    if(MSVC)
+        target_compile_options(${TargetName}
+            PRIVATE
+                /W4
+                /EHsc
+                $<$<CONFIG:Debug>:/Zi>
+                $<$<CONFIG:Debug>:/Od>
+                $<$<CONFIG:Release>:/O2>
+        )
+    else()
+        target_compile_options(${TargetName}
+            PRIVATE
+                -Wall
+                -Wextra
+                $<$<CONFIG:Debug>:-g>
+                $<$<CONFIG:Debug>:-O0>
+                $<$<CONFIG:Release>:-O3>
+        )
+    endif()
+endfunction()
 
 # 公共源文件
 set(COMMON_SOURCES
@@ -29,6 +50,7 @@ target_include_directories(mession_common
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_link_libraries(mession_common PUBLIC m)
+configure_mession_compile_options(mession_common)
 
 # 统一配置每个目标的公共依赖
 function(configure_mession_target TargetName)
@@ -40,6 +62,7 @@ function(configure_mession_target TargetName)
         PRIVATE
             mession_common
     )
+    configure_mession_compile_options(${TargetName})
 endfunction()
 
 # 1. Gateway Server - 网关服务器
