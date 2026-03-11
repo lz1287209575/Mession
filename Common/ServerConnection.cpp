@@ -2,14 +2,14 @@
 #include <poll.h>
 
 // 静态成员定义
-FServerInfo FServerConnection::LocalServerInfo;
+SServerInfo MServerConnection::LocalServerInfo;
 
-void FServerConnection::UpdateLogPrefix()
+void MServerConnection::UpdateLogPrefix()
 {
     LogPrefix = "[Server:" + Config.ServerName + "]";
 }
 
-bool FServerConnection::Connect()
+bool MServerConnection::Connect()
 {
     if (State == EConnectionState::Authenticated)
         return true;
@@ -20,7 +20,7 @@ bool FServerConnection::Connect()
     return TryConnect();
 }
 
-bool FServerConnection::TryConnect()
+bool MServerConnection::TryConnect()
 {
     if (Config.Address.empty() || Config.Port == 0)
     {
@@ -40,8 +40,8 @@ bool FServerConnection::TryConnect()
     }
     
     // 设置非阻塞
-    FSocket::SetNonBlocking(SocketFd, true);
-    FSocket::SetNoDelay(SocketFd, true);
+    MSocket::SetNonBlocking(SocketFd, true);
+    MSocket::SetNoDelay(SocketFd, true);
     
     // 连接
     sockaddr_in Addr = {};
@@ -99,7 +99,7 @@ bool FServerConnection::TryConnect()
     return false;
 }
 
-void FServerConnection::Disconnect()
+void MServerConnection::Disconnect()
 {
     if (SocketFd >= 0)
     {
@@ -117,7 +117,7 @@ void FServerConnection::Disconnect()
         OnDisconnectCallback(shared_from_this());
 }
 
-bool FServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
+bool MServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
 {
     if (State != EConnectionState::Connected && State != EConnectionState::Authenticated)
         return false;
@@ -135,7 +135,7 @@ bool FServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
     return SendRaw(Packet);
 }
 
-bool FServerConnection::SendRaw(const TArray& Data)
+bool MServerConnection::SendRaw(const TArray& Data)
 {
     if (SocketFd < 0 || Data.empty())
         return false;
@@ -155,7 +155,7 @@ bool FServerConnection::SendRaw(const TArray& Data)
     return true;
 }
 
-void FServerConnection::Tick(float DeltaTime)
+void MServerConnection::Tick(float DeltaTime)
 {
     if (State == EConnectionState::Disconnected)
     {
@@ -185,7 +185,7 @@ void FServerConnection::Tick(float DeltaTime)
     }
 }
 
-void FServerConnection::ProcessRecv()
+void MServerConnection::ProcessRecv()
 {
     if (SocketFd < 0)
         return;
@@ -237,7 +237,7 @@ void FServerConnection::ProcessRecv()
     }
 }
 
-void FServerConnection::HandleMessage(uint8 Type, const TArray& Data)
+void MServerConnection::HandleMessage(uint8 Type, const TArray& Data)
 {
     switch (Type)
     {
@@ -254,7 +254,7 @@ void FServerConnection::HandleMessage(uint8 Type, const TArray& Data)
             LOG_INFO("%s Authentication successful!", LogPrefix.c_str());
             
             // 获取远程服务器信息
-            FServerInfo RemoteInfo = GetRemoteServerInfo();
+            SServerInfo RemoteInfo = GetRemoteServerInfo();
             if (OnServerAuthenticatedCallback)
                 OnServerAuthenticatedCallback(shared_from_this(), RemoteInfo);
             break;
@@ -283,7 +283,7 @@ void FServerConnection::HandleMessage(uint8 Type, const TArray& Data)
     }
 }
 
-void FServerConnection::SendHandshake()
+void MServerConnection::SendHandshake()
 {
     TArray Data;
     
@@ -304,26 +304,26 @@ void FServerConnection::SendHandshake()
     LOG_INFO("%s Sent handshake to %s:%d", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
 }
 
-void FServerConnection::SendHandshakeAck()
+void MServerConnection::SendHandshakeAck()
 {
     Send((uint8)EServerMessageType::MT_ServerHandshakeAck, nullptr, 0);
     State = EConnectionState::Authenticated;
     LOG_INFO("%s Sent handshake ack", LogPrefix.c_str());
 }
 
-void FServerConnection::SendHeartbeat()
+void MServerConnection::SendHeartbeat()
 {
     uint32 Seq = ++HeartbeatSeq;
     Send((uint8)EServerMessageType::MT_Heartbeat, &Seq, 4);
 }
 
-void FServerConnection::SendHeartbeatAck()
+void MServerConnection::SendHeartbeatAck()
 {
     Send((uint8)EServerMessageType::MT_HeartbeatAck, nullptr, 0);
 }
 
 // 便捷发送方法
-bool FServerConnection::SendPlayerLogin(uint64 PlayerId, uint32 SessionKey)
+bool MServerConnection::SendPlayerLogin(uint64 PlayerId, uint32 SessionKey)
 {
     TArray Data;
     Data.insert(Data.end(), (uint8*)&PlayerId, (uint8*)&PlayerId + 8);
@@ -331,12 +331,12 @@ bool FServerConnection::SendPlayerLogin(uint64 PlayerId, uint32 SessionKey)
     return Send((uint8)EServerMessageType::MT_PlayerLogin, Data.data(), Data.size());
 }
 
-bool FServerConnection::SendPlayerLogout(uint64 PlayerId)
+bool MServerConnection::SendPlayerLogout(uint64 PlayerId)
 {
     return Send((uint8)EServerMessageType::MT_PlayerLogout, &PlayerId, 8);
 }
 
-bool FServerConnection::SendChatMessage(uint64 FromPlayerId, const FString& Message)
+bool MServerConnection::SendChatMessage(uint64 FromPlayerId, const FString& Message)
 {
     TArray Data;
     Data.insert(Data.end(), (uint8*)&FromPlayerId, (uint8*)&FromPlayerId + 8);
@@ -348,7 +348,7 @@ bool FServerConnection::SendChatMessage(uint64 FromPlayerId, const FString& Mess
     return Send((uint8)EServerMessageType::MT_ChatMessage, Data.data(), Data.size());
 }
 
-bool FServerConnection::Broadcast(uint8 Type, const void* Data, uint32 Size)
+bool MServerConnection::Broadcast(uint8 Type, const void* Data, uint32 Size)
 {
     return Send(Type, Data, Size);
 }

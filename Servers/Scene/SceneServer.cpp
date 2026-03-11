@@ -1,14 +1,14 @@
 #include "SceneServer.h"
 #include <poll.h>
 
-FSceneServer::FSceneServer()
+MSceneServer::MSceneServer()
 {
 }
 
-bool FSceneServer::Init(int InPort)
+bool MSceneServer::Init(int InPort)
 {
     // 创建监听socket
-    ListenSocket = FSocket::CreateListenSocket((uint16)InPort);
+    ListenSocket = MSocket::CreateListenSocket((uint16)InPort);
     if (ListenSocket < 0)
     {
         printf("ERROR: Failed to create listen socket on port %d\n", InPort);
@@ -28,7 +28,7 @@ bool FSceneServer::Init(int InPort)
     return true;
 }
 
-void FSceneServer::Shutdown()
+void MSceneServer::Shutdown()
 {
     if (!bRunning)
         return;
@@ -45,14 +45,14 @@ void FSceneServer::Shutdown()
     // 关闭监听socket
     if (ListenSocket >= 0)
     {
-        FSocket::Close(ListenSocket);
+        MSocket::Close(ListenSocket);
         ListenSocket = -1;
     }
     
     LOG_INFO("Scene server shutdown complete");
 }
 
-void FSceneServer::Tick()
+void MSceneServer::Tick()
 {
     if (!bRunning)
         return;
@@ -64,7 +64,7 @@ void FSceneServer::Tick()
     // TODO: 实现场景更新
 }
 
-void FSceneServer::Run()
+void MSceneServer::Run()
 {
     if (!bRunning)
     {
@@ -81,7 +81,7 @@ void FSceneServer::Run()
     }
 }
 
-void FSceneServer::ConnectToWorldServer()
+void MSceneServer::ConnectToWorldServer()
 {
     // 连接到世界服务器
     // TODO: 实现
@@ -89,25 +89,21 @@ void FSceneServer::ConnectToWorldServer()
     LOG_INFO("Connecting to world server...");
 }
 
-void FSceneServer::ProcessWorldServerMessages()
+void MSceneServer::ProcessWorldServerMessages()
 {
     if (!WorldServerConn || !WorldServerConn->IsConnected())
         return;
-    
-    uint8 Buffer[8192];
-    uint32 BytesRead = 0;
-    
-    while (WorldServerConn->Receive(Buffer, sizeof(Buffer), BytesRead))
+
+    WorldServerConn->FlushSendBuffer();
+
+    TArray Packet;
+    while (WorldServerConn->ReceivePacket(Packet))
     {
-        if (BytesRead > 0)
-        {
-            TArray Data(Buffer, Buffer + BytesRead);
-            HandleWorldPacket(Data);
-        }
+        HandleWorldPacket(Packet);
     }
 }
 
-void FSceneServer::HandleWorldPacket(const TArray& Data)
+void MSceneServer::HandleWorldPacket(const TArray& Data)
 {
     if (Data.empty())
         return;
@@ -123,7 +119,7 @@ void FSceneServer::HandleWorldPacket(const TArray& Data)
             
             uint64 PlayerId = *(uint64*)&Data[1];
             uint16 SceneId = *(uint16*)&Data[9];
-            FVector Position;
+            SVector Position;
             Position.X = *(float*)&Data[11];
             Position.Y = *(float*)&Data[15];
             Position.Z = *(float*)&Data[19];
@@ -131,7 +127,7 @@ void FSceneServer::HandleWorldPacket(const TArray& Data)
             auto Scene = GetScene(SceneId);
             if (Scene)
             {
-                FSceneEntity Entity;
+                SSceneEntity Entity;
                 Entity.EntityId = PlayerId;
                 Entity.Position = Position;
                 Scene->AddEntity(Entity);
@@ -168,7 +164,7 @@ void FSceneServer::HandleWorldPacket(const TArray& Data)
             
             uint64 PlayerId = *(uint64*)&Data[1];
             uint16 SceneId = *(uint16*)&Data[9];
-            FVector Position;
+            SVector Position;
             Position.X = *(float*)&Data[11];
             Position.Y = *(float*)&Data[15];
             Position.Z = *(float*)&Data[19];
@@ -183,33 +179,33 @@ void FSceneServer::HandleWorldPacket(const TArray& Data)
     }
 }
 
-void FSceneServer::CreateDefaultScenes()
+void MSceneServer::CreateDefaultScenes()
 {
     // 创建默认场景
-    auto Scene = std::make_shared<FScene>(Config.SceneId, Config.SceneName, Config.SceneSize);
+    auto Scene = TSharedPtr<MScene>(new MScene(Config.SceneId, Config.SceneName, Config.SceneSize));
     Scenes[Config.SceneId] = Scene;
     
     LOG_INFO("Created scene: %s (id=%d)", Config.SceneName.c_str(), Config.SceneId);
 }
 
-std::shared_ptr<FScene> FSceneServer::GetScene(uint16 SceneId)
+TSharedPtr<MScene> MSceneServer::GetScene(uint16 SceneId)
 {
     auto It = Scenes.find(SceneId);
     return (It != Scenes.end()) ? It->second : nullptr;
 }
 
-// FScene implementation
-void FScene::AddEntity(const FSceneEntity& Entity)
+// MScene implementation
+void MScene::AddEntity(const SSceneEntity& Entity)
 {
     Entities[Entity.EntityId] = Entity;
 }
 
-void FScene::RemoveEntity(uint64 EntityId)
+void MScene::RemoveEntity(uint64 EntityId)
 {
     Entities.erase(EntityId);
 }
 
-void FScene::UpdateEntityPosition(uint64 EntityId, const FVector& NewPosition)
+void MScene::UpdateEntityPosition(uint64 EntityId, const SVector& NewPosition)
 {
     auto It = Entities.find(EntityId);
     if (It != Entities.end())

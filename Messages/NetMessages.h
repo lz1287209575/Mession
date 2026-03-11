@@ -21,24 +21,24 @@ enum class ENetMessageType : uint8
 };
 
 // 消息头
-struct FNetMessageHeader
+struct SNetMessageHeader
 {
     ENetMessageType Type;
     uint32 Size;
     uint32 Sequence;
     
-    FNetMessageHeader() : Type(ENetMessageType::MT_Handshake), Size(0), Sequence(0) {}
-    FNetMessageHeader(ENetMessageType InType, uint32 InSize, uint32 InSeq) 
+    SNetMessageHeader() : Type(ENetMessageType::MT_Handshake), Size(0), Sequence(0) {}
+    SNetMessageHeader(ENetMessageType InType, uint32 InSize, uint32 InSeq) 
         : Type(InType), Size(InSize), Sequence(InSeq) {}
 };
 
 // 握手消息
-struct FHandshakeMessage
+struct SHandshakeMessage
 {
     uint32 ProtocolVersion;
     FString ClientName;
     
-    void Serialize(FArchive& Ar)
+    void Serialize(MArchive& Ar)
     {
         Ar << ProtocolVersion;
         Ar << ClientName;
@@ -46,13 +46,13 @@ struct FHandshakeMessage
 };
 
 // 登录消息
-struct FLoginMessage
+struct SLoginMessage
 {
     uint64 PlayerId;
     FString Token;
     FString PlayerName;
     
-    void Serialize(FArchive& Ar)
+    void Serialize(MArchive& Ar)
     {
         Ar << PlayerId;
         Ar << Token;
@@ -61,13 +61,13 @@ struct FLoginMessage
 };
 
 // 登录响应
-struct FLoginResponseMessage
+struct SLoginResponseMessage
 {
     uint8 Result; // 0=成功, 1=失败
     uint64 AssignedPlayerId;
     FString Message;
     
-    void Serialize(FArchive& Ar)
+    void Serialize(MArchive& Ar)
     {
         Ar << Result;
         Ar << AssignedPlayerId;
@@ -76,12 +76,12 @@ struct FLoginResponseMessage
 };
 
 // 错误消息
-struct FErrorMessage
+struct SErrorMessage
 {
     uint16 ErrorCode;
     FString ErrorMessage;
     
-    void Serialize(FArchive& Ar)
+    void Serialize(MArchive& Ar)
     {
         Ar << ErrorCode;
         Ar << ErrorMessage;
@@ -94,8 +94,8 @@ class IMessageHandler
 public:
     virtual ~IMessageHandler() = default;
     
-    virtual void OnHandshake(uint64 ConnectionId, const FHandshakeMessage& Msg) = 0;
-    virtual void OnLogin(uint64 ConnectionId, const FLoginMessage& Msg) = 0;
+    virtual void OnHandshake(uint64 ConnectionId, const SHandshakeMessage& Msg) = 0;
+    virtual void OnLogin(uint64 ConnectionId, const SLoginMessage& Msg) = 0;
     virtual void OnLogout(uint64 ConnectionId) = 0;
     virtual void OnActorUpdate(uint64 ConnectionId, uint64 ActorId, const TArray& Data) = 0;
     virtual void OnHeartbeat(uint64 ConnectionId) = 0;
@@ -103,40 +103,40 @@ public:
 };
 
 // 消息分发器
-class FMessageDispatcher
+class MMessageDispatcher
 {
 private:
     IMessageHandler* Handler;
-    std::map<ENetMessageType, std::function<void(uint64, FArchive&)>> Handlers;
+    TMap<ENetMessageType, TFunction<void(uint64, MArchive&)>> Handlers;
     
 public:
-    FMessageDispatcher(IMessageHandler* InHandler) : Handler(InHandler)
+    MMessageDispatcher(IMessageHandler* InHandler) : Handler(InHandler)
     {
         RegisterHandlers();
     }
     
     void RegisterHandlers()
     {
-        Handlers[ENetMessageType::MT_Handshake] = [this](uint64 ConnId, FArchive& Ar)
+        Handlers[ENetMessageType::MT_Handshake] = [this](uint64 ConnId, MArchive& Ar)
         {
-            FHandshakeMessage Msg;
+            SHandshakeMessage Msg;
             Msg.Serialize(Ar);
             Handler->OnHandshake(ConnId, Msg);
         };
         
-        Handlers[ENetMessageType::MT_Login] = [this](uint64 ConnId, FArchive& Ar)
+        Handlers[ENetMessageType::MT_Login] = [this](uint64 ConnId, MArchive& Ar)
         {
-            FLoginMessage Msg;
+            SLoginMessage Msg;
             Msg.Serialize(Ar);
             Handler->OnLogin(ConnId, Msg);
         };
         
-        Handlers[ENetMessageType::MT_Logout] = [this](uint64 ConnId, FArchive& Ar)
+        Handlers[ENetMessageType::MT_Logout] = [this](uint64 ConnId, MArchive& Ar)
         {
             Handler->OnLogout(ConnId);
         };
         
-        Handlers[ENetMessageType::MT_ActorUpdate] = [this](uint64 ConnId, FArchive& Ar)
+        Handlers[ENetMessageType::MT_ActorUpdate] = [this](uint64 ConnId, MArchive& Ar)
         {
             uint64 ActorId;
             uint32 DataSize;
@@ -153,7 +153,7 @@ public:
             Handler->OnActorUpdate(ConnId, ActorId, Data);
         };
         
-        Handlers[ENetMessageType::MT_Heartbeat] = [this](uint64 ConnId, FArchive& Ar)
+        Handlers[ENetMessageType::MT_Heartbeat] = [this](uint64 ConnId, MArchive& Ar)
         {
             Handler->OnHeartbeat(ConnId);
         };
@@ -164,7 +164,7 @@ public:
         if (Data.empty() || !Handler)
             return;
         
-        FMemoryArchive Ar(Data);
+        MMemoryArchive Ar(Data);
         
         // 读取消息类型
         uint8 TypeByte;

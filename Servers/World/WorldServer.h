@@ -5,14 +5,11 @@
 #include "../../Common/Logger.h"
 #include "../../NetDriver/NetObject.h"
 #include "../../NetDriver/ReplicationDriver.h"
-#include <map>
-#include <memory>
-#include <vector>
 #include <thread>
 #include <chrono>
 
 // 世界服务器配置
-struct FWorldConfig
+struct SWorldConfig
 {
     uint16 ListenPort = 8003;      // 网关连接端口
     uint16 SceneServerPort = 8004; // 场景服务器端口
@@ -21,45 +18,45 @@ struct FWorldConfig
 };
 
 // 玩家数据
-struct FPlayer
+struct SPlayer
 {
     uint64 PlayerId;
     FString Name;
     uint64 ConnectionId;
     uint32 SessionKey;
-    AActor* Character = nullptr;
+    MActor* Character = nullptr;
     uint32 CurrentSceneId = 0;
     bool bOnline = false;
 };
 
 // 世界服务器
-class FWorldServer
+class MWorldServer
 {
 private:
     int32 ListenSocket = -1;
     bool bRunning = false;
     
     // 配置
-    FWorldConfig Config;
+    SWorldConfig Config;
     
     // 网关连接
-    std::map<uint64, std::shared_ptr<FTcpConnection>> GatewayConnections;
+    TMap<uint64, TSharedPtr<MTcpConnection>> GatewayConnections;
     uint64 NextConnectionId = 1;
     
     // 场景服务器连接
-    std::map<uint16, std::shared_ptr<FTcpConnection>> SceneServers;  // SceneId -> Connection
+    TMap<uint16, TSharedPtr<MTcpConnection>> SceneServers;  // SceneId -> Connection
     uint16 NextSceneId = 1;
     
     // 玩家管理
-    std::map<uint64, FPlayer> Players;  // PlayerId -> Player
-    std::map<uint64, uint64> ConnectionToPlayer;  // ConnectionId -> PlayerId
+    TMap<uint64, SPlayer> Players;  // PlayerId -> Player
+    TMap<uint64, uint64> ConnectionToPlayer;  // ConnectionId -> PlayerId
     
     // 复制系统
-    UReplicationDriver* ReplicationDriver;
+    MReplicationDriver* ReplicationDriver;
     
 public:
-    FWorldServer();
-    ~FWorldServer() { Shutdown(); }
+    MWorldServer();
+    ~MWorldServer() { Shutdown(); }
     
     bool Init(int InPort);
     void Shutdown();
@@ -74,8 +71,8 @@ private:
     // 玩家管理
     void AddPlayer(uint64 PlayerId, const FString& Name, uint64 ConnectionId);
     void RemovePlayer(uint64 PlayerId);
-    FPlayer* GetPlayerById(uint64 PlayerId);
-    FPlayer* GetPlayerByConnection(uint64 ConnectionId);
+    SPlayer* GetPlayerById(uint64 PlayerId);
+    SPlayer* GetPlayerByConnection(uint64 ConnectionId);
     
     // 游戏逻辑
     void UpdateGameLogic(float DeltaTime);

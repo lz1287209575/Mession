@@ -37,26 +37,31 @@ public:
 };
 
 // TCP连接实现
-class FTcpConnection : public INetConnection
+class MTcpConnection : public INetConnection
 {
 private:
     int32 SocketFd;
     uint64 PlayerId;
     bool bConnected;
-    std::string RemoteAddress;
+    TString RemoteAddress;
     uint16 RemotePort;
     
     // 接收缓冲区
-    std::vector<uint8> RecvBuffer;
+    TByteArray RecvBuffer;
+    TByteArray SendBuffer;
     static constexpr uint32 RECV_BUFFER_SIZE = 65535;
+    static constexpr uint32 SEND_BUFFER_SIZE = 65535;
 
 public:
-    FTcpConnection(int32 InSocketFd);
-    virtual ~FTcpConnection();
+    MTcpConnection(int32 InSocketFd);
+    virtual ~MTcpConnection();
     
     // INetConnection接口
     bool Send(const void* Data, uint32 Size) override;
     bool Receive(void* Buffer, uint32 Size, uint32& BytesRead) override;
+    bool ReceivePacket(TArray& OutPacket);
+    bool FlushSendBuffer();
+    bool HasPendingSendData() const { return !SendBuffer.empty(); }
     uint64 GetPlayerId() const override { return PlayerId; }
     void SetPlayerId(uint64 Id) override { PlayerId = Id; }
     int32 GetSocketFd() const override { return SocketFd; }
@@ -65,7 +70,7 @@ public:
     void Close() override;
     
     // 获取远端地址
-    const std::string& GetRemoteAddress() const { return RemoteAddress; }
+    const TString& GetRemoteAddress() const { return RemoteAddress; }
     uint16 GetRemotePort() const { return RemotePort; }
     
     // 处理接收到的数据（粘包处理）
@@ -73,7 +78,7 @@ public:
 };
 
 // Socket封装类
-class FSocket
+class MSocket
 {
 public:
     // 创建TCP监听socket
@@ -89,7 +94,7 @@ public:
     static bool SetNoDelay(int32 SocketFd, bool bNoDelay);
     
     // 接受新连接
-    static int32 Accept(int32 ListenSocketFd, std::string& OutAddress, uint16& OutPort);
+    static int32 Accept(int32 ListenSocketFd, TString& OutAddress, uint16& OutPort);
     
     // 关闭socket
     static void Close(int32 SocketFd);

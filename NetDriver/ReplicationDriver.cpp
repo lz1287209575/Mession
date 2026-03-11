@@ -1,6 +1,6 @@
 #include "ReplicationDriver.h"
 
-UReplicationDriver::~UReplicationDriver()
+MReplicationDriver::~MReplicationDriver()
 {
     for (auto& [Id, Channel] : Channels)
     {

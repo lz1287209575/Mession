@@ -3,74 +3,71 @@
 #include "../../Core/NetCore.h"
 #include "../../Core/Socket.h"
 #include "../../Common/Logger.h"
-#include <map>
-#include <memory>
-#include <vector>
 #include <thread>
 #include <chrono>
 
 // 场景服务器配置
-struct FSceneConfig
+struct SSceneConfig
 {
     uint16 ListenPort = 8004;  // 世界服务器连接端口
     uint16 SceneId = 1;
     FString SceneName = "MainWorld";
-    FVector SceneSize = FVector(1000, 1000, 500);
+    SVector SceneSize = SVector(1000, 1000, 500);
 };
 
 // 场景中的实体
-struct FSceneEntity
+struct SSceneEntity
 {
     uint64 EntityId;
-    FVector Position;
-    FRotator Rotation;
+    SVector Position;
+    SRotator Rotation;
     uint32 ActorId;  // 对应的Actor ID
 };
 
 // 场景
-class FScene
+class MScene
 {
 private:
     uint16 SceneId;
     FString SceneName;
-    FVector Size;
+    SVector Size;
     
     // 场景中的实体
-    std::map<uint64, FSceneEntity> Entities;
+    TMap<uint64, SSceneEntity> Entities;
     
 public:
-    FScene(uint16 InId, const FString& InName, const FVector& InSize)
+    MScene(uint16 InId, const FString& InName, const SVector& InSize)
         : SceneId(InId), SceneName(InName), Size(InSize) {}
     
     uint16 GetSceneId() const { return SceneId; }
     const FString& GetSceneName() const { return SceneName; }
     
-    void AddEntity(const FSceneEntity& Entity);
+    void AddEntity(const SSceneEntity& Entity);
     void RemoveEntity(uint64 EntityId);
-    void UpdateEntityPosition(uint64 EntityId, const FVector& NewPosition);
+    void UpdateEntityPosition(uint64 EntityId, const SVector& NewPosition);
     
-    const std::map<uint64, FSceneEntity>& GetEntities() const { return Entities; }
+    const TMap<uint64, SSceneEntity>& GetEntities() const { return Entities; }
 };
 
 // 场景服务器
-class FSceneServer
+class MSceneServer
 {
 private:
     int32 ListenSocket = -1;
     bool bRunning = false;
     
     // 配置
-    FSceneConfig Config;
+    SSceneConfig Config;
     
     // 世界服务器连接
-    std::shared_ptr<FTcpConnection> WorldServerConn;
+    TSharedPtr<MTcpConnection> WorldServerConn;
     
     // 场景管理
-    std::map<uint16, std::shared_ptr<FScene>> Scenes;
+    TMap<uint16, TSharedPtr<MScene>> Scenes;
     
 public:
-    FSceneServer();
-    ~FSceneServer() { Shutdown(); }
+    MSceneServer();
+    ~MSceneServer() { Shutdown(); }
     
     bool Init(int InPort);
     void Shutdown();
@@ -84,5 +81,5 @@ private:
     
     // 场景管理
     void CreateDefaultScenes();
-    std::shared_ptr<FScene> GetScene(uint16 SceneId);
+    TSharedPtr<MScene> GetScene(uint16 SceneId);
 };

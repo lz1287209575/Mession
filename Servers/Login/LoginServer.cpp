@@ -2,16 +2,16 @@
 #include <poll.h>
 #include <time.h>
 
-FLoginServer::FLoginServer()
+MLoginServer::MLoginServer()
 {
     std::random_device Rd;
     Rng = std::mt19937(Rd());
 }
 
-bool FLoginServer::Init(int InPort)
+bool MLoginServer::Init(int InPort)
 {
     // 创建监听socket
-    ListenSocket = FSocket::CreateListenSocket((uint16)InPort);
+    ListenSocket = MSocket::CreateListenSocket((uint16)InPort);
     if (ListenSocket < 0)
     {
         printf("ERROR: Failed to create listen socket on port %d\n", InPort);
@@ -28,7 +28,7 @@ bool FLoginServer::Init(int InPort)
     return true;
 }
 
-void FLoginServer::Shutdown()
+void MLoginServer::Shutdown()
 {
     if (!bRunning)
         return;
@@ -49,14 +49,14 @@ void FLoginServer::Shutdown()
     // 关闭监听socket
     if (ListenSocket >= 0)
     {
-        FSocket::Close(ListenSocket);
+        MSocket::Close(ListenSocket);
         ListenSocket = -1;
     }
     
     LOG_INFO("Login server shutdown complete");
 }
 
-void FLoginServer::Tick()
+void MLoginServer::Tick()
 {
     if (!bRunning)
         return;
@@ -68,8 +68,8 @@ void FLoginServer::Tick()
     ProcessGatewayMessages();
     
     // 清理过期会话
-    time_t Now = time(nullptr);
-    std::vector<uint32> ExpiredSessions;
+    const uint64 Now = static_cast<uint64>(time(nullptr));
+    TVector<uint32> ExpiredSessions;
     
     for (auto& [Key, Session] : Sessions)
     {
@@ -85,7 +85,7 @@ void FLoginServer::Tick()
     }
 }
 
-void FLoginServer::Run()
+void MLoginServer::Run()
 {
     if (!bRunning)
     {
@@ -102,17 +102,17 @@ void FLoginServer::Run()
     }
 }
 
-void FLoginServer::AcceptGateways()
+void MLoginServer::AcceptGateways()
 {
-    std::string Address;
+    TString Address;
     uint16 Port;
     
-    int32 ClientSocket = FSocket::Accept(ListenSocket, Address, Port);
+    int32 ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
     
     while (ClientSocket >= 0)
     {
         uint64 ConnectionId = NextConnectionId++;
-        auto Connection = std::make_shared<FTcpConnection>(ClientSocket);
+        auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));
         Connection->SetNonBlocking(true);
         
         GatewayConnections[ConnectionId] = Connection;
@@ -120,19 +120,20 @@ void FLoginServer::AcceptGateways()
         LOG_INFO("New gateway connected: %s (connection_id=%llu)", 
                  Address.c_str(), (unsigned long long)ConnectionId);
         
-        ClientSocket = FSocket::Accept(ListenSocket, Address, Port);
+        ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
     }
 }
 
-void FLoginServer::ProcessGatewayMessages()
+void MLoginServer::ProcessGatewayMessages()
 {
-    std::vector<uint64> DisconnectedGateways;
+    TVector<uint64> DisconnectedGateways;
     
-    std::vector<pollfd> PollFds;
+    TVector<pollfd> PollFds;
     for (auto& [ConnId, Conn] : GatewayConnections)
     {
         if (Conn->IsConnected())
         {
+            Conn->FlushSendBuffer();
             pollfd Pfd;
             Pfd.fd = Conn->GetSocketFd();
             Pfd.events = POLLIN;
@@ -156,16 +157,10 @@ void FLoginServer::ProcessGatewayMessages()
         
         if (PollFds[Index].revents & POLLIN)
         {
-            uint8 Buffer[8192];
-            uint32 BytesRead = 0;
-            
-            while (Conn->Receive(Buffer, sizeof(Buffer), BytesRead))
+            TArray Packet;
+            while (Conn->ReceivePacket(Packet))
             {
-                if (BytesRead > 0)
-                {
-                    TArray Data(Buffer, Buffer + BytesRead);
-                    HandleGatewayPacket(ConnId, Data);
-                }
+                HandleGatewayPacket(ConnId, Packet);
             }
             
             if (!Conn->IsConnected())
@@ -184,7 +179,7 @@ void FLoginServer::ProcessGatewayMessages()
     }
 }
 
-void FLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
+void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
 {
     if (Data.empty() || Data.size() < 2)
         return;
@@ -197,17 +192,19 @@ void FLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
     {
         if (Data.size() < 10)
             return;
-        
-        uint64 PlayerId = *(uint64*)&Data[1];
+
+        uint64 PlayerId = 0;
+        memcpy(&PlayerId, Data.data() + 1, sizeof(PlayerId));
         
         // 创建会话
         uint32 SessionKey = CreateSession(PlayerId, ConnectionId);
         
         // 发送响应
         TArray Response;
-        Response.push_back(2); // LoginResponse
-        *(uint32*)&Response[Response.size()] = SessionKey; Response.resize(Response.size() + 4);
-        *(uint64*)&Response[Response.size()] = PlayerId; Response.resize(Response.size() + 8);
+        Response.resize(1 + sizeof(SessionKey) + sizeof(PlayerId));
+        Response[0] = 2; // LoginResponse
+        memcpy(Response.data() + 1, &SessionKey, sizeof(SessionKey));
+        memcpy(Response.data() + 1 + sizeof(SessionKey), &PlayerId, sizeof(PlayerId));
         
         auto It = GatewayConnections.find(ConnectionId);
         if (It != GatewayConnections.end())
@@ -220,11 +217,11 @@ void FLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
     }
 }
 
-uint32 FLoginServer::CreateSession(uint64 PlayerId, uint64 ConnectionId)
+uint32 MLoginServer::CreateSession(uint64 PlayerId, uint64 ConnectionId)
 {
     uint32 SessionKey = GenerateSessionKey();
     
-    FSession Session;
+    SSession Session;
     Session.PlayerId = PlayerId;
     Session.SessionKey = SessionKey;
     Session.ConnectionId = ConnectionId;
@@ -236,14 +233,14 @@ uint32 FLoginServer::CreateSession(uint64 PlayerId, uint64 ConnectionId)
     return SessionKey;
 }
 
-bool FLoginServer::ValidateSession(uint32 SessionKey, uint64& OutPlayerId)
+bool MLoginServer::ValidateSession(uint32 SessionKey, uint64& OutPlayerId)
 {
     auto It = Sessions.find(SessionKey);
     if (It == Sessions.end())
         return false;
     
     // 检查是否过期
-    if (It->second.ExpireTime < time(nullptr))
+    if (It->second.ExpireTime < static_cast<uint64>(time(nullptr)))
     {
         RemoveSession(SessionKey);
         return false;
@@ -253,7 +250,7 @@ bool FLoginServer::ValidateSession(uint32 SessionKey, uint64& OutPlayerId)
     return true;
 }
 
-void FLoginServer::RemoveSession(uint32 SessionKey)
+void MLoginServer::RemoveSession(uint32 SessionKey)
 {
     auto It = Sessions.find(SessionKey);
     if (It != Sessions.end())
@@ -264,7 +261,7 @@ void FLoginServer::RemoveSession(uint32 SessionKey)
     }
 }
 
-uint32 FLoginServer::GenerateSessionKey()
+uint32 MLoginServer::GenerateSessionKey()
 {
     std::uniform_int_distribution<uint32> Dist(Config.SessionKeyMin, Config.SessionKeyMax);
     return Dist(Rng);

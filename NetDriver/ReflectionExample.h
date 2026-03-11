@@ -8,17 +8,17 @@
 // ============================================
 
 // 玩家角色类
-class ACharacter : public UObject
+class MCharacter : public MReflectObject
 {
 public:
-    using ThisClass = ACharacter;
+    using ThisClass = MCharacter;
     
     // 属性定义
     FString Name = "Player";
     int32 Level = 1;
     int64 Experience = 0;
-    FVector Location = FVector::Zero();
-    FRotator Rotation = FRotator::Zero();
+    SVector Location = SVector::Zero();
+    SRotator Rotation = SRotator();
     float Health = 100.0f;
     float MaxHealth = 100.0f;
     float MoveSpeed = 300.0f;
@@ -26,12 +26,12 @@ public:
     int32 Gold = 0;
     
     // 声明UCLASS
-    UCLASS(ACharacter, UObject, 0)
+    UCLASS(MCharacter, MReflectObject, 0)
     
     // 函数
     void TakeDamage(float Damage);
     void Heal(float Amount);
-    void MoveTo(const FVector& NewLocation);
+    void MoveTo(const SVector& NewLocation);
     void LevelUp();
     
     // 虚函数
@@ -40,7 +40,7 @@ public:
 };
 
 // 函数实现
-inline void ACharacter::TakeDamage(float Damage)
+inline void MCharacter::TakeDamage(float Damage)
 {
     Health -= Damage;
     if (Health <= 0)
@@ -51,7 +51,7 @@ inline void ACharacter::TakeDamage(float Damage)
     }
 }
 
-inline void ACharacter::Heal(float Amount)
+inline void MCharacter::Heal(float Amount)
 {
     if (!bIsAlive) return;
     
@@ -60,14 +60,14 @@ inline void ACharacter::Heal(float Amount)
         Health = MaxHealth;
 }
 
-inline void ACharacter::MoveTo(const FVector& NewLocation)
+inline void MCharacter::MoveTo(const SVector& NewLocation)
 {
     Location = NewLocation;
     LOG_DEBUG("%s moved to (%.2f, %.2f, %.2f)", 
               Name.c_str(), Location.X, Location.Y, Location.Z);
 }
 
-inline void ACharacter::LevelUp()
+inline void MCharacter::LevelUp()
 {
     Level++;
     MaxHealth += 20;
@@ -75,18 +75,18 @@ inline void ACharacter::LevelUp()
     LOG_INFO("%s leveled up! Now level %d", Name.c_str(), Level);
 }
 
-inline void ACharacter::Tick(float DeltaTime)
+inline void MCharacter::Tick(float DeltaTime)
 {
     // 可以在这里添加移动逻辑
 }
 
-inline void ACharacter::BeginPlay()
+inline void MCharacter::BeginPlay()
 {
     LOG_INFO("%s spawned at level %d", Name.c_str(), Level);
 }
 
 // 注册属性和函数
-inline void ACharacter::RegisterAllProperties(UClass* InClass)
+inline void MCharacter::RegisterAllProperties(MClass* InClass)
 {
     REGISTER_PROPERTY(String, Name, Edit | SaveGame);
     REGISTER_PROPERTY(Int32, Level, Edit);
@@ -100,36 +100,36 @@ inline void ACharacter::RegisterAllProperties(UClass* InClass)
     REGISTER_PROPERTY(Int32, Gold, Edit | SaveGame);
 }
 
-inline void ACharacter::RegisterAllFunctions(UClass* InClass)
+inline void MCharacter::RegisterAllFunctions(MClass* InClass)
 {
     // 可以在这里注册RPC函数
 }
 
 // 玩家数据类
-class UPlayerData : public UObject
+class MPlayerData : public MReflectObject
 {
 public:
-    using ThisClass = UPlayerData;
+    using ThisClass = MPlayerData;
     
     uint64 PlayerId = 0;
     FString AccountName;
     int32 VIPLevel = 0;
     int64 LoginTime = 0;
     FString LastLoginIP;
-    std::vector<uint64> FriendsList;
+    TVector<uint64> FriendsList;
     
-    UCLASS(UPlayerData, UObject, 0)
+    UCLASS(MPlayerData, MReflectObject, 0)
     
     void AddFriend(uint64 FriendId);
     void RemoveFriend(uint64 FriendId);
     bool HasFriend(uint64 FriendId) const;
     
 private:
-    virtual void Serialize(void* Object, class FArchive& Ar) const override;
+    virtual void Serialize(void* Object, class MReflectArchive& Ar) const override;
     virtual void Deserialize(void* Object, const TArray& Data) const override;
 };
 
-inline void UPlayerData::AddFriend(uint64 FriendId)
+inline void MPlayerData::AddFriend(uint64 FriendId)
 {
     if (!HasFriend(FriendId))
     {
@@ -137,7 +137,7 @@ inline void UPlayerData::AddFriend(uint64 FriendId)
     }
 }
 
-inline void UPlayerData::RemoveFriend(uint64 FriendId)
+inline void MPlayerData::RemoveFriend(uint64 FriendId)
 {
     for (auto it = FriendsList.begin(); it != FriendsList.end(); ++it)
     {
@@ -149,7 +149,7 @@ inline void UPlayerData::RemoveFriend(uint64 FriendId)
     }
 }
 
-inline bool UPlayerData::HasFriend(uint64 FriendId) const
+inline bool MPlayerData::HasFriend(uint64 FriendId) const
 {
     for (uint64 id : FriendsList)
     {
@@ -158,9 +158,9 @@ inline bool UPlayerData::HasFriend(uint64 FriendId) const
     return false;
 }
 
-inline void UPlayerData::Serialize(void* Object, FArchive& Ar) const
+inline void MPlayerData::Serialize(void* Object, MReflectArchive& Ar) const
 {
-    auto* Data = static_cast<UPlayerData*>(Object);
+    auto* Data = static_cast<MPlayerData*>(Object);
     Ar << Data->PlayerId;
     Ar << Data->AccountName;
     Ar << Data->VIPLevel;
@@ -175,10 +175,10 @@ inline void UPlayerData::Serialize(void* Object, FArchive& Ar) const
     }
 }
 
-inline void UPlayerData::Deserialize(void* Object, const TArray& Data) const
+inline void MPlayerData::Deserialize(void* Object, const TArray& Data) const
 {
-    auto* PlayerData = static_cast<UPlayerData*>(Object);
-    FArchive Ar(Data);
+    auto* PlayerData = static_cast<MPlayerData*>(Object);
+    MReflectArchive Ar(Data);
     Ar << PlayerData->PlayerId;
     Ar << PlayerData->AccountName;
     Ar << PlayerData->VIPLevel;
@@ -193,7 +193,7 @@ inline void UPlayerData::Deserialize(void* Object, const TArray& Data) const
     }
 }
 
-inline void UPlayerData::RegisterAllProperties(UClass* InClass)
+inline void MPlayerData::RegisterAllProperties(MClass* InClass)
 {
     REGISTER_PROPERTY(UInt64, PlayerId, Edit | SaveGame);
     REGISTER_PROPERTY(String, AccountName, Edit);
@@ -202,7 +202,7 @@ inline void UPlayerData::RegisterAllProperties(UClass* InClass)
     REGISTER_PROPERTY(String, LastLoginIP, SaveGame);
 }
 
-inline void UPlayerData::RegisterAllFunctions(UClass* InClass)
+inline void MPlayerData::RegisterAllFunctions(MClass* InClass)
 {
     // 不需要注册成员函数作为RPC
 }

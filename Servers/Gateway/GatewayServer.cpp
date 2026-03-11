@@ -1,10 +1,10 @@
 #include "GatewayServer.h"
 #include <poll.h>
 
-bool FGatewayServer::Init(int InPort)
+bool MGatewayServer::Init(int InPort)
 {
     // 创建监听socket
-    ListenSocket = FSocket::CreateListenSocket((uint16)InPort);
+    ListenSocket = MSocket::CreateListenSocket((uint16)InPort);
     
     if (ListenSocket < 0)
     {
@@ -20,27 +20,27 @@ bool FGatewayServer::Init(int InPort)
     printf("=====================================\n");
     
     // 设置本服务器信息
-    FServerConnection::SetLocalInfo(1, EServerType::Gateway, "Gateway01");
+    MServerConnection::SetLocalInfo(1, EServerType::Gateway, "Gateway01");
     
     // 初始化后端长连接
-    FServerConnectionConfig LoginConfig(2, EServerType::Login, "Login01", "127.0.0.1", 8002);
-    LoginServerConn = std::make_shared<FServerConnection>(LoginConfig);
+    SServerConnectionConfig LoginConfig(2, EServerType::Login, "Login01", "127.0.0.1", 8002);
+    LoginServerConn = TSharedPtr<MServerConnection>(new MServerConnection(LoginConfig));
     
-    FServerConnectionConfig WorldConfig(3, EServerType::World, "World01", "127.0.0.1", 8003);
-    WorldServerConn = std::make_shared<FServerConnection>(WorldConfig);
+    SServerConnectionConfig WorldConfig(3, EServerType::World, "World01", "127.0.0.1", 8003);
+    WorldServerConn = TSharedPtr<MServerConnection>(new MServerConnection(WorldConfig));
     
     // 设置回调
-    LoginServerConn->SetOnConnect([](auto Conn) {
+    LoginServerConn->SetOnConnect([](auto) {
         LOG_INFO("Connected to Login Server!");
     });
-    LoginServerConn->SetOnAuthenticated([](auto Conn, const FServerInfo& Info) {
+    LoginServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Login Server authenticated: %s", Info.ServerName.c_str());
     });
     
-    WorldServerConn->SetOnConnect([](auto Conn) {
+    WorldServerConn->SetOnConnect([](auto) {
         LOG_INFO("Connected to World Server!");
     });
-    WorldServerConn->SetOnAuthenticated([](auto Conn, const FServerInfo& Info) {
+    WorldServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("World Server authenticated: %s", Info.ServerName.c_str());
     });
     
@@ -53,7 +53,7 @@ bool FGatewayServer::Init(int InPort)
     return true;
 }
 
-void FGatewayServer::Shutdown()
+void MGatewayServer::Shutdown()
 {
     if (!bRunning)
         return;
@@ -77,14 +77,14 @@ void FGatewayServer::Shutdown()
     // 关闭监听socket
     if (ListenSocket >= 0)
     {
-        FSocket::Close(ListenSocket);
+        MSocket::Close(ListenSocket);
         ListenSocket = -1;
     }
     
     LOG_INFO("Gateway server shutdown complete");
 }
 
-void FGatewayServer::Tick()
+void MGatewayServer::Tick()
 {
     if (!bRunning)
         return;
@@ -112,7 +112,7 @@ void FGatewayServer::Tick()
     }
 }
 
-void FGatewayServer::Run()
+void MGatewayServer::Run()
 {
     if (!bRunning)
     {
@@ -129,38 +129,39 @@ void FGatewayServer::Run()
     }
 }
 
-void FGatewayServer::AcceptClients()
+void MGatewayServer::AcceptClients()
 {
-    std::string Address;
+    TString Address;
     uint16 Port;
     
-    int32 ClientSocket = FSocket::Accept(ListenSocket, Address, Port);
+    int32 ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
     
     while (ClientSocket >= 0)
     {
         uint64 ConnectionId = NextConnectionId++;
-        auto Connection = std::make_shared<FTcpConnection>(ClientSocket);
+        auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));
         Connection->SetNonBlocking(true);
         
-        auto Client = std::make_shared<FClientConnection>(ConnectionId, Connection);
+        auto Client = TSharedPtr<MClientConnection>(new MClientConnection(ConnectionId, Connection));
         ClientConnections[ConnectionId] = Client;
         
         LOG_INFO("New client connected: %s (connection_id=%llu)", 
                  Address.c_str(), (unsigned long long)ConnectionId);
         
-        ClientSocket = FSocket::Accept(ListenSocket, Address, Port);
+        ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
     }
 }
 
-void FGatewayServer::ProcessClientMessages()
+void MGatewayServer::ProcessClientMessages()
 {
-    std::vector<uint64> DisconnectedClients;
+    TVector<uint64> DisconnectedClients;
     
-    std::vector<pollfd> PollFds;
+    TVector<pollfd> PollFds;
     for (auto& [ConnId, Client] : ClientConnections)
     {
         if (Client->Connection->IsConnected())
         {
+            Client->Connection->FlushSendBuffer();
             pollfd Pfd;
             Pfd.fd = Client->Connection->GetSocketFd();
             Pfd.events = POLLIN;
@@ -184,16 +185,10 @@ void FGatewayServer::ProcessClientMessages()
         
         if (PollFds[Index].revents & POLLIN)
         {
-            uint8 Buffer[8192];
-            uint32 BytesRead = 0;
-            
-            while (Client->Connection->Receive(Buffer, sizeof(Buffer), BytesRead))
+            TArray Packet;
+            while (Client->Connection->ReceivePacket(Packet))
             {
-                if (BytesRead > 0)
-                {
-                    TArray Data(Buffer, Buffer + BytesRead);
-                    HandleClientPacket(ConnId, Data);
-                }
+                HandleClientPacket(ConnId, Packet);
             }
             
             if (!Client->Connection->IsConnected())
@@ -213,7 +208,7 @@ void FGatewayServer::ProcessClientMessages()
     }
 }
 
-void FGatewayServer::HandleClientPacket(uint64 ConnectionId, const TArray& Data)
+void MGatewayServer::HandleClientPacket(uint64 /*ConnectionId*/, const TArray& Data)
 {
     if (Data.empty())
         return;

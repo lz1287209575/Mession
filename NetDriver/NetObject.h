@@ -5,23 +5,23 @@
 #include "../Common/Logger.h"
 
 // 网络对象基类
-class UObject
+class MObject
 {
 private:
     static uint16 GlobalPropertyId;
 
 protected:
     uint64 ObjectId;
-    std::vector<FPropertyDescriptor> RepProperties;
+    TVector<SPropertyDescriptor> RepProperties;
     bool bReplicated = false;
     
 public:
-    UObject()
+    MObject()
     {
-        ObjectId = FUniqueIdGenerator::Generate();
+        ObjectId = MUniqueIdGenerator::Generate();
     }
     
-    virtual ~UObject() = default;
+    virtual ~MObject() = default;
     
     // 获取对象ID
     uint64 GetObjectId() const { return ObjectId; }
@@ -34,7 +34,7 @@ public:
     // 注册复制属性
     void RegisterPropertyInternal(const char* Name, uint16 Offset, uint16 Size, ELifetimeRep Condition)
     {
-        FPropertyDescriptor Desc;
+        SPropertyDescriptor Desc;
         Desc.PropertyId = ++GlobalPropertyId;
         Desc.Offset = Offset;
         Desc.Size = Size;
@@ -47,19 +47,27 @@ public:
     }
     
     // 获取所有属性描述符
-    const std::vector<FPropertyDescriptor>& GetRepProperties() const { return RepProperties; }
+    const TVector<SPropertyDescriptor>& GetRepProperties() const { return RepProperties; }
     
     // 序列化 - 子类重写
-    virtual void Serialize(FArchive& Ar) {}
+    virtual void Serialize(MArchive& /*Ar*/) {}
     
     // 复制前检查
     virtual bool HasUnreplicatedChanges() const { return false; }
 };
 
 // Actor类 - 可在网络中复制的对象
-class AActor : public UObject
+class MActor : public MObject
 {
 private:
+    template<typename T>
+    uint16 GetMemberOffset(const T& Member) const
+    {
+        const auto* BasePtr = reinterpret_cast<const uint8*>(this);
+        const auto* MemberPtr = reinterpret_cast<const uint8*>(&Member);
+        return static_cast<uint16>(MemberPtr - BasePtr);
+    }
+
     bool bActorReplicates = false;
     bool bActorIsActive = false;
     uint64 OwnerId = 0;
@@ -68,9 +76,9 @@ private:
     float LastNetUpdateTime = 0.0f;
     
 protected:
-    FVector Location;
-    FRotator Rotation;
-    FVector Scale = FVector(1.0f, 1.0f, 1.0f);
+    SVector Location;
+    SRotator Rotation;
+    SVector Scale = SVector(1.0f, 1.0f, 1.0f);
     
     // 属性变化标记
     bool bLocationDirty = false;
@@ -78,15 +86,15 @@ protected:
     bool bScaleDirty = false;
     
 public:
-    AActor()
+    MActor()
     {
         // 注册基础属性
-        RegisterPropertyInternal("Location", offsetof(AActor, Location), sizeof(FVector), ELifetimeRep::Always);
-        RegisterPropertyInternal("Rotation", offsetof(AActor, Rotation), sizeof(FRotator), ELifetimeRep::Always);
-        RegisterPropertyInternal("Scale", offsetof(AActor, Scale), sizeof(FVector), ELifetimeRep::InitialOnly);
+        RegisterPropertyInternal("Location", GetMemberOffset(Location), sizeof(SVector), ELifetimeRep::Always);
+        RegisterPropertyInternal("Rotation", GetMemberOffset(Rotation), sizeof(SRotator), ELifetimeRep::Always);
+        RegisterPropertyInternal("Scale", GetMemberOffset(Scale), sizeof(SVector), ELifetimeRep::InitialOnly);
     }
     
-    virtual ~AActor() = default;
+    virtual ~MActor() = default;
     
     // 设置复制启用
     void SetActorReplicates(bool b) { bActorReplicates = b; }
@@ -109,7 +117,7 @@ public:
     float GetNetUpdateFrequency() const { return NetUpdateFrequency; }
     
     // 位置操作
-    void SetLocation(const FVector& Loc) 
+    void SetLocation(const SVector& Loc) 
     { 
         if (Location.X != Loc.X || Location.Y != Loc.Y || Location.Z != Loc.Z)
         {
@@ -117,10 +125,10 @@ public:
             bLocationDirty = true;
         }
     }
-    const FVector& GetLocation() const { return Location; }
+    const SVector& GetLocation() const { return Location; }
     
     // 旋转操作
-    void SetRotation(const FRotator& Rot)
+    void SetRotation(const SRotator& Rot)
     {
         if (Rotation.Pitch != Rot.Pitch || Rotation.Yaw != Rot.Yaw || Rotation.Roll != Rot.Roll)
         {
@@ -128,10 +136,10 @@ public:
             bRotationDirty = true;
         }
     }
-    const FRotator& GetRotation() const { return Rotation; }
+    const SRotator& GetRotation() const { return Rotation; }
     
     // 缩放操作
-    void SetScale(const FVector& InScale)
+    void SetScale(const SVector& InScale)
     {
         if (Scale.X != InScale.X || Scale.Y != InScale.Y || Scale.Z != InScale.Z)
         {
@@ -139,7 +147,7 @@ public:
             bScaleDirty = true;
         }
     }
-    const FVector& GetScale() const { return Scale; }
+    const SVector& GetScale() const { return Scale; }
     
     // 检查是否有未复制的变化
     bool HasUnreplicatedChanges() const override
@@ -156,21 +164,21 @@ public:
     }
     
     // 获取需要复制的属性数据
-    virtual void GetReplicatedProperties(FArchive& Ar) const
+    virtual void GetReplicatedProperties(MArchive& Ar) const
     {
         // 序列化所有标记为需要复制的属性
         if (bLocationDirty)
-            Ar << const_cast<FVector&>(Location);
+            Ar << const_cast<SVector&>(Location);
         
         if (bRotationDirty)
-            Ar << const_cast<FRotator&>(Rotation);
+            Ar << const_cast<SRotator&>(Rotation);
         
         if (bScaleDirty)
-            Ar << const_cast<FVector&>(Scale);
+            Ar << const_cast<SVector&>(Scale);
     }
     
     // 反序列化属性数据
-    virtual void OnRep_Property(const FPropertyDescriptor& Desc, FArchive& Ar)
+    virtual void OnRep_Property(const SPropertyDescriptor& Desc, MArchive& /*Ar*/)
     {
         // 子类重写处理特定属性变化
         LOG_DEBUG("Actor %llu property %d updated", (unsigned long long)GetObjectId(), Desc.PropertyId);

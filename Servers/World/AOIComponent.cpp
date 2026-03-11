@@ -1,30 +1,30 @@
 #include "AOIComponent.h"
 #include "../../Common/Logger.h"
 
-void FAOISystem::AddObject(uint64 ObjectId, const FVector& Position)
+void MAOISystem::AddObject(uint64 ObjectId, const SVector& Position)
 {
     ObjectPositions[ObjectId] = Position;
     
-    FAOICell Cell = GetCell(Position);
+    SAOICell Cell = GetCell(Position);
     AddObjectToCell(ObjectId, Cell);
     
     LOG_DEBUG("Object %llu added to AOI cell (%d, %d)", 
               (unsigned long long)ObjectId, Cell.X, Cell.Y);
 }
 
-void FAOISystem::RemoveObject(uint64 ObjectId)
+void MAOISystem::RemoveObject(uint64 ObjectId)
 {
     auto It = ObjectPositions.find(ObjectId);
     if (It == ObjectPositions.end())
         return;
     
-    FAOICell Cell = GetCell(It->second);
+    SAOICell Cell = GetCell(It->second);
     RemoveObjectFromCell(ObjectId, Cell);
     
     ObjectPositions.erase(It);
 }
 
-void FAOISystem::UpdateObjectPosition(uint64 ObjectId, const FVector& NewPosition)
+void MAOISystem::UpdateObjectPosition(uint64 ObjectId, const SVector& NewPosition)
 {
     auto It = ObjectPositions.find(ObjectId);
     if (It == ObjectPositions.end())
@@ -34,8 +34,8 @@ void FAOISystem::UpdateObjectPosition(uint64 ObjectId, const FVector& NewPositio
         return;
     }
     
-    FAOICell OldCell = GetCell(It->second);
-    FAOICell NewCell = GetCell(NewPosition);
+    SAOICell OldCell = GetCell(It->second);
+    SAOICell NewCell = GetCell(NewPosition);
     
     if (OldCell.X != NewCell.X || OldCell.Y != NewCell.Y)
     {
@@ -47,7 +47,7 @@ void FAOISystem::UpdateObjectPosition(uint64 ObjectId, const FVector& NewPositio
     It->second = NewPosition;
 }
 
-void FAOISystem::GetVisibleObjects(uint64 ObjectId, std::vector<uint64>& OutVisibleObjects)
+void MAOISystem::GetVisibleObjects(uint64 ObjectId, TVector<uint64>& OutVisibleObjects)
 {
     OutVisibleObjects.clear();
     
@@ -55,14 +55,14 @@ void FAOISystem::GetVisibleObjects(uint64 ObjectId, std::vector<uint64>& OutVisi
     if (It == ObjectPositions.end())
         return;
     
-    FAOICell CenterCell = GetCell(It->second);
+    SAOICell CenterCell = GetCell(It->second);
     
     // 获取周围3x3区域内的对象
     for (int32 dx = -1; dx <= 1; ++dx)
     {
         for (int32 dy = -1; dy <= 1; ++dy)
         {
-            FAOICell Cell(CenterCell.X + dx, CenterCell.Y + dy);
+            SAOICell Cell(CenterCell.X + dx, CenterCell.Y + dy);
             
             auto CellIt = Cells.find(Cell);
             if (CellIt != Cells.end())
@@ -79,19 +79,19 @@ void FAOISystem::GetVisibleObjects(uint64 ObjectId, std::vector<uint64>& OutVisi
     }
 }
 
-FAOICell FAOISystem::GetCell(const FVector& Position) const
+SAOICell MAOISystem::GetCell(const SVector& Position) const
 {
     int32 X = (int32)std::floor(Position.X / CellSize);
     int32 Y = (int32)std::floor(Position.Y / CellSize);
-    return FAOICell(X, Y);
+    return SAOICell(X, Y);
 }
 
-void FAOISystem::AddObjectToCell(uint64 ObjectId, const FAOICell& Cell)
+void MAOISystem::AddObjectToCell(uint64 ObjectId, const SAOICell& Cell)
 {
     Cells[Cell].Objects.insert(ObjectId);
 }
 
-void FAOISystem::RemoveObjectFromCell(uint64 ObjectId, const FAOICell& Cell)
+void MAOISystem::RemoveObjectFromCell(uint64 ObjectId, const SAOICell& Cell)
 {
     auto It = Cells.find(Cell);
     if (It != Cells.end())

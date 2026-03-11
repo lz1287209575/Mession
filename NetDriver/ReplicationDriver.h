@@ -2,46 +2,45 @@
 
 #include "NetObject.h"
 #include "../Core/Socket.h"
-#include <set>
 
 // 连接通道
-class UReplicationChannel
+class MReplicationChannel
 {
 public:
     uint64 ConnectionId;
-    std::set<uint64> RelevantActors;  // 该连接可见的Actor
+    TSet<uint64> RelevantActors;  // 该连接可见的Actor
     
-    UReplicationChannel(uint64 InConnectionId) : ConnectionId(InConnectionId) {}
+    MReplicationChannel(uint64 InConnectionId) : ConnectionId(InConnectionId) {}
 };
 
 // 复制驱动 - 负责管理所有Actor的复制
-class UReplicationDriver
+class MReplicationDriver
 {
 private:
     // 所有复制的Actor
-    std::map<uint64, AActor*> ReplicationMap;
+    TMap<uint64, MActor*> ReplicationMap;
     
     // 每个连接的相关Actor
-    std::map<uint64, UReplicationChannel*> Channels;
+    TMap<uint64, MReplicationChannel*> Channels;
     
     // 待发送的更新队列
-    struct FPendingUpdate
+    struct SPendingUpdate
     {
         uint64 ConnectionId;
         uint64 ActorId;
         TArray Data;
     };
-    std::queue<FPendingUpdate> PendingUpdates;
+    TQueue<SPendingUpdate> PendingUpdates;
     
     // 连接管理
-    std::map<uint64, std::shared_ptr<FTcpConnection>> Connections;
+    TMap<uint64, TSharedPtr<MTcpConnection>> Connections;
     
 public:
-    UReplicationDriver() {}
-    ~UReplicationDriver();
+    MReplicationDriver() {}
+    ~MReplicationDriver();
     
     // 注册Actor
-    void RegisterActor(AActor* Actor)
+    void RegisterActor(MActor* Actor)
     {
         if (Actor && Actor->DoesActorReplicate())
         {
@@ -64,10 +63,10 @@ public:
     }
     
     // 添加连接到频道
-    void AddConnection(uint64 ConnectionId, std::shared_ptr<FTcpConnection> Connection)
+    void AddConnection(uint64 ConnectionId, TSharedPtr<MTcpConnection> Connection)
     {
         Connections[ConnectionId] = Connection;
-        Channels[ConnectionId] = new UReplicationChannel(ConnectionId);
+        Channels[ConnectionId] = new MReplicationChannel(ConnectionId);
         LOG_DEBUG("Added connection %llu to replication", (unsigned long long)ConnectionId);
     }
     
@@ -105,7 +104,7 @@ public:
     }
     
     // Tick - 处理复制
-    void Tick(float DeltaTime)
+    void Tick(float /*DeltaTime*/)
     {
         // 1. 检查所有Actor是否需要更新
         for (auto& [ActorId, Actor] : ReplicationMap)
@@ -114,7 +113,7 @@ public:
                 continue;
             
             // 序列化更新的属性
-            FMemoryArchive Ar;
+            MMemoryArchive Ar;
             Actor->GetReplicatedProperties(Ar);
             
             if (Ar.GetData().empty())
@@ -147,11 +146,13 @@ public:
     // 直接发送Actor更新
     void SendActorUpdate(uint64 ConnectionId, uint64 ActorId, const TArray& Data)
     {
-        // 消息格式: [ActorId(8)][DataSize(4)][Data...]
+        // 消息格式: [MsgType(1)][ActorId(8)][DataSize(4)][Data...]
         TArray Packet;
+        uint8 MsgType = 8; // ActorUpdate
         uint64 ActorIdBE = ActorId;
         uint32 DataSize = (uint32)Data.size();
         
+        Packet.push_back(MsgType);
         // 添加Actor ID
         Packet.insert(Packet.end(), (uint8*)&ActorIdBE, (uint8*)&ActorIdBE + sizeof(ActorIdBE));
         // 添加数据大小
@@ -167,12 +168,12 @@ public:
     }
     
     // 广播Actor创建
-    void BroadcastActorCreate(AActor* Actor, uint64 ExcludeConnectionId = 0)
+    void BroadcastActorCreate(MActor* Actor, uint64 ExcludeConnectionId = 0)
     {
         if (!Actor)
             return;
         
-        FMemoryArchive Ar;
+        MMemoryArchive Ar;
         Actor->Serialize(Ar);
         
         // 创建消息

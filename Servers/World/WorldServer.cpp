@@ -1,15 +1,15 @@
 #include "WorldServer.h"
 #include <poll.h>
 
-FWorldServer::FWorldServer()
+MWorldServer::MWorldServer()
 {
-    ReplicationDriver = new UReplicationDriver();
+    ReplicationDriver = new MReplicationDriver();
 }
 
-bool FWorldServer::Init(int InPort)
+bool MWorldServer::Init(int InPort)
 {
     // 创建监听socket
-    ListenSocket = FSocket::CreateListenSocket((uint16)InPort);
+    ListenSocket = MSocket::CreateListenSocket((uint16)InPort);
     if (ListenSocket < 0)
     {
         printf("ERROR: Failed to create listen socket on port %d\n", InPort);
@@ -28,7 +28,7 @@ bool FWorldServer::Init(int InPort)
     return true;
 }
 
-void FWorldServer::Shutdown()
+void MWorldServer::Shutdown()
 {
     if (!bRunning)
         return;
@@ -59,14 +59,14 @@ void FWorldServer::Shutdown()
     // 关闭监听socket
     if (ListenSocket >= 0)
     {
-        FSocket::Close(ListenSocket);
+        MSocket::Close(ListenSocket);
         ListenSocket = -1;
     }
     
     LOG_INFO("World server shutdown complete");
 }
 
-void FWorldServer::Tick()
+void MWorldServer::Tick()
 {
     if (!bRunning)
         return;
@@ -87,7 +87,7 @@ void FWorldServer::Tick()
     }
 }
 
-void FWorldServer::Run()
+void MWorldServer::Run()
 {
     if (!bRunning)
     {
@@ -104,17 +104,17 @@ void FWorldServer::Run()
     }
 }
 
-void FWorldServer::AcceptConnections()
+void MWorldServer::AcceptConnections()
 {
-    std::string Address;
+    TString Address;
     uint16 Port;
     
-    int32 ClientSocket = FSocket::Accept(ListenSocket, Address, Port);
+    int32 ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
     
     while (ClientSocket >= 0)
     {
         uint64 ConnectionId = NextConnectionId++;
-        auto Connection = std::make_shared<FTcpConnection>(ClientSocket);
+        auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));
         Connection->SetNonBlocking(true);
         
         GatewayConnections[ConnectionId] = Connection;
@@ -122,19 +122,20 @@ void FWorldServer::AcceptConnections()
         LOG_INFO("New connection: %s (connection_id=%llu)", 
                  Address.c_str(), (unsigned long long)ConnectionId);
         
-        ClientSocket = FSocket::Accept(ListenSocket, Address, Port);
+        ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
     }
 }
 
-void FWorldServer::ProcessMessages()
+void MWorldServer::ProcessMessages()
 {
-    std::vector<uint64> DisconnectedConnections;
+    TVector<uint64> DisconnectedConnections;
     
-    std::vector<pollfd> PollFds;
+    TVector<pollfd> PollFds;
     for (auto& [ConnId, Conn] : GatewayConnections)
     {
         if (Conn->IsConnected())
         {
+            Conn->FlushSendBuffer();
             pollfd Pfd;
             Pfd.fd = Conn->GetSocketFd();
             Pfd.events = POLLIN;
@@ -146,6 +147,7 @@ void FWorldServer::ProcessMessages()
     {
         if (Conn->IsConnected())
         {
+            Conn->FlushSendBuffer();
             pollfd Pfd;
             Pfd.fd = Conn->GetSocketFd();
             Pfd.events = POLLIN;
@@ -171,16 +173,10 @@ void FWorldServer::ProcessMessages()
         
         if (PollFds[Index].revents & POLLIN)
         {
-            uint8 Buffer[8192];
-            uint32 BytesRead = 0;
-            
-            while (Conn->Receive(Buffer, sizeof(Buffer), BytesRead))
+            TArray Packet;
+            while (Conn->ReceivePacket(Packet))
             {
-                if (BytesRead > 0)
-                {
-                    TArray Data(Buffer, Buffer + BytesRead);
-                    HandlePacket(ConnId, Data);
-                }
+                HandlePacket(ConnId, Packet);
             }
             
             if (!Conn->IsConnected())
@@ -206,7 +202,7 @@ void FWorldServer::ProcessMessages()
     }
 }
 
-void FWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
+void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
 {
     if (Data.empty())
         return;
@@ -224,7 +220,7 @@ void FWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
             if (!Player || !Player->Character)
                 return;
             
-            FVector NewPos;
+            SVector NewPos;
             NewPos.X = *(float*)&Data[1];
             NewPos.Y = *(float*)&Data[5];
             NewPos.Z = *(float*)&Data[9];
@@ -241,20 +237,20 @@ void FWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
     }
 }
 
-void FWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 ConnectionId)
+void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 ConnectionId)
 {
-    FPlayer Player;
+    SPlayer Player;
     Player.PlayerId = PlayerId;
     Player.Name = Name;
     Player.ConnectionId = ConnectionId;
     Player.bOnline = true;
     
     // 创建角色
-    AActor* Character = new AActor();
+    MActor* Character = new MActor();
     Character->SetReplicated(true);
     Character->SetActorReplicates(true);
     Character->SetActorActive(true);
-    Character->SetLocation(FVector(0, 0, 100));
+    Character->SetLocation(SVector(0, 0, 100));
     
     Player.Character = Character;
     
@@ -269,13 +265,13 @@ void FWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 Connec
              Name.c_str(), (unsigned long long)PlayerId);
 }
 
-void FWorldServer::RemovePlayer(uint64 PlayerId)
+void MWorldServer::RemovePlayer(uint64 PlayerId)
 {
     auto It = Players.find(PlayerId);
     if (It == Players.end())
         return;
     
-    FPlayer& Player = It->second;
+    SPlayer& Player = It->second;
     
     // 移除复制
     if (Player.Character)
@@ -290,13 +286,13 @@ void FWorldServer::RemovePlayer(uint64 PlayerId)
     LOG_INFO("Player %llu removed from world", (unsigned long long)PlayerId);
 }
 
-FPlayer* FWorldServer::GetPlayerById(uint64 PlayerId)
+SPlayer* MWorldServer::GetPlayerById(uint64 PlayerId)
 {
     auto It = Players.find(PlayerId);
     return (It != Players.end()) ? &It->second : nullptr;
 }
 
-FPlayer* FWorldServer::GetPlayerByConnection(uint64 ConnectionId)
+SPlayer* MWorldServer::GetPlayerByConnection(uint64 ConnectionId)
 {
     auto It = ConnectionToPlayer.find(ConnectionId);
     if (It == ConnectionToPlayer.end())
@@ -305,7 +301,7 @@ FPlayer* FWorldServer::GetPlayerByConnection(uint64 ConnectionId)
     return GetPlayerById(It->second);
 }
 
-void FWorldServer::UpdateGameLogic(float DeltaTime)
+void MWorldServer::UpdateGameLogic(float DeltaTime)
 {
     // 更新所有玩家角色
     for (auto& [PlayerId, Player] : Players)

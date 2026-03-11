@@ -4,14 +4,11 @@
 #include "../../Core/Socket.h"
 #include "../../Common/Logger.h"
 #include "../../Common/ServerConnection.h"
-#include <map>
-#include <memory>
-#include <vector>
 #include <thread>
 #include <chrono>
 
 // 网关服务器配置
-struct FGatewayConfig
+struct SGatewayConfig
 {
     uint16 ListenPort = 8001;        // 客户端连接端口
     FString LoginServerAddr = "127.0.0.1";
@@ -21,42 +18,42 @@ struct FGatewayConfig
 };
 
 // 客户端连接
-class FClientConnection
+class MClientConnection
 {
 public:
     uint64 ConnectionId;
-    std::shared_ptr<FTcpConnection> Connection;
+    TSharedPtr<MTcpConnection> Connection;
     uint64 PlayerId = 0;
     bool bAuthenticated = false;
     uint32 SessionToken = 0;
     
-    FClientConnection(uint64 Id, std::shared_ptr<FTcpConnection> Conn) 
+    MClientConnection(uint64 Id, TSharedPtr<MTcpConnection> Conn) 
         : ConnectionId(Id), Connection(Conn) {}
 };
 
 // 网关服务器
-class FGatewayServer
+class MGatewayServer
 {
 private:
     int32 ListenSocket = -1;
     bool bRunning = false;
     
     // 配置
-    FGatewayConfig Config;
+    SGatewayConfig Config;
     
     // 客户端连接管理
-    std::map<uint64, std::shared_ptr<FClientConnection>> ClientConnections;
+    TMap<uint64, TSharedPtr<MClientConnection>> ClientConnections;
     uint64 NextConnectionId = 1;
     
     // 与LoginServer的连接 (使用长连接抽象层)
-    std::shared_ptr<FServerConnection> LoginServerConn;
+    TSharedPtr<MServerConnection> LoginServerConn;
     
     // 与WorldServer的连接 (使用长连接抽象层)
-    std::shared_ptr<FServerConnection> WorldServerConn;
+    TSharedPtr<MServerConnection> WorldServerConn;
     
 public:
-    FGatewayServer() {}
-    ~FGatewayServer() { Shutdown(); }
+    MGatewayServer() {}
+    ~MGatewayServer() { Shutdown(); }
     
     bool Init(int InPort);
     void Shutdown();

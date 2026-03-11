@@ -13,7 +13,7 @@ Mession/
 │   ├── Logger.h             # 日志系统
 │   └── ServerConnection.h   # 服务器长连接抽象层
 ├── NetDriver/               # 网络驱动
-│   ├── NetObject.h         # UObject/AActor (UE风格)
+│   ├── NetObject.h         # MObject/MActor 运行时网络对象
 │   ├── Replicate.h        # 属性复制系统
 │   └── ReplicationDriver.h # 复制驱动
 ├── Servers/                 # 服务器实现
@@ -61,13 +61,13 @@ make -j4
 #include "Common/ServerConnection.h"
 
 // 设置本服务器信息
-FServerConnection::SetLocalInfo(1, EServerType::Gateway, "Gateway01");
+MServerConnection::SetLocalInfo(1, EServerType::Gateway, "Gateway01");
 
 // 添加远程服务器连接
 auto Conn = Manager->AddServer(2, EServerType::Login, "Login01", "127.0.0.1", 8002);
 
 // 设置回调
-Conn->SetOnAuthenticated([](auto Conn, const FServerInfo& Info) {
+Conn->SetOnAuthenticated([](auto Conn, const SServerInfo& Info) {
     LOG_INFO("Server %s authenticated!", Info.ServerName.c_str());
 });
 

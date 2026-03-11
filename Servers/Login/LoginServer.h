@@ -3,15 +3,12 @@
 #include "../../Core/NetCore.h"
 #include "../../Core/Socket.h"
 #include "../../Common/Logger.h"
-#include <map>
-#include <memory>
-#include <vector>
 #include <random>
 #include <thread>
 #include <chrono>
 
 // 登录服务器配置
-struct FLoginConfig
+struct SLoginConfig
 {
     uint16 ListenPort = 8002;  // 网关连接端口
     uint32 SessionKeyMin = 100000;
@@ -19,7 +16,7 @@ struct FLoginConfig
 };
 
 // 在线会话
-struct FSession
+struct SSession
 {
     uint64 PlayerId;
     uint32 SessionKey;
@@ -28,29 +25,29 @@ struct FSession
 };
 
 // 登录服务器
-class FLoginServer
+class MLoginServer
 {
 private:
     int32 ListenSocket = -1;
     bool bRunning = false;
     
     // 配置
-    FLoginConfig Config;
+    SLoginConfig Config;
     
     // 网关连接
-    std::map<uint64, std::shared_ptr<FTcpConnection>> GatewayConnections;
+    TMap<uint64, TSharedPtr<MTcpConnection>> GatewayConnections;
     uint64 NextConnectionId = 1;
     
     // 会话管理
-    std::map<uint32, FSession> Sessions;  // SessionKey -> Session
-    std::map<uint64, uint32> PlayerSessions;  // PlayerId -> SessionKey
+    TMap<uint32, SSession> Sessions;  // SessionKey -> Session
+    TMap<uint64, uint32> PlayerSessions;  // PlayerId -> SessionKey
     
     // 随机数生成器
     std::mt19937 Rng;
     
 public:
-    FLoginServer();
-    ~FLoginServer() { Shutdown(); }
+    MLoginServer();
+    ~MLoginServer() { Shutdown(); }
     
     bool Init(int InPort);
     void Shutdown();

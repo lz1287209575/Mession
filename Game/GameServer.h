@@ -9,7 +9,7 @@
 #include <poll.h>
 
 // 游戏服务器主类
-class AGameServer : public IMessageHandler
+class MGameServer : public IMessageHandler
 {
 private:
     // 服务器配置
@@ -18,38 +18,38 @@ private:
     bool bRunning = false;
     
     // 网络
-    std::map<uint64, std::shared_ptr<FTcpConnection>> Connections;
+    TMap<uint64, TSharedPtr<MTcpConnection>> Connections;
     uint64 NextConnectionId = 1;
     
     // 复制系统
-    UReplicationDriver* ReplicationDriver;
+    MReplicationDriver* ReplicationDriver;
     
     // 消息分发
-    FMessageDispatcher* MessageDispatcher;
+    MMessageDispatcher* MessageDispatcher;
     
     // 玩家数据
-    struct FPlayerData
+    struct SPlayerData
     {
         uint64 PlayerId;
         FString Name;
         uint64 ConnectionId;
-        AActor* Character = nullptr;
+        MActor* Character = nullptr;
         bool bAuthenticated = false;
         float LastHeartbeatTime = 0.0f;
     };
-    std::map<uint64, FPlayerData> Players;
+    TMap<uint64, SPlayerData> Players;
     
     // 时间
     double ServerStartTime = 0.0f;
     
 public:
-    AGameServer()
+    MGameServer()
     {
-        ReplicationDriver = new UReplicationDriver();
-        MessageDispatcher = new FMessageDispatcher(this);
+        ReplicationDriver = new MReplicationDriver();
+        MessageDispatcher = new MMessageDispatcher(this);
     }
     
-    ~AGameServer()
+    ~MGameServer()
     {
         Shutdown();
         delete ReplicationDriver;
@@ -62,7 +62,7 @@ public:
         Port = InPort;
         
         // 创建监听socket
-        ListenSocket = FSocket::CreateListenSocket(Port);
+        ListenSocket = MSocket::CreateListenSocket(Port);
         if (ListenSocket < 0)
         {
             LOG_ERROR("Failed to start server on port %d", Port);
@@ -98,7 +98,7 @@ public:
         // 关闭监听socket
         if (ListenSocket >= 0)
         {
-            FSocket::Close(ListenSocket);
+            MSocket::Close(ListenSocket);
             ListenSocket = -1;
         }
         
@@ -149,15 +149,15 @@ private:
     // 接受新连接
     void AcceptNewConnections()
     {
-        std::string Address;
+        TString Address;
         uint16 PortNum;
         
-        int32 ClientSocket = FSocket::Accept(ListenSocket, Address, PortNum);
+        int32 ClientSocket = MSocket::Accept(ListenSocket, Address, PortNum);
         
         while (ClientSocket >= 0)
         {
             uint64 ConnectionId = NextConnectionId++;
-            auto Connection = std::make_shared<FTcpConnection>(ClientSocket);
+            auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));
             Connection->SetPlayerId(ConnectionId);
             Connection->SetNonBlocking(true);
             
@@ -168,21 +168,22 @@ private:
                      Address.c_str(), (unsigned long long)ConnectionId);
             
             // 继续接受下一个
-            ClientSocket = FSocket::Accept(ListenSocket, Address, PortNum);
+            ClientSocket = MSocket::Accept(ListenSocket, Address, PortNum);
         }
     }
     
     // 处理网络消息
     void ProcessNetworkMessages()
     {
-        std::vector<uint64> DisconnectedConns;
+        TVector<uint64> DisconnectedConns;
         
         // 准备pollfd
-        std::vector<pollfd> PollFds;
+        TVector<pollfd> PollFds;
         for (auto& [ConnId, Conn] : Connections)
         {
             if (Conn->IsConnected())
             {
+                Conn->FlushSendBuffer();
                 pollfd Pfd;
                 Pfd.fd = Conn->GetSocketFd();
                 Pfd.events = POLLIN;
@@ -213,18 +214,10 @@ private:
             
             if (PollFds[Index].revents & POLLIN)
             {
-                // 接收数据
-                uint8 Buffer[8192];
-                uint32 BytesRead = 0;
-                
-                while (Conn->Receive(Buffer, sizeof(Buffer), BytesRead))
+                TArray Packet;
+                while (Conn->ReceivePacket(Packet))
                 {
-                    // 简单处理：直接分发
-                    if (BytesRead > 0)
-                    {
-                        TArray Data(Buffer, Buffer + BytesRead);
-                        MessageDispatcher->Dispatch(ConnId, Data);
-                    }
+                    MessageDispatcher->Dispatch(ConnId, Packet);
                 }
                 
                 if (!Conn->IsConnected())
@@ -302,7 +295,7 @@ private:
 
 public:
     // IMessageHandler接口实现
-    void OnHandshake(uint64 ConnectionId, const FHandshakeMessage& Msg) override
+    void OnHandshake(uint64 ConnectionId, const SHandshakeMessage& Msg) override
     {
         LOG_DEBUG("Handshake from connection %llu: version=%d, name=%s",
                   (unsigned long long)ConnectionId, 
@@ -313,7 +306,7 @@ public:
         // 实际应该验证版本号
     }
     
-    void OnLogin(uint64 ConnectionId, const FLoginMessage& Msg) override
+    void OnLogin(uint64 ConnectionId, const SLoginMessage& Msg) override
     {
         LOG_INFO("Login attempt: player=%s, token=%s", 
                  Msg.PlayerName.c_str(), Msg.Token.c_str());
@@ -325,7 +318,7 @@ public:
         // 创建玩家数据
         uint64 PlayerId = Msg.PlayerId > 0 ? Msg.PlayerId : ConnectionId;
         
-        FPlayerData Player;
+        SPlayerData Player;
         Player.PlayerId = PlayerId;
         Player.Name = Msg.PlayerName.empty() ? "Player" : Msg.PlayerName;
         Player.ConnectionId = ConnectionId;
@@ -335,11 +328,11 @@ public:
         Players[ConnectionId] = Player;
         
         // 创建玩家角色（简单示例）
-        AActor* Character = new AActor();
+        MActor* Character = new MActor();
         Character->SetReplicated(true);
         Character->SetActorReplicates(true);
         Character->SetActorActive(true);
-        Character->SetLocation(FVector(0, 0, 100));
+        Character->SetLocation(SVector(0, 0, 100));
         
         Player.Character = Character;
         
@@ -351,14 +344,14 @@ public:
         ReplicationDriver->BroadcastActorCreate(Character, ConnectionId);
         
         // 发送登录响应
-        FLoginResponseMessage Response;
+        SLoginResponseMessage Response;
         Response.Result = 0; // 成功
         Response.AssignedPlayerId = PlayerId;
         Response.Message = "Welcome to MMO Server!";
         
         // 发送响应
         TArray Data;
-        FMemoryArchive Ar(Data);
+        MMemoryArchive Ar(Data);
         uint8 MsgType = (uint8)ENetMessageType::MT_LoginResponse;
         Ar << MsgType;
         Response.Serialize(Ar);

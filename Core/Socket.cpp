@@ -1,8 +1,8 @@
 #include "Socket.h"
 #include <netinet/tcp.h>
 
-// FTcpConnection implementation
-FTcpConnection::FTcpConnection(int32 InSocketFd) 
+// MTcpConnection implementation
+MTcpConnection::MTcpConnection(int32 InSocketFd) 
     : SocketFd(InSocketFd), PlayerId(0), bConnected(true)
 {
     // 获取远端地址
@@ -26,96 +26,162 @@ FTcpConnection::FTcpConnection(int32 InSocketFd)
              RemoteAddress.c_str(), RemotePort, SocketFd);
 }
 
-FTcpConnection::~FTcpConnection()
+MTcpConnection::~MTcpConnection()
 {
     Close();
 }
 
-bool FTcpConnection::Send(const void* Data, uint32 Size)
+bool MTcpConnection::Send(const void* Data, uint32 Size)
 {
     if (!bConnected || Size == 0)
         return false;
-    
-    // 添加4字节长度头
-    uint8 Packet[MAX_PACKET_SIZE];
-    *(uint32*)Packet = Size;
-    memcpy(Packet + 4, Data, Size);
-    
-    int32 Sent = send(SocketFd, Packet, Size + 4, 0);
-    
-    if (Sent < 0)
+
+    if (Size > MAX_PACKET_SIZE)
     {
-        if (errno == EWOULDBLOCK || errno == EAGAIN)
-        {
-            // 缓冲区满，稍后重试
-            return false;
-        }
-        
-        LOG_ERROR("Send failed: %s", strerror(errno));
+        LOG_ERROR("Packet too large to send: %u", Size);
+        return false;
+    }
+
+    if (SendBuffer.size() + 4 + Size > SEND_BUFFER_SIZE)
+    {
+        LOG_ERROR("Send buffer overflow on fd=%d", SocketFd);
         bConnected = false;
         return false;
     }
-    
+
+    const size_t OldSize = SendBuffer.size();
+    SendBuffer.resize(OldSize + 4 + Size);
+
+    memcpy(SendBuffer.data() + OldSize, &Size, sizeof(Size));
+    memcpy(SendBuffer.data() + OldSize + 4, Data, Size);
+
+    return FlushSendBuffer();
+}
+
+bool MTcpConnection::Receive(void* Buffer, uint32 Size, uint32& BytesRead)
+{
+    TArray Packet;
+    if (!ReceivePacket(Packet))
+    {
+        BytesRead = 0;
+        return false;
+    }
+
+    if (Packet.size() > Size)
+    {
+        LOG_ERROR("Receive buffer too small: packet=%zu buffer=%u", Packet.size(), Size);
+        bConnected = false;
+        BytesRead = 0;
+        return false;
+    }
+
+    memcpy(Buffer, Packet.data(), Packet.size());
+    BytesRead = static_cast<uint32>(Packet.size());
     return true;
 }
 
-bool FTcpConnection::Receive(void* Buffer, uint32 Size, uint32& BytesRead)
+bool MTcpConnection::ReceivePacket(TArray& OutPacket)
 {
     if (!bConnected)
         return false;
-    
-    BytesRead = recv(SocketFd, Buffer, Size, 0);
-    
-    if (BytesRead > 0)
+
+    OutPacket.clear();
+    FlushSendBuffer();
+
+    while (bConnected)
     {
-        return true;
-    }
-    else if (BytesRead == 0)
-    {
-        // 连接关闭
-        LOG_INFO("Connection closed by peer (player=%llu)", (unsigned long long)PlayerId);
-        bConnected = false;
-        return false;
-    }
-    else
-    {
-        if (errno == EWOULDBLOCK || errno == EAGAIN)
+        if (ProcessRecvBuffer(OutPacket))
+            return true;
+
+        uint8 Buffer[8192];
+        ssize_t BytesRead = recv(SocketFd, Buffer, sizeof(Buffer), 0);
+
+        if (BytesRead > 0)
         {
-            // 没有数据
+            if (RecvBuffer.size() + static_cast<size_t>(BytesRead) > RECV_BUFFER_SIZE)
+            {
+                LOG_ERROR("Receive buffer overflow on fd=%d", SocketFd);
+                bConnected = false;
+                return false;
+            }
+
+            RecvBuffer.insert(RecvBuffer.end(), Buffer, Buffer + BytesRead);
+            continue;
+        }
+
+        if (BytesRead == 0)
+        {
+            LOG_INFO("Connection closed by peer (player=%llu)", (unsigned long long)PlayerId);
+            bConnected = false;
             return false;
         }
-        
+
+        if (errno == EWOULDBLOCK || errno == EAGAIN)
+            return false;
+
         LOG_ERROR("Receive failed: %s", strerror(errno));
         bConnected = false;
         return false;
     }
+
+    return false;
 }
 
-void FTcpConnection::SetNonBlocking(bool bNonBlocking)
+bool MTcpConnection::FlushSendBuffer()
 {
-    FSocket::SetNonBlocking(SocketFd, bNonBlocking);
+    if (!bConnected)
+        return false;
+
+    while (!SendBuffer.empty())
+    {
+        ssize_t Sent = send(SocketFd, SendBuffer.data(), SendBuffer.size(), 0);
+
+        if (Sent > 0)
+        {
+            SendBuffer.erase(SendBuffer.begin(), SendBuffer.begin() + Sent);
+            continue;
+        }
+
+        if (Sent < 0 && (errno == EWOULDBLOCK || errno == EAGAIN))
+            return true;
+
+        LOG_ERROR("Send failed: %s", strerror(errno));
+        bConnected = false;
+        return false;
+    }
+
+    return true;
 }
 
-void FTcpConnection::Close()
+void MTcpConnection::SetNonBlocking(bool bNonBlocking)
+{
+    MSocket::SetNonBlocking(SocketFd, bNonBlocking);
+}
+
+void MTcpConnection::Close()
 {
     if (bConnected)
     {
         LOG_DEBUG("Closing connection (player=%llu, fd=%d)", 
                   (unsigned long long)PlayerId, SocketFd);
-        FSocket::Close(SocketFd);
+        MSocket::Close(SocketFd);
         bConnected = false;
     }
+
+    RecvBuffer.clear();
+    SendBuffer.clear();
 }
 
-bool FTcpConnection::ProcessRecvBuffer(TArray& OutPacket)
+bool MTcpConnection::ProcessRecvBuffer(TArray& OutPacket)
 {
     // 简单的粘包处理：先读4字节长度头
     if (RecvBuffer.size() < 4)
         return false;
+
+    uint32 PacketSize = 0;
+    memcpy(&PacketSize, RecvBuffer.data(), sizeof(PacketSize));
     
-    uint32 PacketSize = *(uint32*)RecvBuffer.data();
-    
-    if (PacketSize > MAX_PACKET_SIZE)
+    if (PacketSize == 0 || PacketSize > MAX_PACKET_SIZE)
     {
         LOG_ERROR("Invalid packet size: %u", PacketSize);
         bConnected = false;
@@ -134,8 +200,8 @@ bool FTcpConnection::ProcessRecvBuffer(TArray& OutPacket)
     return true;
 }
 
-// FSocket implementation
-int32 FSocket::CreateListenSocket(uint16 Port, int32 MaxBacklog)
+// MSocket implementation
+int32 MSocket::CreateListenSocket(uint16 Port, int32 MaxBacklog)
 {
     int32 ListenFd = socket(AF_INET, SOCK_STREAM, 0);
     if (ListenFd < 0)
@@ -176,7 +242,7 @@ int32 FSocket::CreateListenSocket(uint16 Port, int32 MaxBacklog)
     return ListenFd;
 }
 
-int32 FSocket::CreateNonBlockingSocket()
+int32 MSocket::CreateNonBlockingSocket()
 {
     int32 Fd = socket(AF_INET, SOCK_STREAM, 0);
     if (Fd >= 0)
@@ -187,7 +253,7 @@ int32 FSocket::CreateNonBlockingSocket()
     return Fd;
 }
 
-bool FSocket::SetNonBlocking(int32 SocketFd, bool bNonBlocking)
+bool MSocket::SetNonBlocking(int32 SocketFd, bool bNonBlocking)
 {
     int32 Flags = fcntl(SocketFd, F_GETFL, 0);
     if (Flags < 0)
@@ -201,13 +267,13 @@ bool FSocket::SetNonBlocking(int32 SocketFd, bool bNonBlocking)
     return fcntl(SocketFd, F_SETFL, Flags) == 0;
 }
 
-bool FSocket::SetNoDelay(int32 SocketFd, bool bNoDelay)
+bool MSocket::SetNoDelay(int32 SocketFd, bool bNoDelay)
 {
     int32 NoDelay = bNoDelay ? 1 : 0;
     return setsockopt(SocketFd, IPPROTO_TCP, TCP_NODELAY, &NoDelay, sizeof(NoDelay)) == 0;
 }
 
-int32 FSocket::Accept(int32 ListenSocketFd, std::string& OutAddress, uint16& OutPort)
+int32 MSocket::Accept(int32 ListenSocketFd, TString& OutAddress, uint16& OutPort)
 {
     sockaddr_in ClientAddr;
     socklen_t AddrLen = sizeof(ClientAddr);
@@ -227,7 +293,7 @@ int32 FSocket::Accept(int32 ListenSocketFd, std::string& OutAddress, uint16& Out
     return ClientFd;
 }
 
-void FSocket::Close(int32 SocketFd)
+void MSocket::Close(int32 SocketFd)
 {
     if (SocketFd >= 0)
     {

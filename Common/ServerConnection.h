@@ -3,9 +3,6 @@
 #include "../Core/NetCore.h"
 #include "../Core/Socket.h"
 #include "../Common/Logger.h"
-#include <map>
-#include <memory>
-#include <functional>
 #include <thread>
 #include <chrono>
 
@@ -35,7 +32,7 @@ enum class EServerMessageType : uint8
 };
 
 // 服务器信息
-struct FServerInfo
+struct SServerInfo
 {
     uint32 ServerId = 0;
     EServerType ServerType = EServerType::Unknown;
@@ -43,8 +40,8 @@ struct FServerInfo
     FString Address;
     uint16 Port = 0;
     
-    FServerInfo() = default;
-    FServerInfo(uint32 Id, EServerType Type, const FString& Name, const FString& Addr, uint16 P)
+    SServerInfo() = default;
+    SServerInfo(uint32 Id, EServerType Type, const FString& Name, const FString& Addr, uint16 P)
         : ServerId(Id), ServerType(Type), ServerName(Name), Address(Addr), Port(P) {}
 };
 
@@ -58,7 +55,7 @@ enum class EConnectionState
 };
 
 // 服务器连接配置
-struct FServerConnectionConfig
+struct SServerConnectionConfig
 {
     uint32 ServerId = 0;
     EServerType ServerType = EServerType::Unknown;
@@ -71,23 +68,23 @@ struct FServerConnectionConfig
     float ConnectTimeout = 3.0f;     // 连接超时
     float ReconnectInterval = 5.0f;  // 重连间隔
     
-    FServerConnectionConfig() = default;
+    SServerConnectionConfig() = default;
     
-    FServerConnectionConfig(uint32 Id, EServerType Type, const FString& Name, 
+    SServerConnectionConfig(uint32 Id, EServerType Type, const FString& Name, 
                            const FString& Addr, uint16 P)
         : ServerId(Id), ServerType(Type), ServerName(Name), Address(Addr), Port(P) {}
 };
 
 // 单个服务器连接
-class FServerConnection : public std::enable_shared_from_this<FServerConnection>
+class MServerConnection : public TEnableSharedFromThis<MServerConnection>
 {
 private:
     int32 SocketFd = -1;
     EConnectionState State = EConnectionState::Disconnected;
-    FServerConnectionConfig Config;
+    SServerConnectionConfig Config;
     
     // 本地服务器信息（静态）
-    static FServerInfo LocalServerInfo;
+    static SServerInfo LocalServerInfo;
     
     // 心跳
     float HeartbeatTimer = 0.0f;
@@ -100,10 +97,10 @@ private:
     float ReconnectInterval = 5.0f;
     
     // 回调
-    std::function<void(std::shared_ptr<FServerConnection>)> OnConnectCallback;
-    std::function<void(std::shared_ptr<FServerConnection>)> OnDisconnectCallback;
-    std::function<void(std::shared_ptr<FServerConnection>, uint8, const TArray&)> OnMessageCallback;
-    std::function<void(std::shared_ptr<FServerConnection>, const FServerInfo&)> OnServerAuthenticatedCallback;
+    TFunction<void(TSharedPtr<MServerConnection>)> OnConnectCallback;
+    TFunction<void(TSharedPtr<MServerConnection>)> OnDisconnectCallback;
+    TFunction<void(TSharedPtr<MServerConnection>, uint8, const TArray&)> OnMessageCallback;
+    TFunction<void(TSharedPtr<MServerConnection>, const SServerInfo&)> OnServerAuthenticatedCallback;
     
     // 接收缓冲
     TArray RecvBuffer;
@@ -112,22 +109,22 @@ private:
     FString LogPrefix;
     
 public:
-    FServerConnection() {}
-    explicit FServerConnection(const FServerConnectionConfig& InConfig) : Config(InConfig) 
+    MServerConnection() {}
+    explicit MServerConnection(const SServerConnectionConfig& InConfig) : Config(InConfig) 
     {
         UpdateLogPrefix();
     }
-    ~FServerConnection() { Disconnect(); }
+    ~MServerConnection() { Disconnect(); }
     
     // 配置
-    void SetConfig(const FServerConnectionConfig& InConfig) 
+    void SetConfig(const SServerConnectionConfig& InConfig) 
     { 
         Config = InConfig; 
         HeartbeatInterval = InConfig.HeartbeatInterval;
         ReconnectInterval = InConfig.ReconnectInterval;
         UpdateLogPrefix();
     }
-    const FServerConnectionConfig& GetConfig() const { return Config; }
+    const SServerConnectionConfig& GetConfig() const { return Config; }
     
     // 静态方法：设置本服务器信息
     static void SetLocalInfo(uint32 Id, EServerType Type, const FString& Name)
@@ -138,10 +135,10 @@ public:
     }
     
     // 回调设置
-    void SetOnConnect(std::function<void(std::shared_ptr<FServerConnection>)> CB) { OnConnectCallback = CB; }
-    void SetOnDisconnect(std::function<void(std::shared_ptr<FServerConnection>)> CB) { OnDisconnectCallback = CB; }
-    void SetOnMessage(std::function<void(std::shared_ptr<FServerConnection>, uint8, const TArray&)> CB) { OnMessageCallback = CB; }
-    void SetOnAuthenticated(std::function<void(std::shared_ptr<FServerConnection>, const FServerInfo&)> CB) { OnServerAuthenticatedCallback = CB; }
+    void SetOnConnect(TFunction<void(TSharedPtr<MServerConnection>)> CB) { OnConnectCallback = CB; }
+    void SetOnDisconnect(TFunction<void(TSharedPtr<MServerConnection>)> CB) { OnDisconnectCallback = CB; }
+    void SetOnMessage(TFunction<void(TSharedPtr<MServerConnection>, uint8, const TArray&)> CB) { OnMessageCallback = CB; }
+    void SetOnAuthenticated(TFunction<void(TSharedPtr<MServerConnection>, const SServerInfo&)> CB) { OnServerAuthenticatedCallback = CB; }
     
     // 连接/断开
     bool Connect();
@@ -164,9 +161,9 @@ public:
     void Tick(float DeltaTime);
     
     // 获取服务器信息
-    const FServerInfo& GetRemoteServerInfo() const 
+    const SServerInfo& GetRemoteServerInfo() const 
     { 
-        static FServerInfo Info;
+        static SServerInfo Info;
         Info.ServerId = Config.ServerId;
         Info.ServerType = Config.ServerType;
         Info.ServerName = Config.ServerName;
@@ -187,23 +184,23 @@ private:
 };
 
 // 服务器连接管理器
-class FServerConnectionManager
+class MServerConnectionManager
 {
 private:
     // 所有服务器连接
-    std::map<uint32, std::shared_ptr<FServerConnection>> Connections;
+    TMap<uint32, TSharedPtr<MServerConnection>> Connections;
     
     // 轮询间隔
     float PollInterval = 0.1f;
     float PollTimer = 0.0f;
     
 public:
-    FServerConnectionManager() {}
+    MServerConnectionManager() {}
     
     // 添加远程服务器
-    std::shared_ptr<FServerConnection> AddServer(const FServerConnectionConfig& Config)
+    TSharedPtr<MServerConnection> AddServer(const SServerConnectionConfig& Config)
     {
-        auto Conn = std::make_shared<FServerConnection>(Config);
+        auto Conn = TSharedPtr<MServerConnection>(new MServerConnection(Config));
         Connections[Config.ServerId] = Conn;
         
         LOG_INFO("[ServerMgr] Added server: %s (%s:%d)", 
@@ -213,11 +210,11 @@ public:
     }
     
     // 添加远程服务器（便捷方法）
-    std::shared_ptr<FServerConnection> AddServer(uint32 ServerId, EServerType Type, 
+    TSharedPtr<MServerConnection> AddServer(uint32 ServerId, EServerType Type, 
                                                    const FString& Name, 
                                                    const FString& Addr, uint16 Port)
     {
-        FServerConnectionConfig Config(ServerId, Type, Name, Addr, Port);
+        SServerConnectionConfig Config(ServerId, Type, Name, Addr, Port);
         return AddServer(Config);
     }
     
@@ -234,7 +231,7 @@ public:
     }
     
     // 获取连接
-    std::shared_ptr<FServerConnection> GetConnection(uint32 ServerId)
+    TSharedPtr<MServerConnection> GetConnection(uint32 ServerId)
     {
         auto It = Connections.find(ServerId);
         return (It != Connections.end()) ? It->second : nullptr;

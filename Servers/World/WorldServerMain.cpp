@@ -8,12 +8,12 @@ void SignalHandler(int Signal)
     exit(0);
 }
 
-int main(int argc, char* argv[])
+int main(int /*argc*/, char* /*argv*/[])
 {
     signal(SIGINT, SignalHandler);
     signal(SIGTERM, SignalHandler);
     
-    FWorldServer Server;
+    MWorldServer Server;
     
     if (!Server.Init(8003))
     {

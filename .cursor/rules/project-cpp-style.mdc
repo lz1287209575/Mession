@@ -1,0 +1,24 @@
+---
+description: Global C++ naming and container conventions for Mession
+alwaysApply: true
+---
+
+# Mession C++ Conventions
+
+- Follow an Unreal-like style, but use this project's prefixes instead of Unreal's defaults.
+- Prefix all structs with `S`, all classes with `M`, and all enums with `E`.
+- Do not introduce new `F*`, `U*`, or `A*` type prefixes in new code. When refactoring touched code, prefer migrating names toward `S*`, `M*`, and `E*`.
+- Keep boolean names in `bXxx` form. `InXxx` and `OutXxx` are allowed only for function parameters.
+- Function, type, and enum names use PascalCase. Local variables and parameters use PascalCase unless an existing file clearly follows another established style.
+
+# STL Wrapping Rule
+
+- Do not use raw STL types directly in gameplay, server, networking, or shared domain code when introducing new dependencies on containers or utility types.
+- Before using an STL facility, first expose it through a project-owned alias or wrapper in the core type layer, then use that project name everywhere else.
+- Prefer extending the existing core type layer instead of scattering `std::vector`, `std::map`, `std::string`, `std::shared_ptr`, or similar types across feature code.
+- If a required STL type does not yet have a project name, add the alias/wrapper first, then consume the project name in calling code.
+
+# Safety Notes
+
+- Keep packet parsing and serialization code explicit and bounds-checked.
+- Avoid pointer-cast reads and writes such as `*(uint32*)&Buffer[0]`; prefer `memcpy` or typed serialization helpers.

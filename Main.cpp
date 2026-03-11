@@ -4,7 +4,7 @@
 #include <iostream>
 
 // 全局服务器实例
-AGameServer* GServer = nullptr;
+MGameServer* GServer = nullptr;
 
 // 信号处理
 void SignalHandler(int32 Signal)
@@ -51,7 +51,7 @@ int32 main(int32 argc, char* argv[])
     signal(SIGTERM, SignalHandler);
     
     // 创建服务器
-    GServer = new AGameServer();
+    GServer = new MGameServer();
     
     // 启动服务器
     if (!GServer->Start(Port))

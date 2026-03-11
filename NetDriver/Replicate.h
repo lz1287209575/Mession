@@ -15,10 +15,10 @@ enum class ELifetimeRep : uint8
 };
 
 // 属性变化回调
-using FRepChangedFunc = std::function<void()>;
+using FRepChangedFunc = TFunction<void()>;
 
 // 属性描述符
-struct FPropertyDescriptor
+struct SPropertyDescriptor
 {
     uint16 PropertyId;
     uint16 Offset;
@@ -26,10 +26,10 @@ struct FPropertyDescriptor
     ELifetimeRep Condition;
     FRepChangedFunc ChangedCallback;
     
-    FPropertyDescriptor() 
+    SPropertyDescriptor() 
         : PropertyId(0), Offset(0), Size(0), Condition(ELifetimeRep::Always) {}
     
-    FPropertyDescriptor(uint16 InId, uint16 InOffset, uint16 InSize, ELifetimeRep InCond)
+    SPropertyDescriptor(uint16 InId, uint16 InOffset, uint16 InSize, ELifetimeRep InCond)
         : PropertyId(InId), Offset(InOffset), Size(InSize), Condition(InCond) {}
 };
 
@@ -41,39 +41,39 @@ struct FPropertyDescriptor
         Condition)
 
 // 序列化接口
-class FArchive
+class MArchive
 {
 public:
-    virtual ~FArchive() = default;
+    virtual ~MArchive() = default;
     
-    virtual FArchive& operator<<(uint8& Value) = 0;
-    virtual FArchive& operator<<(uint16& Value) = 0;
-    virtual FArchive& operator<<(uint32& Value) = 0;
-    virtual FArchive& operator<<(uint64& Value) = 0;
-    virtual FArchive& operator<<(int8& Value) = 0;
-    virtual FArchive& operator<<(int16& Value) = 0;
-    virtual FArchive& operator<<(int32& Value) = 0;
-    virtual FArchive& operator<<(int64& Value) = 0;
-    virtual FArchive& operator<<(float& Value) = 0;
-    virtual FArchive& operator<<(double& Value) = 0;
-    virtual FArchive& operator<<(FString& Value) = 0;
-    virtual FArchive& operator<<(FVector& Value) = 0;
-    virtual FArchive& operator<<(FRotator& Value) = 0;
+    virtual MArchive& operator<<(uint8& Value) = 0;
+    virtual MArchive& operator<<(uint16& Value) = 0;
+    virtual MArchive& operator<<(uint32& Value) = 0;
+    virtual MArchive& operator<<(uint64& Value) = 0;
+    virtual MArchive& operator<<(int8& Value) = 0;
+    virtual MArchive& operator<<(int16& Value) = 0;
+    virtual MArchive& operator<<(int32& Value) = 0;
+    virtual MArchive& operator<<(int64& Value) = 0;
+    virtual MArchive& operator<<(float& Value) = 0;
+    virtual MArchive& operator<<(double& Value) = 0;
+    virtual MArchive& operator<<(FString& Value) = 0;
+    virtual MArchive& operator<<(SVector& Value) = 0;
+    virtual MArchive& operator<<(SRotator& Value) = 0;
     
     virtual bool IsLoading() const = 0;
     virtual bool IsSaving() const = 0;
 };
 
 // 内存归档（用于序列化）
-class FMemoryArchive : public FArchive
+class MMemoryArchive : public MArchive
 {
 private:
     TArray Data;
     size_t ReadPos;
     
 public:
-    FMemoryArchive() : ReadPos(0) {}
-    explicit FMemoryArchive(const TArray& InData) : Data(InData), ReadPos(0) {}
+    MMemoryArchive() : ReadPos(0) {}
+    explicit MMemoryArchive(const TArray& InData) : Data(InData), ReadPos(0) {}
     
     // 设置数据（加载时）
     void SetData(const TArray& InData)
@@ -91,8 +91,8 @@ public:
         ReadPos = 0;
     }
     
-    // FArchive接口
-    FArchive& operator<<(uint8& Value) override
+    // MArchive接口
+    MArchive& operator<<(uint8& Value) override
     {
         if (IsLoading() && ReadPos + sizeof(Value) <= Data.size())
         {
@@ -105,7 +105,7 @@ public:
         return *this;
     }
     
-    FArchive& operator<<(uint16& Value) override
+    MArchive& operator<<(uint16& Value) override
     {
         if (IsLoading() && ReadPos + sizeof(Value) <= Data.size())
         {
@@ -120,7 +120,7 @@ public:
         return *this;
     }
     
-    FArchive& operator<<(uint32& Value) override
+    MArchive& operator<<(uint32& Value) override
     {
         if (IsLoading() && ReadPos + sizeof(Value) <= Data.size())
         {
@@ -135,7 +135,7 @@ public:
         return *this;
     }
     
-    FArchive& operator<<(uint64& Value) override
+    MArchive& operator<<(uint64& Value) override
     {
         if (IsLoading() && ReadPos + sizeof(Value) <= Data.size())
         {
@@ -150,7 +150,7 @@ public:
         return *this;
     }
     
-    FArchive& operator<<(int8& Value) override
+    MArchive& operator<<(int8& Value) override
     {
         if (IsLoading() && ReadPos + sizeof(Value) <= Data.size())
         {
@@ -163,7 +163,7 @@ public:
         return *this;
     }
     
-    FArchive& operator<<(int16& Value) override
+    MArchive& operator<<(int16& Value) override
     {
         if (IsLoading() && ReadPos + sizeof(Value) <= Data.size())
         {
@@ -178,7 +178,7 @@ public:
         return *this;
     }
     
-    FArchive& operator<<(int32& Value) override
+    MArchive& operator<<(int32& Value) override
     {
         if (IsLoading() && ReadPos + sizeof(Value) <= Data.size())
         {
@@ -193,7 +193,7 @@ public:
         return *this;
     }
     
-    FArchive& operator<<(int64& Value) override
+    MArchive& operator<<(int64& Value) override
     {
         if (IsLoading() && ReadPos + sizeof(Value) <= Data.size())
         {
@@ -208,7 +208,7 @@ public:
         return *this;
     }
     
-    FArchive& operator<<(float& Value) override
+    MArchive& operator<<(float& Value) override
     {
         if (IsLoading() && ReadPos + sizeof(Value) <= Data.size())
         {
@@ -223,7 +223,7 @@ public:
         return *this;
     }
     
-    FArchive& operator<<(double& Value) override
+    MArchive& operator<<(double& Value) override
     {
         if (IsLoading() && ReadPos + sizeof(Value) <= Data.size())
         {
@@ -238,7 +238,7 @@ public:
         return *this;
     }
     
-    FArchive& operator<<(FString& Value) override
+    MArchive& operator<<(FString& Value) override
     {
         uint32 Len = (uint32)Value.size();
         *this << Len;
@@ -255,13 +255,13 @@ public:
         return *this;
     }
     
-    FArchive& operator<<(FVector& Value) override
+    MArchive& operator<<(SVector& Value) override
     {
         *this << Value.X << Value.Y << Value.Z;
         return *this;
     }
     
-    FArchive& operator<<(FRotator& Value) override
+    MArchive& operator<<(SRotator& Value) override
     {
         *this << Value.Pitch << Value.Yaw << Value.Roll;
         return *this;

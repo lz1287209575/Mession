@@ -3,11 +3,6 @@
 #include "../Core/NetCore.h"
 #include <typeinfo>
 #include <typeindex>
-#include <map>
-#include <functional>
-#include <vector>
-#include <string>
-
 // ============================================
 // 反射系统核心 - 仿UE风格
 // ============================================
@@ -71,7 +66,7 @@ enum class EFunctionFlags : uint32
 };
 
 // 属性基础类
-class FProperty
+class MProperty
 {
 public:
     FString Name;
@@ -81,11 +76,11 @@ public:
     size_t Size = 0;
     uint16 PropertyId = 0;
     
-    FProperty() = default;
-    FProperty(const FString& InName, EPropertyType InType, size_t InOffset, size_t InSize)
+    MProperty() = default;
+    MProperty(const FString& InName, EPropertyType InType, size_t InOffset, size_t InSize)
         : Name(InName), Type(InType), Offset(InOffset), Size(InSize) {}
     
-    virtual ~FProperty() = default;
+    virtual ~MProperty() = default;
     
     // 获取属性值（模板化）
     template<typename T>
@@ -102,7 +97,7 @@ public:
 };
 
 // 函数定义
-class UFunction
+class MFunction
 {
 public:
     FString Name;
@@ -115,15 +110,15 @@ public:
     FunctionPtr NativeFunc = nullptr;
     
     // 参数列表
-    std::vector<FProperty*> Params;
-    FProperty* ReturnProperty = nullptr;
+    TVector<MProperty*> Params;
+    MProperty* ReturnProperty = nullptr;
     
-    UFunction() = default;
-    virtual ~UFunction() = default;
+    MFunction() = default;
+    virtual ~MFunction() = default;
 };
 
 // 类元数据
-class UClass
+class MClass
 {
 private:
     inline static uint16 GlobalClassId = 0;
@@ -136,11 +131,11 @@ protected:
     uint16 ClassId = 0;
     
     // 属性和函数
-    std::vector<FProperty*> Properties;
-    std::vector<UFunction*> Functions;
+    TVector<MProperty*> Properties;
+    TVector<MFunction*> Functions;
     
     // 父类
-    UClass* ParentClass = nullptr;
+    MClass* ParentClass = nullptr;
     
     // 创建函数
     using ClassConstructor = void*(*)(void*);
@@ -150,12 +145,12 @@ protected:
     uint32 ClassFlags = 0;
     
 public:
-    UClass() 
+    MClass() 
     {
         ClassId = ++GlobalClassId;
     }
     
-    virtual ~UClass() 
+    virtual ~MClass() 
     {
         for (auto* Prop : Properties)
             delete Prop;
@@ -169,21 +164,21 @@ public:
     uint16 GetId() const { return ClassId; }
     
     // 获取属性
-    const std::vector<FProperty*>& GetProperties() const { return Properties; }
-    FProperty* FindProperty(const FString& InName) const;
-    FProperty* FindPropertyById(uint16 InId) const;
+    const TVector<MProperty*>& GetProperties() const { return Properties; }
+    MProperty* FindProperty(const FString& InName) const;
+    MProperty* FindPropertyById(uint16 InId) const;
     
-    // 获取 std::vector<UFunction*>
-    constFunction*>& GetFunctions() const { return Functions; }
-    UFunction* FindFunction(const FString& InName) const;
-    UFunction* FindFunctionById(uint16 InId) const;
+    // 获取函数列表
+    const TVector<MFunction*>& GetFunctions() const { return Functions; }
+    MFunction* FindFunction(const FString& InName) const;
+    MFunction* FindFunctionById(uint16 InId) const;
     
     // 创建实例
     void* CreateInstance() const;
     void Construct(void* Object) const;
     
     // 序列化
-    virtual void Serialize(void* Object, class FArchive& Ar) const;
+    virtual void Serialize(void* Object, class MReflectArchive& Ar) const;
     virtual void Deserialize(void* Object, const TArray& Data) const;
     
     // 复制属性
@@ -194,14 +189,14 @@ public:
     
 protected:
     // 注册属性（子类调用）
-    void RegisterProperty(FProperty* InProperty)
+    void RegisterProperty(MProperty* InProperty)
     {
         InProperty->PropertyId = ++GlobalPropertyId;
         Properties.push_back(InProperty);
     }
     
     // 注册函数（子类调用）
-    void RegisterFunction(UFunction* InFunction)
+    void RegisterFunction(MFunction* InFunction)
     {
         InFunction->FunctionId = ++GlobalFunctionId;
         Functions.push_back(InFunction);
@@ -209,7 +204,7 @@ protected:
 };
 
 // 查找实现
-inline FProperty* UClass::FindProperty(const FString& InName) const
+inline MProperty* MClass::FindProperty(const FString& InName) const
 {
     for (auto* Prop : Properties)
     {
@@ -221,7 +216,7 @@ inline FProperty* UClass::FindProperty(const FString& InName) const
     return nullptr;
 }
 
-inline FProperty* UClass::FindPropertyById(uint16 InId) const
+inline MProperty* MClass::FindPropertyById(uint16 InId) const
 {
     for (auto* Prop : Properties)
     {
@@ -233,7 +228,7 @@ inline FProperty* UClass::FindPropertyById(uint16 InId) const
     return nullptr;
 }
 
-inline UFunction* UClass::FindFunction(const FString& InName) const
+inline MFunction* MClass::FindFunction(const FString& InName) const
 {
     for (auto* Func : Functions)
     {
@@ -245,7 +240,7 @@ inline UFunction* UClass::FindFunction(const FString& InName) const
     return nullptr;
 }
 
-inline UFunction* UClass::FindFunctionById(uint16 InId) const
+inline MFunction* MClass::FindFunctionById(uint16 InId) const
 {
     for (auto* Func : Functions)
     {
@@ -258,36 +253,36 @@ inline UFunction* UClass::FindFunctionById(uint16 InId) const
 }
 
 // ============================================
-// UObject - 反射系统的基类
+// 反射对象基类
 // ============================================
 
-class UObject
+class MReflectObject
 {
 private:
-    inline static std::map<FString, UClass*>& GetClassMap()
+    inline static TMap<FString, MClass*>& GetClassMap()
     {
-        static std::map<FString, UClass*> Map;
+        static TMap<FString, MClass*> Map;
         return Map;
     }
     
-    inline static std::map<uint16, UClass*>& GetClassIdMap()
+    inline static TMap<uint16, MClass*>& GetClassIdMap()
     {
-        static std::map<uint16, UClass*> Map;
+        static TMap<uint16, MClass*> Map;
         return Map;
     }
 
 protected:
-    UClass* Class = nullptr;
+    MClass* Class = nullptr;
     uint64 ObjectFlags = 0;
     uint64 ObjectId = 0;
     FString Name;
     
 public:
-    UObject() : ObjectId(++GlobalObjectId) {}
-    virtual ~UObject() = default;
+    MReflectObject() : ObjectId(++GlobalObjectId) {}
+    virtual ~MReflectObject() = default;
     
     // 获取类和对象信息
-    UClass* GetClass() const { return Class; }
+    MClass* GetClass() const { return Class; }
     uint64 GetId() const { return ObjectId; }
     const FString& GetName() const { return Name; }
     
@@ -319,24 +314,24 @@ public:
     
     // 静态方法：类注册
     template<typename T>
-    static UClass* StaticClass()
+    static MClass* StaticClass()
     {
         return T::StaticClass();
     }
     
-    static UClass* FindClass(const FString& InName)
+    static MClass* FindClass(const FString& InName)
     {
         auto It = GetClassMap().find(InName);
         return (It != GetClassMap().end()) ? It->second : nullptr;
     }
     
-    static UClass* FindClass(uint16 InId)
+    static MClass* FindClass(uint16 InId)
     {
         auto It = GetClassIdMap().find(InId);
         return (It != GetClassIdMap().end()) ? It->second : nullptr;
     }
     
-    static void RegisterClass(UClass* InClass)
+    static void RegisterClass(MClass* InClass)
     {
         GetClassMap()[InClass->GetName()] = InClass;
         GetClassIdMap()[InClass->GetId()] = InClass;
@@ -352,16 +347,16 @@ private:
 
 // 注册属性
 #define PROPERTY(Type, Name, Flags) \
-    struct FProperty_##Name : public FProperty { \
-        FProperty_##Name() : FProperty(#Name, EPropertyType::Type, offsetof(ThisClass, Name), sizeof(Type)) { \
+    struct SProperty_##Name : public MProperty { \
+        SProperty_##Name() : MProperty(#Name, EPropertyType::Type, offsetof(ThisClass, Name), sizeof(Type)) { \
             this->Flags = EPropertyFlags::Flags; \
         } \
     } Name##_Property;
 
 // 注册函数
 #define FUNCTION(Name, Flags) \
-    struct UFunction_##Name : public UFunction { \
-        UFunction_##Name() { \
+    struct MFunction_##Name : public MFunction { \
+        MFunction_##Name() { \
             Name = #Name; \
             Flags = EFunctionFlags::Flags; \
         } \
@@ -372,23 +367,23 @@ private:
     class ClassName : public ParentClass { \
     public: \
         using ThisClass = ClassName; \
-        static UClass* StaticClass() { \
-            static UClass* Class = nullptr; \
+        static MClass* StaticClass() { \
+            static MClass* Class = nullptr; \
             if (!Class) { \
-                Class = new UClass(); \
+                Class = new MClass(); \
                 Class->ClassName = #ClassName; \
                 Class->ClassPath = __FILE__; \
                 Class->ParentClass = ParentClass::StaticClass(); \
                 Class->ClassFlags = Flags; \
-                UObject::RegisterClass(Class); \
+                MReflectObject::RegisterClass(Class); \
                 RegisterAllProperties(Class); \
                 RegisterAllFunctions(Class); \
             } \
             return Class; \
         } \
     private: \
-        static void RegisterAllProperties(UClass* InClass); \
-        static void RegisterAllFunctions(UClass* InClass);
+        static void RegisterAllProperties(MClass* InClass); \
+        static void RegisterAllFunctions(MClass* InClass);
 
 // 结束类定义
 #define END_UCLASS() \
@@ -397,7 +392,7 @@ private:
 // 注册属性宏
 #define REGISTER_PROPERTY(PropType, PropName, PropFlags) \
     do { \
-        auto* Prop = new FProperty(#PropName, EPropertyType::PropType, offsetof(ThisClass, PropName), sizeof(PropType)); \
+        auto* Prop = new MProperty(#PropName, EPropertyType::PropType, offsetof(ThisClass, PropName), sizeof(PropType)); \
         Prop->Flags = EPropertyFlags::PropFlags; \
         InClass->RegisterProperty(Prop); \
     } while(0)
@@ -405,7 +400,7 @@ private:
 // 注册函数宏
 #define REGISTER_FUNCTION(FuncName, FuncFlags) \
     do { \
-        auto* Func = new UFunction(); \
+        auto* Func = new MFunction(); \
         Func->Name = #FuncName; \
         Func->Flags = EFunctionFlags::FuncFlags; \
         InClass->RegisterFunction(Func); \
@@ -422,7 +417,7 @@ private:
 // 序列化系统
 // ============================================
 
-class FArchive
+class MReflectArchive
 {
 public:
     TArray Data;
@@ -430,27 +425,27 @@ public:
     bool bReading = false;
     bool bWriting = true;
     
-    FArchive() { bWriting = true; bReading = false; }
-    explicit FArchive(const TArray& InData) : Data(InData), ReadPos(0), bReading(true), bWriting(false) {}
+    MReflectArchive() { bWriting = true; bReading = false; }
+    explicit MReflectArchive(const TArray& InData) : Data(InData), ReadPos(0), bReading(true), bWriting(false) {}
     
     // 序列化基本类型
-    FArchive& operator<<(uint8& Value) { return SerializePrimitive(Value); }
-    FArchive& operator<<(uint16& Value) { return SerializePrimitive(Value); }
-    FArchive& operator<<(uint32& Value) { return SerializePrimitive(Value); }
-    FArchive& operator<<(uint64& Value) { return SerializePrimitive(Value); }
-    FArchive& operator<<(int8& Value) { return SerializePrimitive(Value); }
-    FArchive& operator<<(int16& Value) { return SerializePrimitive(Value); }
-    FArchive& operator<<(int32& Value) { return SerializePrimitive(Value); }
-    FArchive& operator<<(int64& Value) { return SerializePrimitive(Value); }
-    FArchive& operator<<(float& Value) { return SerializePrimitive(Value); }
-    FArchive& operator<<(double& Value) { return SerializePrimitive(Value); }
-    FArchive& operator<<(FString& Value) { return SerializeString(Value); }
-    FArchive& operator<<(FVector& Value) { return SerializePrimitive(Value); }
-    FArchive& operator<<(FRotator& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(uint8& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(uint16& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(uint32& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(uint64& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(int8& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(int16& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(int32& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(int64& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(float& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(double& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(FString& Value) { return SerializeString(Value); }
+    MReflectArchive& operator<<(SVector& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(SRotator& Value) { return SerializePrimitive(Value); }
     
 private:
     template<typename T>
-    FArchive& SerializePrimitive(T& Value)
+    MReflectArchive& SerializePrimitive(T& Value)
     {
         if (bWriting)
         {
@@ -466,7 +461,7 @@ private:
         return *this;
     }
     
-    FArchive& SerializeString(FString& Value)
+    MReflectArchive& SerializeString(FString& Value)
     {
         if (bWriting)
         {

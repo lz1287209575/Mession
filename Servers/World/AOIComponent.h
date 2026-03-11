@@ -1,21 +1,18 @@
 #pragma once
 
 #include "../../Core/NetCore.h"
-#include <map>
-#include <set>
-#include <vector>
 
 // AOI (Area of Interest) 区域
-struct FAOICell
+struct SAOICell
 {
     int32 X = 0;
     int32 Y = 0;
-    std::set<uint64> Objects;  // 在这个区域内的对象
+    TSet<uint64> Objects;  // 在这个区域内的对象
     
-    FAOICell() = default;
-    FAOICell(int32 InX, int32 InY) : X(InX), Y(InY) {}
+    SAOICell() = default;
+    SAOICell(int32 InX, int32 InY) : X(InX), Y(InY) {}
     
-    bool operator<(const FAOICell& Other) const
+    bool operator<(const SAOICell& Other) const
     {
         if (X != Other.X)
             return X < Other.X;
@@ -24,36 +21,36 @@ struct FAOICell
 };
 
 // AOI系统 - 区域感知
-class FAOISystem
+class MAOISystem
 {
 private:
     float CellSize = 100.0f;  // 每个格子的大小
     
     // 格子映射
-    std::map<FAOICell, FAOICell> Cells;
+    TMap<SAOICell, SAOICell> Cells;
     
     // 对象位置缓存
-    std::map<uint64, FVector> ObjectPositions;
+    TMap<uint64, SVector> ObjectPositions;
     
 public:
-    FAOISystem(float InCellSize = 100.0f) : CellSize(InCellSize) {}
+    MAOISystem(float InCellSize = 100.0f) : CellSize(InCellSize) {}
     
     // 将对象添加到AOI系统
-    void AddObject(uint64 ObjectId, const FVector& Position);
+    void AddObject(uint64 ObjectId, const SVector& Position);
     
     // 移除对象
     void RemoveObject(uint64 ObjectId);
     
     // 更新对象位置
-    void UpdateObjectPosition(uint64 ObjectId, const FVector& NewPosition);
+    void UpdateObjectPosition(uint64 ObjectId, const SVector& NewPosition);
     
     // 获取对象周围可见的其他对象
-    void GetVisibleObjects(uint64 ObjectId, std::vector<uint64>& OutVisibleObjects);
+    void GetVisibleObjects(uint64 ObjectId, TVector<uint64>& OutVisibleObjects);
     
     // 获取对象所在的格子
-    FAOICell GetCell(const FVector& Position) const;
+    SAOICell GetCell(const SVector& Position) const;
     
 private:
-    void AddObjectToCell(uint64 ObjectId, const FAOICell& Cell);
-    void RemoveObjectFromCell(uint64 ObjectId, const FAOICell& Cell);
+    void AddObjectToCell(uint64 ObjectId, const SAOICell& Cell);
+    void RemoveObjectFromCell(uint64 ObjectId, const SAOICell& Cell);
 };
