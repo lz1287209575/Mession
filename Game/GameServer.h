@@ -6,7 +6,7 @@
 #include "Messages/NetMessages.h"
 #include <thread>
 #include <chrono>
-#include <poll.h>
+#include "Core/Poll.h"
 
 // 游戏服务器主类
 class MGameServer : public IMessageHandler
@@ -14,7 +14,7 @@ class MGameServer : public IMessageHandler
 private:
     // 服务器配置
     uint16 Port = 7777;
-    int32 ListenSocket = -1;
+    TSocketFd ListenSocket = INVALID_SOCKET_FD;
     bool bRunning = false;
     
     // 网络
@@ -63,7 +63,7 @@ public:
         
         // 创建监听socket
         ListenSocket = MSocket::CreateListenSocket(Port);
-        if (ListenSocket < 0)
+        if (ListenSocket == INVALID_SOCKET_FD)
         {
             LOG_ERROR("Failed to start server on port %d", Port);
             return false;
@@ -98,10 +98,10 @@ public:
         Players.clear();
         
         // 关闭监听socket
-        if (ListenSocket >= 0)
+        if (ListenSocket != INVALID_SOCKET_FD)
         {
             MSocket::Close(ListenSocket);
-            ListenSocket = -1;
+            ListenSocket = INVALID_SOCKET_FD;
         }
         
         LOG_INFO("Server shutdown complete");
@@ -156,9 +156,9 @@ private:
         TString Address;
         uint16 PortNum;
         
-        int32 ClientSocket = MSocket::Accept(ListenSocket, Address, PortNum);
-        
-        while (ClientSocket >= 0)
+        TSocketFd ClientSocket = MSocket::Accept(ListenSocket, Address, PortNum);
+
+        while (ClientSocket != INVALID_SOCKET_FD)
         {
             uint64 ConnectionId = NextConnectionId++;
             auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));

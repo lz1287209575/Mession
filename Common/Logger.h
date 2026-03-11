@@ -38,7 +38,19 @@ private:
 
         const char* LevelStr[] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
 
+#if defined(_MSC_VER) || (defined(__MINGW32__) && !defined(__USE_MINGW_ANSI_STDIO))
+        std::tm Tm = {};
+        if (localtime_s(&Tm, &TimeT) == 0)
+        {
+            std::cout << std::put_time(&Tm, "%Y-%m-%d %H:%M:%S");
+        }
+        else
+        {
+            std::cout << "????-??-?? ??:??:??";
+        }
+#else
         std::cout << std::put_time(std::localtime(&TimeT), "%Y-%m-%d %H:%M:%S");
+#endif
         std::cout << " [" << LevelStr[Level] << "] " << Buffer << std::endl;
     }
     

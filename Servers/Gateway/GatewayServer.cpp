@@ -1,7 +1,7 @@
 #include "GatewayServer.h"
 #include "Common/ServerMessages.h"
 #include "Messages/NetMessages.h"
-#include <poll.h>
+#include "Core/Poll.h"
 
 namespace
 {
@@ -16,18 +16,18 @@ bool MGatewayServer::Init(int InPort)
     Config.ListenPort = static_cast<uint16>(InPort);
     // 创建监听socket
     ListenSocket = MSocket::CreateListenSocket((uint16)InPort);
-    
-    if (ListenSocket < 0)
+
+    if (ListenSocket == INVALID_SOCKET_FD)
     {
         LOG_ERROR("Failed to create listen socket on port %d", InPort);
         return false;
     }
-    
+
     bRunning = true;
-    
+
     printf("=====================================\n");
     printf("  Mession Gateway Server\n");
-    printf("  Listening on port %d (fd=%d)\n", InPort, ListenSocket);
+    printf("  Listening on port %d (fd=%zd)\n", InPort, (intptr_t)ListenSocket);
     printf("=====================================\n");
     
     // 设置本服务器信息
@@ -121,10 +121,10 @@ void MGatewayServer::Shutdown()
     }
     
     // 关闭监听socket
-    if (ListenSocket >= 0)
+    if (ListenSocket != INVALID_SOCKET_FD)
     {
         MSocket::Close(ListenSocket);
-        ListenSocket = -1;
+        ListenSocket = INVALID_SOCKET_FD;
     }
     
     LOG_INFO("Gateway server shutdown complete");
@@ -196,9 +196,9 @@ void MGatewayServer::AcceptClients()
     TString Address;
     uint16 Port;
     
-    int32 ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
-    
-    while (ClientSocket >= 0)
+    TSocketFd ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
+
+    while (ClientSocket != INVALID_SOCKET_FD)
     {
         uint64 ConnectionId = NextConnectionId++;
         auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));

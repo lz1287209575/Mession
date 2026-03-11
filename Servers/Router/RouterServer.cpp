@@ -1,11 +1,11 @@
 #include "RouterServer.h"
-#include <poll.h>
+#include "Core/Poll.h"
 
 bool MRouterServer::Init(int InPort)
 {
     Config.ListenPort = static_cast<uint16>(InPort);
     ListenSocket = MSocket::CreateListenSocket(Config.ListenPort);
-    if (ListenSocket < 0)
+    if (ListenSocket == INVALID_SOCKET_FD)
     {
         LOG_ERROR("Failed to create router listen socket on port %d", InPort);
         return false;
@@ -15,7 +15,7 @@ bool MRouterServer::Init(int InPort)
 
     printf("=====================================\n");
     printf("  Mession Router Server\n");
-    printf("  Listening on port %d (fd=%d)\n", InPort, ListenSocket);
+    printf("  Listening on port %d (fd=%zd)\n", InPort, (intptr_t)ListenSocket);
     printf("=====================================\n");
 
     return true;
@@ -39,10 +39,10 @@ void MRouterServer::Shutdown()
     }
     Peers.clear();
 
-    if (ListenSocket >= 0)
+    if (ListenSocket != INVALID_SOCKET_FD)
     {
         MSocket::Close(ListenSocket);
-        ListenSocket = -1;
+        ListenSocket = INVALID_SOCKET_FD;
     }
 
     LOG_INFO("Router server shutdown complete");
@@ -79,9 +79,9 @@ void MRouterServer::AcceptServers()
 {
     TString Address;
     uint16 Port = 0;
-    int32 ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
+    TSocketFd ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
 
-    while (ClientSocket >= 0)
+    while (ClientSocket != INVALID_SOCKET_FD)
     {
         const uint64 ConnectionId = NextConnectionId++;
         auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));

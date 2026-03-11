@@ -2,13 +2,26 @@
 
 #include "NetCore.h"
 #include "Common/Logger.h"
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
 #include <cstring>
+
+#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
+    #ifndef _WIN32_WINNT
+        #define _WIN32_WINNT 0x0600
+    #endif
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    typedef SOCKET TSocketFd;
+    constexpr SOCKET INVALID_SOCKET_FD = INVALID_SOCKET;
+#else
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+    #include <fcntl.h>
+    #include <errno.h>
+    typedef int TSocketFd;
+    constexpr int INVALID_SOCKET_FD = -1;
+#endif
 
 // 网络错误码
 enum class ENetError
@@ -30,7 +43,7 @@ public:
     virtual bool Receive(void* Buffer, uint32 Size, uint32& BytesRead) = 0;
     virtual uint64 GetPlayerId() const = 0;
     virtual void SetPlayerId(uint64 Id) = 0;
-    virtual int32 GetSocketFd() const = 0;
+    virtual TSocketFd GetSocketFd() const = 0;
     virtual void SetNonBlocking(bool bNonBlocking) = 0;
     virtual bool IsConnected() const = 0;
     virtual void Close() = 0;
@@ -40,7 +53,7 @@ public:
 class MTcpConnection : public INetConnection
 {
 private:
-    int32 SocketFd;
+    TSocketFd SocketFd;
     uint64 PlayerId;
     bool bConnected;
     TString RemoteAddress;
@@ -53,7 +66,7 @@ private:
     static constexpr uint32 SEND_BUFFER_SIZE = 65535;
 
 public:
-    MTcpConnection(int32 InSocketFd);
+    MTcpConnection(TSocketFd InSocketFd);
     virtual ~MTcpConnection();
     
     // INetConnection接口
@@ -64,7 +77,7 @@ public:
     bool HasPendingSendData() const { return !SendBuffer.empty(); }
     uint64 GetPlayerId() const override { return PlayerId; }
     void SetPlayerId(uint64 Id) override { PlayerId = Id; }
-    int32 GetSocketFd() const override { return SocketFd; }
+    TSocketFd GetSocketFd() const override { return SocketFd; }
     void SetNonBlocking(bool bNonBlocking) override;
     bool IsConnected() const override { return bConnected; }
     void Close() override;
@@ -81,21 +94,28 @@ public:
 class MSocket
 {
 public:
+    // 平台初始化（Windows: WSAStartup；Unix: 无操作）
+    static bool EnsureInit();
+
     // 创建TCP监听socket
-    static int32 CreateListenSocket(uint16 Port, int32 MaxBacklog = 128);
+    static TSocketFd CreateListenSocket(uint16 Port, int32 MaxBacklog = 128);
     
     // 创建非阻塞socket
-    static int32 CreateNonBlockingSocket();
+    static TSocketFd CreateNonBlockingSocket();
     
     // 设置socket为非阻塞
-    static bool SetNonBlocking(int32 SocketFd, bool bNonBlocking);
+    static bool SetNonBlocking(TSocketFd Fd, bool bNonBlocking);
     
     // 设置TCP_NODELAY
-    static bool SetNoDelay(int32 SocketFd, bool bNoDelay);
+    static bool SetNoDelay(TSocketFd Fd, bool bNoDelay);
     
     // 接受新连接
-    static int32 Accept(int32 ListenSocketFd, TString& OutAddress, uint16& OutPort);
+    static TSocketFd Accept(TSocketFd ListenFd, TString& OutAddress, uint16& OutPort);
     
     // 关闭socket
-    static void Close(int32 SocketFd);
+    static void Close(TSocketFd Fd);
+
+    // 最后 socket 错误与是否“会阻塞”
+    static int GetLastError();
+    static bool IsWouldBlock(int Error);
 };

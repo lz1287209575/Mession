@@ -34,7 +34,7 @@ struct SPlayerRouteBinding
 class MRouterServer
 {
 private:
-    int32 ListenSocket = -1;
+    TSocketFd ListenSocket = INVALID_SOCKET_FD;
     bool bRunning = false;
     SRouterConfig Config;
     TMap<uint64, SRouterPeer> Peers;

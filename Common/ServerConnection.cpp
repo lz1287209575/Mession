@@ -1,6 +1,6 @@
 #include "ServerConnection.h"
 #include "Common/ServerMessages.h"
-#include <poll.h>
+#include "Core/Poll.h"
 
 // 静态成员定义
 SServerInfo MServerConnection::LocalServerInfo;
@@ -34,84 +34,91 @@ bool MServerConnection::TryConnect()
     }
     
     State = EConnectionState::Connecting;
-    
-    // 创建socket
+
+    if (!MSocket::EnsureInit())
+    {
+        LOG_ERROR("%s Platform init failed", LogPrefix.c_str());
+        State = EConnectionState::Disconnected;
+        return false;
+    }
+
     SocketFd = socket(AF_INET, SOCK_STREAM, 0);
-    if (SocketFd < 0)
+    if (SocketFd == INVALID_SOCKET_FD)
     {
         LOG_ERROR("%s Failed to create socket", LogPrefix.c_str());
         State = EConnectionState::Disconnected;
         return false;
     }
-    
-    // 设置非阻塞
+
     MSocket::SetNonBlocking(SocketFd, true);
     MSocket::SetNoDelay(SocketFd, true);
-    
-    // 连接
+
     sockaddr_in Addr = {};
     Addr.sin_family = AF_INET;
     Addr.sin_port = htons(Config.Port);
-    
+
     if (inet_pton(AF_INET, Config.Address.c_str(), &Addr.sin_addr) <= 0)
     {
         LOG_ERROR("%s Invalid address: %s", LogPrefix.c_str(), Config.Address.c_str());
-        close(SocketFd);
-        SocketFd = -1;
+        MSocket::Close(SocketFd);
+        SocketFd = INVALID_SOCKET_FD;
         State = EConnectionState::Disconnected;
         return false;
     }
-    
+
     int Result = connect(SocketFd, (sockaddr*)&Addr, sizeof(Addr));
-    
+
+#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
+    int LastErr = MSocket::GetLastError();
+    if (Result != 0 && LastErr != WSAEWOULDBLOCK && LastErr != WSAEINPROGRESS)
+#else
     if (Result < 0 && errno != EINPROGRESS)
+#endif
     {
-        LOG_ERROR("%s Connect failed: %s", LogPrefix.c_str(), strerror(errno));
-        close(SocketFd);
-        SocketFd = -1;
+        LOG_ERROR("%s Connect failed", LogPrefix.c_str());
+        MSocket::Close(SocketFd);
+        SocketFd = INVALID_SOCKET_FD;
         State = EConnectionState::Disconnected;
         return false;
     }
-    
+
     LOG_INFO("%s Connecting to %s:%d...", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
-    
-    // 等待连接成功
+
     pollfd Pfd;
     Pfd.fd = SocketFd;
     Pfd.events = POLLOUT;
     Pfd.revents = 0;
-    
+
     int Ret = poll(&Pfd, 1, (int)(Config.ConnectTimeout * 1000));
-    
+
     if (Ret > 0 && (Pfd.revents & POLLOUT))
     {
         State = EConnectionState::Connected;
         LOG_INFO("%s Connected to %s:%d!", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
-        
-        // 发送握手
+
         SendHandshake();
-        
+
         if (OnConnectCallback)
         {
             OnConnectCallback(shared_from_this());
         }
-        
+
         return true;
     }
-    
+
     LOG_WARN("%s Connection timeout to %s:%d", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
-    close(SocketFd);
-    SocketFd = -1;
+    MSocket::Close(SocketFd);
+    SocketFd = INVALID_SOCKET_FD;
     State = EConnectionState::Disconnected;
     return false;
 }
 
 void MServerConnection::Disconnect()
 {
-    if (SocketFd >= 0)
+    if (SocketFd != INVALID_SOCKET_FD)
     {
-        close(SocketFd);
-        SocketFd = -1;
+        MSocket::Close(SocketFd);
+        SocketFd = INVALID_SOCKET_FD;
     }
     
     State = EConnectionState::Disconnected;
@@ -150,23 +157,27 @@ bool MServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
 
 bool MServerConnection::SendRaw(const TArray& Data)
 {
-    if (SocketFd < 0 || Data.empty())
+    if (SocketFd == INVALID_SOCKET_FD || Data.empty())
     {
         return false;
     }
-    
+
+#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
+    int Sent = send(SocketFd, (const char*)Data.data(), (int)Data.size(), 0);
+#else
     ssize_t Sent = send(SocketFd, Data.data(), Data.size(), 0);
-    
+#endif
+
     if (Sent < 0)
     {
-        if (errno != EWOULDBLOCK && errno != EAGAIN)
+        if (!MSocket::IsWouldBlock(MSocket::GetLastError()))
         {
-            LOG_ERROR("%s Send failed: %s", LogPrefix.c_str(), strerror(errno));
+            LOG_ERROR("%s Send failed", LogPrefix.c_str());
             Disconnect();
             return false;
         }
     }
-    
+
     return true;
 }
 
@@ -209,40 +220,41 @@ void MServerConnection::Tick(float DeltaTime)
 
 void MServerConnection::ProcessRecv()
 {
-    if (SocketFd < 0)
+    if (SocketFd == INVALID_SOCKET_FD)
     {
         return;
     }
-    
+
     uint8 Buffer[8192];
+#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
+    int BytesRead = recv(SocketFd, (char*)Buffer, (int)sizeof(Buffer), 0);
+#else
     ssize_t BytesRead = recv(SocketFd, Buffer, sizeof(Buffer), 0);
-    
+#endif
+
     if (BytesRead > 0)
     {
         RecvBuffer.insert(RecvBuffer.end(), Buffer, Buffer + BytesRead);
-        
-        // 处理粘包
+
         while (RecvBuffer.size() >= 4)
         {
             uint32 PacketSize = *(uint32*)RecvBuffer.data();
-            
+
             if (PacketSize > 65535 || PacketSize == 0)
             {
                 LOG_ERROR("%s Invalid packet size: %u", LogPrefix.c_str(), PacketSize);
                 Disconnect();
                 return;
             }
-            
+
             if (RecvBuffer.size() < 4 + PacketSize)
             {
                 break;
             }
-            
-            // 提取完整包
+
             TArray Packet(RecvBuffer.begin() + 4, RecvBuffer.begin() + 4 + PacketSize);
             RecvBuffer.erase(RecvBuffer.begin(), RecvBuffer.begin() + 4 + PacketSize);
-            
-            // 处理消息
+
             if (!Packet.empty())
             {
                 uint8 Type = Packet[0];
@@ -256,9 +268,9 @@ void MServerConnection::ProcessRecv()
         LOG_INFO("%s Connection closed by remote", LogPrefix.c_str());
         Disconnect();
     }
-    else if (errno != EWOULDBLOCK && errno != EAGAIN)
+    else if (!MSocket::IsWouldBlock(MSocket::GetLastError()))
     {
-        LOG_ERROR("%s Recv error: %s", LogPrefix.c_str(), strerror(errno));
+        LOG_ERROR("%s Recv error", LogPrefix.c_str());
         Disconnect();
     }
 }

@@ -50,6 +50,9 @@ target_include_directories(mession_common
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_link_libraries(mession_common PUBLIC m)
+if(WIN32)
+    target_link_libraries(mession_common PUBLIC ws2_32)
+endif()
 configure_mession_compile_options(mession_common)
 
 # 统一配置每个目标的公共依赖

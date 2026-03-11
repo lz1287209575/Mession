@@ -55,7 +55,7 @@ struct SPendingSessionValidation
 class MWorldServer
 {
 private:
-    int32 ListenSocket = -1;
+    TSocketFd ListenSocket = INVALID_SOCKET_FD;
     bool bRunning = false;
     
     // 配置

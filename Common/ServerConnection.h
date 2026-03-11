@@ -88,7 +88,7 @@ struct SServerConnectionConfig
 class MServerConnection : public TEnableSharedFromThis<MServerConnection>
 {
 private:
-    int32 SocketFd = -1;
+    TSocketFd SocketFd = INVALID_SOCKET_FD;
     EConnectionState State = EConnectionState::Disconnected;
     SServerConnectionConfig Config;
     
