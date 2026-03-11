@@ -1,35 +1,7 @@
 #include "LoginServer.h"
-#include "../../Messages/NetMessages.h"
+#include "Messages/NetMessages.h"
 #include <poll.h>
 #include <time.h>
-
-namespace
-{
-template<typename T>
-void AppendValue(TArray& OutData, const T& Value)
-{
-    const auto* ValueBytes = reinterpret_cast<const uint8*>(&Value);
-    OutData.insert(OutData.end(), ValueBytes, ValueBytes + sizeof(T));
-}
-
-void AppendString(TArray& OutData, const FString& Value)
-{
-    const uint16 Length = static_cast<uint16>(Value.size());
-    AppendValue(OutData, Length);
-    OutData.insert(OutData.end(), Value.begin(), Value.end());
-}
-
-template<typename T>
-bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
-{
-    if (Offset + sizeof(T) > Data.size())
-        return false;
-
-    memcpy(&OutValue, Data.data() + Offset, sizeof(T));
-    Offset += sizeof(T);
-    return true;
-}
-}
 
 MLoginServer::MLoginServer()
 {
@@ -74,7 +46,9 @@ bool MLoginServer::Init(int InPort)
 void MLoginServer::Shutdown()
 {
     if (!bRunning)
+    {
         return;
+    }
     
     bRunning = false;
     
@@ -82,12 +56,16 @@ void MLoginServer::Shutdown()
     for (auto& [Id, Peer] : GatewayConnections)
     {
         if (Peer.Connection)
+        {
             Peer.Connection->Close();
+        }
     }
     GatewayConnections.clear();
 
     if (RouterServerConn)
+    {
         RouterServerConn->Disconnect();
+    }
     
     // 清理会话
     Sessions.clear();
@@ -106,7 +84,9 @@ void MLoginServer::Shutdown()
 void MLoginServer::Tick()
 {
     if (!bRunning)
+    {
         return;
+    }
     
     // 接受新网关连接
     AcceptGateways();
@@ -115,7 +95,9 @@ void MLoginServer::Tick()
     ProcessGatewayMessages();
 
     if (RouterServerConn)
+    {
         RouterServerConn->Tick(0.016f);
+    }
     
     // 清理过期会话
     const uint64 Now = static_cast<uint64>(time(nullptr));
@@ -194,18 +176,24 @@ void MLoginServer::ProcessGatewayMessages()
     }
     
     if (PollFds.empty())
+    {
         return;
+    }
     
     int32 Ret = poll(PollFds.data(), PollFds.size(), 10);
     
     if (Ret < 0)
+    {
         return;
+    }
     
     size_t Index = 0;
     for (auto& [ConnId, Peer] : GatewayConnections)
     {
         if (Index >= PollFds.size())
+        {
             break;
+        }
         
         if (PollFds[Index].revents & POLLIN)
         {
@@ -234,11 +222,15 @@ void MLoginServer::ProcessGatewayMessages()
 void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
 {
     if (Data.empty())
+    {
         return;
+    }
 
     auto PeerIt = GatewayConnections.find(ConnectionId);
     if (PeerIt == GatewayConnections.end())
+    {
         return;
+    }
 
     SGatewayPeer& Peer = PeerIt->second;
     const uint8 MsgType = Data[0];
@@ -269,26 +261,20 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
                 break;
             }
 
-            size_t Offset = 0;
-            uint32 ServerId = 0;
-            uint8 ServerTypeValue = 0;
-            uint16 NameLen = 0;
-            if (!ReadValue(Payload, Offset, ServerId) ||
-                !ReadValue(Payload, Offset, ServerTypeValue) ||
-                !ReadValue(Payload, Offset, NameLen) ||
-                Offset + NameLen > Payload.size())
+            SServerHandshakeMessage Message;
+            if (!ParsePayload(Payload, Message))
             {
                 LOG_WARN("Invalid handshake payload from connection %llu",
                          (unsigned long long)ConnectionId);
                 return;
             }
 
-            Peer.ServerId = ServerId;
-            Peer.ServerType = (EServerType)ServerTypeValue;
-            Peer.ServerName.assign(reinterpret_cast<const char*>(Payload.data() + Offset), NameLen);
+            Peer.ServerId = Message.ServerId;
+            Peer.ServerType = Message.ServerType;
+            Peer.ServerName = Message.ServerName;
             Peer.bAuthenticated = true;
 
-            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_ServerHandshakeAck, {});
+            SendServerMessage(ConnectionId, EServerMessageType::MT_ServerHandshakeAck, SEmptyServerMessage{});
             LOG_INFO("Gateway %s authenticated (id=%u)",
                      Peer.ServerName.c_str(),
                      Peer.ServerId);
@@ -297,7 +283,7 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
 
         case EServerMessageType::MT_Heartbeat:
         {
-            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_HeartbeatAck, {});
+            SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
             break;
         }
 
@@ -310,26 +296,22 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
                 return;
             }
 
-            size_t Offset = 0;
-            uint64 ClientConnectionId = 0;
-            uint64 PlayerId = 0;
-            if (!ReadValue(Payload, Offset, ClientConnectionId) ||
-                !ReadValue(Payload, Offset, PlayerId))
+            SPlayerLoginRequestMessage Request;
+            if (!ParsePayload(Payload, Request))
             {
                 LOG_WARN("Invalid player login payload size: %zu", Payload.size());
                 return;
             }
 
-            const uint32 SessionKey = CreateSession(PlayerId, ClientConnectionId);
+            const uint32 SessionKey = CreateSession(Request.PlayerId, Request.ConnectionId);
 
-            TArray ResponsePayload;
-            AppendValue(ResponsePayload, ClientConnectionId);
-            AppendValue(ResponsePayload, PlayerId);
-            AppendValue(ResponsePayload, SessionKey);
-            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_PlayerLogin, ResponsePayload);
+            SendServerMessage(
+                ConnectionId,
+                EServerMessageType::MT_PlayerLogin,
+                SPlayerLoginResponseMessage{Request.ConnectionId, Request.PlayerId, SessionKey});
 
             LOG_INFO("Player %llu logged in, session key: %u", 
-                     (unsigned long long)PlayerId, SessionKey);
+                     (unsigned long long)Request.PlayerId, SessionKey);
             break;
         }
 
@@ -342,30 +324,24 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
                 return;
             }
 
-            size_t Offset = 0;
-            uint64 ClientConnectionId = 0;
-            uint64 PlayerId = 0;
-            uint32 SessionKey = 0;
-            if (!ReadValue(Payload, Offset, ClientConnectionId) ||
-                !ReadValue(Payload, Offset, PlayerId) ||
-                !ReadValue(Payload, Offset, SessionKey))
+            SSessionValidateRequestMessage Request;
+            if (!ParsePayload(Payload, Request))
             {
                 LOG_WARN("Invalid session validation payload size: %zu", Payload.size());
                 return;
             }
 
             uint64 ValidatedPlayerId = 0;
-            const bool bValid = ValidateSession(SessionKey, ValidatedPlayerId) && ValidatedPlayerId == PlayerId;
+            const bool bValid = ValidateSession(Request.SessionKey, ValidatedPlayerId) && ValidatedPlayerId == Request.PlayerId;
 
-            TArray ResponsePayload;
-            AppendValue(ResponsePayload, ClientConnectionId);
-            AppendValue(ResponsePayload, PlayerId);
-            ResponsePayload.push_back(bValid ? 1 : 0);
-            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_SessionValidateResponse, ResponsePayload);
+            SendServerMessage(
+                ConnectionId,
+                EServerMessageType::MT_SessionValidateResponse,
+                SSessionValidateResponseMessage{Request.ConnectionId, Request.PlayerId, bValid});
 
             LOG_INFO("Session validation for player %llu on connection %llu: %s",
-                     (unsigned long long)PlayerId,
-                     (unsigned long long)ClientConnectionId,
+                     (unsigned long long)Request.PlayerId,
+                     (unsigned long long)Request.ConnectionId,
                      bValid ? "valid" : "invalid");
             break;
         }
@@ -379,7 +355,9 @@ bool MLoginServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArr
 {
     auto It = GatewayConnections.find(ConnectionId);
     if (It == GatewayConnections.end() || !It->second.Connection)
+    {
         return false;
+    }
 
     TArray Packet;
     Packet.reserve(1 + Payload.size());
@@ -408,7 +386,9 @@ bool MLoginServer::ValidateSession(uint32 SessionKey, uint64& OutPlayerId)
 {
     auto It = Sessions.find(SessionKey);
     if (It == Sessions.end())
+    {
         return false;
+    }
     
     // 检查是否过期
     if (It->second.ExpireTime < static_cast<uint64>(time(nullptr)))
@@ -441,19 +421,20 @@ uint32 MLoginServer::GenerateSessionKey()
 void MLoginServer::HandleRouterServerMessage(uint8 Type, const TArray& /*Data*/)
 {
     if (Type == (uint8)EServerMessageType::MT_ServerRegisterAck)
+    {
         LOG_INFO("Login server registered to RouterServer");
+    }
 }
 
 void MLoginServer::SendRouterRegister()
 {
     if (!RouterServerConn || !RouterServerConn->IsConnected())
+    {
         return;
+    }
 
-    TArray Payload;
-    AppendValue(Payload, static_cast<uint32>(2));
-    Payload.push_back((uint8)EServerType::Login);
-    AppendString(Payload, "Login01");
-    AppendString(Payload, "127.0.0.1");
-    AppendValue(Payload, Config.ListenPort);
-    RouterServerConn->Send((uint8)EServerMessageType::MT_ServerRegister, Payload.data(), Payload.size());
+    SendTypedServerMessage(
+        RouterServerConn,
+        EServerMessageType::MT_ServerRegister,
+        SServerRegisterMessage{2, EServerType::Login, "Login01", "127.0.0.1", Config.ListenPort});
 }

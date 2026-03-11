@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../../Core/NetCore.h"
-#include "../../Core/Socket.h"
-#include "../../Common/Logger.h"
-#include "../../Common/ServerConnection.h"
+#include "Core/NetCore.h"
+#include "Core/Socket.h"
+#include "Common/Logger.h"
+#include "Common/ServerConnection.h"
 #include <thread>
 #include <chrono>
 

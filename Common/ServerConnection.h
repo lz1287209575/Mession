@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../Core/NetCore.h"
-#include "../Core/Socket.h"
-#include "../Common/Logger.h"
+#include "Core/NetCore.h"
+#include "Core/Socket.h"
+#include "Common/Logger.h"
 #include <thread>
 #include <chrono>
 
@@ -313,7 +313,9 @@ public:
         for (auto& [Id, Conn] : Connections)
         {
             if (Conn->IsConnected())
+            {
                 Count++;
+            }
         }
         return Count;
     }

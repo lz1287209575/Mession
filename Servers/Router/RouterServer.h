@@ -1,9 +1,10 @@
 #pragma once
 
-#include "../../Core/NetCore.h"
-#include "../../Core/Socket.h"
-#include "../../Common/Logger.h"
-#include "../../Common/ServerConnection.h"
+#include "Core/NetCore.h"
+#include "Core/Socket.h"
+#include "Common/Logger.h"
+#include "Common/ServerConnection.h"
+#include "Common/ServerMessages.h"
 #include <thread>
 #include <chrono>
 
@@ -54,6 +55,11 @@ private:
     void ProcessMessages();
     void HandlePacket(uint64 ConnectionId, const TArray& Data);
     bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
+    template<typename TMessage>
+    bool SendServerMessage(uint64 ConnectionId, EServerMessageType Type, const TMessage& Message)
+    {
+        return SendServerMessage(ConnectionId, static_cast<uint8>(Type), BuildPayload(Message));
+    }
     const SRouterPeer* SelectRouteTarget(EServerType RequestedType, uint64 PlayerId);
     const SRouterPeer* FindRegisteredServerById(uint32 ServerId) const;
     void RemovePeer(uint64 ConnectionId);

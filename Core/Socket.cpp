@@ -34,7 +34,9 @@ MTcpConnection::~MTcpConnection()
 bool MTcpConnection::Send(const void* Data, uint32 Size)
 {
     if (!bConnected || Size == 0)
+    {
         return false;
+    }
 
     if (Size > MAX_PACKET_SIZE)
     {
@@ -83,7 +85,9 @@ bool MTcpConnection::Receive(void* Buffer, uint32 Size, uint32& BytesRead)
 bool MTcpConnection::ReceivePacket(TArray& OutPacket)
 {
     if (!bConnected)
+    {
         return false;
+    }
 
     OutPacket.clear();
     FlushSendBuffer();
@@ -91,7 +95,9 @@ bool MTcpConnection::ReceivePacket(TArray& OutPacket)
     while (bConnected)
     {
         if (ProcessRecvBuffer(OutPacket))
+        {
             return true;
+        }
 
         uint8 Buffer[8192];
         ssize_t BytesRead = recv(SocketFd, Buffer, sizeof(Buffer), 0);
@@ -117,7 +123,9 @@ bool MTcpConnection::ReceivePacket(TArray& OutPacket)
         }
 
         if (errno == EWOULDBLOCK || errno == EAGAIN)
+        {
             return false;
+        }
 
         LOG_ERROR("Receive failed: %s", strerror(errno));
         bConnected = false;
@@ -130,7 +138,9 @@ bool MTcpConnection::ReceivePacket(TArray& OutPacket)
 bool MTcpConnection::FlushSendBuffer()
 {
     if (!bConnected)
+    {
         return false;
+    }
 
     while (!SendBuffer.empty())
     {
@@ -143,7 +153,9 @@ bool MTcpConnection::FlushSendBuffer()
         }
 
         if (Sent < 0 && (errno == EWOULDBLOCK || errno == EAGAIN))
+        {
             return true;
+        }
 
         LOG_ERROR("Send failed: %s", strerror(errno));
         bConnected = false;
@@ -176,7 +188,9 @@ bool MTcpConnection::ProcessRecvBuffer(TArray& OutPacket)
 {
     // 简单的粘包处理：先读4字节长度头
     if (RecvBuffer.size() < 4)
+    {
         return false;
+    }
 
     uint32 PacketSize = 0;
     memcpy(&PacketSize, RecvBuffer.data(), sizeof(PacketSize));
@@ -189,7 +203,9 @@ bool MTcpConnection::ProcessRecvBuffer(TArray& OutPacket)
     }
     
     if (RecvBuffer.size() < 4 + PacketSize)
+    {
         return false;
+    }
     
     // 提取数据包
     OutPacket.assign(RecvBuffer.begin() + 4, RecvBuffer.begin() + 4 + PacketSize);
@@ -257,12 +273,18 @@ bool MSocket::SetNonBlocking(int32 SocketFd, bool bNonBlocking)
 {
     int32 Flags = fcntl(SocketFd, F_GETFL, 0);
     if (Flags < 0)
+    {
         return false;
+    }
     
     if (bNonBlocking)
+    {
         Flags |= O_NONBLOCK;
+    }
     else
+    {
         Flags &= ~O_NONBLOCK;
+    }
     
     return fcntl(SocketFd, F_SETFL, Flags) == 0;
 }

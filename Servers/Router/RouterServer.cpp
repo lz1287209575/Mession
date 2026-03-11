@@ -1,45 +1,6 @@
 #include "RouterServer.h"
 #include <poll.h>
 
-namespace
-{
-template<typename T>
-void AppendValue(TArray& OutData, const T& Value)
-{
-    const auto* ValueBytes = reinterpret_cast<const uint8*>(&Value);
-    OutData.insert(OutData.end(), ValueBytes, ValueBytes + sizeof(T));
-}
-
-template<typename T>
-bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
-{
-    if (Offset + sizeof(T) > Data.size())
-        return false;
-
-    memcpy(&OutValue, Data.data() + Offset, sizeof(T));
-    Offset += sizeof(T);
-    return true;
-}
-
-void AppendString(TArray& OutData, const FString& Value)
-{
-    const uint16 Length = static_cast<uint16>(Value.size());
-    AppendValue(OutData, Length);
-    OutData.insert(OutData.end(), Value.begin(), Value.end());
-}
-
-bool ReadString(const TArray& Data, size_t& Offset, FString& OutValue)
-{
-    uint16 Length = 0;
-    if (!ReadValue(Data, Offset, Length) || Offset + Length > Data.size())
-        return false;
-
-    OutValue.assign(reinterpret_cast<const char*>(Data.data() + Offset), Length);
-    Offset += Length;
-    return true;
-}
-}
-
 bool MRouterServer::Init(int InPort)
 {
     Config.ListenPort = static_cast<uint16>(InPort);
@@ -63,14 +24,18 @@ bool MRouterServer::Init(int InPort)
 void MRouterServer::Shutdown()
 {
     if (!bRunning)
+    {
         return;
+    }
 
     bRunning = false;
 
     for (auto& [ConnectionId, Peer] : Peers)
     {
         if (Peer.Connection)
+        {
             Peer.Connection->Close();
+        }
     }
     Peers.clear();
 
@@ -86,7 +51,9 @@ void MRouterServer::Shutdown()
 void MRouterServer::Tick()
 {
     if (!bRunning)
+    {
         return;
+    }
 
     AcceptServers();
     ProcessMessages();
@@ -151,17 +118,23 @@ void MRouterServer::ProcessMessages()
     }
 
     if (PollFds.empty())
+    {
         return;
+    }
 
     const int32 Ret = poll(PollFds.data(), PollFds.size(), 10);
     if (Ret < 0)
+    {
         return;
+    }
 
     size_t Index = 0;
     for (auto& [ConnectionId, Peer] : Peers)
     {
         if (Index >= PollFds.size())
+        {
             break;
+        }
 
         if (PollFds[Index].revents & POLLIN)
         {
@@ -172,7 +145,9 @@ void MRouterServer::ProcessMessages()
             }
 
             if (!Peer.Connection->IsConnected())
+            {
                 DisconnectedConnections.push_back(ConnectionId);
+            }
         }
 
         ++Index;
@@ -187,11 +162,15 @@ void MRouterServer::ProcessMessages()
 void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
 {
     if (Data.empty())
+    {
         return;
+    }
 
     auto PeerIt = Peers.find(ConnectionId);
     if (PeerIt == Peers.end())
+    {
         return;
+    }
 
     SRouterPeer& Peer = PeerIt->second;
     const uint8 MsgType = Data[0];
@@ -201,25 +180,20 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
     {
         case EServerMessageType::MT_ServerHandshake:
         {
-            size_t Offset = 0;
-            uint32 ServerId = 0;
-            uint8 ServerTypeValue = 0;
-            FString ServerName;
-            if (!ReadValue(Payload, Offset, ServerId) ||
-                !ReadValue(Payload, Offset, ServerTypeValue) ||
-                !ReadString(Payload, Offset, ServerName))
+            SServerHandshakeMessage Message;
+            if (!ParsePayload(Payload, Message))
             {
                 LOG_WARN("Invalid router handshake payload from connection %llu",
                          (unsigned long long)ConnectionId);
                 return;
             }
 
-            Peer.ServerId = ServerId;
-            Peer.ServerType = (EServerType)ServerTypeValue;
-            Peer.ServerName = ServerName;
+            Peer.ServerId = Message.ServerId;
+            Peer.ServerType = Message.ServerType;
+            Peer.ServerName = Message.ServerName;
             Peer.bAuthenticated = true;
 
-            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_ServerHandshakeAck, {});
+            SendServerMessage(ConnectionId, EServerMessageType::MT_ServerHandshakeAck, SEmptyServerMessage{});
             LOG_INFO("Router authenticated %s (id=%u type=%d)",
                      Peer.ServerName.c_str(), Peer.ServerId, (int)Peer.ServerType);
             break;
@@ -227,42 +201,33 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
 
         case EServerMessageType::MT_Heartbeat:
         {
-            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_HeartbeatAck, {});
+            SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
             break;
         }
 
         case EServerMessageType::MT_ServerRegister:
         {
             if (!Peer.bAuthenticated)
+            {
                 return;
+            }
 
-            size_t Offset = 0;
-            uint32 ServerId = 0;
-            uint8 ServerTypeValue = 0;
-            FString ServerName;
-            FString Address;
-            uint16 Port = 0;
-            if (!ReadValue(Payload, Offset, ServerId) ||
-                !ReadValue(Payload, Offset, ServerTypeValue) ||
-                !ReadString(Payload, Offset, ServerName) ||
-                !ReadString(Payload, Offset, Address) ||
-                !ReadValue(Payload, Offset, Port))
+            SServerRegisterMessage Message;
+            if (!ParsePayload(Payload, Message))
             {
                 LOG_WARN("Invalid server register payload from connection %llu",
                          (unsigned long long)ConnectionId);
                 return;
             }
 
-            Peer.ServerId = ServerId;
-            Peer.ServerType = (EServerType)ServerTypeValue;
-            Peer.ServerName = ServerName;
-            Peer.Address = Address;
-            Peer.Port = Port;
+            Peer.ServerId = Message.ServerId;
+            Peer.ServerType = Message.ServerType;
+            Peer.ServerName = Message.ServerName;
+            Peer.Address = Message.Address;
+            Peer.Port = Message.Port;
             Peer.bRegistered = true;
 
-            TArray AckPayload;
-            AckPayload.push_back(1);
-            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_ServerRegisterAck, AckPayload);
+            SendServerMessage(ConnectionId, EServerMessageType::MT_ServerRegisterAck, SServerRegisterAckMessage{1});
 
             LOG_INFO("Registered server %s (id=%u type=%d addr=%s:%u)",
                      Peer.ServerName.c_str(),
@@ -276,45 +241,36 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
         case EServerMessageType::MT_RouteQuery:
         {
             if (!Peer.bAuthenticated)
+            {
                 return;
+            }
 
-            size_t Offset = 0;
-            uint64 RequestId = 0;
-            uint8 RequestedTypeValue = 0;
-            uint64 PlayerId = 0;
-            if (!ReadValue(Payload, Offset, RequestId) ||
-                !ReadValue(Payload, Offset, RequestedTypeValue) ||
-                !ReadValue(Payload, Offset, PlayerId))
+            SRouteQueryMessage Query;
+            if (!ParsePayload(Payload, Query))
             {
                 LOG_WARN("Invalid route query payload from connection %llu",
                          (unsigned long long)ConnectionId);
                 return;
             }
 
-            const EServerType RequestedType = (EServerType)RequestedTypeValue;
-            const SRouterPeer* Target = SelectRouteTarget(RequestedType, PlayerId);
+            const SRouterPeer* Target = SelectRouteTarget(Query.RequestedType, Query.PlayerId);
 
-            TArray ResponsePayload;
-            AppendValue(ResponsePayload, RequestId);
-            AppendValue(ResponsePayload, RequestedTypeValue);
-            AppendValue(ResponsePayload, PlayerId);
-            ResponsePayload.push_back(Target ? 1 : 0);
-
+            SRouteResponseMessage Response;
+            Response.RequestId = Query.RequestId;
+            Response.RequestedType = Query.RequestedType;
+            Response.PlayerId = Query.PlayerId;
+            Response.bFound = (Target != nullptr);
             if (Target)
             {
-                AppendValue(ResponsePayload, Target->ServerId);
-                ResponsePayload.push_back((uint8)Target->ServerType);
-                AppendString(ResponsePayload, Target->ServerName);
-                AppendString(ResponsePayload, Target->Address);
-                AppendValue(ResponsePayload, Target->Port);
+                Response.ServerInfo = SServerInfo(Target->ServerId, Target->ServerType, Target->ServerName, Target->Address, Target->Port);
             }
 
-            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_RouteResponse, ResponsePayload);
+            SendServerMessage(ConnectionId, EServerMessageType::MT_RouteResponse, Response);
 
             LOG_INFO("Route query from %s for type=%d player=%llu result=%s",
                      Peer.ServerName.c_str(),
-                     (int)RequestedType,
-                     (unsigned long long)PlayerId,
+                     (int)Query.RequestedType,
+                     (unsigned long long)Query.PlayerId,
                      Target ? Target->ServerName.c_str() : "none");
             break;
         }
@@ -328,7 +284,9 @@ bool MRouterServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TAr
 {
     auto It = Peers.find(ConnectionId);
     if (It == Peers.end() || !It->second.Connection)
+    {
         return false;
+    }
 
     TArray Packet;
     Packet.reserve(1 + Payload.size());
@@ -346,7 +304,9 @@ const SRouterPeer* MRouterServer::SelectRouteTarget(EServerType RequestedType, u
         {
             const SRouterPeer* BoundServer = FindRegisteredServerById(BindingIt->second.WorldServerId);
             if (BoundServer)
+            {
                 return BoundServer;
+            }
 
             PlayerRouteBindings.erase(BindingIt);
         }
@@ -357,12 +317,18 @@ const SRouterPeer* MRouterServer::SelectRouteTarget(EServerType RequestedType, u
     {
         (void)ConnectionId;
         if (!Peer.bRegistered || !Peer.Connection || !Peer.Connection->IsConnected())
+        {
             continue;
+        }
         if (Peer.ServerType != RequestedType)
+        {
             continue;
+        }
 
         if (!Selected || Peer.ServerId < Selected->ServerId)
+        {
             Selected = &Peer;
+        }
     }
 
     if (Selected && RequestedType == EServerType::World && PlayerId != 0)
@@ -379,9 +345,13 @@ const SRouterPeer* MRouterServer::FindRegisteredServerById(uint32 ServerId) cons
     {
         (void)ConnectionId;
         if (!Peer.bRegistered || !Peer.Connection || !Peer.Connection->IsConnected())
+        {
             continue;
+        }
         if (Peer.ServerId == ServerId)
+        {
             return &Peer;
+        }
     }
 
     return nullptr;
@@ -391,7 +361,9 @@ void MRouterServer::RemovePeer(uint64 ConnectionId)
 {
     auto It = Peers.find(ConnectionId);
     if (It == Peers.end())
+    {
         return;
+    }
 
     const uint32 RemovedServerId = It->second.ServerId;
     const EServerType RemovedServerType = It->second.ServerType;
@@ -416,10 +388,14 @@ void MRouterServer::RemovePeer(uint64 ConnectionId)
         for (const auto& [PlayerId, Binding] : PlayerRouteBindings)
         {
             if (Binding.WorldServerId == RemovedServerId)
+            {
                 PlayersToUnbind.push_back(PlayerId);
+            }
         }
 
         for (uint64 PlayerId : PlayersToUnbind)
+        {
             PlayerRouteBindings.erase(PlayerId);
+        }
     }
 }

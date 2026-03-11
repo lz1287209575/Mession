@@ -1,11 +1,12 @@
 #pragma once
 
-#include "../../Core/NetCore.h"
-#include "../../Core/Socket.h"
-#include "../../Common/Logger.h"
-#include "../../Common/ServerConnection.h"
-#include "../../NetDriver/NetObject.h"
-#include "../../NetDriver/ReplicationDriver.h"
+#include "Core/NetCore.h"
+#include "Core/Socket.h"
+#include "Common/Logger.h"
+#include "Common/ServerConnection.h"
+#include "Common/ServerMessages.h"
+#include "NetDriver/NetObject.h"
+#include "NetDriver/ReplicationDriver.h"
 #include <thread>
 #include <chrono>
 
@@ -92,6 +93,11 @@ private:
     void HandlePacket(uint64 ConnectionId, const TArray& Data);
     void HandleGameplayPacket(uint64 ConnectionId, const TArray& Data);
     bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
+    template<typename TMessage>
+    bool SendServerMessage(uint64 ConnectionId, EServerMessageType Type, const TMessage& Message)
+    {
+        return SendServerMessage(ConnectionId, static_cast<uint8>(Type), BuildPayload(Message));
+    }
     void BroadcastToScenes(uint8 Type, const TArray& Payload);
     void HandleRouterServerMessage(uint8 Type, const TArray& Data);
     void SendRouterRegister();

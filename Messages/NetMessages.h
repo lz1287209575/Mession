@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../Core/NetCore.h"
-#include "../NetDriver/Replicate.h"
+#include "Core/NetCore.h"
+#include "NetDriver/Replicate.h"
 
 // 当前客户端协议消息类型
 enum class EClientMessageType : uint8
@@ -177,7 +177,9 @@ public:
     void Dispatch(uint64 ConnectionId, const TArray& Data)
     {
         if (Data.empty() || !Handler)
+        {
             return;
+        }
         
         MMemoryArchive Ar(Data);
         

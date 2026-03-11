@@ -1,7 +1,7 @@
 #pragma once
 
 #include "NetCore.h"
-#include "../Common/Logger.h"
+#include "Common/Logger.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>

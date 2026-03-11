@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Core/NetCore.h"
+#include "Core/NetCore.h"
 #include <typeinfo>
 #include <typeindex>
 // ============================================
@@ -153,9 +153,13 @@ public:
     virtual ~MClass() 
     {
         for (auto* Prop : Properties)
+        {
             delete Prop;
+        }
         for (auto* Func : Functions)
+        {
             delete Func;
+        }
     }
     
     // 获取类名
@@ -209,10 +213,14 @@ inline MProperty* MClass::FindProperty(const FString& InName) const
     for (auto* Prop : Properties)
     {
         if (Prop->Name == InName)
+        {
             return Prop;
+        }
     }
     if (ParentClass)
+    {
         return ParentClass->FindProperty(InName);
+    }
     return nullptr;
 }
 
@@ -221,10 +229,14 @@ inline MProperty* MClass::FindPropertyById(uint16 InId) const
     for (auto* Prop : Properties)
     {
         if (Prop->PropertyId == InId)
+        {
             return Prop;
+        }
     }
     if (ParentClass)
+    {
         return ParentClass->FindPropertyById(InId);
+    }
     return nullptr;
 }
 
@@ -233,10 +245,14 @@ inline MFunction* MClass::FindFunction(const FString& InName) const
     for (auto* Func : Functions)
     {
         if (Func->Name == InName)
+        {
             return Func;
+        }
     }
     if (ParentClass)
+    {
         return ParentClass->FindFunction(InName);
+    }
     return nullptr;
 }
 
@@ -245,10 +261,14 @@ inline MFunction* MClass::FindFunctionById(uint16 InId) const
     for (auto* Func : Functions)
     {
         if (Func->FunctionId == InId)
+        {
             return Func;
+        }
     }
     if (ParentClass)
+    {
         return ParentClass->FindFunctionById(InId);
+    }
     return nullptr;
 }
 
@@ -295,18 +315,30 @@ public:
     template<typename T>
     T* GetProperty(const FString& InName) const
     {
-        if (!Class) return nullptr;
+        if (!Class)
+        {
+            return nullptr;
+        }
         auto* Prop = Class->FindProperty(InName);
-        if (!Prop) return nullptr;
+        if (!Prop)
+        {
+            return nullptr;
+        }
         return Prop->GetValuePtr<T>(const_cast<void*>(static_cast<const void*>(this)));
     }
     
     template<typename T>
     void SetProperty(const FString& InName, const T& Value)
     {
-        if (!Class) return;
+        if (!Class)
+        {
+            return;
+        }
         auto* Prop = Class->FindProperty(InName);
-        if (!Prop) return;
+        if (!Prop)
+        {
+            return;
+        }
         *Prop->GetValuePtr<T>(this) = Value;
     }
     

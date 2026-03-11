@@ -1,44 +1,6 @@
 #include "SceneServer.h"
+#include "Common/ServerMessages.h"
 #include <poll.h>
-
-namespace
-{
-template<typename T>
-void AppendValue(TArray& OutData, const T& Value)
-{
-    const auto* ValueBytes = reinterpret_cast<const uint8*>(&Value);
-    OutData.insert(OutData.end(), ValueBytes, ValueBytes + sizeof(T));
-}
-
-void AppendString(TArray& OutData, const FString& Value)
-{
-    const uint16 Length = static_cast<uint16>(Value.size());
-    AppendValue(OutData, Length);
-    OutData.insert(OutData.end(), Value.begin(), Value.end());
-}
-
-template<typename T>
-bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
-{
-    if (Offset + sizeof(T) > Data.size())
-        return false;
-
-    memcpy(&OutValue, Data.data() + Offset, sizeof(T));
-    Offset += sizeof(T);
-    return true;
-}
-
-bool ReadString(const TArray& Data, size_t& Offset, FString& OutValue)
-{
-    uint16 Length = 0;
-    if (!ReadValue(Data, Offset, Length) || Offset + Length > Data.size())
-        return false;
-
-    OutValue.assign(reinterpret_cast<const char*>(Data.data() + Offset), Length);
-    Offset += Length;
-    return true;
-}
-}
 
 MSceneServer::MSceneServer()
 {
@@ -73,15 +35,21 @@ bool MSceneServer::Init(int InPort)
 void MSceneServer::Shutdown()
 {
     if (!bRunning)
+    {
         return;
+    }
     
     bRunning = false;
     
     // 关闭世界服务器连接
     if (RouterServerConn)
+    {
         RouterServerConn->Disconnect();
+    }
     if (WorldServerConn)
+    {
         WorldServerConn->Disconnect();
+    }
     
     // 清理场景
     Scenes.clear();
@@ -99,18 +67,24 @@ void MSceneServer::Shutdown()
 void MSceneServer::Tick()
 {
     if (!bRunning)
+    {
         return;
+    }
     
     // 处理世界服务器消息
     if (RouterServerConn)
+    {
         RouterServerConn->Tick(0.016f);
+    }
 
     WorldRouteQueryTimer += 0.016f;
     if (RouterServerConn && RouterServerConn->IsConnected() && WorldRouteQueryTimer >= 1.0f)
     {
         WorldRouteQueryTimer = 0.0f;
         if (!WorldServerConn || !WorldServerConn->IsConnected())
+        {
             QueryWorldServerRoute();
+        }
     }
 
     ProcessWorldServerMessages();
@@ -171,7 +145,9 @@ void MSceneServer::ConnectToWorldServer()
         HandleWorldPacket(Type, Data);
     });
     if (!WorldServerConn->IsConnected() && !WorldServerConn->IsConnecting())
+    {
         WorldServerConn->Connect();
+    }
 
     LOG_INFO("Connecting to world server...");
 }
@@ -186,39 +162,23 @@ void MSceneServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 
         case EServerMessageType::MT_RouteResponse:
         {
-            size_t Offset = 0;
-            uint64 RequestId = 0;
-            uint8 RequestedTypeValue = 0;
-            uint64 PlayerId = 0;
-            uint8 Result = 0;
-            if (!ReadValue(Data, Offset, RequestId) ||
-                !ReadValue(Data, Offset, RequestedTypeValue) ||
-                !ReadValue(Data, Offset, PlayerId) ||
-                !ReadValue(Data, Offset, Result))
+            SRouteResponseMessage Message;
+            if (!ParsePayload(Data, Message))
             {
                 LOG_WARN("Invalid scene route response payload size: %zu", Data.size());
                 return;
             }
 
-            if (PlayerId != 0 || (EServerType)RequestedTypeValue != EServerType::World || !Result)
-                return;
-
-            uint32 ServerId = 0;
-            uint8 ServerTypeValue = 0;
-            FString ServerName;
-            FString Address;
-            uint16 Port = 0;
-            if (!ReadValue(Data, Offset, ServerId) ||
-                !ReadValue(Data, Offset, ServerTypeValue) ||
-                !ReadString(Data, Offset, ServerName) ||
-                !ReadString(Data, Offset, Address) ||
-                !ReadValue(Data, Offset, Port))
+            if (Message.PlayerId != 0 || Message.RequestedType != EServerType::World || !Message.bFound)
             {
-                LOG_WARN("Invalid scene world route payload size: %zu", Data.size());
                 return;
             }
 
-            ApplyWorldServerRoute(ServerId, ServerName, Address, Port);
+            ApplyWorldServerRoute(
+                Message.ServerInfo.ServerId,
+                Message.ServerInfo.ServerName,
+                Message.ServerInfo.Address,
+                Message.ServerInfo.Port);
             break;
         }
 
@@ -230,27 +190,33 @@ void MSceneServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 void MSceneServer::SendRouterRegister()
 {
     if (!RouterServerConn || !RouterServerConn->IsConnected())
+    {
         return;
+    }
 
-    TArray Payload;
-    AppendValue(Payload, static_cast<uint32>(Config.SceneId));
-    Payload.push_back((uint8)EServerType::Scene);
-    AppendString(Payload, Config.SceneName);
-    AppendString(Payload, "127.0.0.1");
-    AppendValue(Payload, Config.ListenPort);
-    RouterServerConn->Send((uint8)EServerMessageType::MT_ServerRegister, Payload.data(), Payload.size());
+    SendTypedServerMessage(
+        RouterServerConn,
+        EServerMessageType::MT_ServerRegister,
+        SServerRegisterMessage{
+            static_cast<uint32>(Config.SceneId),
+            EServerType::Scene,
+            Config.SceneName,
+            "127.0.0.1",
+            Config.ListenPort
+        });
 }
 
 void MSceneServer::QueryWorldServerRoute()
 {
     if (!RouterServerConn || !RouterServerConn->IsConnected())
+    {
         return;
+    }
 
-    TArray Payload;
-    AppendValue(Payload, NextRouteRequestId++);
-    Payload.push_back((uint8)EServerType::World);
-    AppendValue(Payload, static_cast<uint64>(0));
-    RouterServerConn->Send((uint8)EServerMessageType::MT_RouteQuery, Payload.data(), Payload.size());
+    SendTypedServerMessage(
+        RouterServerConn,
+        EServerMessageType::MT_RouteQuery,
+        SRouteQueryMessage{NextRouteRequestId++, EServerType::World, 0});
 }
 
 void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port)
@@ -269,7 +235,9 @@ void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const FString& ServerN
         CurrentConfig.Port != Port;
 
     if (bRouteChanged && (WorldServerConn->IsConnected() || WorldServerConn->IsConnecting()))
+    {
         WorldServerConn->Disconnect();
+    }
 
     SServerConnectionConfig NewConfig(ServerId, EServerType::World, ServerName, Address, Port);
     NewConfig.HeartbeatInterval = CurrentConfig.HeartbeatInterval;
@@ -282,7 +250,9 @@ void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const FString& ServerN
 void MSceneServer::ProcessWorldServerMessages()
 {
     if (!WorldServerConn)
+    {
         return;
+    }
 
     WorldServerConn->Tick(0.016f);
 }
@@ -293,68 +263,61 @@ void MSceneServer::HandleWorldPacket(uint8 Type, const TArray& Data)
     {
         case EServerMessageType::MT_PlayerSwitchServer:
         {
-            size_t Offset = 0;
-            uint64 PlayerId = 0;
-            uint16 SceneId = 0;
-            SVector Position;
-            if (!ReadValue(Data, Offset, PlayerId) ||
-                !ReadValue(Data, Offset, SceneId) ||
-                !ReadValue(Data, Offset, Position.X) ||
-                !ReadValue(Data, Offset, Position.Y) ||
-                !ReadValue(Data, Offset, Position.Z))
+            SPlayerSceneStateMessage Message;
+            if (!ParsePayload(Data, Message))
+            {
                 return;
+            }
 
-            auto Scene = GetScene(SceneId);
+            auto Scene = GetScene(Message.SceneId);
             if (Scene)
             {
                 SSceneEntity Entity;
-                Entity.EntityId = PlayerId;
-                Entity.Position = Position;
+                Entity.EntityId = Message.PlayerId;
+                Entity.Position = SVector(Message.X, Message.Y, Message.Z);
                 Scene->AddEntity(Entity);
                 
                 LOG_INFO("Player %llu entered scene %d at (%.2f, %.2f, %.2f)",
-                        (unsigned long long)PlayerId, SceneId, Position.X, Position.Y, Position.Z);
+                        (unsigned long long)Message.PlayerId,
+                        Message.SceneId,
+                        Message.X,
+                        Message.Y,
+                        Message.Z);
             }
             break;
         }
 
         case EServerMessageType::MT_PlayerLogout:
         {
-            size_t Offset = 0;
-            uint64 PlayerId = 0;
-            uint16 SceneId = 0;
-            if (!ReadValue(Data, Offset, PlayerId) ||
-                !ReadValue(Data, Offset, SceneId))
+            SPlayerSceneLeaveMessage Message;
+            if (!ParsePayload(Data, Message))
+            {
                 return;
+            }
 
-            auto Scene = GetScene(SceneId);
+            auto Scene = GetScene(Message.SceneId);
             if (Scene)
             {
-                Scene->RemoveEntity(PlayerId);
+                Scene->RemoveEntity(Message.PlayerId);
                 
                 LOG_INFO("Player %llu left scene %d",
-                        (unsigned long long)PlayerId, SceneId);
+                        (unsigned long long)Message.PlayerId, Message.SceneId);
             }
             break;
         }
 
         case EServerMessageType::MT_PlayerDataSync:
         {
-            size_t Offset = 0;
-            uint64 PlayerId = 0;
-            uint16 SceneId = 0;
-            SVector Position;
-            if (!ReadValue(Data, Offset, PlayerId) ||
-                !ReadValue(Data, Offset, SceneId) ||
-                !ReadValue(Data, Offset, Position.X) ||
-                !ReadValue(Data, Offset, Position.Y) ||
-                !ReadValue(Data, Offset, Position.Z))
+            SPlayerSceneStateMessage Message;
+            if (!ParsePayload(Data, Message))
+            {
                 return;
+            }
 
-            auto Scene = GetScene(SceneId);
+            auto Scene = GetScene(Message.SceneId);
             if (Scene)
             {
-                Scene->UpdateEntityPosition(PlayerId, Position);
+                Scene->UpdateEntityPosition(Message.PlayerId, SVector(Message.X, Message.Y, Message.Z));
             }
             break;
         }

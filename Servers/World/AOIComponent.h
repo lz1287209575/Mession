@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../Core/NetCore.h"
+#include "Core/NetCore.h"
 
 // AOI (Area of Interest) 区域
 struct SAOICell
@@ -15,7 +15,9 @@ struct SAOICell
     bool operator<(const SAOICell& Other) const
     {
         if (X != Other.X)
+        {
             return X < Other.X;
+        }
         return Y < Other.Y;
     }
 };

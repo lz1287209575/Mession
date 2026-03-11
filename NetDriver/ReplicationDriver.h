@@ -1,8 +1,8 @@
 #pragma once
 
 #include "NetObject.h"
-#include "../Core/Socket.h"
-#include "../Messages/NetMessages.h"
+#include "Core/Socket.h"
+#include "Messages/NetMessages.h"
 
 // 连接通道
 class MReplicationChannel
@@ -111,14 +111,18 @@ public:
         for (auto& [ActorId, Actor] : ReplicationMap)
         {
             if (!Actor->NeedsNetUpdate())
+            {
                 continue;
+            }
             
             // 序列化更新的属性
             MMemoryArchive Ar;
             Actor->GetReplicatedProperties(Ar);
             
             if (Ar.GetData().empty())
+            {
                 continue;
+            }
             
             // 发送给所有相关连接
             for (auto& [ConnectionId, Channel] : Channels)
@@ -172,7 +176,9 @@ public:
     void BroadcastActorCreate(MActor* Actor, uint64 ExcludeConnectionId = 0)
     {
         if (!Actor)
+        {
             return;
+        }
         
         MMemoryArchive Ar;
         Actor->Serialize(Ar);

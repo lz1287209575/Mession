@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../Core/NetCore.h"
-#include "../Core/Socket.h"
-#include "../NetDriver/ReplicationDriver.h"
-#include "../Messages/NetMessages.h"
+#include "Core/NetCore.h"
+#include "Core/Socket.h"
+#include "NetDriver/ReplicationDriver.h"
+#include "Messages/NetMessages.h"
 #include <thread>
 #include <chrono>
 #include <poll.h>
@@ -83,7 +83,9 @@ public:
     void Shutdown()
     {
         if (!bRunning)
+        {
             return;
+        }
         
         bRunning = false;
         
@@ -109,7 +111,9 @@ public:
     void Tick()
     {
         if (!bRunning)
+        {
             return;
+        }
         
         // 1. 处理新连接
         AcceptNewConnections();
@@ -193,7 +197,9 @@ private:
         }
         
         if (PollFds.empty())
+        {
             return;
+        }
         
         // 等待100ms
         int32 Ret = poll(PollFds.data(), PollFds.size(), 100);
@@ -201,7 +207,9 @@ private:
         if (Ret < 0)
         {
             if (errno != EINTR)
+            {
                 LOG_ERROR("Poll error: %s", strerror(errno));
+            }
             return;
         }
         
@@ -210,7 +218,9 @@ private:
         for (auto& [ConnId, Conn] : Connections)
         {
             if (Index >= PollFds.size())
+            {
                 break;
+            }
             
             if (PollFds[Index].revents & POLLIN)
             {
@@ -313,7 +323,9 @@ public:
         
         auto ConnIt = Connections.find(ConnectionId);
         if (ConnIt == Connections.end())
+        {
             return;
+        }
         
         // 创建玩家数据
         uint64 PlayerId = Msg.PlayerId > 0 ? Msg.PlayerId : ConnectionId;

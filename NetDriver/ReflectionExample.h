@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Reflection.h"
-#include "../Core/NetCore.h"
+#include "Core/NetCore.h"
 
 // ============================================
 // 使用反射系统的示例类
@@ -53,11 +53,16 @@ inline void MCharacter::TakeDamage(float Damage)
 
 inline void MCharacter::Heal(float Amount)
 {
-    if (!bIsAlive) return;
+    if (!bIsAlive)
+    {
+        return;
+    }
     
     Health += Amount;
     if (Health > MaxHealth)
+    {
         Health = MaxHealth;
+    }
 }
 
 inline void MCharacter::MoveTo(const SVector& NewLocation)
@@ -153,7 +158,10 @@ inline bool MPlayerData::HasFriend(uint64 FriendId) const
 {
     for (uint64 id : FriendsList)
     {
-        if (id == FriendId) return true;
+        if (id == FriendId)
+        {
+            return true;
+        }
     }
     return false;
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Core/NetCore.h"
+#include "Core/NetCore.h"
 
 // 属性复制条件
 enum class ELifetimeRep : uint8

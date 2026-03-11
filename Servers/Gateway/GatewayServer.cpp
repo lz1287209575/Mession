@@ -1,5 +1,6 @@
 #include "GatewayServer.h"
-#include "../../Messages/NetMessages.h"
+#include "Common/ServerMessages.h"
+#include "Messages/NetMessages.h"
 #include <poll.h>
 
 namespace
@@ -7,42 +8,6 @@ namespace
 bool IsLoginRoutingMessage(EClientMessageType Type)
 {
     return Type == EClientMessageType::MT_Login || Type == EClientMessageType::MT_Handshake;
-}
-
-template<typename T>
-void AppendValue(TArray& OutData, const T& Value)
-{
-    const auto* ValueBytes = reinterpret_cast<const uint8*>(&Value);
-    OutData.insert(OutData.end(), ValueBytes, ValueBytes + sizeof(T));
-}
-
-void AppendString(TArray& OutData, const FString& Value)
-{
-    const uint16 Length = static_cast<uint16>(Value.size());
-    AppendValue(OutData, Length);
-    OutData.insert(OutData.end(), Value.begin(), Value.end());
-}
-
-template<typename T>
-bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
-{
-    if (Offset + sizeof(T) > Data.size())
-        return false;
-
-    memcpy(&OutValue, Data.data() + Offset, sizeof(T));
-    Offset += sizeof(T);
-    return true;
-}
-
-bool ReadString(const TArray& Data, size_t& Offset, FString& OutValue)
-{
-    uint16 Length = 0;
-    if (!ReadValue(Data, Offset, Length) || Offset + Length > Data.size())
-        return false;
-
-    OutValue.assign(reinterpret_cast<const char*>(Data.data() + Offset), Length);
-    Offset += Length;
-    return true;
 }
 }
 
@@ -125,7 +90,9 @@ bool MGatewayServer::Init(int InPort)
 void MGatewayServer::Shutdown()
 {
     if (!bRunning)
+    {
         return;
+    }
     
     bRunning = false;
     
@@ -133,17 +100,25 @@ void MGatewayServer::Shutdown()
     for (auto& [Id, Conn] : ClientConnections)
     {
         if (Conn->Connection)
+        {
             Conn->Connection->Close();
+        }
     }
     ClientConnections.clear();
     
     // 关闭后端长连接
     if (RouterServerConn)
+    {
         RouterServerConn->Disconnect();
+    }
     if (LoginServerConn)
+    {
         LoginServerConn->Disconnect();
+    }
     if (WorldServerConn)
+    {
         WorldServerConn->Disconnect();
+    }
     
     // 关闭监听socket
     if (ListenSocket >= 0)
@@ -158,7 +133,9 @@ void MGatewayServer::Shutdown()
 void MGatewayServer::Tick()
 {
     if (!bRunning)
+    {
         return;
+    }
 
     static constexpr float BackendTickInterval = 0.016f;
     
@@ -166,22 +143,32 @@ void MGatewayServer::Tick()
     AcceptClients();
 
     if (RouterServerConn)
+    {
         RouterServerConn->Tick(BackendTickInterval);
+    }
 
     RouteQueryTimer += BackendTickInterval;
     if (RouterServerConn && RouterServerConn->IsConnected() && RouteQueryTimer >= 1.0f)
     {
         RouteQueryTimer = 0.0f;
         if (!LoginServerConn || !LoginServerConn->IsConnected())
+        {
             QueryRoute(EServerType::Login);
+        }
         if (!WorldServerConn || !WorldServerConn->IsConnected())
+        {
             QueryRoute(EServerType::World);
+        }
     }
     
     if (LoginServerConn)
+    {
         LoginServerConn->Tick(BackendTickInterval);
+    }
     if (WorldServerConn)
+    {
         WorldServerConn->Tick(BackendTickInterval);
+    }
 
     // 处理客户端消息
     ProcessClientMessages();
@@ -245,18 +232,24 @@ void MGatewayServer::ProcessClientMessages()
     }
     
     if (PollFds.empty())
+    {
         return;
+    }
     
     int32 Ret = poll(PollFds.data(), PollFds.size(), 10);
     
     if (Ret < 0)
+    {
         return;
+    }
     
     size_t Index = 0;
     for (auto& [ConnId, Client] : ClientConnections)
     {
         if (Index >= PollFds.size())
+        {
             break;
+        }
         
         if (PollFds[Index].revents & POLLIN)
         {
@@ -286,7 +279,9 @@ void MGatewayServer::ProcessClientMessages()
 void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TArray& Data)
 {
     if (Data.empty())
+    {
         return;
+    }
     
     // 简单处理：直接转发到后端
     // 实际应该解析消息头，判断类型
@@ -310,10 +305,14 @@ void MGatewayServer::ForwardToBackend(uint64 ConnectionId, const TArray& Data)
 {
     auto ClientIt = ClientConnections.find(ConnectionId);
     if (ClientIt == ClientConnections.end())
+    {
         return;
+    }
 
     if (Data.empty())
+    {
         return;
+    }
 
     const EClientMessageType MsgType = (EClientMessageType)Data[0];
     if (IsLoginRoutingMessage(MsgType))
@@ -333,10 +332,10 @@ void MGatewayServer::ForwardToBackend(uint64 ConnectionId, const TArray& Data)
         uint64 PlayerId = 0;
         memcpy(&PlayerId, Data.data() + 1, sizeof(PlayerId));
 
-        TArray Payload;
-        AppendValue(Payload, ConnectionId);
-        AppendValue(Payload, PlayerId);
-        LoginServerConn->Send((uint8)EServerMessageType::MT_PlayerLogin, Payload.data(), Payload.size());
+        SendTypedServerMessage(
+            LoginServerConn,
+            EServerMessageType::MT_PlayerLogin,
+            SPlayerLoginRequestMessage{ConnectionId, PlayerId});
         LOG_DEBUG("Forwarded login request for player %llu", (unsigned long long)PlayerId);
         return;
     }
@@ -353,72 +352,68 @@ void MGatewayServer::ForwardToBackend(uint64 ConnectionId, const TArray& Data)
         return;
     }
 
-    TArray Payload;
-    AppendValue(Payload, ConnectionId);
-
-    const uint32 DataSize = static_cast<uint32>(Data.size());
-    AppendValue(Payload, DataSize);
-    Payload.insert(Payload.end(), Data.begin(), Data.end());
-
-    WorldServerConn->Send((uint8)EServerMessageType::MT_PlayerDataSync, Payload.data(), Payload.size());
+    SendTypedServerMessage(
+        WorldServerConn,
+        EServerMessageType::MT_PlayerDataSync,
+        SGameplaySyncMessage{ConnectionId, Data});
     LOG_DEBUG("Forwarded client message type %d to WorldServer", (int)MsgType);
 }
 
 void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
 {
     if (Type != (uint8)EServerMessageType::MT_PlayerLogin)
+    {
         return;
+    }
 
-    size_t Offset = 0;
-    uint64 ConnectionId = 0;
-    uint64 PlayerId = 0;
-    uint32 SessionKey = 0;
-    if (!ReadValue(Data, Offset, ConnectionId) ||
-        !ReadValue(Data, Offset, PlayerId) ||
-        !ReadValue(Data, Offset, SessionKey))
+    SPlayerLoginResponseMessage Message;
+    if (!ParsePayload(Data, Message))
     {
         LOG_WARN("Invalid login server payload size: %zu", Data.size());
         return;
     }
 
-    auto ClientIt = ClientConnections.find(ConnectionId);
+    auto ClientIt = ClientConnections.find(Message.ConnectionId);
     if (ClientIt == ClientConnections.end())
     {
-        LOG_WARN("Login response for unknown client %llu", (unsigned long long)ConnectionId);
+        LOG_WARN("Login response for unknown client %llu", (unsigned long long)Message.ConnectionId);
         return;
     }
 
     auto& Client = ClientIt->second;
-    Client->PlayerId = PlayerId;
-    Client->SessionToken = SessionKey;
+    Client->PlayerId = Message.PlayerId;
+    Client->SessionToken = Message.SessionKey;
     Client->bAuthenticated = true;
 
     TArray Response;
-    Response.resize(1 + sizeof(SessionKey) + sizeof(PlayerId));
+    Response.resize(1 + sizeof(Message.SessionKey) + sizeof(Message.PlayerId));
     Response[0] = (uint8)EClientMessageType::MT_LoginResponse;
-    memcpy(Response.data() + 1, &SessionKey, sizeof(SessionKey));
-    memcpy(Response.data() + 1 + sizeof(SessionKey), &PlayerId, sizeof(PlayerId));
+    memcpy(Response.data() + 1, &Message.SessionKey, sizeof(Message.SessionKey));
+    memcpy(Response.data() + 1 + sizeof(Message.SessionKey), &Message.PlayerId, sizeof(Message.PlayerId));
     Client->Connection->Send(Response.data(), Response.size());
 
-    const uint64 RouteRequestId = QueryRoute(EServerType::World, PlayerId);
+    const uint64 RouteRequestId = QueryRoute(EServerType::World, Message.PlayerId);
     if (RouteRequestId != 0)
-        PendingWorldLoginRoutes[RouteRequestId] = {ConnectionId, PlayerId, SessionKey};
+    {
+        PendingWorldLoginRoutes[RouteRequestId] = {Message.ConnectionId, Message.PlayerId, Message.SessionKey};
+    }
 
     LOG_INFO("Client %llu authenticated as player %llu",
-             (unsigned long long)ConnectionId,
-             (unsigned long long)PlayerId);
+             (unsigned long long)Message.ConnectionId,
+             (unsigned long long)Message.PlayerId);
 }
 
 void MGatewayServer::HandleWorldServerMessage(uint8 Type, const TArray& Data)
 {
     if (Type == (uint8)EServerMessageType::MT_PlayerLogout)
     {
-        size_t Offset = 0;
-        uint64 ConnectionId = 0;
-        if (!ReadValue(Data, Offset, ConnectionId))
+        SPlayerLogoutMessage Message;
+        if (!ParsePayload(Data, Message))
+        {
             return;
+        }
 
-        auto ClientIt = ClientConnections.find(ConnectionId);
+        auto ClientIt = ClientConnections.find(Message.PlayerId);
         if (ClientIt != ClientConnections.end())
         {
             ClientIt->second->bAuthenticated = false;
@@ -437,52 +432,38 @@ void MGatewayServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 
         case EServerMessageType::MT_RouteResponse:
         {
-            size_t Offset = 0;
-            uint64 RequestId = 0;
-            uint8 RequestedTypeValue = 0;
-            uint64 PlayerId = 0;
-            uint8 Result = 0;
-            if (!ReadValue(Data, Offset, RequestId) ||
-                !ReadValue(Data, Offset, RequestedTypeValue) ||
-                !ReadValue(Data, Offset, PlayerId) ||
-                !ReadValue(Data, Offset, Result))
+            SRouteResponseMessage Message;
+            if (!ParsePayload(Data, Message))
             {
                 LOG_WARN("Invalid route response payload size: %zu", Data.size());
                 return;
             }
 
-            const EServerType RequestedType = (EServerType)RequestedTypeValue;
-            if (!Result)
+            if (!Message.bFound)
             {
                 LOG_WARN("No route available yet for server type %d (request=%llu)",
-                         (int)RequestedType,
-                         (unsigned long long)RequestId);
+                         (int)Message.RequestedType,
+                         (unsigned long long)Message.RequestId);
                 return;
             }
 
-            uint32 ServerId = 0;
-            uint8 ServerTypeValue = 0;
-            FString ServerName;
-            FString Address;
-            uint16 Port = 0;
-            if (!ReadValue(Data, Offset, ServerId) ||
-                !ReadValue(Data, Offset, ServerTypeValue) ||
-                !ReadString(Data, Offset, ServerName) ||
-                !ReadString(Data, Offset, Address) ||
-                !ReadValue(Data, Offset, Port))
+            ApplyRoute(
+                Message.ServerInfo.ServerType,
+                Message.ServerInfo.ServerId,
+                Message.ServerInfo.ServerName,
+                Message.ServerInfo.Address,
+                Message.ServerInfo.Port);
+            if (Message.ServerInfo.ServerType == EServerType::World)
             {
-                LOG_WARN("Invalid successful route response payload size: %zu", Data.size());
-                return;
-            }
-
-            ApplyRoute((EServerType)ServerTypeValue, ServerId, ServerName, Address, Port);
-            if ((EServerType)ServerTypeValue == EServerType::World)
-            {
-                auto PendingIt = PendingWorldLoginRoutes.find(RequestId);
+                auto PendingIt = PendingWorldLoginRoutes.find(Message.RequestId);
                 if (PendingIt != PendingWorldLoginRoutes.end())
+                {
                     FlushPendingWorldLogins();
-                else if (PlayerId == 0)
+                }
+                else if (Message.PlayerId == 0)
+                {
                     FlushPendingWorldLogins();
+                }
             }
             break;
         }
@@ -495,28 +476,28 @@ void MGatewayServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 void MGatewayServer::SendRouterRegister()
 {
     if (!RouterServerConn || !RouterServerConn->IsConnected())
+    {
         return;
+    }
 
-    TArray Payload;
-    AppendValue(Payload, static_cast<uint32>(1));
-    Payload.push_back((uint8)EServerType::Gateway);
-    AppendString(Payload, "Gateway01");
-    AppendString(Payload, "127.0.0.1");
-    AppendValue(Payload, Config.ListenPort);
-    RouterServerConn->Send((uint8)EServerMessageType::MT_ServerRegister, Payload.data(), Payload.size());
+    SendTypedServerMessage(
+        RouterServerConn,
+        EServerMessageType::MT_ServerRegister,
+        SServerRegisterMessage{1, EServerType::Gateway, "Gateway01", "127.0.0.1", Config.ListenPort});
 }
 
 uint64 MGatewayServer::QueryRoute(EServerType ServerType, uint64 PlayerId)
 {
     if (!RouterServerConn || !RouterServerConn->IsConnected())
+    {
         return 0;
+    }
 
     const uint64 RequestId = NextRouteRequestId++;
-    TArray Payload;
-    AppendValue(Payload, RequestId);
-    Payload.push_back((uint8)ServerType);
-    AppendValue(Payload, PlayerId);
-    RouterServerConn->Send((uint8)EServerMessageType::MT_RouteQuery, Payload.data(), Payload.size());
+    SendTypedServerMessage(
+        RouterServerConn,
+        EServerMessageType::MT_RouteQuery,
+        SRouteQueryMessage{RequestId, ServerType, PlayerId});
     return RequestId;
 }
 
@@ -524,14 +505,22 @@ void MGatewayServer::ApplyRoute(EServerType ServerType, uint32 ServerId, const F
 {
     TSharedPtr<MServerConnection> TargetConn;
     if (ServerType == EServerType::Login)
+    {
         TargetConn = LoginServerConn;
+    }
     else if (ServerType == EServerType::World)
+    {
         TargetConn = WorldServerConn;
+    }
     else
+    {
         return;
+    }
 
     if (!TargetConn)
+    {
         return;
+    }
 
     const SServerConnectionConfig& CurrentConfig = TargetConn->GetConfig();
     const bool bRouteChanged =
@@ -542,7 +531,9 @@ void MGatewayServer::ApplyRoute(EServerType ServerType, uint32 ServerId, const F
         CurrentConfig.Port != Port;
 
     if (bRouteChanged && (TargetConn->IsConnected() || TargetConn->IsConnecting()))
+    {
         TargetConn->Disconnect();
+    }
 
     SServerConnectionConfig NewConfig(ServerId, ServerType, ServerName, Address, Port);
     NewConfig.HeartbeatInterval = CurrentConfig.HeartbeatInterval;
@@ -551,28 +542,35 @@ void MGatewayServer::ApplyRoute(EServerType ServerType, uint32 ServerId, const F
     TargetConn->SetConfig(NewConfig);
 
     if (!TargetConn->IsConnected() && !TargetConn->IsConnecting())
+    {
         TargetConn->Connect();
+    }
 
     if (ServerType == EServerType::World && TargetConn->IsConnected())
+    {
         FlushPendingWorldLogins();
+    }
 }
 
 void MGatewayServer::FlushPendingWorldLogins()
 {
     if (!WorldServerConn || !WorldServerConn->IsConnected())
+    {
         return;
+    }
 
     TVector<uint64> CompletedRequests;
     for (const auto& [RequestId, Pending] : PendingWorldLoginRoutes)
     {
-        TArray Payload;
-        AppendValue(Payload, Pending.ConnectionId);
-        AppendValue(Payload, Pending.PlayerId);
-        AppendValue(Payload, Pending.SessionKey);
-        WorldServerConn->Send((uint8)EServerMessageType::MT_PlayerLogin, Payload.data(), Payload.size());
+        SendTypedServerMessage(
+            WorldServerConn,
+            EServerMessageType::MT_PlayerLogin,
+            SPlayerLoginResponseMessage{Pending.ConnectionId, Pending.PlayerId, Pending.SessionKey});
         CompletedRequests.push_back(RequestId);
     }
 
     for (uint64 RequestId : CompletedRequests)
+    {
         PendingWorldLoginRoutes.erase(RequestId);
+    }
 }

@@ -1,45 +1,6 @@
 #include "WorldServer.h"
-#include "../../Messages/NetMessages.h"
+#include "Messages/NetMessages.h"
 #include <poll.h>
-
-namespace
-{
-template<typename T>
-void AppendValue(TArray& OutData, const T& Value)
-{
-    const auto* ValueBytes = reinterpret_cast<const uint8*>(&Value);
-    OutData.insert(OutData.end(), ValueBytes, ValueBytes + sizeof(T));
-}
-
-void AppendString(TArray& OutData, const FString& Value)
-{
-    const uint16 Length = static_cast<uint16>(Value.size());
-    AppendValue(OutData, Length);
-    OutData.insert(OutData.end(), Value.begin(), Value.end());
-}
-
-template<typename T>
-bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
-{
-    if (Offset + sizeof(T) > Data.size())
-        return false;
-
-    memcpy(&OutValue, Data.data() + Offset, sizeof(T));
-    Offset += sizeof(T);
-    return true;
-}
-
-bool ReadString(const TArray& Data, size_t& Offset, FString& OutValue)
-{
-    uint16 Length = 0;
-    if (!ReadValue(Data, Offset, Length) || Offset + Length > Data.size())
-        return false;
-
-    OutValue.assign(reinterpret_cast<const char*>(Data.data() + Offset), Length);
-    Offset += Length;
-    return true;
-}
-}
 
 MWorldServer::MWorldServer()
 {
@@ -95,7 +56,9 @@ bool MWorldServer::Init(int InPort)
 void MWorldServer::Shutdown()
 {
     if (!bRunning)
+    {
         return;
+    }
     
     bRunning = false;
     
@@ -103,14 +66,20 @@ void MWorldServer::Shutdown()
     for (auto& [Id, Peer] : BackendConnections)
     {
         if (Peer.Connection)
+        {
             Peer.Connection->Close();
+        }
     }
     BackendConnections.clear();
 
     if (RouterServerConn)
+    {
         RouterServerConn->Disconnect();
+    }
     if (LoginServerConn)
+    {
         LoginServerConn->Disconnect();
+    }
     PendingSessionValidations.clear();
     
     // 清理玩家
@@ -134,24 +103,32 @@ void MWorldServer::Shutdown()
 void MWorldServer::Tick()
 {
     if (!bRunning)
+    {
         return;
+    }
     
     // 接受新连接
     AcceptConnections();
 
     if (RouterServerConn)
+    {
         RouterServerConn->Tick(DEFAULT_TICK_RATE);
+    }
 
     LoginRouteQueryTimer += DEFAULT_TICK_RATE;
     if (RouterServerConn && RouterServerConn->IsConnected() && LoginRouteQueryTimer >= 1.0f)
     {
         LoginRouteQueryTimer = 0.0f;
         if (!LoginServerConn || !LoginServerConn->IsConnected())
+        {
             QueryLoginServerRoute();
+        }
     }
 
     if (LoginServerConn)
+    {
         LoginServerConn->Tick(DEFAULT_TICK_RATE);
+    }
     
     // 处理消息
     ProcessMessages();
@@ -225,19 +202,25 @@ void MWorldServer::ProcessMessages()
     }
     
     if (PollFds.empty())
+    {
         return;
+    }
     
     int32 Ret = poll(PollFds.data(), PollFds.size(), 10);
     
     if (Ret < 0)
+    {
         return;
+    }
     
     size_t Index = 0;
     
     for (auto& [ConnId, Peer] : BackendConnections)
     {
         if (Index >= PollFds.size())
+        {
             break;
+        }
         
         if (PollFds[Index].revents & POLLIN)
         {
@@ -273,11 +256,15 @@ void MWorldServer::ProcessMessages()
 void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
 {
     if (Data.empty())
+    {
         return;
+    }
 
     auto PeerIt = BackendConnections.find(ConnectionId);
     if (PeerIt == BackendConnections.end())
+    {
         return;
+    }
 
     SBackendPeer& Peer = PeerIt->second;
     const uint8 MsgType = Data[0];
@@ -287,89 +274,80 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
     {
         case EServerMessageType::MT_ServerHandshake:
         {
-            size_t Offset = 0;
-            uint32 ServerId = 0;
-            uint8 ServerTypeValue = 0;
-            uint16 NameLen = 0;
-            if (!ReadValue(Payload, Offset, ServerId) ||
-                !ReadValue(Payload, Offset, ServerTypeValue) ||
-                !ReadValue(Payload, Offset, NameLen) ||
-                Offset + NameLen > Payload.size())
+            SServerHandshakeMessage Message;
+            if (!ParsePayload(Payload, Message))
             {
                 LOG_WARN("Invalid handshake payload from connection %llu",
                          (unsigned long long)ConnectionId);
                 return;
             }
 
-            Peer.ServerId = ServerId;
-            Peer.ServerType = (EServerType)ServerTypeValue;
-            Peer.ServerName.assign(reinterpret_cast<const char*>(Payload.data() + Offset), NameLen);
+            Peer.ServerId = Message.ServerId;
+            Peer.ServerType = Message.ServerType;
+            Peer.ServerName = Message.ServerName;
             Peer.bAuthenticated = true;
 
-            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_ServerHandshakeAck, {});
+            SendServerMessage(ConnectionId, EServerMessageType::MT_ServerHandshakeAck, SEmptyServerMessage{});
             LOG_INFO("%s authenticated as %d", Peer.ServerName.c_str(), (int)Peer.ServerType);
             break;
         }
 
         case EServerMessageType::MT_Heartbeat:
         {
-            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_HeartbeatAck, {});
+            SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
             break;
         }
 
         case EServerMessageType::MT_PlayerLogin:
         {
             if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Gateway)
+            {
                 return;
+            }
 
-            size_t Offset = 0;
-            uint64 ClientConnectionId = 0;
-            uint64 PlayerId = 0;
-            uint32 SessionKey = 0;
-            if (!ReadValue(Payload, Offset, ClientConnectionId) ||
-                !ReadValue(Payload, Offset, PlayerId) ||
-                !ReadValue(Payload, Offset, SessionKey))
+            SPlayerLoginResponseMessage Message;
+            if (!ParsePayload(Payload, Message))
             {
                 LOG_WARN("Invalid player login payload size: %zu", Payload.size());
                 return;
             }
 
-            RequestSessionValidation(ClientConnectionId, PlayerId, SessionKey);
+            RequestSessionValidation(Message.ConnectionId, Message.PlayerId, Message.SessionKey);
             break;
         }
 
         case EServerMessageType::MT_PlayerLogout:
         {
             if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Gateway)
+            {
                 return;
+            }
 
-            size_t Offset = 0;
-            uint64 PlayerId = 0;
-            if (!ReadValue(Payload, Offset, PlayerId))
+            SPlayerLogoutMessage Message;
+            if (!ParsePayload(Payload, Message))
+            {
                 return;
+            }
 
-            RemovePlayer(PlayerId);
+            RemovePlayer(Message.PlayerId);
             break;
         }
 
         case EServerMessageType::MT_PlayerDataSync:
         {
             if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Gateway)
+            {
                 return;
+            }
 
-            size_t Offset = 0;
-            uint64 ClientConnectionId = 0;
-            uint32 DataSize = 0;
-            if (!ReadValue(Payload, Offset, ClientConnectionId) ||
-                !ReadValue(Payload, Offset, DataSize) ||
-                Offset + DataSize > Payload.size())
+            SGameplaySyncMessage Message;
+            if (!ParsePayload(Payload, Message))
             {
                 LOG_WARN("Invalid gameplay payload size: %zu", Payload.size());
                 return;
             }
 
-            TArray GameplayData(Payload.begin() + Offset, Payload.begin() + Offset + DataSize);
-            HandleGameplayPacket(ClientConnectionId, GameplayData);
+            HandleGameplayPacket(Message.ConnectionId, Message.Data);
             break;
         }
 
@@ -381,7 +359,9 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
 void MWorldServer::HandleGameplayPacket(uint64 ConnectionId, const TArray& Data)
 {
     if (Data.empty())
+    {
         return;
+    }
 
     const EClientMessageType MsgType = (EClientMessageType)Data[0];
 
@@ -390,11 +370,15 @@ void MWorldServer::HandleGameplayPacket(uint64 ConnectionId, const TArray& Data)
         case EClientMessageType::MT_PlayerMove:
         {
             if (Data.size() < 1 + sizeof(float) * 3)
+            {
                 return;
+            }
             
             auto* Player = GetPlayerByConnection(ConnectionId);
             if (!Player || !Player->Character)
+            {
                 return;
+            }
             
             SVector NewPos;
             memcpy(&NewPos.X, Data.data() + 1, sizeof(float));
@@ -403,13 +387,14 @@ void MWorldServer::HandleGameplayPacket(uint64 ConnectionId, const TArray& Data)
             
             Player->Character->SetLocation(NewPos);
 
-            TArray ScenePayload;
-            AppendValue(ScenePayload, Player->PlayerId);
-            AppendValue(ScenePayload, Player->CurrentSceneId);
-            AppendValue(ScenePayload, NewPos.X);
-            AppendValue(ScenePayload, NewPos.Y);
-            AppendValue(ScenePayload, NewPos.Z);
-            BroadcastToScenes((uint8)EServerMessageType::MT_PlayerDataSync, ScenePayload);
+            const SPlayerSceneStateMessage Message{
+                Player->PlayerId,
+                static_cast<uint16>(Player->CurrentSceneId),
+                NewPos.X,
+                NewPos.Y,
+                NewPos.Z
+            };
+            BroadcastToScenes((uint8)EServerMessageType::MT_PlayerDataSync, BuildPayload(Message));
             
             LOG_DEBUG("Player %llu moved to (%.2f, %.2f, %.2f)",
                      (unsigned long long)Player->PlayerId, NewPos.X, NewPos.Y, NewPos.Z);
@@ -424,7 +409,9 @@ void MWorldServer::HandleGameplayPacket(uint64 ConnectionId, const TArray& Data)
 void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 ConnectionId)
 {
     if (Players.find(PlayerId) != Players.end())
+    {
         return;
+    }
 
     SPlayer Player;
     Player.PlayerId = PlayerId;
@@ -449,13 +436,14 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 Connec
     ReplicationDriver->RegisterActor(Character);
     ReplicationDriver->AddRelevantActor(ConnectionId, Character->GetObjectId());
 
-    TArray ScenePayload;
-    AppendValue(ScenePayload, Player.PlayerId);
-    AppendValue(ScenePayload, Player.CurrentSceneId);
-    AppendValue(ScenePayload, Player.Character->GetLocation().X);
-    AppendValue(ScenePayload, Player.Character->GetLocation().Y);
-    AppendValue(ScenePayload, Player.Character->GetLocation().Z);
-    BroadcastToScenes((uint8)EServerMessageType::MT_PlayerSwitchServer, ScenePayload);
+    const SPlayerSceneStateMessage Message{
+        Player.PlayerId,
+        static_cast<uint16>(Player.CurrentSceneId),
+        Player.Character->GetLocation().X,
+        Player.Character->GetLocation().Y,
+        Player.Character->GetLocation().Z
+    };
+    BroadcastToScenes((uint8)EServerMessageType::MT_PlayerSwitchServer, BuildPayload(Message));
     
     LOG_INFO("Player %s (id=%llu) added to world", 
              Name.c_str(), (unsigned long long)PlayerId);
@@ -465,7 +453,9 @@ void MWorldServer::RemovePlayer(uint64 PlayerId)
 {
     auto It = Players.find(PlayerId);
     if (It == Players.end())
+    {
         return;
+    }
     
     SPlayer& Player = It->second;
     
@@ -476,10 +466,9 @@ void MWorldServer::RemovePlayer(uint64 PlayerId)
         delete Player.Character;
     }
 
-    TArray ScenePayload;
-    AppendValue(ScenePayload, Player.PlayerId);
-    AppendValue(ScenePayload, Player.CurrentSceneId);
-    BroadcastToScenes((uint8)EServerMessageType::MT_PlayerLogout, ScenePayload);
+    BroadcastToScenes(
+        (uint8)EServerMessageType::MT_PlayerLogout,
+        BuildPayload(SPlayerSceneLeaveMessage{Player.PlayerId, static_cast<uint16>(Player.CurrentSceneId)}));
     
     ConnectionToPlayer.erase(Player.ConnectionId);
     Players.erase(It);
@@ -497,7 +486,9 @@ SPlayer* MWorldServer::GetPlayerByConnection(uint64 ConnectionId)
 {
     auto It = ConnectionToPlayer.find(ConnectionId);
     if (It == ConnectionToPlayer.end())
+    {
         return nullptr;
+    }
     
     return GetPlayerById(It->second);
 }
@@ -518,7 +509,9 @@ bool MWorldServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArr
 {
     auto It = BackendConnections.find(ConnectionId);
     if (It == BackendConnections.end() || !It->second.Connection)
+    {
         return false;
+    }
 
     TArray Packet;
     Packet.reserve(1 + Payload.size());
@@ -532,7 +525,9 @@ void MWorldServer::BroadcastToScenes(uint8 Type, const TArray& Payload)
     for (auto& [ConnectionId, Peer] : BackendConnections)
     {
         if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Scene || !Peer.Connection)
+        {
             continue;
+        }
 
         SendServerMessage(ConnectionId, Type, Payload);
     }
@@ -541,39 +536,40 @@ void MWorldServer::BroadcastToScenes(uint8 Type, const TArray& Payload)
 void MWorldServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
 {
     if (Type != (uint8)EServerMessageType::MT_SessionValidateResponse)
+    {
         return;
+    }
 
-    size_t Offset = 0;
-    uint64 ConnectionId = 0;
-    uint64 PlayerId = 0;
-    uint8 bValid = 0;
-    if (!ReadValue(Data, Offset, ConnectionId) ||
-        !ReadValue(Data, Offset, PlayerId) ||
-        !ReadValue(Data, Offset, bValid))
+    SSessionValidateResponseMessage Message;
+    if (!ParsePayload(Data, Message))
     {
         LOG_WARN("Invalid session validation response size: %zu", Data.size());
         return;
     }
 
-    auto PendingIt = PendingSessionValidations.find(ConnectionId);
+    auto PendingIt = PendingSessionValidations.find(Message.ConnectionId);
     if (PendingIt == PendingSessionValidations.end())
+    {
         return;
+    }
 
     const SPendingSessionValidation Pending = PendingIt->second;
     PendingSessionValidations.erase(PendingIt);
 
-    if (!bValid || Pending.PlayerId != PlayerId)
+    if (!Message.bValid || Pending.PlayerId != Message.PlayerId)
     {
         LOG_WARN("Session validation failed for player %llu on connection %llu",
                  (unsigned long long)Pending.PlayerId,
-                 (unsigned long long)ConnectionId);
+                 (unsigned long long)Message.ConnectionId);
         return;
     }
 
-    AddPlayer(PlayerId, "Player" + std::to_string(PlayerId), ConnectionId);
-    auto* Player = GetPlayerById(PlayerId);
+    AddPlayer(Message.PlayerId, "Player" + std::to_string(Message.PlayerId), Message.ConnectionId);
+    auto* Player = GetPlayerById(Message.PlayerId);
     if (Player)
+    {
         Player->SessionKey = Pending.SessionKey;
+    }
 }
 
 void MWorldServer::RequestSessionValidation(uint64 ConnectionId, uint64 PlayerId, uint32 SessionKey)
@@ -587,11 +583,10 @@ void MWorldServer::RequestSessionValidation(uint64 ConnectionId, uint64 PlayerId
 
     PendingSessionValidations[ConnectionId] = {ConnectionId, PlayerId, SessionKey};
 
-    TArray Payload;
-    AppendValue(Payload, ConnectionId);
-    AppendValue(Payload, PlayerId);
-    AppendValue(Payload, SessionKey);
-    LoginServerConn->Send((uint8)EServerMessageType::MT_SessionValidateRequest, Payload.data(), Payload.size());
+    SendTypedServerMessage(
+        LoginServerConn,
+        EServerMessageType::MT_SessionValidateRequest,
+        SSessionValidateRequestMessage{ConnectionId, PlayerId, SessionKey});
 }
 
 void MWorldServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
@@ -604,39 +599,23 @@ void MWorldServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 
         case EServerMessageType::MT_RouteResponse:
         {
-            size_t Offset = 0;
-            uint64 RequestId = 0;
-            uint8 RequestedTypeValue = 0;
-            uint64 PlayerId = 0;
-            uint8 Result = 0;
-            if (!ReadValue(Data, Offset, RequestId) ||
-                !ReadValue(Data, Offset, RequestedTypeValue) ||
-                !ReadValue(Data, Offset, PlayerId) ||
-                !ReadValue(Data, Offset, Result))
+            SRouteResponseMessage Message;
+            if (!ParsePayload(Data, Message))
             {
                 LOG_WARN("Invalid router route response size: %zu", Data.size());
                 return;
             }
 
-            if (PlayerId != 0 || (EServerType)RequestedTypeValue != EServerType::Login || !Result)
-                return;
-
-            uint32 ServerId = 0;
-            uint8 ServerTypeValue = 0;
-            FString ServerName;
-            FString Address;
-            uint16 Port = 0;
-            if (!ReadValue(Data, Offset, ServerId) ||
-                !ReadValue(Data, Offset, ServerTypeValue) ||
-                !ReadString(Data, Offset, ServerName) ||
-                !ReadString(Data, Offset, Address) ||
-                !ReadValue(Data, Offset, Port))
+            if (Message.PlayerId != 0 || Message.RequestedType != EServerType::Login || !Message.bFound)
             {
-                LOG_WARN("Invalid router login route payload size: %zu", Data.size());
                 return;
             }
 
-            ApplyLoginServerRoute(ServerId, ServerName, Address, Port);
+            ApplyLoginServerRoute(
+                Message.ServerInfo.ServerId,
+                Message.ServerInfo.ServerName,
+                Message.ServerInfo.Address,
+                Message.ServerInfo.Port);
             break;
         }
 
@@ -648,33 +627,35 @@ void MWorldServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 void MWorldServer::SendRouterRegister()
 {
     if (!RouterServerConn || !RouterServerConn->IsConnected())
+    {
         return;
+    }
 
-    TArray Payload;
-    AppendValue(Payload, static_cast<uint32>(3));
-    Payload.push_back((uint8)EServerType::World);
-    AppendString(Payload, Config.ServerName);
-    AppendString(Payload, "127.0.0.1");
-    AppendValue(Payload, Config.ListenPort);
-    RouterServerConn->Send((uint8)EServerMessageType::MT_ServerRegister, Payload.data(), Payload.size());
+    SendTypedServerMessage(
+        RouterServerConn,
+        EServerMessageType::MT_ServerRegister,
+        SServerRegisterMessage{3, EServerType::World, Config.ServerName, "127.0.0.1", Config.ListenPort});
 }
 
 void MWorldServer::QueryLoginServerRoute()
 {
     if (!RouterServerConn || !RouterServerConn->IsConnected())
+    {
         return;
+    }
 
-    TArray Payload;
-    AppendValue(Payload, NextRouteRequestId++);
-    Payload.push_back((uint8)EServerType::Login);
-    AppendValue(Payload, static_cast<uint64>(0));
-    RouterServerConn->Send((uint8)EServerMessageType::MT_RouteQuery, Payload.data(), Payload.size());
+    SendTypedServerMessage(
+        RouterServerConn,
+        EServerMessageType::MT_RouteQuery,
+        SRouteQueryMessage{NextRouteRequestId++, EServerType::Login, 0});
 }
 
 void MWorldServer::ApplyLoginServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port)
 {
     if (!LoginServerConn)
+    {
         return;
+    }
 
     const SServerConnectionConfig& CurrentConfig = LoginServerConn->GetConfig();
     const bool bRouteChanged =
@@ -684,7 +665,9 @@ void MWorldServer::ApplyLoginServerRoute(uint32 ServerId, const FString& ServerN
         CurrentConfig.Port != Port;
 
     if (bRouteChanged && (LoginServerConn->IsConnected() || LoginServerConn->IsConnecting()))
+    {
         LoginServerConn->Disconnect();
+    }
 
     SServerConnectionConfig NewConfig(ServerId, EServerType::Login, ServerName, Address, Port);
     NewConfig.HeartbeatInterval = CurrentConfig.HeartbeatInterval;
@@ -693,5 +676,7 @@ void MWorldServer::ApplyLoginServerRoute(uint32 ServerId, const FString& ServerN
     LoginServerConn->SetConfig(NewConfig);
 
     if (!LoginServerConn->IsConnected() && !LoginServerConn->IsConnecting())
+    {
         LoginServerConn->Connect();
+    }
 }

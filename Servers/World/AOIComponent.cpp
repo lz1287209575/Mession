@@ -1,5 +1,5 @@
 #include "AOIComponent.h"
-#include "../../Common/Logger.h"
+#include "Common/Logger.h"
 
 void MAOISystem::AddObject(uint64 ObjectId, const SVector& Position)
 {
@@ -16,7 +16,9 @@ void MAOISystem::RemoveObject(uint64 ObjectId)
 {
     auto It = ObjectPositions.find(ObjectId);
     if (It == ObjectPositions.end())
+    {
         return;
+    }
     
     SAOICell Cell = GetCell(It->second);
     RemoveObjectFromCell(ObjectId, Cell);
@@ -53,7 +55,9 @@ void MAOISystem::GetVisibleObjects(uint64 ObjectId, TVector<uint64>& OutVisibleO
     
     auto It = ObjectPositions.find(ObjectId);
     if (It == ObjectPositions.end())
+    {
         return;
+    }
     
     SAOICell CenterCell = GetCell(It->second);
     

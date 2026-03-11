@@ -1,9 +1,10 @@
 #pragma once
 
-#include "../../Core/NetCore.h"
-#include "../../Core/Socket.h"
-#include "../../Common/Logger.h"
-#include "../../Common/ServerConnection.h"
+#include "Core/NetCore.h"
+#include "Core/Socket.h"
+#include "Common/Logger.h"
+#include "Common/ServerConnection.h"
+#include "Common/ServerMessages.h"
 #include <random>
 #include <thread>
 #include <chrono>
@@ -78,6 +79,11 @@ private:
     void ProcessGatewayMessages();
     void HandleGatewayPacket(uint64 ConnectionId, const TArray& Data);
     bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
+    template<typename TMessage>
+    bool SendServerMessage(uint64 ConnectionId, EServerMessageType Type, const TMessage& Message)
+    {
+        return SendServerMessage(ConnectionId, static_cast<uint8>(Type), BuildPayload(Message));
+    }
     void HandleRouterServerMessage(uint8 Type, const TArray& Data);
     void SendRouterRegister();
     uint32 GenerateSessionKey();

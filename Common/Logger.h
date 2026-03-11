@@ -21,7 +21,9 @@ private:
     static void VLog(int Level, const char* Format, va_list Args)
     {
         if (Level < MinLevel || !bConsoleOutput)
+        {
             return;
+        }
 
         char Buffer[4096];
         va_list ArgsCopy;

@@ -22,3 +22,8 @@ alwaysApply: true
 
 - Keep packet parsing and serialization code explicit and bounds-checked.
 - Avoid pointer-cast reads and writes such as `*(uint32*)&Buffer[0]`; prefer `memcpy` or typed serialization helpers.
+
+# Control Flow Braces
+
+- Always use braces for `if`, `for`, and `while`, even when the body is a single statement.
+- Do not introduce single-line control-flow bodies without braces in new code.

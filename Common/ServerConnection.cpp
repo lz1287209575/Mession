@@ -1,4 +1,5 @@
 #include "ServerConnection.h"
+#include "Common/ServerMessages.h"
 #include <poll.h>
 
 // 静态成员定义
@@ -12,10 +13,14 @@ void MServerConnection::UpdateLogPrefix()
 bool MServerConnection::Connect()
 {
     if (State == EConnectionState::Authenticated || State == EConnectionState::Connected)
+    {
         return true;
+    }
     
     if (State == EConnectionState::Connecting)
+    {
         return false;
+    }
     
     return TryConnect();
 }
@@ -87,7 +92,9 @@ bool MServerConnection::TryConnect()
         SendHandshake();
         
         if (OnConnectCallback)
+        {
             OnConnectCallback(shared_from_this());
+        }
         
         return true;
     }
@@ -114,13 +121,17 @@ void MServerConnection::Disconnect()
     LOG_INFO("%s Disconnected", LogPrefix.c_str());
     
     if (OnDisconnectCallback)
+    {
         OnDisconnectCallback(shared_from_this());
+    }
 }
 
 bool MServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
 {
     if (State != EConnectionState::Connected && State != EConnectionState::Authenticated)
+    {
         return false;
+    }
     
     // 消息格式: [Length(4)][Type(1)][Data...]
     TArray Packet;
@@ -130,7 +141,9 @@ bool MServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
     *(uint32*)Packet.data() = TotalSize;
     Packet[4] = Type;
     if (Size > 0 && Data)
+    {
         memcpy(Packet.data() + 5, Data, Size);
+    }
     
     return SendRaw(Packet);
 }
@@ -138,7 +151,9 @@ bool MServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
 bool MServerConnection::SendRaw(const TArray& Data)
 {
     if (SocketFd < 0 || Data.empty())
+    {
         return false;
+    }
     
     ssize_t Sent = send(SocketFd, Data.data(), Data.size(), 0);
     
@@ -160,7 +175,9 @@ void MServerConnection::Tick(float DeltaTime)
     if (State == EConnectionState::Disconnected)
     {
         if (Config.Address.empty() || Config.Port == 0)
+        {
             return;
+        }
 
         // 尝试重连
         ReconnectTimer += DeltaTime;
@@ -174,7 +191,9 @@ void MServerConnection::Tick(float DeltaTime)
     }
     
     if (State != EConnectionState::Connected && State != EConnectionState::Authenticated)
+    {
         return;
+    }
     
     // 处理接收
     ProcessRecv();
@@ -191,7 +210,9 @@ void MServerConnection::Tick(float DeltaTime)
 void MServerConnection::ProcessRecv()
 {
     if (SocketFd < 0)
+    {
         return;
+    }
     
     uint8 Buffer[8192];
     ssize_t BytesRead = recv(SocketFd, Buffer, sizeof(Buffer), 0);
@@ -213,7 +234,9 @@ void MServerConnection::ProcessRecv()
             }
             
             if (RecvBuffer.size() < 4 + PacketSize)
+            {
                 break;
+            }
             
             // 提取完整包
             TArray Packet(RecvBuffer.begin() + 4, RecvBuffer.begin() + 4 + PacketSize);
@@ -259,7 +282,9 @@ void MServerConnection::HandleMessage(uint8 Type, const TArray& Data)
             // 获取远程服务器信息
             SServerInfo RemoteInfo = GetRemoteServerInfo();
             if (OnServerAuthenticatedCallback)
+            {
                 OnServerAuthenticatedCallback(shared_from_this(), RemoteInfo);
+            }
             break;
         }
         
@@ -280,7 +305,9 @@ void MServerConnection::HandleMessage(uint8 Type, const TArray& Data)
         {
             // 转发给应用层
             if (OnMessageCallback)
+            {
                 OnMessageCallback(shared_from_this(), Type, Data);
+            }
             break;
         }
     }
@@ -288,20 +315,12 @@ void MServerConnection::HandleMessage(uint8 Type, const TArray& Data)
 
 void MServerConnection::SendHandshake()
 {
-    TArray Data;
-    
-    // 服务器ID (4 bytes)
-    uint32 Id = LocalServerInfo.ServerId;
-    Data.insert(Data.end(), (uint8*)&Id, (uint8*)&Id + 4);
-    
-    // 服务器类型 (1 byte)
-    Data.push_back((uint8)LocalServerInfo.ServerType);
-    
-    // 服务器名称
-    uint16 NameLen = (uint16)LocalServerInfo.ServerName.size();
-    Data.insert(Data.end(), (uint8*)&NameLen, (uint8*)&NameLen + 2);
-    Data.insert(Data.end(), LocalServerInfo.ServerName.begin(), LocalServerInfo.ServerName.end());
-    
+    const SServerHandshakeMessage Message{
+        LocalServerInfo.ServerId,
+        LocalServerInfo.ServerType,
+        LocalServerInfo.ServerName
+    };
+    TArray Data = BuildPayload(Message);
     Send((uint8)EServerMessageType::MT_ServerHandshake, Data.data(), Data.size());
     
     LOG_INFO("%s Sent handshake to %s:%d", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
@@ -316,8 +335,9 @@ void MServerConnection::SendHandshakeAck()
 
 void MServerConnection::SendHeartbeat()
 {
-    uint32 Seq = ++HeartbeatSeq;
-    Send((uint8)EServerMessageType::MT_Heartbeat, &Seq, 4);
+    const SHeartbeatMessage Message{++HeartbeatSeq};
+    TArray Data = BuildPayload(Message);
+    Send((uint8)EServerMessageType::MT_Heartbeat, Data.data(), Data.size());
 }
 
 void MServerConnection::SendHeartbeatAck()
@@ -328,26 +348,22 @@ void MServerConnection::SendHeartbeatAck()
 // 便捷发送方法
 bool MServerConnection::SendPlayerLogin(uint64 PlayerId, uint32 SessionKey)
 {
-    TArray Data;
-    Data.insert(Data.end(), (uint8*)&PlayerId, (uint8*)&PlayerId + 8);
-    Data.insert(Data.end(), (uint8*)&SessionKey, (uint8*)&SessionKey + 4);
+    const SPlayerLoginResponseMessage Message{0, PlayerId, SessionKey};
+    TArray Data = BuildPayload(Message);
     return Send((uint8)EServerMessageType::MT_PlayerLogin, Data.data(), Data.size());
 }
 
 bool MServerConnection::SendPlayerLogout(uint64 PlayerId)
 {
-    return Send((uint8)EServerMessageType::MT_PlayerLogout, &PlayerId, 8);
+    const SPlayerLogoutMessage Message{PlayerId};
+    TArray Data = BuildPayload(Message);
+    return Send((uint8)EServerMessageType::MT_PlayerLogout, Data.data(), Data.size());
 }
 
 bool MServerConnection::SendChatMessage(uint64 FromPlayerId, const FString& Message)
 {
-    TArray Data;
-    Data.insert(Data.end(), (uint8*)&FromPlayerId, (uint8*)&FromPlayerId + 8);
-    
-    uint16 MsgLen = (uint16)Message.size();
-    Data.insert(Data.end(), (uint8*)&MsgLen, (uint8*)&MsgLen + 2);
-    Data.insert(Data.end(), Message.begin(), Message.end());
-    
+    const SChatMessage ChatMessage{FromPlayerId, Message};
+    TArray Data = BuildPayload(ChatMessage);
     return Send((uint8)EServerMessageType::MT_ChatMessage, Data.data(), Data.size());
 }
 

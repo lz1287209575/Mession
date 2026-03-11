@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../Core/NetCore.h"
+#include "Core/NetCore.h"
 #include "Replicate.h"
-#include "../Common/Logger.h"
+#include "Common/Logger.h"
 
 // 网络对象基类
 class MObject
@@ -168,13 +168,19 @@ public:
     {
         // 序列化所有标记为需要复制的属性
         if (bLocationDirty)
+        {
             Ar << const_cast<SVector&>(Location);
+        }
         
         if (bRotationDirty)
+        {
             Ar << const_cast<SRotator&>(Rotation);
+        }
         
         if (bScaleDirty)
+        {
             Ar << const_cast<SVector&>(Scale);
+        }
     }
     
     // 反序列化属性数据

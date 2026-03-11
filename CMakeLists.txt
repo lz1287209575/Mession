@@ -13,9 +13,6 @@ else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wextra")
 endif()
 
-# 头文件目录
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-
 # 公共源文件
 set(COMMON_SOURCES
     Core/NetCore.cpp
@@ -23,27 +20,46 @@ set(COMMON_SOURCES
     Common/ServerConnection.cpp
 )
 
+# 公共基础库
+add_library(mession_common STATIC
+    ${COMMON_SOURCES}
+)
+target_include_directories(mession_common
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(mession_common PUBLIC m)
+
+# 统一配置每个目标的公共依赖
+function(configure_mession_target TargetName)
+    target_include_directories(${TargetName}
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    target_link_libraries(${TargetName}
+        PRIVATE
+            mession_common
+    )
+endfunction()
+
 # 1. Gateway Server - 网关服务器
 add_executable(GatewayServer 
-    ${COMMON_SOURCES}
     Servers/Gateway/GatewayServer.h
     Servers/Gateway/GatewayServer.cpp
     Servers/Gateway/GatewayServerMain.cpp
 )
-target_link_libraries(GatewayServer m)
+configure_mession_target(GatewayServer)
 
 # 2. Login Server - 登录服务器
 add_executable(LoginServer 
-    ${COMMON_SOURCES}
     Servers/Login/LoginServer.h
     Servers/Login/LoginServer.cpp
     Servers/Login/LoginServerMain.cpp
 )
-target_link_libraries(LoginServer m)
+configure_mession_target(LoginServer)
 
 # 3. World Server - 世界服务器
 add_executable(WorldServer 
-    ${COMMON_SOURCES}
     NetDriver/NetObject.cpp
     NetDriver/NetObject.h
     NetDriver/Replicate.h
@@ -53,25 +69,23 @@ add_executable(WorldServer
     Servers/World/WorldServer.cpp
     Servers/World/WorldServerMain.cpp
 )
-target_link_libraries(WorldServer m)
+configure_mession_target(WorldServer)
 
 # 4. Scene Server - 场景服务器
 add_executable(SceneServer 
-    ${COMMON_SOURCES}
     Servers/Scene/SceneServer.h
     Servers/Scene/SceneServer.cpp
     Servers/Scene/SceneServerMain.cpp
 )
-target_link_libraries(SceneServer m)
+configure_mession_target(SceneServer)
 
 # 5. Router Server - 控制面路由服务器
 add_executable(RouterServer
-    ${COMMON_SOURCES}
     Servers/Router/RouterServer.h
     Servers/Router/RouterServer.cpp
     Servers/Router/RouterServerMain.cpp
 )
-target_link_libraries(RouterServer m)
+configure_mession_target(RouterServer)
 
 # 安装目标
 install(TARGETS 
