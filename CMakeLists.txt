@@ -49,7 +49,9 @@ target_include_directories(mession_common
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
-target_link_libraries(mession_common PUBLIC m)
+if(NOT WIN32)
+    target_link_libraries(mession_common PUBLIC m)
+endif()
 if(WIN32)
     target_link_libraries(mession_common PUBLIC ws2_32)
 endif()
