@@ -3,6 +3,7 @@
 #include "../../Core/NetCore.h"
 #include "../../Core/Socket.h"
 #include "../../Common/Logger.h"
+#include "../../Common/ServerConnection.h"
 #include <thread>
 #include <chrono>
 
@@ -12,6 +13,8 @@ struct SSceneConfig
     uint16 ListenPort = 8004;  // 世界服务器连接端口
     uint16 SceneId = 1;
     FString SceneName = "MainWorld";
+    FString WorldServerAddr = "127.0.0.1";
+    uint16 WorldServerPort = 8003;
     SVector SceneSize = SVector(1000, 1000, 500);
 };
 
@@ -60,7 +63,7 @@ private:
     SSceneConfig Config;
     
     // 世界服务器连接
-    TSharedPtr<MTcpConnection> WorldServerConn;
+    TSharedPtr<MServerConnection> WorldServerConn;
     
     // 场景管理
     TMap<uint16, TSharedPtr<MScene>> Scenes;
@@ -77,7 +80,7 @@ public:
 private:
     void ConnectToWorldServer();
     void ProcessWorldServerMessages();
-    void HandleWorldPacket(const TArray& Data);
+    void HandleWorldPacket(uint8 Type, const TArray& Data);
     
     // 场景管理
     void CreateDefaultScenes();

@@ -11,7 +11,7 @@ void MServerConnection::UpdateLogPrefix()
 
 bool MServerConnection::Connect()
 {
-    if (State == EConnectionState::Authenticated)
+    if (State == EConnectionState::Authenticated || State == EConnectionState::Connected)
         return true;
     
     if (State == EConnectionState::Connecting)

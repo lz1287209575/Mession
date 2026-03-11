@@ -2,6 +2,27 @@
 #include <poll.h>
 #include <time.h>
 
+namespace
+{
+template<typename T>
+void AppendValue(TArray& OutData, const T& Value)
+{
+    const auto* ValueBytes = reinterpret_cast<const uint8*>(&Value);
+    OutData.insert(OutData.end(), ValueBytes, ValueBytes + sizeof(T));
+}
+
+template<typename T>
+bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
+{
+    if (Offset + sizeof(T) > Data.size())
+        return false;
+
+    memcpy(&OutValue, Data.data() + Offset, sizeof(T));
+    Offset += sizeof(T);
+    return true;
+}
+}
+
 MLoginServer::MLoginServer()
 {
     std::random_device Rd;
@@ -36,9 +57,10 @@ void MLoginServer::Shutdown()
     bRunning = false;
     
     // 关闭所有网关连接
-    for (auto& [Id, Conn] : GatewayConnections)
+    for (auto& [Id, Peer] : GatewayConnections)
     {
-        Conn->Close();
+        if (Peer.Connection)
+            Peer.Connection->Close();
     }
     GatewayConnections.clear();
     
@@ -114,8 +136,10 @@ void MLoginServer::AcceptGateways()
         uint64 ConnectionId = NextConnectionId++;
         auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));
         Connection->SetNonBlocking(true);
-        
-        GatewayConnections[ConnectionId] = Connection;
+
+        SGatewayPeer Peer;
+        Peer.Connection = Connection;
+        GatewayConnections[ConnectionId] = Peer;
         
         LOG_INFO("New gateway connected: %s (connection_id=%llu)", 
                  Address.c_str(), (unsigned long long)ConnectionId);
@@ -129,13 +153,13 @@ void MLoginServer::ProcessGatewayMessages()
     TVector<uint64> DisconnectedGateways;
     
     TVector<pollfd> PollFds;
-    for (auto& [ConnId, Conn] : GatewayConnections)
+    for (auto& [ConnId, Peer] : GatewayConnections)
     {
-        if (Conn->IsConnected())
+        if (Peer.Connection && Peer.Connection->IsConnected())
         {
-            Conn->FlushSendBuffer();
+            Peer.Connection->FlushSendBuffer();
             pollfd Pfd;
-            Pfd.fd = Conn->GetSocketFd();
+            Pfd.fd = Peer.Connection->GetSocketFd();
             Pfd.events = POLLIN;
             PollFds.push_back(Pfd);
         }
@@ -150,7 +174,7 @@ void MLoginServer::ProcessGatewayMessages()
         return;
     
     size_t Index = 0;
-    for (auto& [ConnId, Conn] : GatewayConnections)
+    for (auto& [ConnId, Peer] : GatewayConnections)
     {
         if (Index >= PollFds.size())
             break;
@@ -158,12 +182,12 @@ void MLoginServer::ProcessGatewayMessages()
         if (PollFds[Index].revents & POLLIN)
         {
             TArray Packet;
-            while (Conn->ReceivePacket(Packet))
+            while (Peer.Connection->ReceivePacket(Packet))
             {
                 HandleGatewayPacket(ConnId, Packet);
             }
             
-            if (!Conn->IsConnected())
+            if (!Peer.Connection->IsConnected())
             {
                 DisconnectedGateways.push_back(ConnId);
             }
@@ -181,40 +205,122 @@ void MLoginServer::ProcessGatewayMessages()
 
 void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
 {
-    if (Data.empty() || Data.size() < 2)
+    if (Data.empty())
         return;
-    
-    // 解析消息
-    // 格式: [MsgType(1)][PlayerId(8)][PlayerNameLen(2)][PlayerName...]
-    uint8 MsgType = Data[0];
-    
-    if (MsgType == 1) // Login request
-    {
-        if (Data.size() < 10)
-            return;
 
-        uint64 PlayerId = 0;
-        memcpy(&PlayerId, Data.data() + 1, sizeof(PlayerId));
-        
-        // 创建会话
-        uint32 SessionKey = CreateSession(PlayerId, ConnectionId);
-        
-        // 发送响应
-        TArray Response;
-        Response.resize(1 + sizeof(SessionKey) + sizeof(PlayerId));
-        Response[0] = 2; // LoginResponse
-        memcpy(Response.data() + 1, &SessionKey, sizeof(SessionKey));
-        memcpy(Response.data() + 1 + sizeof(SessionKey), &PlayerId, sizeof(PlayerId));
-        
-        auto It = GatewayConnections.find(ConnectionId);
-        if (It != GatewayConnections.end())
+    auto PeerIt = GatewayConnections.find(ConnectionId);
+    if (PeerIt == GatewayConnections.end())
+        return;
+
+    SGatewayPeer& Peer = PeerIt->second;
+    const uint8 MsgType = Data[0];
+    const TArray Payload(Data.begin() + 1, Data.end());
+
+    switch ((EServerMessageType)MsgType)
+    {
+        case EServerMessageType::MT_ServerHandshake:
         {
-            It->second->Send(Response.data(), Response.size());
+            if (!Peer.bAuthenticated &&
+                (Payload.size() == sizeof(uint64) || Payload.size() == sizeof(uint64) + 1))
+            {
+                uint64 PlayerId = 0;
+                memcpy(&PlayerId, Payload.data(), sizeof(PlayerId));
+
+                const uint32 SessionKey = CreateSession(PlayerId, ConnectionId);
+
+                TArray Response;
+                Response.resize(1 + sizeof(SessionKey) + sizeof(PlayerId));
+                Response[0] = 2;
+                memcpy(Response.data() + 1, &SessionKey, sizeof(SessionKey));
+                memcpy(Response.data() + 1 + sizeof(SessionKey), &PlayerId, sizeof(PlayerId));
+                Peer.Connection->Send(Response.data(), Response.size());
+
+                LOG_INFO("Player %llu logged in, session key: %u",
+                         (unsigned long long)PlayerId,
+                         SessionKey);
+                break;
+            }
+
+            size_t Offset = 0;
+            uint32 ServerId = 0;
+            uint8 ServerTypeValue = 0;
+            uint16 NameLen = 0;
+            if (!ReadValue(Payload, Offset, ServerId) ||
+                !ReadValue(Payload, Offset, ServerTypeValue) ||
+                !ReadValue(Payload, Offset, NameLen) ||
+                Offset + NameLen > Payload.size())
+            {
+                LOG_WARN("Invalid handshake payload from connection %llu",
+                         (unsigned long long)ConnectionId);
+                return;
+            }
+
+            Peer.ServerId = ServerId;
+            Peer.ServerType = (EServerType)ServerTypeValue;
+            Peer.ServerName.assign(reinterpret_cast<const char*>(Payload.data() + Offset), NameLen);
+            Peer.bAuthenticated = true;
+
+            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_ServerHandshakeAck, {});
+            LOG_INFO("Gateway %s authenticated (id=%u)",
+                     Peer.ServerName.c_str(),
+                     Peer.ServerId);
+            break;
         }
-        
-        LOG_INFO("Player %llu logged in, session key: %u", 
-                 (unsigned long long)PlayerId, SessionKey);
+
+        case EServerMessageType::MT_Heartbeat:
+        {
+            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_HeartbeatAck, {});
+            break;
+        }
+
+        case EServerMessageType::MT_PlayerLogin:
+        {
+            if (!Peer.bAuthenticated)
+            {
+                LOG_WARN("Rejecting player login from unauthenticated connection %llu",
+                         (unsigned long long)ConnectionId);
+                return;
+            }
+
+            size_t Offset = 0;
+            uint64 ClientConnectionId = 0;
+            uint64 PlayerId = 0;
+            if (!ReadValue(Payload, Offset, ClientConnectionId) ||
+                !ReadValue(Payload, Offset, PlayerId))
+            {
+                LOG_WARN("Invalid player login payload size: %zu", Payload.size());
+                return;
+            }
+
+            const uint32 SessionKey = CreateSession(PlayerId, ClientConnectionId);
+
+            TArray ResponsePayload;
+            AppendValue(ResponsePayload, ClientConnectionId);
+            AppendValue(ResponsePayload, PlayerId);
+            AppendValue(ResponsePayload, SessionKey);
+            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_PlayerLogin, ResponsePayload);
+
+            LOG_INFO("Player %llu logged in, session key: %u", 
+                     (unsigned long long)PlayerId, SessionKey);
+            break;
+        }
+
+        default:
+            break;
     }
+}
+
+bool MLoginServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload)
+{
+    auto It = GatewayConnections.find(ConnectionId);
+    if (It == GatewayConnections.end() || !It->second.Connection)
+        return false;
+
+    TArray Packet;
+    Packet.reserve(1 + Payload.size());
+    Packet.push_back(Type);
+    Packet.insert(Packet.end(), Payload.begin(), Payload.end());
+    return It->second.Connection->Send(Packet.data(), Packet.size());
 }
 
 uint32 MLoginServer::CreateSession(uint64 PlayerId, uint64 ConnectionId)

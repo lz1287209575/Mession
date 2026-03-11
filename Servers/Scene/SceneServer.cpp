@@ -1,6 +1,20 @@
 #include "SceneServer.h"
 #include <poll.h>
 
+namespace
+{
+template<typename T>
+bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
+{
+    if (Offset + sizeof(T) > Data.size())
+        return false;
+
+    memcpy(&OutValue, Data.data() + Offset, sizeof(T));
+    Offset += sizeof(T);
+    return true;
+}
+}
+
 MSceneServer::MSceneServer()
 {
 }
@@ -17,6 +31,8 @@ bool MSceneServer::Init(int InPort)
     
     // 创建默认场景
     CreateDefaultScenes();
+
+    ConnectToWorldServer();
     
     bRunning = true;
     
@@ -37,7 +53,7 @@ void MSceneServer::Shutdown()
     
     // 关闭世界服务器连接
     if (WorldServerConn)
-        WorldServerConn->Close();
+        WorldServerConn->Disconnect();
     
     // 清理场景
     Scenes.clear();
@@ -83,47 +99,46 @@ void MSceneServer::Run()
 
 void MSceneServer::ConnectToWorldServer()
 {
-    // 连接到世界服务器
-    // TODO: 实现
-    
+    MServerConnection::SetLocalInfo(Config.SceneId, EServerType::Scene, Config.SceneName);
+
+    SServerConnectionConfig WorldConfig(3, EServerType::World, "World01", Config.WorldServerAddr, Config.WorldServerPort);
+    WorldServerConn = TSharedPtr<MServerConnection>(new MServerConnection(WorldConfig));
+    WorldServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
+        LOG_INFO("Connected to world server: %s", Info.ServerName.c_str());
+    });
+    WorldServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+        HandleWorldPacket(Type, Data);
+    });
+    WorldServerConn->Connect();
+
     LOG_INFO("Connecting to world server...");
 }
 
 void MSceneServer::ProcessWorldServerMessages()
 {
-    if (!WorldServerConn || !WorldServerConn->IsConnected())
+    if (!WorldServerConn)
         return;
 
-    WorldServerConn->FlushSendBuffer();
-
-    TArray Packet;
-    while (WorldServerConn->ReceivePacket(Packet))
-    {
-        HandleWorldPacket(Packet);
-    }
+    WorldServerConn->Tick(0.016f);
 }
 
-void MSceneServer::HandleWorldPacket(const TArray& Data)
+void MSceneServer::HandleWorldPacket(uint8 Type, const TArray& Data)
 {
-    if (Data.empty())
-        return;
-    
-    uint8 MsgType = Data[0];
-    
-    switch (MsgType)
+    switch ((EServerMessageType)Type)
     {
-        case 1: // 进入场景
+        case EServerMessageType::MT_PlayerSwitchServer:
         {
-            if (Data.size() < 17)
-                return;
-            
-            uint64 PlayerId = *(uint64*)&Data[1];
-            uint16 SceneId = *(uint16*)&Data[9];
+            size_t Offset = 0;
+            uint64 PlayerId = 0;
+            uint16 SceneId = 0;
             SVector Position;
-            Position.X = *(float*)&Data[11];
-            Position.Y = *(float*)&Data[15];
-            Position.Z = *(float*)&Data[19];
-            
+            if (!ReadValue(Data, Offset, PlayerId) ||
+                !ReadValue(Data, Offset, SceneId) ||
+                !ReadValue(Data, Offset, Position.X) ||
+                !ReadValue(Data, Offset, Position.Y) ||
+                !ReadValue(Data, Offset, Position.Z))
+                return;
+
             auto Scene = GetScene(SceneId);
             if (Scene)
             {
@@ -137,15 +152,16 @@ void MSceneServer::HandleWorldPacket(const TArray& Data)
             }
             break;
         }
-        
-        case 2: // 离开场景
+
+        case EServerMessageType::MT_PlayerLogout:
         {
-            if (Data.size() < 11)
+            size_t Offset = 0;
+            uint64 PlayerId = 0;
+            uint16 SceneId = 0;
+            if (!ReadValue(Data, Offset, PlayerId) ||
+                !ReadValue(Data, Offset, SceneId))
                 return;
-            
-            uint64 PlayerId = *(uint64*)&Data[1];
-            uint16 SceneId = *(uint16*)&Data[9];
-            
+
             auto Scene = GetScene(SceneId);
             if (Scene)
             {
@@ -156,19 +172,20 @@ void MSceneServer::HandleWorldPacket(const TArray& Data)
             }
             break;
         }
-        
-        case 3: // 位置更新
+
+        case EServerMessageType::MT_PlayerDataSync:
         {
-            if (Data.size() < 21)
-                return;
-            
-            uint64 PlayerId = *(uint64*)&Data[1];
-            uint16 SceneId = *(uint16*)&Data[9];
+            size_t Offset = 0;
+            uint64 PlayerId = 0;
+            uint16 SceneId = 0;
             SVector Position;
-            Position.X = *(float*)&Data[11];
-            Position.Y = *(float*)&Data[15];
-            Position.Z = *(float*)&Data[19];
-            
+            if (!ReadValue(Data, Offset, PlayerId) ||
+                !ReadValue(Data, Offset, SceneId) ||
+                !ReadValue(Data, Offset, Position.X) ||
+                !ReadValue(Data, Offset, Position.Y) ||
+                !ReadValue(Data, Offset, Position.Z))
+                return;
+
             auto Scene = GetScene(SceneId);
             if (Scene)
             {
@@ -176,6 +193,9 @@ void MSceneServer::HandleWorldPacket(const TArray& Data)
             }
             break;
         }
+
+        default:
+            break;
     }
 }
 

@@ -67,4 +67,6 @@ private:
     void ConnectToWorldServer();
     void HandleClientPacket(uint64 ConnectionId, const TArray& Data);
     void ForwardToBackend(uint64 ConnectionId, const TArray& Data);
+    void HandleLoginServerMessage(uint8 Type, const TArray& Data);
+    void HandleWorldServerMessage(uint8 Type, const TArray& Data);
 };

@@ -3,6 +3,7 @@
 #include "../../Core/NetCore.h"
 #include "../../Core/Socket.h"
 #include "../../Common/Logger.h"
+#include "../../Common/ServerConnection.h"
 #include <random>
 #include <thread>
 #include <chrono>
@@ -24,6 +25,15 @@ struct SSession
     uint64 ExpireTime;  // 过期时间戳
 };
 
+struct SGatewayPeer
+{
+    TSharedPtr<MTcpConnection> Connection;
+    bool bAuthenticated = false;
+    uint32 ServerId = 0;
+    EServerType ServerType = EServerType::Unknown;
+    FString ServerName;
+};
+
 // 登录服务器
 class MLoginServer
 {
@@ -35,7 +45,7 @@ private:
     SLoginConfig Config;
     
     // 网关连接
-    TMap<uint64, TSharedPtr<MTcpConnection>> GatewayConnections;
+    TMap<uint64, SGatewayPeer> GatewayConnections;
     uint64 NextConnectionId = 1;
     
     // 会话管理
@@ -63,5 +73,6 @@ private:
     void AcceptGateways();
     void ProcessGatewayMessages();
     void HandleGatewayPacket(uint64 ConnectionId, const TArray& Data);
+    bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
     uint32 GenerateSessionKey();
 };

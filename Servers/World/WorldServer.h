@@ -3,6 +3,7 @@
 #include "../../Core/NetCore.h"
 #include "../../Core/Socket.h"
 #include "../../Common/Logger.h"
+#include "../../Common/ServerConnection.h"
 #include "../../NetDriver/NetObject.h"
 #include "../../NetDriver/ReplicationDriver.h"
 #include <thread>
@@ -29,6 +30,15 @@ struct SPlayer
     bool bOnline = false;
 };
 
+struct SBackendPeer
+{
+    TSharedPtr<MTcpConnection> Connection;
+    bool bAuthenticated = false;
+    uint32 ServerId = 0;
+    EServerType ServerType = EServerType::Unknown;
+    FString ServerName;
+};
+
 // 世界服务器
 class MWorldServer
 {
@@ -40,12 +50,8 @@ private:
     SWorldConfig Config;
     
     // 网关连接
-    TMap<uint64, TSharedPtr<MTcpConnection>> GatewayConnections;
+    TMap<uint64, SBackendPeer> BackendConnections;
     uint64 NextConnectionId = 1;
-    
-    // 场景服务器连接
-    TMap<uint16, TSharedPtr<MTcpConnection>> SceneServers;  // SceneId -> Connection
-    uint16 NextSceneId = 1;
     
     // 玩家管理
     TMap<uint64, SPlayer> Players;  // PlayerId -> Player
@@ -67,6 +73,9 @@ private:
     void AcceptConnections();
     void ProcessMessages();
     void HandlePacket(uint64 ConnectionId, const TArray& Data);
+    void HandleGameplayPacket(uint64 ConnectionId, const TArray& Data);
+    bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
+    void BroadcastToScenes(uint8 Type, const TArray& Payload);
     
     // 玩家管理
     void AddPlayer(uint64 PlayerId, const FString& Name, uint64 ConnectionId);

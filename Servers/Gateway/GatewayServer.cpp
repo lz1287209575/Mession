@@ -1,6 +1,27 @@
 #include "GatewayServer.h"
 #include <poll.h>
 
+namespace
+{
+template<typename T>
+void AppendValue(TArray& OutData, const T& Value)
+{
+    const auto* ValueBytes = reinterpret_cast<const uint8*>(&Value);
+    OutData.insert(OutData.end(), ValueBytes, ValueBytes + sizeof(T));
+}
+
+template<typename T>
+bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
+{
+    if (Offset + sizeof(T) > Data.size())
+        return false;
+
+    memcpy(&OutValue, Data.data() + Offset, sizeof(T));
+    Offset += sizeof(T);
+    return true;
+}
+}
+
 bool MGatewayServer::Init(int InPort)
 {
     // 创建监听socket
@@ -36,12 +57,18 @@ bool MGatewayServer::Init(int InPort)
     LoginServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Login Server authenticated: %s", Info.ServerName.c_str());
     });
+    LoginServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+        HandleLoginServerMessage(Type, Data);
+    });
     
     WorldServerConn->SetOnConnect([](auto) {
         LOG_INFO("Connected to World Server!");
     });
     WorldServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("World Server authenticated: %s", Info.ServerName.c_str());
+    });
+    WorldServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+        HandleWorldServerMessage(Type, Data);
     });
     
     // 尝试连接后端服务器
@@ -88,28 +115,19 @@ void MGatewayServer::Tick()
 {
     if (!bRunning)
         return;
+
+    static constexpr float BackendTickInterval = 0.016f;
     
     // 接受新客户端
     AcceptClients();
     
+    if (LoginServerConn)
+        LoginServerConn->Tick(BackendTickInterval);
+    if (WorldServerConn)
+        WorldServerConn->Tick(BackendTickInterval);
+
     // 处理客户端消息
     ProcessClientMessages();
-    
-    // 定期尝试连接后端服务器
-    static float ConnectTimer = 0.0f;
-    ConnectTimer += 0.1f;
-    if (ConnectTimer >= 5.0f)  // 每5秒尝试一次
-    {
-        ConnectTimer = 0.0f;
-        if (LoginServerConn && !LoginServerConn->IsConnected())
-        {
-            LoginServerConn->Connect();
-        }
-        if (WorldServerConn && !WorldServerConn->IsConnected())
-        {
-            WorldServerConn->Connect();
-        }
-    }
 }
 
 void MGatewayServer::Run()
@@ -208,7 +226,7 @@ void MGatewayServer::ProcessClientMessages()
     }
 }
 
-void MGatewayServer::HandleClientPacket(uint64 /*ConnectionId*/, const TArray& Data)
+void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TArray& Data)
 {
     if (Data.empty())
         return;
@@ -222,13 +240,137 @@ void MGatewayServer::HandleClientPacket(uint64 /*ConnectionId*/, const TArray& D
     // 登录相关消息转发到LoginServer
     if (MsgType == 1 || MsgType == 3) // Handshake or Login
     {
-        // TODO: 转发到LoginServer
-        LOG_DEBUG("Forwarding message type %d to LoginServer", MsgType);
+        ForwardToBackend(ConnectionId, Data);
     }
     // 游戏消息转发到WorldServer
     else
     {
-        // TODO: 转发到WorldServer
-        LOG_DEBUG("Forwarding message type %d to WorldServer", MsgType);
+        ForwardToBackend(ConnectionId, Data);
+    }
+}
+
+void MGatewayServer::ForwardToBackend(uint64 ConnectionId, const TArray& Data)
+{
+    auto ClientIt = ClientConnections.find(ConnectionId);
+    if (ClientIt == ClientConnections.end())
+        return;
+
+    if (Data.empty())
+        return;
+
+    const uint8 MsgType = Data[0];
+    if (MsgType == 1 || MsgType == 3)
+    {
+        if (!LoginServerConn || !LoginServerConn->IsConnected())
+        {
+            LOG_WARN("Login server unavailable, dropping login request");
+            return;
+        }
+
+        if (Data.size() < 1 + sizeof(uint64))
+        {
+            LOG_WARN("Invalid client login packet size: %zu", Data.size());
+            return;
+        }
+
+        uint64 PlayerId = 0;
+        memcpy(&PlayerId, Data.data() + 1, sizeof(PlayerId));
+
+        TArray Payload;
+        AppendValue(Payload, ConnectionId);
+        AppendValue(Payload, PlayerId);
+        LoginServerConn->Send((uint8)EServerMessageType::MT_PlayerLogin, Payload.data(), Payload.size());
+        LOG_DEBUG("Forwarded login request for player %llu", (unsigned long long)PlayerId);
+        return;
+    }
+
+    if (!ClientIt->second->bAuthenticated)
+    {
+        LOG_WARN("Ignoring unauthenticated client message type %d", MsgType);
+        return;
+    }
+
+    if (!WorldServerConn || !WorldServerConn->IsConnected())
+    {
+        LOG_WARN("World server unavailable, dropping client message type %d", MsgType);
+        return;
+    }
+
+    TArray Payload;
+    AppendValue(Payload, ConnectionId);
+
+    const uint32 DataSize = static_cast<uint32>(Data.size());
+    AppendValue(Payload, DataSize);
+    Payload.insert(Payload.end(), Data.begin(), Data.end());
+
+    WorldServerConn->Send((uint8)EServerMessageType::MT_PlayerDataSync, Payload.data(), Payload.size());
+    LOG_DEBUG("Forwarded client message type %d to WorldServer", MsgType);
+}
+
+void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
+{
+    if (Type != (uint8)EServerMessageType::MT_PlayerLogin)
+        return;
+
+    size_t Offset = 0;
+    uint64 ConnectionId = 0;
+    uint64 PlayerId = 0;
+    uint32 SessionKey = 0;
+    if (!ReadValue(Data, Offset, ConnectionId) ||
+        !ReadValue(Data, Offset, PlayerId) ||
+        !ReadValue(Data, Offset, SessionKey))
+    {
+        LOG_WARN("Invalid login server payload size: %zu", Data.size());
+        return;
+    }
+
+    auto ClientIt = ClientConnections.find(ConnectionId);
+    if (ClientIt == ClientConnections.end())
+    {
+        LOG_WARN("Login response for unknown client %llu", (unsigned long long)ConnectionId);
+        return;
+    }
+
+    auto& Client = ClientIt->second;
+    Client->PlayerId = PlayerId;
+    Client->SessionToken = SessionKey;
+    Client->bAuthenticated = true;
+
+    TArray Response;
+    Response.resize(1 + sizeof(SessionKey) + sizeof(PlayerId));
+    Response[0] = 2;
+    memcpy(Response.data() + 1, &SessionKey, sizeof(SessionKey));
+    memcpy(Response.data() + 1 + sizeof(SessionKey), &PlayerId, sizeof(PlayerId));
+    Client->Connection->Send(Response.data(), Response.size());
+
+    if (WorldServerConn && WorldServerConn->IsConnected())
+    {
+        TArray Payload;
+        AppendValue(Payload, ConnectionId);
+        AppendValue(Payload, PlayerId);
+        AppendValue(Payload, SessionKey);
+        WorldServerConn->Send((uint8)EServerMessageType::MT_PlayerLogin, Payload.data(), Payload.size());
+    }
+
+    LOG_INFO("Client %llu authenticated as player %llu",
+             (unsigned long long)ConnectionId,
+             (unsigned long long)PlayerId);
+}
+
+void MGatewayServer::HandleWorldServerMessage(uint8 Type, const TArray& Data)
+{
+    if (Type == (uint8)EServerMessageType::MT_PlayerLogout)
+    {
+        size_t Offset = 0;
+        uint64 ConnectionId = 0;
+        if (!ReadValue(Data, Offset, ConnectionId))
+            return;
+
+        auto ClientIt = ClientConnections.find(ConnectionId);
+        if (ClientIt != ClientConnections.end())
+        {
+            ClientIt->second->bAuthenticated = false;
+            ClientIt->second->SessionToken = 0;
+        }
     }
 }
