@@ -162,6 +162,7 @@ flowchart LR
 |------|------|
 | `MT_ServerRegister` | 服务注册 |
 | `MT_ServerRegisterAck` | 注册确认 |
+| `MT_ServerLoadReport` | 负载上报（CurrentLoad, Capacity） |
 | `MT_RouteQuery` | 路由查询 |
 | `MT_RouteResponse` | 路由结果返回 |
 
@@ -262,10 +263,45 @@ sequenceDiagram
 - 已完成动态发现
 - 已完成玩家到世界服的稳定路由绑定
 
+## 负载上报与多世界服选路
+
+### 负载上报
+
+- `WorldServer` 每 5 秒向 Router 发送 `MT_ServerLoadReport`，上报当前在线玩家数（CurrentLoad）和最大容量（Capacity）
+- `SceneServer` 每 5 秒向 Router 发送 `MT_ServerLoadReport`，上报当前实体数（CurrentLoad）和最大容量（Capacity）
+- Router 将负载信息存储在 `SRouterPeer` 的 `CurrentLoad`、`Capacity` 字段中
+
+### 多世界服选路策略
+
+当存在多个 WorldServer 时，Router 按以下策略选路：
+
+1. **玩家绑定优先**：若玩家已有世界服绑定，直接返回原目标
+2. **负载均衡**：若无绑定，选择 `CurrentLoad/Capacity` 比值最低的 WorldServer
+3. **同负载时**：按 ServerId 升序选择
+
+## 路由租约与失效重分配
+
+### 路由租约
+
+- 玩家到世界服的绑定具有租约期限，默认 300 秒
+- 配置项：`route_lease_seconds` 或环境变量 `MESSION_ROUTE_LEASE_SECONDS`
+- 租约过期后，下次路由查询将重新选路（便于负载再均衡）
+
+### 失效重分配
+
+- 当 WorldServer 断开连接时，Router 在 `RemovePeer` 中自动解除该 World 上所有玩家的绑定
+- 玩家下次登录或重连时，将重新查询路由并分配到可用 World
+- 无需额外配置，与现有连接管理逻辑配合工作
+
+## Zone / 分片支持
+
+- `ZoneId` (uint16)：0 表示任意区，非 0 表示指定区
+- 注册时：World/Scene 可指定 `zone_id` 表示所属区
+- 查询时：Gateway 可指定 `zone_id`，Router 只返回该区的服务器
+- 配置：`gateway.conf` / `world.conf` 的 `zone_id`，或环境变量 `MESSION_ZONE_ID`
+
 ## 后续可扩展方向
 
-- 负载上报
-- 多世界服选路策略
 - 场景服拓扑查询
 - 路由租约和失效重分配
 - 区服 / 分片 / Zone 感知

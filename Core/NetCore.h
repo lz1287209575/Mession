@@ -13,6 +13,13 @@
 #include <queue>
 #include <set>
 #include <deque>
+#include <unordered_map>
+#include <optional>
+#include <utility>
+#include <atomic>
+#include <mutex>
+#include <chrono>
+#include <thread>
 
 // 类型别名
 using uint8 = uint8_t;
@@ -64,10 +71,39 @@ using TEnableSharedFromThis = std::enable_shared_from_this<T>;
 template<typename Signature>
 using TFunction = std::function<Signature>;
 
+template<typename K, typename V, typename Hash = std::hash<K>, typename KeyEqual = std::equal_to<K>>
+using TUnorderedMap = std::unordered_map<K, V, Hash, KeyEqual>;
+
+template<typename T>
+using TOptional = std::optional<T>;
+
+template<typename TFirst, typename TSecond>
+using TPair = std::pair<TFirst, TSecond>;
+
+// 文件流
+#include <fstream>
+using TIfstream = std::ifstream;
+using TOfstream = std::ofstream;
+
 // 兼容旧命名，后续逐步迁移
 using FString = TString;
 using FName = TName;
 using TArray = TByteArray;
+
+// 字节序：协议使用网络字节序（大端），提供 HostToNetwork/NetworkToHost 供序列化使用
+#if defined(_WIN32) || defined(_WIN64)
+    #include <stdlib.h>
+    inline uint16 HostToNetwork(uint16 Value) { return _byteswap_ushort(Value); }
+    inline uint32 HostToNetwork(uint32 Value) { return _byteswap_ulong(Value); }
+    inline uint64 HostToNetwork(uint64 Value) { return _byteswap_uint64(Value); }
+#else
+    inline uint16 HostToNetwork(uint16 Value) { return __builtin_bswap16(Value); }
+    inline uint32 HostToNetwork(uint32 Value) { return __builtin_bswap32(Value); }
+    inline uint64 HostToNetwork(uint64 Value) { return __builtin_bswap64(Value); }
+#endif
+inline uint16 NetworkToHost(uint16 Value) { return HostToNetwork(Value); }
+inline uint32 NetworkToHost(uint32 Value) { return HostToNetwork(Value); }
+inline uint64 NetworkToHost(uint64 Value) { return HostToNetwork(Value); }
 
 // 常量定义
 constexpr uint32 MAX_PACKET_SIZE = 65535;
@@ -116,15 +152,99 @@ struct STransform
     SVector Scale = SVector(1.0f, 1.0f, 1.0f);
 };
 
-// 唯一ID生成器
+// 时间抽象
+class MTime
+{
+public:
+    static double GetTimeSeconds()
+    {
+        auto Now = std::chrono::steady_clock::now();
+        return std::chrono::duration<double>(Now.time_since_epoch()).count();
+    }
+
+    static void SleepSeconds(double Seconds)
+    {
+        if (Seconds > 0.0)
+        {
+            std::this_thread::sleep_for(std::chrono::duration<double>(Seconds));
+        }
+    }
+
+    static void SleepMilliseconds(uint32 Ms)
+    {
+        if (Ms > 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(Ms));
+        }
+    }
+};
+
+// Result/Error 类型 - 统一错误返回
+template<typename T, typename E = TString>
+struct TResult
+{
+    TOptional<T> Value;
+    TOptional<E> Error;
+
+    static TResult Ok(T InValue)
+    {
+        TResult R;
+        R.Value = InValue;
+        return R;
+    }
+
+    static TResult Err(E InError)
+    {
+        TResult R;
+        R.Error = InError;
+        return R;
+    }
+
+    bool IsOk() const { return Value.has_value(); }
+    bool IsErr() const { return Error.has_value(); }
+    T& GetValue() { return *Value; }
+    const T& GetValue() const { return *Value; }
+    E& GetError() { return *Error; }
+    const E& GetError() const { return *Error; }
+};
+
+// void 特化：仅表示成功/失败
+template<typename E>
+struct TResult<void, E>
+{
+    bool bSuccess = false;
+    TOptional<E> Error;
+
+    static TResult Ok()
+    {
+        TResult R;
+        R.bSuccess = true;
+        return R;
+    }
+
+    static TResult Err(E InError)
+    {
+        TResult R;
+        R.bSuccess = false;
+        R.Error = InError;
+        return R;
+    }
+
+    bool IsOk() const { return bSuccess; }
+    bool IsErr() const { return Error.has_value(); }
+    E& GetError() { return *Error; }
+    const E& GetError() const { return *Error; }
+};
+
+// 唯一ID生成器（线程安全）
 class MUniqueIdGenerator
 {
 private:
-    inline static uint64 CurrentId = 0;
-    
+    inline static std::atomic<uint64> CurrentId{0};
+
 public:
     static uint64 Generate()
     {
-        return ++CurrentId;
+        return CurrentId.fetch_add(1, std::memory_order_relaxed) + 1;
     }
 };

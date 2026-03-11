@@ -51,6 +51,7 @@ struct SServerRegisterMessage
     FString ServerName;
     FString Address;
     uint16 Port = 0;
+    uint16 ZoneId = 0;
 };
 
 inline void Serialize(MMessageWriter& Writer, const SServerRegisterMessage& Message)
@@ -59,7 +60,8 @@ inline void Serialize(MMessageWriter& Writer, const SServerRegisterMessage& Mess
         .Write(static_cast<uint8>(Message.ServerType))
         .WriteString(Message.ServerName)
         .WriteString(Message.Address)
-        .Write(Message.Port);
+        .Write(Message.Port)
+        .Write(Message.ZoneId);
 }
 
 inline bool Deserialize(MMessageReader& Reader, SServerRegisterMessage& OutMessage)
@@ -75,6 +77,10 @@ inline bool Deserialize(MMessageReader& Reader, SServerRegisterMessage& OutMessa
     }
 
     OutMessage.ServerType = static_cast<EServerType>(ServerTypeValue);
+    if (Reader.GetRemainingSize() >= sizeof(uint16))
+    {
+        Reader.Read(OutMessage.ZoneId);
+    }
     return true;
 }
 
@@ -93,18 +99,36 @@ inline bool Deserialize(MMessageReader& Reader, SServerRegisterAckMessage& OutMe
     return Reader.Read(OutMessage.Result);
 }
 
+struct SServerLoadReportMessage
+{
+    uint32 CurrentLoad = 0;
+    uint32 Capacity = 0;
+};
+
+inline void Serialize(MMessageWriter& Writer, const SServerLoadReportMessage& Message)
+{
+    Writer.Write(Message.CurrentLoad).Write(Message.Capacity);
+}
+
+inline bool Deserialize(MMessageReader& Reader, SServerLoadReportMessage& OutMessage)
+{
+    return Reader.Read(OutMessage.CurrentLoad) && Reader.Read(OutMessage.Capacity);
+}
+
 struct SRouteQueryMessage
 {
     uint64 RequestId = 0;
     EServerType RequestedType = EServerType::Unknown;
     uint64 PlayerId = 0;
+    uint16 ZoneId = 0;
 };
 
 inline void Serialize(MMessageWriter& Writer, const SRouteQueryMessage& Message)
 {
     Writer.Write(Message.RequestId)
         .Write(static_cast<uint8>(Message.RequestedType))
-        .Write(Message.PlayerId);
+        .Write(Message.PlayerId)
+        .Write(Message.ZoneId);
 }
 
 inline bool Deserialize(MMessageReader& Reader, SRouteQueryMessage& OutMessage)
@@ -118,6 +142,10 @@ inline bool Deserialize(MMessageReader& Reader, SRouteQueryMessage& OutMessage)
     }
 
     OutMessage.RequestedType = static_cast<EServerType>(RequestedTypeValue);
+    if (Reader.GetRemainingSize() >= sizeof(uint16))
+    {
+        Reader.Read(OutMessage.ZoneId);
+    }
     return true;
 }
 
@@ -146,7 +174,8 @@ inline void Serialize(MMessageWriter& Writer, const SRouteResponseMessage& Messa
         .Write(static_cast<uint8>(Message.ServerInfo.ServerType))
         .WriteString(Message.ServerInfo.ServerName)
         .WriteString(Message.ServerInfo.Address)
-        .Write(Message.ServerInfo.Port);
+        .Write(Message.ServerInfo.Port)
+        .Write(Message.ServerInfo.ZoneId);
 }
 
 inline bool Deserialize(MMessageReader& Reader, SRouteResponseMessage& OutMessage)
@@ -179,6 +208,10 @@ inline bool Deserialize(MMessageReader& Reader, SRouteResponseMessage& OutMessag
     }
 
     OutMessage.ServerInfo.ServerType = static_cast<EServerType>(ServerTypeValue);
+    if (Reader.GetRemainingSize() >= sizeof(uint16))
+    {
+        Reader.Read(OutMessage.ServerInfo.ZoneId);
+    }
     return true;
 }
 

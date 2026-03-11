@@ -1,25 +1,51 @@
 #include "GatewayServer.h"
+#include "Common/Config.h"
 #include "Common/ServerMessages.h"
 #include "Messages/NetMessages.h"
 #include "Core/Poll.h"
 
 namespace
 {
+const TMap<FString, const char*> GatewayEnvMap = {
+    {"port", "MESSION_GATEWAY_PORT"},
+    {"router_addr", "MESSION_ROUTER_ADDR"},
+    {"router_port", "MESSION_ROUTER_PORT"},
+    {"zone_id", "MESSION_ZONE_ID"},
+};
+
 bool IsLoginRoutingMessage(EClientMessageType Type)
 {
     return Type == EClientMessageType::MT_Login || Type == EClientMessageType::MT_Handshake;
 }
 }
 
+bool MGatewayServer::LoadConfig(const FString& ConfigPath)
+{
+    TMap<FString, FString> Vars;
+    if (!ConfigPath.empty())
+    {
+        MConfig::LoadFromFile(ConfigPath, Vars);
+    }
+    MConfig::ApplyEnvOverrides(Vars, GatewayEnvMap);
+    Config.RouterServerAddr = MConfig::GetStr(Vars, "router_addr", Config.RouterServerAddr);
+    Config.RouterServerPort = MConfig::GetU16(Vars, "router_port", Config.RouterServerPort);
+    Config.ListenPort = MConfig::GetU16(Vars, "port", Config.ListenPort);
+    Config.ZoneId = MConfig::GetU16(Vars, "zone_id", Config.ZoneId);
+    return true;
+}
+
 bool MGatewayServer::Init(int InPort)
 {
-    Config.ListenPort = static_cast<uint16>(InPort);
+    if (InPort > 0)
+    {
+        Config.ListenPort = static_cast<uint16>(InPort);
+    }
     // 创建监听socket
-    ListenSocket = MSocket::CreateListenSocket((uint16)InPort);
+    ListenSocket = MSocket::CreateListenSocket(Config.ListenPort);
 
     if (ListenSocket == INVALID_SOCKET_FD)
     {
-        LOG_ERROR("Failed to create listen socket on port %d", InPort);
+        LOG_ERROR("Failed to create listen socket on port %d", Config.ListenPort);
         return false;
     }
 
@@ -27,7 +53,7 @@ bool MGatewayServer::Init(int InPort)
 
     printf("=====================================\n");
     printf("  Mession Gateway Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", InPort, (intptr_t)ListenSocket);
+    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket);
     printf("=====================================\n");
     
     // 设置本服务器信息
@@ -87,13 +113,23 @@ bool MGatewayServer::Init(int InPort)
     return true;
 }
 
+void MGatewayServer::RequestShutdown()
+{
+    bRunning = false;
+    if (ListenSocket != INVALID_SOCKET_FD)
+    {
+        MSocket::Close(ListenSocket);
+        ListenSocket = INVALID_SOCKET_FD;
+    }
+}
+
 void MGatewayServer::Shutdown()
 {
-    if (!bRunning)
+    if (bShutdownDone)
     {
         return;
     }
-    
+    bShutdownDone = true;
     bRunning = false;
     
     // 关闭所有客户端连接
@@ -126,7 +162,7 @@ void MGatewayServer::Shutdown()
         MSocket::Close(ListenSocket);
         ListenSocket = INVALID_SOCKET_FD;
     }
-    
+
     LOG_INFO("Gateway server shutdown complete");
 }
 
@@ -187,7 +223,7 @@ void MGatewayServer::Run()
     while (bRunning)
     {
         Tick();
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        MTime::SleepMilliseconds(16);
     }
 }
 
@@ -201,7 +237,7 @@ void MGatewayServer::AcceptClients()
     while (ClientSocket != INVALID_SOCKET_FD)
     {
         uint64 ConnectionId = NextConnectionId++;
-        auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));
+        auto Connection = TSharedPtr<INetConnection>(new MTcpConnection(ClientSocket));
         Connection->SetNonBlocking(true);
         
         auto Client = TSharedPtr<MClientConnection>(new MClientConnection(ConnectionId, Connection));
@@ -497,7 +533,7 @@ uint64 MGatewayServer::QueryRoute(EServerType ServerType, uint64 PlayerId)
     SendTypedServerMessage(
         RouterServerConn,
         EServerMessageType::MT_RouteQuery,
-        SRouteQueryMessage{RequestId, ServerType, PlayerId});
+        SRouteQueryMessage{RequestId, ServerType, PlayerId, Config.ZoneId});
     return RequestId;
 }
 

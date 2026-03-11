@@ -34,7 +34,7 @@ private:
     TQueue<SPendingUpdate> PendingUpdates;
     
     // 连接管理
-    TMap<uint64, TSharedPtr<MTcpConnection>> Connections;
+    TMap<uint64, TSharedPtr<INetConnection>> Connections;
     
 public:
     MReplicationDriver() {}
@@ -64,7 +64,7 @@ public:
     }
     
     // 添加连接到频道
-    void AddConnection(uint64 ConnectionId, TSharedPtr<MTcpConnection> Connection)
+    void AddConnection(uint64 ConnectionId, TSharedPtr<INetConnection> Connection)
     {
         Connections[ConnectionId] = Connection;
         Channels[ConnectionId] = new MReplicationChannel(ConnectionId);

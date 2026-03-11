@@ -73,3 +73,8 @@ jobs:
       # Execute tests defined by the CMake configuration. Note that --build-config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
       # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
       run: ctest --build-config ${{ matrix.build_type }}
+
+    - name: Script validation (Linux only)
+      if: matrix.os == 'ubuntu-latest' && matrix.c_compiler == 'gcc'
+      run: |
+        python3 scripts/validate.py --build-dir ${{ steps.strings.outputs.build-output-dir }} --no-build --timeout 45

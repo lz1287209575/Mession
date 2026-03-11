@@ -5,6 +5,7 @@
 #include <type_traits>
 #include <utility>
 
+// 主机字节序（当前行为，保持兼容）
 template<typename T>
 inline void AppendValue(TArray& OutData, const T& Value)
 {
@@ -27,6 +28,51 @@ inline bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
 
     memcpy(&OutValue, Data.data() + Offset, sizeof(T));
     Offset += sizeof(T);
+    return true;
+}
+
+// 网络字节序（大端）：多字节整数应使用以下接口以保证跨平台
+inline void AppendValueBE(TArray& OutData, uint16 Value)
+{
+    uint16 Net = HostToNetwork(Value);
+    AppendValue(OutData, Net);
+}
+inline void AppendValueBE(TArray& OutData, uint32 Value)
+{
+    uint32 Net = HostToNetwork(Value);
+    AppendValue(OutData, Net);
+}
+inline void AppendValueBE(TArray& OutData, uint64 Value)
+{
+    uint64 Net = HostToNetwork(Value);
+    AppendValue(OutData, Net);
+}
+
+inline bool ReadValueBE(const TArray& Data, size_t& Offset, uint16& OutValue)
+{
+    if (!ReadValue(Data, Offset, OutValue))
+    {
+        return false;
+    }
+    OutValue = NetworkToHost(OutValue);
+    return true;
+}
+inline bool ReadValueBE(const TArray& Data, size_t& Offset, uint32& OutValue)
+{
+    if (!ReadValue(Data, Offset, OutValue))
+    {
+        return false;
+    }
+    OutValue = NetworkToHost(OutValue);
+    return true;
+}
+inline bool ReadValueBE(const TArray& Data, size_t& Offset, uint64& OutValue)
+{
+    if (!ReadValue(Data, Offset, OutValue))
+    {
+        return false;
+    }
+    OutValue = NetworkToHost(OutValue);
     return true;
 }
 

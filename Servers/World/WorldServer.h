@@ -21,6 +21,7 @@ struct SWorldConfig
     uint16 LoginServerPort = 8002;
     FString ServerName = "World01";
     uint32 MaxPlayers = 10000;
+    uint16 ZoneId = 0;             // 0 = 默认区
 };
 
 // 玩家数据
@@ -37,7 +38,7 @@ struct SPlayer
 
 struct SBackendPeer
 {
-    TSharedPtr<MTcpConnection> Connection;
+    TSharedPtr<INetConnection> Connection;
     bool bAuthenticated = false;
     uint32 ServerId = 0;
     EServerType ServerType = EServerType::Unknown;
@@ -57,6 +58,7 @@ class MWorldServer
 private:
     TSocketFd ListenSocket = INVALID_SOCKET_FD;
     bool bRunning = false;
+    bool bShutdownDone = false;
     
     // 配置
     SWorldConfig Config;
@@ -67,6 +69,7 @@ private:
 
     TSharedPtr<MServerConnection> RouterServerConn;
     float LoginRouteQueryTimer = 0.0f;
+    float LoadReportTimer = 0.0f;
     uint64 NextRouteRequestId = 1;
     TSharedPtr<MServerConnection> LoginServerConn;
     TMap<uint64, SPendingSessionValidation> PendingSessionValidations;
@@ -82,7 +85,9 @@ public:
     MWorldServer();
     ~MWorldServer() { Shutdown(); }
     
-    bool Init(int InPort);
+    bool LoadConfig(const FString& ConfigPath);
+    bool Init(int InPort = 0);
+    void RequestShutdown();
     void Shutdown();
     void Tick();
     void Run();
@@ -102,6 +107,7 @@ private:
     void HandleRouterServerMessage(uint8 Type, const TArray& Data);
     void SendRouterRegister();
     void QueryLoginServerRoute();
+    void SendLoadReport();
     void ApplyLoginServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
     void HandleLoginServerMessage(uint8 Type, const TArray& Data);
     void RequestSessionValidation(uint64 ConnectionId, uint64 PlayerId, uint32 SessionKey);

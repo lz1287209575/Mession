@@ -48,11 +48,25 @@ struct SServerInfo
     FString ServerName;
     FString Address;
     uint16 Port = 0;
-    
+    uint16 ZoneId = 0;
+
     SServerInfo() = default;
-    SServerInfo(uint32 Id, EServerType Type, const FString& Name, const FString& Addr, uint16 P)
-        : ServerId(Id), ServerType(Type), ServerName(Name), Address(Addr), Port(P) {}
+    SServerInfo(uint32 Id, EServerType Type, const FString& Name, const FString& Addr, uint16 P, uint16 Z = 0)
+        : ServerId(Id), ServerType(Type), ServerName(Name), Address(Addr), Port(P), ZoneId(Z) {}
 };
+
+// 用于 ApplyRoute 等需要完整 ServerInfo 的场景
+inline SServerInfo MakeServerInfo(uint32 Id, EServerType Type, const FString& Name, const FString& Addr, uint16 Port, uint16 ZoneId = 0)
+{
+    SServerInfo Info;
+    Info.ServerId = Id;
+    Info.ServerType = Type;
+    Info.ServerName = Name;
+    Info.Address = Addr;
+    Info.Port = Port;
+    Info.ZoneId = ZoneId;
+    return Info;
+}
 
 // 服务器连接状态
 enum class EConnectionState
@@ -193,6 +207,8 @@ private:
 };
 
 // 服务器连接管理器
+// 说明：当前 Gateway/World/Scene 采用分散式连接（ApplyRoute 中自行持有 MTcpConnection），
+// 未使用本管理器。若需统一重连、心跳、连接池，可考虑迁移。详见 docs/TODO.md。
 class MServerConnectionManager
 {
 private:

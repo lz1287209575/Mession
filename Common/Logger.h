@@ -1,6 +1,6 @@
 #pragma once
 
-#include <string>
+#include "Core/NetCore.h"
 #include <iostream>
 #include <sstream>
 #include <chrono>
@@ -8,19 +8,26 @@
 #include <mutex>
 #include <cstdarg>
 
-// 简单的日志系统
+// 简单的日志系统（MinLevel、bConsoleOutput 等配置线程安全）
 class MLogger
 {
 private:
     inline static std::mutex LogMutex;
-    inline static int MinLevel = 1;
-    inline static bool bConsoleOutput = true;
-    
+    inline static std::atomic<int> MinLevel{1};
+    inline static std::atomic<bool> bConsoleOutput{true};
+    inline static std::atomic<bool> bFileOutput{false};
+    inline static FString LogFilePath;
+    inline static TOfstream LogFileStream;
+
     MLogger() = default;
 
     static void VLog(int Level, const char* Format, va_list Args)
     {
-        if (Level < MinLevel || !bConsoleOutput)
+        const int CurrentMinLevel = MinLevel.load(std::memory_order_relaxed);
+        const bool bConsole = bConsoleOutput.load(std::memory_order_relaxed);
+        const bool bFile = bFileOutput.load(std::memory_order_relaxed);
+
+        if (Level < CurrentMinLevel || (!bConsole && !bFile))
         {
             return;
         }
@@ -31,36 +38,57 @@ private:
         vsnprintf(Buffer, sizeof(Buffer), Format, ArgsCopy);
         va_end(ArgsCopy);
 
-        std::lock_guard<std::mutex> Lock(LogMutex);
-
         auto Now = std::chrono::system_clock::now();
         auto TimeT = std::chrono::system_clock::to_time_t(Now);
-
         const char* LevelStr[] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
 
+        std::ostringstream Oss;
 #if defined(_MSC_VER) || (defined(__MINGW32__) && !defined(__USE_MINGW_ANSI_STDIO))
         std::tm Tm = {};
         if (localtime_s(&Tm, &TimeT) == 0)
         {
-            std::cout << std::put_time(&Tm, "%Y-%m-%d %H:%M:%S");
+            Oss << std::put_time(&Tm, "%Y-%m-%d %H:%M:%S");
         }
         else
         {
-            std::cout << "????-??-?? ??:??:??";
+            Oss << "(unknown time)";
         }
 #else
-        std::cout << std::put_time(std::localtime(&TimeT), "%Y-%m-%d %H:%M:%S");
+        Oss << std::put_time(std::localtime(&TimeT), "%Y-%m-%d %H:%M:%S");
 #endif
-        std::cout << " [" << LevelStr[Level] << "] " << Buffer << std::endl;
+        Oss << " [" << LevelStr[Level] << "] " << Buffer;
+        FString Line = Oss.str();
+
+        std::lock_guard<std::mutex> Lock(LogMutex);
+        if (bConsole)
+        {
+            std::cout << Line << std::endl;
+        }
+        if (bFile && LogFileStream.is_open())
+        {
+            LogFileStream << Line << std::endl;
+        }
     }
     
 public:
-    static void Init(const std::string& /*LogFileName*/ = "", int InMinLevel = 1)
+    static void Init(const FString& LogFileName = "", int InMinLevel = 1)
     {
-        MinLevel = InMinLevel;
+        MinLevel.store(InMinLevel, std::memory_order_relaxed);
+        if (!LogFileName.empty())
+        {
+            std::lock_guard<std::mutex> Lock(LogMutex);
+            if (LogFileStream.is_open())
+            {
+                LogFileStream.close();
+            }
+            LogFileStream.open(LogFileName, std::ios::out | std::ios::app);
+            bFileOutput.store(LogFileStream.is_open(), std::memory_order_relaxed);
+            LogFilePath = LogFileName;
+        }
     }
-    
-    static void SetConsoleOutput(bool bEnable) { bConsoleOutput = bEnable; }
+
+    static void SetMinLevel(int InMinLevel) { MinLevel.store(InMinLevel, std::memory_order_relaxed); }
+    static void SetConsoleOutput(bool bEnable) { bConsoleOutput.store(bEnable, std::memory_order_relaxed); }
     
     // 带格式的日志 - 唯一的日志方法
     static void Log(int Level, const char* Format, ...)

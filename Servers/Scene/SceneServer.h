@@ -13,6 +13,7 @@ struct SSceneConfig
     uint16 ListenPort = 8004;  // 世界服务器连接端口
     uint16 SceneId = 1;
     FString SceneName = "MainWorld";
+    uint16 ZoneId = 0;
     FString RouterServerAddr = "127.0.0.1";
     uint16 RouterServerPort = 8005;
     FString WorldServerAddr = "127.0.0.1";
@@ -50,7 +51,9 @@ public:
     void AddEntity(const SSceneEntity& Entity);
     void RemoveEntity(uint64 EntityId);
     void UpdateEntityPosition(uint64 EntityId, const SVector& NewPosition);
-    
+
+    void Tick(float DeltaTime);
+
     const TMap<uint64, SSceneEntity>& GetEntities() const { return Entities; }
 };
 
@@ -60,6 +63,7 @@ class MSceneServer
 private:
     TSocketFd ListenSocket = INVALID_SOCKET_FD;
     bool bRunning = false;
+    bool bShutdownDone = false;
     
     // 配置
     SSceneConfig Config;
@@ -67,6 +71,7 @@ private:
     // 世界服务器连接
     TSharedPtr<MServerConnection> RouterServerConn;
     float WorldRouteQueryTimer = 0.0f;
+    float LoadReportTimer = 0.0f;
     uint64 NextRouteRequestId = 1;
     TSharedPtr<MServerConnection> WorldServerConn;
     
@@ -77,7 +82,9 @@ public:
     MSceneServer();
     ~MSceneServer() { Shutdown(); }
     
-    bool Init(int InPort);
+    bool LoadConfig(const FString& ConfigPath);
+    bool Init(int InPort = 0);
+    void RequestShutdown();
     void Shutdown();
     void Tick();
     void Run();
@@ -88,6 +95,7 @@ private:
     void HandleRouterServerMessage(uint8 Type, const TArray& Data);
     void SendRouterRegister();
     void QueryWorldServerRoute();
+    void SendLoadReport();
     void ApplyWorldServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
     void ProcessWorldServerMessages();
     void HandleWorldPacket(uint8 Type, const TArray& Data);

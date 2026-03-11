@@ -58,10 +58,16 @@ MTcpConnection::MTcpConnection(TSocketFd InSocketFd)
 #endif
     if (getpeername(SocketFd, (sockaddr*)&ClientAddr, &AddrLen) == 0)
     {
-        char AddrBuf[64];
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-        InetNtopA(AF_INET, &ClientAddr.sin_addr, AddrBuf, sizeof(AddrBuf));
-        RemoteAddress = AddrBuf;
+        char AddrBuf[64];
+        if (InetNtopA(AF_INET, &ClientAddr.sin_addr, AddrBuf, sizeof(AddrBuf)))
+        {
+            RemoteAddress = AddrBuf;
+        }
+        else
+        {
+            RemoteAddress = "unknown";
+        }
 #else
         RemoteAddress = inet_ntoa(ClientAddr.sin_addr);
 #endif
@@ -396,10 +402,16 @@ TSocketFd MSocket::Accept(TSocketFd ListenFd, TString& OutAddress, uint16& OutPo
 
     if (IsValidSocket(ClientFd))
     {
-        char AddrBuf[64];
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-        InetNtopA(AF_INET, &ClientAddr.sin_addr, AddrBuf, sizeof(AddrBuf));
-        OutAddress = AddrBuf;
+        char AddrBuf[64];
+        if (InetNtopA(AF_INET, &ClientAddr.sin_addr, AddrBuf, sizeof(AddrBuf)))
+        {
+            OutAddress = AddrBuf;
+        }
+        else
+        {
+            OutAddress = "unknown";
+        }
 #else
         OutAddress = inet_ntoa(ClientAddr.sin_addr);
 #endif

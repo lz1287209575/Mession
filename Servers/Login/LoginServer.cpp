@@ -1,7 +1,17 @@
 #include "LoginServer.h"
+#include "Common/Config.h"
 #include "Messages/NetMessages.h"
 #include "Core/Poll.h"
 #include <time.h>
+
+namespace
+{
+const TMap<FString, const char*> LoginEnvMap = {
+    {"port", "MESSION_LOGIN_PORT"},
+    {"router_addr", "MESSION_ROUTER_ADDR"},
+    {"router_port", "MESSION_ROUTER_PORT"},
+};
+}
 
 MLoginServer::MLoginServer()
 {
@@ -9,16 +19,33 @@ MLoginServer::MLoginServer()
     Rng = std::mt19937(Rd());
 }
 
+bool MLoginServer::LoadConfig(const FString& ConfigPath)
+{
+    TMap<FString, FString> Vars;
+    if (!ConfigPath.empty())
+    {
+        MConfig::LoadFromFile(ConfigPath, Vars);
+    }
+    MConfig::ApplyEnvOverrides(Vars, LoginEnvMap);
+    Config.ListenPort = MConfig::GetU16(Vars, "port", Config.ListenPort);
+    Config.RouterServerAddr = MConfig::GetStr(Vars, "router_addr", Config.RouterServerAddr);
+    Config.RouterServerPort = MConfig::GetU16(Vars, "router_port", Config.RouterServerPort);
+    return true;
+}
+
 bool MLoginServer::Init(int InPort)
 {
-    Config.ListenPort = static_cast<uint16>(InPort);
+    if (InPort > 0)
+    {
+        Config.ListenPort = static_cast<uint16>(InPort);
+    }
     MServerConnection::SetLocalInfo(2, EServerType::Login, "Login01");
 
     // 创建监听socket
-    ListenSocket = MSocket::CreateListenSocket((uint16)InPort);
+    ListenSocket = MSocket::CreateListenSocket(Config.ListenPort);
     if (ListenSocket == INVALID_SOCKET_FD)
     {
-        printf("ERROR: Failed to create listen socket on port %d\n", InPort);
+        printf("ERROR: Failed to create listen socket on port %d\n", Config.ListenPort);
         return false;
     }
 
@@ -26,7 +53,7 @@ bool MLoginServer::Init(int InPort)
 
     printf("=====================================\n");
     printf("  Mession Login Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", InPort, (intptr_t)ListenSocket);
+    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket);
     printf("=====================================\n");
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
@@ -43,13 +70,23 @@ bool MLoginServer::Init(int InPort)
     return true;
 }
 
+void MLoginServer::RequestShutdown()
+{
+    bRunning = false;
+    if (ListenSocket != INVALID_SOCKET_FD)
+    {
+        MSocket::Close(ListenSocket);
+        ListenSocket = INVALID_SOCKET_FD;
+    }
+}
+
 void MLoginServer::Shutdown()
 {
-    if (!bRunning)
+    if (bShutdownDone)
     {
         return;
     }
-    
+    bShutdownDone = true;
     bRunning = false;
     
     // 关闭所有网关连接
@@ -130,7 +167,7 @@ void MLoginServer::Run()
     while (bRunning)
     {
         Tick();
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        MTime::SleepMilliseconds(16);
     }
 }
 
@@ -144,7 +181,7 @@ void MLoginServer::AcceptGateways()
     while (ClientSocket != INVALID_SOCKET_FD)
     {
         uint64 ConnectionId = NextConnectionId++;
-        auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));
+        auto Connection = TSharedPtr<INetConnection>(new MTcpConnection(ClientSocket));
         Connection->SetNonBlocking(true);
 
         SGatewayPeer Peer;

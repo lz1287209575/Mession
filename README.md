@@ -6,6 +6,7 @@
 
 - 模块化文档入口见 `readme/README.md`
 - Router 模块文档见 `readme/router.md`
+- 脚本验证见 `scripts/README.md`
 
 ## 📁 项目结构
 

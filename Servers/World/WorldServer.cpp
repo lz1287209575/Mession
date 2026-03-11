@@ -1,19 +1,52 @@
 #include "WorldServer.h"
+#include "Common/Config.h"
 #include "Messages/NetMessages.h"
 #include "Core/Poll.h"
+
+namespace
+{
+const TMap<FString, const char*> WorldEnvMap = {
+    {"port", "MESSION_WORLD_PORT"},
+    {"router_addr", "MESSION_ROUTER_ADDR"},
+    {"router_port", "MESSION_ROUTER_PORT"},
+    {"login_addr", "MESSION_LOGIN_ADDR"},
+    {"login_port", "MESSION_LOGIN_PORT"},
+    {"zone_id", "MESSION_ZONE_ID"},
+};
+}
 
 MWorldServer::MWorldServer()
 {
     ReplicationDriver = new MReplicationDriver();
 }
 
+bool MWorldServer::LoadConfig(const FString& ConfigPath)
+{
+    TMap<FString, FString> Vars;
+    if (!ConfigPath.empty())
+    {
+        MConfig::LoadFromFile(ConfigPath, Vars);
+    }
+    MConfig::ApplyEnvOverrides(Vars, WorldEnvMap);
+    Config.ListenPort = MConfig::GetU16(Vars, "port", Config.ListenPort);
+    Config.RouterServerAddr = MConfig::GetStr(Vars, "router_addr", Config.RouterServerAddr);
+    Config.RouterServerPort = MConfig::GetU16(Vars, "router_port", Config.RouterServerPort);
+    Config.LoginServerAddr = MConfig::GetStr(Vars, "login_addr", Config.LoginServerAddr);
+    Config.LoginServerPort = MConfig::GetU16(Vars, "login_port", Config.LoginServerPort);
+    Config.ZoneId = MConfig::GetU16(Vars, "zone_id", Config.ZoneId);
+    return true;
+}
+
 bool MWorldServer::Init(int InPort)
 {
-    Config.ListenPort = static_cast<uint16>(InPort);
+    if (InPort > 0)
+    {
+        Config.ListenPort = static_cast<uint16>(InPort);
+    }
     MServerConnection::SetLocalInfo(3, EServerType::World, Config.ServerName);
 
     // 创建监听socket
-    ListenSocket = MSocket::CreateListenSocket((uint16)InPort);
+    ListenSocket = MSocket::CreateListenSocket(Config.ListenPort);
     if (ListenSocket == INVALID_SOCKET_FD)
     {
         printf("ERROR: Failed to create listen socket on port %d\n", InPort);
@@ -24,7 +57,7 @@ bool MWorldServer::Init(int InPort)
 
     printf("=====================================\n");
     printf("  Mession World Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", InPort, (intptr_t)ListenSocket);
+    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket);
     printf("=====================================\n");
     LOG_INFO("  Listening on port %d", Config.ListenPort);
     LOG_INFO("=====================================");
@@ -53,13 +86,23 @@ bool MWorldServer::Init(int InPort)
     return true;
 }
 
+void MWorldServer::RequestShutdown()
+{
+    bRunning = false;
+    if (ListenSocket != INVALID_SOCKET_FD)
+    {
+        MSocket::Close(ListenSocket);
+        ListenSocket = INVALID_SOCKET_FD;
+    }
+}
+
 void MWorldServer::Shutdown()
 {
-    if (!bRunning)
+    if (bShutdownDone)
     {
         return;
     }
-    
+    bShutdownDone = true;
     bRunning = false;
     
     // 关闭所有连接
@@ -125,6 +168,13 @@ void MWorldServer::Tick()
         }
     }
 
+    LoadReportTimer += DEFAULT_TICK_RATE;
+    if (RouterServerConn && RouterServerConn->IsConnected() && LoadReportTimer >= 5.0f)
+    {
+        LoadReportTimer = 0.0f;
+        SendLoadReport();
+    }
+
     if (LoginServerConn)
     {
         LoginServerConn->Tick(DEFAULT_TICK_RATE);
@@ -156,7 +206,7 @@ void MWorldServer::Run()
     while (bRunning)
     {
         Tick();
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        MTime::SleepMilliseconds(16);
     }
 }
 
@@ -170,7 +220,7 @@ void MWorldServer::AcceptConnections()
     while (ClientSocket != INVALID_SOCKET_FD)
     {
         uint64 ConnectionId = NextConnectionId++;
-        auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));
+        auto Connection = TSharedPtr<INetConnection>(new MTcpConnection(ClientSocket));
         Connection->SetNonBlocking(true);
 
         SBackendPeer Peer;
@@ -634,7 +684,7 @@ void MWorldServer::SendRouterRegister()
     SendTypedServerMessage(
         RouterServerConn,
         EServerMessageType::MT_ServerRegister,
-        SServerRegisterMessage{3, EServerType::World, Config.ServerName, "127.0.0.1", Config.ListenPort});
+        SServerRegisterMessage{3, EServerType::World, Config.ServerName, "127.0.0.1", Config.ListenPort, Config.ZoneId});
 }
 
 void MWorldServer::QueryLoginServerRoute()
@@ -647,7 +697,30 @@ void MWorldServer::QueryLoginServerRoute()
     SendTypedServerMessage(
         RouterServerConn,
         EServerMessageType::MT_RouteQuery,
-        SRouteQueryMessage{NextRouteRequestId++, EServerType::Login, 0});
+        SRouteQueryMessage{NextRouteRequestId++, EServerType::Login, 0, 0});
+}
+
+void MWorldServer::SendLoadReport()
+{
+    if (!RouterServerConn || !RouterServerConn->IsConnected())
+    {
+        return;
+    }
+
+    uint32 OnlineCount = 0;
+    for (const auto& [PlayerId, Player] : Players)
+    {
+        (void)PlayerId;
+        if (Player.bOnline)
+        {
+            ++OnlineCount;
+        }
+    }
+
+    SendTypedServerMessage(
+        RouterServerConn,
+        EServerMessageType::MT_ServerLoadReport,
+        SServerLoadReportMessage{OnlineCount, Config.MaxPlayers});
 }
 
 void MWorldServer::ApplyLoginServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port)

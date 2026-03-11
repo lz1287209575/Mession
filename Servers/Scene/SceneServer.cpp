@@ -1,19 +1,48 @@
 #include "SceneServer.h"
+#include "Common/Config.h"
 #include "Common/ServerMessages.h"
 #include "Core/Poll.h"
+
+namespace
+{
+const TMap<FString, const char*> SceneEnvMap = {
+    {"port", "MESSION_SCENE_PORT"},
+    {"router_addr", "MESSION_ROUTER_ADDR"},
+    {"router_port", "MESSION_ROUTER_PORT"},
+    {"zone_id", "MESSION_ZONE_ID"},
+};
+}
 
 MSceneServer::MSceneServer()
 {
 }
 
+bool MSceneServer::LoadConfig(const FString& ConfigPath)
+{
+    TMap<FString, FString> Vars;
+    if (!ConfigPath.empty())
+    {
+        MConfig::LoadFromFile(ConfigPath, Vars);
+    }
+    MConfig::ApplyEnvOverrides(Vars, SceneEnvMap);
+    Config.ListenPort = MConfig::GetU16(Vars, "port", Config.ListenPort);
+    Config.RouterServerAddr = MConfig::GetStr(Vars, "router_addr", Config.RouterServerAddr);
+    Config.RouterServerPort = MConfig::GetU16(Vars, "router_port", Config.RouterServerPort);
+    Config.ZoneId = MConfig::GetU16(Vars, "zone_id", Config.ZoneId);
+    return true;
+}
+
 bool MSceneServer::Init(int InPort)
 {
-    Config.ListenPort = static_cast<uint16>(InPort);
+    if (InPort > 0)
+    {
+        Config.ListenPort = static_cast<uint16>(InPort);
+    }
     // 创建监听socket
-    ListenSocket = MSocket::CreateListenSocket((uint16)InPort);
+    ListenSocket = MSocket::CreateListenSocket(Config.ListenPort);
     if (ListenSocket == INVALID_SOCKET_FD)
     {
-        printf("ERROR: Failed to create listen socket on port %d\n", InPort);
+        printf("ERROR: Failed to create listen socket on port %d\n", Config.ListenPort);
         return false;
     }
 
@@ -26,19 +55,29 @@ bool MSceneServer::Init(int InPort)
 
     printf("=====================================\n");
     printf("  Mession Scene Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", InPort, (intptr_t)ListenSocket);
+    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket);
     printf("=====================================\n");
     
     return true;
 }
 
+void MSceneServer::RequestShutdown()
+{
+    bRunning = false;
+    if (ListenSocket != INVALID_SOCKET_FD)
+    {
+        MSocket::Close(ListenSocket);
+        ListenSocket = INVALID_SOCKET_FD;
+    }
+}
+
 void MSceneServer::Shutdown()
 {
-    if (!bRunning)
+    if (bShutdownDone)
     {
         return;
     }
-    
+    bShutdownDone = true;
     bRunning = false;
     
     // 关闭世界服务器连接
@@ -87,10 +126,23 @@ void MSceneServer::Tick()
         }
     }
 
+    LoadReportTimer += 0.016f;
+    if (RouterServerConn && RouterServerConn->IsConnected() && LoadReportTimer >= 5.0f)
+    {
+        LoadReportTimer = 0.0f;
+        SendLoadReport();
+    }
+
     ProcessWorldServerMessages();
-    
-    // 更新场景逻辑（每个场景的AI等）
-    // TODO: 实现场景更新
+
+    for (auto& [SceneId, Scene] : Scenes)
+    {
+        (void)SceneId;
+        if (Scene)
+        {
+            Scene->Tick(0.016f);
+        }
+    }
 }
 
 void MSceneServer::Run()
@@ -106,7 +158,7 @@ void MSceneServer::Run()
     while (bRunning)
     {
         Tick();
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        MTime::SleepMilliseconds(16);
     }
 }
 
@@ -202,8 +254,33 @@ void MSceneServer::SendRouterRegister()
             EServerType::Scene,
             Config.SceneName,
             "127.0.0.1",
-            Config.ListenPort
+            Config.ListenPort,
+            Config.ZoneId
         });
+}
+
+void MSceneServer::SendLoadReport()
+{
+    if (!RouterServerConn || !RouterServerConn->IsConnected())
+    {
+        return;
+    }
+
+    uint32 EntityCount = 0;
+    for (const auto& [SceneId, Scene] : Scenes)
+    {
+        (void)SceneId;
+        if (Scene)
+        {
+            EntityCount += static_cast<uint32>(Scene->GetEntities().size());
+        }
+    }
+
+    constexpr uint32 MaxSceneEntities = 10000;
+    SendTypedServerMessage(
+        RouterServerConn,
+        EServerMessageType::MT_ServerLoadReport,
+        SServerLoadReportMessage{EntityCount, MaxSceneEntities});
 }
 
 void MSceneServer::QueryWorldServerRoute()
@@ -216,7 +293,7 @@ void MSceneServer::QueryWorldServerRoute()
     SendTypedServerMessage(
         RouterServerConn,
         EServerMessageType::MT_RouteQuery,
-        SRouteQueryMessage{NextRouteRequestId++, EServerType::World, 0});
+        SRouteQueryMessage{NextRouteRequestId++, EServerType::World, 0, 0});
 }
 
 void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port)
@@ -359,5 +436,16 @@ void MScene::UpdateEntityPosition(uint64 EntityId, const SVector& NewPosition)
     if (It != Entities.end())
     {
         It->second.Position = NewPosition;
+    }
+}
+
+void MScene::Tick(float DeltaTime)
+{
+    (void)DeltaTime;
+    for (auto& [EntityId, Entity] : Entities)
+    {
+        (void)EntityId;
+        (void)Entity;
+        // 预留：NPC AI、定时刷新、状态更新等场景逻辑
     }
 }

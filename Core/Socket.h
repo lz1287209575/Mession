@@ -34,7 +34,7 @@ enum class ENetError
     ReceiveFailed = 5
 };
 
-// 网络连接接口
+// 网络连接接口（客户端连接统一通过此抽象）
 class INetConnection
 {
 public:
@@ -47,6 +47,12 @@ public:
     virtual void SetNonBlocking(bool bNonBlocking) = 0;
     virtual bool IsConnected() const = 0;
     virtual void Close() = 0;
+
+    // 包模式（粘包/半包处理），默认返回 false/空
+    virtual bool ReceivePacket(TArray& OutPacket) { (void)OutPacket; return false; }
+    virtual bool ProcessRecvBuffer(TArray& OutPacket) { (void)OutPacket; return false; }
+    virtual bool FlushSendBuffer() { return true; }
+    virtual bool HasPendingSendData() const { return false; }
 };
 
 // TCP连接实现
@@ -72,9 +78,9 @@ public:
     // INetConnection接口
     bool Send(const void* Data, uint32 Size) override;
     bool Receive(void* Buffer, uint32 Size, uint32& BytesRead) override;
-    bool ReceivePacket(TArray& OutPacket);
-    bool FlushSendBuffer();
-    bool HasPendingSendData() const { return !SendBuffer.empty(); }
+    bool ReceivePacket(TArray& OutPacket) override;
+    bool FlushSendBuffer() override;
+    bool HasPendingSendData() const override { return !SendBuffer.empty(); }
     uint64 GetPlayerId() const override { return PlayerId; }
     void SetPlayerId(uint64 Id) override { PlayerId = Id; }
     TSocketFd GetSocketFd() const override { return SocketFd; }
@@ -87,7 +93,7 @@ public:
     uint16 GetRemotePort() const { return RemotePort; }
     
     // 处理接收到的数据（粘包处理）
-    bool ProcessRecvBuffer(TArray& OutPacket);
+    bool ProcessRecvBuffer(TArray& OutPacket) override;
 };
 
 // Socket封装类

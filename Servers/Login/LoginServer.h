@@ -30,7 +30,7 @@ struct SSession
 
 struct SGatewayPeer
 {
-    TSharedPtr<MTcpConnection> Connection;
+    TSharedPtr<INetConnection> Connection;
     bool bAuthenticated = false;
     uint32 ServerId = 0;
     EServerType ServerType = EServerType::Unknown;
@@ -43,6 +43,7 @@ class MLoginServer
 private:
     TSocketFd ListenSocket = INVALID_SOCKET_FD;
     bool bRunning = false;
+    bool bShutdownDone = false;
     
     // 配置
     SLoginConfig Config;
@@ -64,7 +65,9 @@ public:
     MLoginServer();
     ~MLoginServer() { Shutdown(); }
     
-    bool Init(int InPort);
+    bool LoadConfig(const FString& ConfigPath);
+    bool Init(int InPort = 0);
+    void RequestShutdown();
     void Shutdown();
     void Tick();
     void Run();

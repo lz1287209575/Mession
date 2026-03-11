@@ -18,7 +18,7 @@ private:
     bool bRunning = false;
     
     // 网络
-    TMap<uint64, TSharedPtr<MTcpConnection>> Connections;
+    TMap<uint64, TSharedPtr<INetConnection>> Connections;
     uint64 NextConnectionId = 1;
     
     // 复制系统
@@ -70,7 +70,7 @@ public:
         }
         
         bRunning = true;
-        ServerStartTime = GetCurrentTime();
+        ServerStartTime = MTime::GetTimeSeconds();
         
         LOG_INFO("======================================");
         LOG_INFO("  MMO Server Started on port %d", Port);
@@ -145,7 +145,7 @@ public:
         while (bRunning)
         {
             Tick();
-            std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60 FPS
+            MTime::SleepMilliseconds(16); // ~60 FPS
         }
     }
 
@@ -161,7 +161,7 @@ private:
         while (ClientSocket != INVALID_SOCKET_FD)
         {
             uint64 ConnectionId = NextConnectionId++;
-            auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));
+            auto Connection = TSharedPtr<INetConnection>(new MTcpConnection(ClientSocket));
             Connection->SetPlayerId(ConnectionId);
             Connection->SetNonBlocking(true);
             
@@ -277,7 +277,7 @@ private:
     // 心跳检查
     void CheckHeartbeats()
     {
-        double CurrentTime = GetCurrentTime();
+        double CurrentTime = MTime::GetTimeSeconds();
         
         for (auto& [PlayerId, Player] : Players)
         {
@@ -296,13 +296,6 @@ private:
         // 这里更新游戏逻辑
     }
     
-    // 获取当前时间（秒）
-    double GetCurrentTime()
-    {
-        auto Now = std::chrono::high_resolution_clock::now();
-        return std::chrono::duration<double>(Now.time_since_epoch()).count();
-    }
-
 public:
     // IMessageHandler接口实现
     void OnHandshake(uint64 ConnectionId, const SHandshakeMessage& Msg) override
@@ -335,7 +328,7 @@ public:
         Player.Name = Msg.PlayerName.empty() ? "Player" : Msg.PlayerName;
         Player.ConnectionId = ConnectionId;
         Player.bAuthenticated = true;
-        Player.LastHeartbeatTime = GetCurrentTime();
+        Player.LastHeartbeatTime = static_cast<float>(MTime::GetTimeSeconds());
         
         Players[ConnectionId] = Player;
         
@@ -396,7 +389,7 @@ public:
         auto It = Players.find(ConnectionId);
         if (It != Players.end())
         {
-            It->second.LastHeartbeatTime = GetCurrentTime();
+            It->second.LastHeartbeatTime = static_cast<float>(MTime::GetTimeSeconds());
         }
     }
     

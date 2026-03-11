@@ -1,13 +1,38 @@
 #include "RouterServer.h"
+#include "Common/Config.h"
 #include "Core/Poll.h"
+
+namespace
+{
+const TMap<FString, const char*> RouterEnvMap = {
+    {"port", "MESSION_ROUTER_PORT"},
+    {"route_lease_seconds", "MESSION_ROUTE_LEASE_SECONDS"},
+};
+}
+
+bool MRouterServer::LoadConfig(const FString& ConfigPath)
+{
+    TMap<FString, FString> Vars;
+    if (!ConfigPath.empty())
+    {
+        MConfig::LoadFromFile(ConfigPath, Vars);
+    }
+    MConfig::ApplyEnvOverrides(Vars, RouterEnvMap);
+    Config.ListenPort = MConfig::GetU16(Vars, "port", Config.ListenPort);
+    Config.RouteLeaseSeconds = MConfig::GetU16(Vars, "route_lease_seconds", Config.RouteLeaseSeconds);
+    return true;
+}
 
 bool MRouterServer::Init(int InPort)
 {
-    Config.ListenPort = static_cast<uint16>(InPort);
-    ListenSocket = MSocket::CreateListenSocket(Config.ListenPort);
+    if (InPort > 0)
+    {
+        Config.ListenPort = static_cast<uint16>(InPort);
+    }
+    ListenSocket = MSocket::CreateListenSocket(static_cast<uint16>(Config.ListenPort));
     if (ListenSocket == INVALID_SOCKET_FD)
     {
-        LOG_ERROR("Failed to create router listen socket on port %d", InPort);
+        LOG_ERROR("Failed to create router listen socket on port %d", Config.ListenPort);
         return false;
     }
 
@@ -15,19 +40,29 @@ bool MRouterServer::Init(int InPort)
 
     printf("=====================================\n");
     printf("  Mession Router Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", InPort, (intptr_t)ListenSocket);
+    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket);
     printf("=====================================\n");
 
     return true;
 }
 
+void MRouterServer::RequestShutdown()
+{
+    bRunning = false;
+    if (ListenSocket != INVALID_SOCKET_FD)
+    {
+        MSocket::Close(ListenSocket);
+        ListenSocket = INVALID_SOCKET_FD;
+    }
+}
+
 void MRouterServer::Shutdown()
 {
-    if (!bRunning)
+    if (bShutdownDone)
     {
         return;
     }
-
+    bShutdownDone = true;
     bRunning = false;
 
     for (auto& [ConnectionId, Peer] : Peers)
@@ -55,6 +90,7 @@ void MRouterServer::Tick()
         return;
     }
 
+    ++TickCounter;
     AcceptServers();
     ProcessMessages();
 }
@@ -71,7 +107,7 @@ void MRouterServer::Run()
     while (bRunning)
     {
         Tick();
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        MTime::SleepMilliseconds(16);
     }
 }
 
@@ -84,7 +120,7 @@ void MRouterServer::AcceptServers()
     while (ClientSocket != INVALID_SOCKET_FD)
     {
         const uint64 ConnectionId = NextConnectionId++;
-        auto Connection = TSharedPtr<MTcpConnection>(new MTcpConnection(ClientSocket));
+        auto Connection = TSharedPtr<INetConnection>(new MTcpConnection(ClientSocket));
         Connection->SetNonBlocking(true);
 
         SRouterPeer Peer;
@@ -225,6 +261,7 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
             Peer.ServerName = Message.ServerName;
             Peer.Address = Message.Address;
             Peer.Port = Message.Port;
+            Peer.ZoneId = Message.ZoneId;
             Peer.bRegistered = true;
 
             SendServerMessage(ConnectionId, EServerMessageType::MT_ServerRegisterAck, SServerRegisterAckMessage{1});
@@ -235,6 +272,26 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
                      (int)Peer.ServerType,
                      Peer.Address.c_str(),
                      Peer.Port);
+            break;
+        }
+
+        case EServerMessageType::MT_ServerLoadReport:
+        {
+            if (!Peer.bAuthenticated)
+            {
+                return;
+            }
+
+            SServerLoadReportMessage Message;
+            if (!ParsePayload(Payload, Message))
+            {
+                LOG_WARN("Invalid load report payload from connection %llu",
+                         (unsigned long long)ConnectionId);
+                return;
+            }
+
+            Peer.CurrentLoad = Message.CurrentLoad;
+            Peer.Capacity = (Message.Capacity > 0) ? Message.Capacity : 1;
             break;
         }
 
@@ -253,7 +310,7 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
                 return;
             }
 
-            const SRouterPeer* Target = SelectRouteTarget(Query.RequestedType, Query.PlayerId);
+            const SRouterPeer* Target = SelectRouteTarget(Query.RequestedType, Query.PlayerId, Query.ZoneId);
 
             SRouteResponseMessage Response;
             Response.RequestId = Query.RequestId;
@@ -262,7 +319,7 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
             Response.bFound = (Target != nullptr);
             if (Target)
             {
-                Response.ServerInfo = SServerInfo(Target->ServerId, Target->ServerType, Target->ServerName, Target->Address, Target->Port);
+                Response.ServerInfo = SServerInfo(Target->ServerId, Target->ServerType, Target->ServerName, Target->Address, Target->Port, Target->ZoneId);
             }
 
             SendServerMessage(ConnectionId, EServerMessageType::MT_RouteResponse, Response);
@@ -295,19 +352,23 @@ bool MRouterServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TAr
     return It->second.Connection->Send(Packet.data(), Packet.size());
 }
 
-const SRouterPeer* MRouterServer::SelectRouteTarget(EServerType RequestedType, uint64 PlayerId)
+const SRouterPeer* MRouterServer::SelectRouteTarget(EServerType RequestedType, uint64 PlayerId, uint16 ZoneId)
 {
     if (RequestedType == EServerType::World && PlayerId != 0)
     {
         auto BindingIt = PlayerRouteBindings.find(PlayerId);
         if (BindingIt != PlayerRouteBindings.end())
         {
-            const SRouterPeer* BoundServer = FindRegisteredServerById(BindingIt->second.WorldServerId);
-            if (BoundServer)
+            const bool bLeaseExpired = (Config.RouteLeaseSeconds > 0) &&
+                (TickCounter >= BindingIt->second.LeaseExpireTick);
+            if (!bLeaseExpired)
             {
-                return BoundServer;
+                const SRouterPeer* BoundServer = FindRegisteredServerById(BindingIt->second.WorldServerId);
+                if (BoundServer)
+                {
+                    return BoundServer;
+                }
             }
-
             PlayerRouteBindings.erase(BindingIt);
         }
     }
@@ -325,15 +386,43 @@ const SRouterPeer* MRouterServer::SelectRouteTarget(EServerType RequestedType, u
             continue;
         }
 
-        if (!Selected || Peer.ServerId < Selected->ServerId)
+        if ((RequestedType == EServerType::World || RequestedType == EServerType::Scene) &&
+            ZoneId != 0 && Peer.ZoneId != ZoneId)
         {
-            Selected = &Peer;
+            continue;
+        }
+
+        if (RequestedType == EServerType::World)
+        {
+            const uint32 PeerCapacity = (Peer.Capacity > 0) ? Peer.Capacity : 1;
+            const uint32 SelectedCapacity = Selected ? ((Selected->Capacity > 0) ? Selected->Capacity : 1) : 0;
+            const float PeerLoadRatio = static_cast<float>(Peer.CurrentLoad) / static_cast<float>(PeerCapacity);
+            const float SelectedLoadRatio = Selected ? (static_cast<float>(Selected->CurrentLoad) / static_cast<float>(SelectedCapacity)) : 1.0f;
+            if (!Selected || PeerLoadRatio < SelectedLoadRatio)
+            {
+                Selected = &Peer;
+            }
+            else if (Selected && PeerLoadRatio == SelectedLoadRatio && Peer.ServerId < Selected->ServerId)
+            {
+                Selected = &Peer;
+            }
+        }
+        else
+        {
+            if (!Selected || Peer.ServerId < Selected->ServerId)
+            {
+                Selected = &Peer;
+            }
         }
     }
 
     if (Selected && RequestedType == EServerType::World && PlayerId != 0)
     {
-        PlayerRouteBindings[PlayerId] = {PlayerId, Selected->ServerId};
+        SPlayerRouteBinding Binding;
+        Binding.PlayerId = PlayerId;
+        Binding.WorldServerId = Selected->ServerId;
+        Binding.LeaseExpireTick = TickCounter + static_cast<uint64>(Config.RouteLeaseSeconds) * 60;
+        PlayerRouteBindings[PlayerId] = Binding;
     }
 
     return Selected;

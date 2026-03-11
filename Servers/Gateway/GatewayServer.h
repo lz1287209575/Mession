@@ -17,19 +17,20 @@ struct SGatewayConfig
     uint16 LoginServerPort = 8002;
     FString WorldServerAddr = "127.0.0.1";
     uint16 WorldServerPort = 8003;
+    uint16 ZoneId = 0;               // 0 = 任意区
 };
 
-// 客户端连接
+// 客户端连接（通过 INetConnection 抽象）
 class MClientConnection
 {
 public:
     uint64 ConnectionId;
-    TSharedPtr<MTcpConnection> Connection;
+    TSharedPtr<INetConnection> Connection;
     uint64 PlayerId = 0;
     bool bAuthenticated = false;
     uint32 SessionToken = 0;
-    
-    MClientConnection(uint64 Id, TSharedPtr<MTcpConnection> Conn) 
+
+    MClientConnection(uint64 Id, TSharedPtr<INetConnection> Conn)
         : ConnectionId(Id), Connection(Conn) {}
 };
 
@@ -46,6 +47,7 @@ class MGatewayServer
 private:
     TSocketFd ListenSocket = INVALID_SOCKET_FD;
     bool bRunning = false;
+    bool bShutdownDone = false;
     
     // 配置
     SGatewayConfig Config;
@@ -70,7 +72,9 @@ public:
     MGatewayServer() {}
     ~MGatewayServer() { Shutdown(); }
     
-    bool Init(int InPort);
+    bool LoadConfig(const FString& ConfigPath);
+    bool Init(int InPort = 0);
+    void RequestShutdown();
     void Shutdown();
     void Tick();
     void Run();
