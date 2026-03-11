@@ -24,6 +24,76 @@ Mession/
 └── CMakeLists.txt          # 构建配置
 ```
 
+## 🏗️ 当前架构
+
+```mermaid
+flowchart LR
+    C[Client] -->|TCP :8001\nLength(4) + MsgType(1) + Payload| G[GatewayServer]
+
+    G -->|长连接 / 后端协议| L[LoginServer :8002]
+    G -->|长连接 / 后端协议| W[WorldServer :8003]
+    S[SceneServer :8004] -->|长连接 / 后端协议| W
+
+    subgraph Gateway
+        G1[客户端连接管理]
+        G2[登录请求转发到 Login]
+        G3[游戏消息转发到 World]
+        G4[登录结果回包给 Client]
+    end
+
+    subgraph Login
+        L1[后端握手与心跳]
+        L2[SessionKey 生成]
+        L3[登录结果返回 Gateway]
+    end
+
+    subgraph World
+        W1[后端连接管理]
+        W2[玩家进入世界]
+        W3[Actor / Replication]
+        W4[同步到 Scene]
+    end
+
+    subgraph Scene
+        S1[主动连接 World]
+        S2[场景实体管理]
+        S3[进入场景 / 位置同步]
+    end
+```
+
+### 典型时序
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Gateway
+    participant Login
+    participant World
+    participant Scene
+
+    Gateway->>Login: 服务器握手
+    Login-->>Gateway: HandshakeAck
+
+    Gateway->>World: 服务器握手
+    World-->>Gateway: HandshakeAck
+
+    Scene->>World: 服务器握手
+    World-->>Scene: HandshakeAck
+
+    Client->>Gateway: 登录包
+    Gateway->>Login: MT_PlayerLogin
+    Login-->>Gateway: MT_PlayerLogin(SessionKey)
+    Gateway-->>Client: LoginResponse
+    Gateway->>World: MT_PlayerLogin
+
+    World->>Scene: MT_PlayerSwitchServer
+    Scene-->>Scene: 玩家进入场景
+
+    Client->>Gateway: 移动包
+    Gateway->>World: MT_PlayerDataSync
+    World->>Scene: MT_PlayerDataSync
+```
+
 ## 🚀 快速开始
 
 ### 编译
@@ -54,6 +124,22 @@ make -j4
 | **属性复制** | UE风格的网络对象复制系统 |
 | **AOI区域** | Area of Interest 区域感知系统 |
 | **消息协议** | 二进制协议、粘包处理 |
+
+## 🧩 模块职责
+
+- **GatewayServer**: 客户端入口，维护客户端连接，并负责把登录和游戏消息分别转发到 Login / World。
+- **LoginServer**: 处理登录请求、生成 `SessionKey`、返回登录结果。
+- **WorldServer**: 管理玩家与世界状态，维护 `MActor`，并把玩家进入场景和位置变化同步给 Scene。
+- **SceneServer**: 主动连接 World，维护场景内实体视图，处理进场和位置更新。
+- **ServerConnection**: 封装服务器间长连接、握手、心跳和业务消息分发。
+- **Socket / MTcpConnection**: 统一底层 TCP 包收发，处理半包、粘包和非阻塞发送。
+
+## 📦 包格式
+
+- **客户端 <-> Gateway / 服务端 MTcpConnection**: `Length(4) + MsgType(1) + Payload(N)`
+- **服务器 <-> 服务器**: 同样使用 `Length(4) + MsgType(1) + Payload(N)`，其中 `MsgType` 由 `EServerMessageType` 定义
+- **握手消息**: `ServerId(4) + ServerType(1) + NameLen(2) + ServerName`
+- **登录结果**: `MsgType(1) + SessionKey(4) + PlayerId(8)`
 
 ## 📡 服务器间通信
 
