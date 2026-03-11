@@ -61,6 +61,55 @@ flowchart LR
     end
 ```
 
+### 模块关系图
+
+```mermaid
+flowchart TB
+    Client[Client]
+
+    subgraph GatewayServer
+        GConn[客户端连接管理]
+        GRoute[登录/游戏路由]
+        GLoginLink[MServerConnection -> Login]
+        GWorldLink[MServerConnection -> World]
+    end
+
+    subgraph LoginServer
+        LAccept[Gateway 接入]
+        LAuth[后端握手/心跳]
+        LSession[会话生成与校验]
+    end
+
+    subgraph WorldServer
+        WAccept[Gateway/Scene 接入]
+        WPlayer[玩家与连接映射]
+        WRep[MReplicationDriver]
+        WSceneSync[场景同步广播]
+    end
+
+    subgraph SceneServer
+        SLink[MServerConnection -> World]
+        SScene[场景与实体管理]
+    end
+
+    Client --> GConn
+    GConn --> GRoute
+    GRoute --> GLoginLink
+    GRoute --> GWorldLink
+
+    GLoginLink --> LAccept
+    LAccept --> LAuth
+    LAuth --> LSession
+
+    GWorldLink --> WAccept
+    WAccept --> WPlayer
+    WPlayer --> WRep
+    WPlayer --> WSceneSync
+
+    SLink --> WAccept
+    WSceneSync --> SScene
+```
+
 ### 典型时序
 
 ```mermaid
@@ -92,6 +141,95 @@ sequenceDiagram
     Client->>Gateway: 移动包
     Gateway->>World: MT_PlayerDataSync
     World->>Scene: MT_PlayerDataSync
+```
+
+### 数据流图
+
+```mermaid
+flowchart LR
+    CLogin[Client Login Packet] --> G1[Gateway 接收客户端包]
+    G1 --> G2[转为 MT_PlayerLogin]
+    G2 --> L1[Login 创建 SessionKey]
+    L1 --> G3[Gateway 接收登录结果]
+    G3 --> CResp[Client LoginResponse]
+    G3 --> W1[World 接收玩家进入世界]
+    W1 --> S1[Scene 接收玩家进入场景]
+
+    CMove[Client Move Packet] --> G4[Gateway 转发游戏包]
+    G4 --> W2[World 更新玩家状态]
+    W2 --> W3[Replication / Scene Sync]
+    W3 --> S2[Scene 更新实体位置]
+```
+
+### 部署视图
+
+```mermaid
+flowchart LR
+    subgraph ClientSide
+        C[Game Client]
+    end
+
+    subgraph ServerSide
+        G[GatewayServer\n:8001]
+        L[LoginServer\n:8002]
+        W[WorldServer\n:8003]
+        S[SceneServer\n:8004]
+    end
+
+    C -->|客户端 TCP| G
+    G -->|后端长连接| L
+    G -->|后端长连接| W
+    S -->|后端长连接| W
+```
+
+### 网络协议视图
+
+```mermaid
+flowchart TD
+    P0[统一包格式]
+    P1[Length(4)]
+    P2[MsgType(1)]
+    P3[Payload(N)]
+
+    P0 --> P1
+    P0 --> P2
+    P0 --> P3
+
+    P2 --> CMsg[客户端消息类型\n例: Login / Move]
+    P2 --> SMsg[服务器消息类型\nEServerMessageType]
+
+    SMsg --> HS[MT_ServerHandshake / Ack]
+    SMsg --> HB[MT_Heartbeat / Ack]
+    SMsg --> PL[MT_PlayerLogin]
+    SMsg --> PS[MT_PlayerSwitchServer]
+    SMsg --> PD[MT_PlayerDataSync]
+    SMsg --> PO[MT_PlayerLogout]
+```
+
+### 运行时对象视图
+
+```mermaid
+flowchart TB
+    ClientConn[MClientConnection]
+    TcpConn[MTcpConnection]
+    LoginLink[MServerConnection]
+    WorldLink[MServerConnection]
+    Player[SPlayer]
+    Actor[MActor]
+    RepDriver[MReplicationDriver]
+    SceneObj[MScene]
+    SceneEntity[SSceneEntity]
+
+    ClientConn --> TcpConn
+    ClientConn --> Player
+
+    LoginLink --> TcpConn
+    WorldLink --> TcpConn
+
+    Player --> Actor
+    RepDriver --> Actor
+    Player --> SceneEntity
+    SceneObj --> SceneEntity
 ```
 
 ## 🚀 快速开始
@@ -133,6 +271,20 @@ make -j4
 - **SceneServer**: 主动连接 World，维护场景内实体视图，处理进场和位置更新。
 - **ServerConnection**: 封装服务器间长连接、握手、心跳和业务消息分发。
 - **Socket / MTcpConnection**: 统一底层 TCP 包收发，处理半包、粘包和非阻塞发送。
+
+### 关键消息职责
+
+- **客户端登录包**: 由 `GatewayServer` 接收，转成后端 `MT_PlayerLogin` 发给 `LoginServer`。
+- **`MT_PlayerLogin`**: `LoginServer` 用它生成 `SessionKey`；`GatewayServer` 再把成功结果同步给 `WorldServer`。
+- **`MT_PlayerSwitchServer`**: 由 `WorldServer` 发给 `SceneServer`，表示玩家进入某个场景。
+- **`MT_PlayerDataSync`**: 用于 `Gateway -> World` 的游戏数据转发，以及 `World -> Scene` 的位置/状态同步。
+- **握手/心跳消息**: 全部走 `ServerConnection`，用于后端长连接认证和保活，不进入业务层消息分发。
+
+### 三层理解
+
+- **部署视图**: 看清楚进程和端口分别是谁对谁连。
+- **网络协议视图**: 看清楚统一包格式和服务器间消息类型是怎么分层的。
+- **运行时对象视图**: 看清楚连接、玩家、Actor、Scene 实体在内存中的核心关系。
 
 ## 📦 包格式
 
