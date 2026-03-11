@@ -14,6 +14,8 @@ struct SWorldConfig
 {
     uint16 ListenPort = 8003;      // 网关连接端口
     uint16 SceneServerPort = 8004; // 场景服务器端口
+    FString RouterServerAddr = "127.0.0.1";
+    uint16 RouterServerPort = 8005;
     FString LoginServerAddr = "127.0.0.1";
     uint16 LoginServerPort = 8002;
     FString ServerName = "World01";
@@ -62,6 +64,9 @@ private:
     TMap<uint64, SBackendPeer> BackendConnections;
     uint64 NextConnectionId = 1;
 
+    TSharedPtr<MServerConnection> RouterServerConn;
+    float LoginRouteQueryTimer = 0.0f;
+    uint64 NextRouteRequestId = 1;
     TSharedPtr<MServerConnection> LoginServerConn;
     TMap<uint64, SPendingSessionValidation> PendingSessionValidations;
     
@@ -88,6 +93,10 @@ private:
     void HandleGameplayPacket(uint64 ConnectionId, const TArray& Data);
     bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
     void BroadcastToScenes(uint8 Type, const TArray& Payload);
+    void HandleRouterServerMessage(uint8 Type, const TArray& Data);
+    void SendRouterRegister();
+    void QueryLoginServerRoute();
+    void ApplyLoginServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
     void HandleLoginServerMessage(uint8 Type, const TArray& Data);
     void RequestSessionValidation(uint64 ConnectionId, uint64 PlayerId, uint32 SessionKey);
     

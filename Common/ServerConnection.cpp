@@ -159,6 +159,9 @@ void MServerConnection::Tick(float DeltaTime)
 {
     if (State == EConnectionState::Disconnected)
     {
+        if (Config.Address.empty() || Config.Port == 0)
+            return;
+
         // 尝试重连
         ReconnectTimer += DeltaTime;
         if (ReconnectTimer >= ReconnectInterval)

@@ -12,6 +12,8 @@
 struct SLoginConfig
 {
     uint16 ListenPort = 8002;  // 网关连接端口
+    FString RouterServerAddr = "127.0.0.1";
+    uint16 RouterServerPort = 8005;
     uint32 SessionKeyMin = 100000;
     uint32 SessionKeyMax = 999999;
 };
@@ -47,6 +49,8 @@ private:
     // 网关连接
     TMap<uint64, SGatewayPeer> GatewayConnections;
     uint64 NextConnectionId = 1;
+
+    TSharedPtr<MServerConnection> RouterServerConn;
     
     // 会话管理
     TMap<uint32, SSession> Sessions;  // SessionKey -> Session
@@ -74,5 +78,7 @@ private:
     void ProcessGatewayMessages();
     void HandleGatewayPacket(uint64 ConnectionId, const TArray& Data);
     bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
+    void HandleRouterServerMessage(uint8 Type, const TArray& Data);
+    void SendRouterRegister();
     uint32 GenerateSessionKey();
 };

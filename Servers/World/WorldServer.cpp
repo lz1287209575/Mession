@@ -11,6 +11,13 @@ void AppendValue(TArray& OutData, const T& Value)
     OutData.insert(OutData.end(), ValueBytes, ValueBytes + sizeof(T));
 }
 
+void AppendString(TArray& OutData, const FString& Value)
+{
+    const uint16 Length = static_cast<uint16>(Value.size());
+    AppendValue(OutData, Length);
+    OutData.insert(OutData.end(), Value.begin(), Value.end());
+}
+
 template<typename T>
 bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
 {
@@ -19,6 +26,17 @@ bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
 
     memcpy(&OutValue, Data.data() + Offset, sizeof(T));
     Offset += sizeof(T);
+    return true;
+}
+
+bool ReadString(const TArray& Data, size_t& Offset, FString& OutValue)
+{
+    uint16 Length = 0;
+    if (!ReadValue(Data, Offset, Length) || Offset + Length > Data.size())
+        return false;
+
+    OutValue.assign(reinterpret_cast<const char*>(Data.data() + Offset), Length);
+    Offset += Length;
     return true;
 }
 }
@@ -30,6 +48,7 @@ MWorldServer::MWorldServer()
 
 bool MWorldServer::Init(int InPort)
 {
+    Config.ListenPort = static_cast<uint16>(InPort);
     MServerConnection::SetLocalInfo(3, EServerType::World, Config.ServerName);
 
     // 创建监听socket
@@ -49,7 +68,19 @@ bool MWorldServer::Init(int InPort)
     LOG_INFO("  Listening on port %d", Config.ListenPort);
     LOG_INFO("=====================================");
 
-    SServerConnectionConfig LoginConfig(2, EServerType::Login, "Login01", Config.LoginServerAddr, Config.LoginServerPort);
+    SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
+    RouterServerConn = TSharedPtr<MServerConnection>(new MServerConnection(RouterConfig));
+    RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
+        LOG_INFO("Router server authenticated: %s", Info.ServerName.c_str());
+        SendRouterRegister();
+        QueryLoginServerRoute();
+    });
+    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+        HandleRouterServerMessage(Type, Data);
+    });
+    RouterServerConn->Connect();
+
+    SServerConnectionConfig LoginConfig(2, EServerType::Login, "Login01", "", 0);
     LoginServerConn = TSharedPtr<MServerConnection>(new MServerConnection(LoginConfig));
     LoginServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Login server authenticated: %s", Info.ServerName.c_str());
@@ -57,7 +88,6 @@ bool MWorldServer::Init(int InPort)
     LoginServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
         HandleLoginServerMessage(Type, Data);
     });
-    LoginServerConn->Connect();
     
     return true;
 }
@@ -77,6 +107,8 @@ void MWorldServer::Shutdown()
     }
     BackendConnections.clear();
 
+    if (RouterServerConn)
+        RouterServerConn->Disconnect();
     if (LoginServerConn)
         LoginServerConn->Disconnect();
     PendingSessionValidations.clear();
@@ -106,6 +138,17 @@ void MWorldServer::Tick()
     
     // 接受新连接
     AcceptConnections();
+
+    if (RouterServerConn)
+        RouterServerConn->Tick(DEFAULT_TICK_RATE);
+
+    LoginRouteQueryTimer += DEFAULT_TICK_RATE;
+    if (RouterServerConn && RouterServerConn->IsConnected() && LoginRouteQueryTimer >= 1.0f)
+    {
+        LoginRouteQueryTimer = 0.0f;
+        if (!LoginServerConn || !LoginServerConn->IsConnected())
+            QueryLoginServerRoute();
+    }
 
     if (LoginServerConn)
         LoginServerConn->Tick(DEFAULT_TICK_RATE);
@@ -549,4 +592,106 @@ void MWorldServer::RequestSessionValidation(uint64 ConnectionId, uint64 PlayerId
     AppendValue(Payload, PlayerId);
     AppendValue(Payload, SessionKey);
     LoginServerConn->Send((uint8)EServerMessageType::MT_SessionValidateRequest, Payload.data(), Payload.size());
+}
+
+void MWorldServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
+{
+    switch ((EServerMessageType)Type)
+    {
+        case EServerMessageType::MT_ServerRegisterAck:
+            LOG_INFO("World server registered to RouterServer");
+            break;
+
+        case EServerMessageType::MT_RouteResponse:
+        {
+            size_t Offset = 0;
+            uint64 RequestId = 0;
+            uint8 RequestedTypeValue = 0;
+            uint64 PlayerId = 0;
+            uint8 Result = 0;
+            if (!ReadValue(Data, Offset, RequestId) ||
+                !ReadValue(Data, Offset, RequestedTypeValue) ||
+                !ReadValue(Data, Offset, PlayerId) ||
+                !ReadValue(Data, Offset, Result))
+            {
+                LOG_WARN("Invalid router route response size: %zu", Data.size());
+                return;
+            }
+
+            if (PlayerId != 0 || (EServerType)RequestedTypeValue != EServerType::Login || !Result)
+                return;
+
+            uint32 ServerId = 0;
+            uint8 ServerTypeValue = 0;
+            FString ServerName;
+            FString Address;
+            uint16 Port = 0;
+            if (!ReadValue(Data, Offset, ServerId) ||
+                !ReadValue(Data, Offset, ServerTypeValue) ||
+                !ReadString(Data, Offset, ServerName) ||
+                !ReadString(Data, Offset, Address) ||
+                !ReadValue(Data, Offset, Port))
+            {
+                LOG_WARN("Invalid router login route payload size: %zu", Data.size());
+                return;
+            }
+
+            ApplyLoginServerRoute(ServerId, ServerName, Address, Port);
+            break;
+        }
+
+        default:
+            break;
+    }
+}
+
+void MWorldServer::SendRouterRegister()
+{
+    if (!RouterServerConn || !RouterServerConn->IsConnected())
+        return;
+
+    TArray Payload;
+    AppendValue(Payload, static_cast<uint32>(3));
+    Payload.push_back((uint8)EServerType::World);
+    AppendString(Payload, Config.ServerName);
+    AppendString(Payload, "127.0.0.1");
+    AppendValue(Payload, Config.ListenPort);
+    RouterServerConn->Send((uint8)EServerMessageType::MT_ServerRegister, Payload.data(), Payload.size());
+}
+
+void MWorldServer::QueryLoginServerRoute()
+{
+    if (!RouterServerConn || !RouterServerConn->IsConnected())
+        return;
+
+    TArray Payload;
+    AppendValue(Payload, NextRouteRequestId++);
+    Payload.push_back((uint8)EServerType::Login);
+    AppendValue(Payload, static_cast<uint64>(0));
+    RouterServerConn->Send((uint8)EServerMessageType::MT_RouteQuery, Payload.data(), Payload.size());
+}
+
+void MWorldServer::ApplyLoginServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port)
+{
+    if (!LoginServerConn)
+        return;
+
+    const SServerConnectionConfig& CurrentConfig = LoginServerConn->GetConfig();
+    const bool bRouteChanged =
+        CurrentConfig.ServerId != ServerId ||
+        CurrentConfig.ServerName != ServerName ||
+        CurrentConfig.Address != Address ||
+        CurrentConfig.Port != Port;
+
+    if (bRouteChanged && (LoginServerConn->IsConnected() || LoginServerConn->IsConnecting()))
+        LoginServerConn->Disconnect();
+
+    SServerConnectionConfig NewConfig(ServerId, EServerType::Login, ServerName, Address, Port);
+    NewConfig.HeartbeatInterval = CurrentConfig.HeartbeatInterval;
+    NewConfig.ConnectTimeout = CurrentConfig.ConnectTimeout;
+    NewConfig.ReconnectInterval = CurrentConfig.ReconnectInterval;
+    LoginServerConn->SetConfig(NewConfig);
+
+    if (!LoginServerConn->IsConnected() && !LoginServerConn->IsConnecting())
+        LoginServerConn->Connect();
 }

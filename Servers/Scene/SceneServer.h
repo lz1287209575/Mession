@@ -13,6 +13,8 @@ struct SSceneConfig
     uint16 ListenPort = 8004;  // 世界服务器连接端口
     uint16 SceneId = 1;
     FString SceneName = "MainWorld";
+    FString RouterServerAddr = "127.0.0.1";
+    uint16 RouterServerPort = 8005;
     FString WorldServerAddr = "127.0.0.1";
     uint16 WorldServerPort = 8003;
     SVector SceneSize = SVector(1000, 1000, 500);
@@ -63,6 +65,9 @@ private:
     SSceneConfig Config;
     
     // 世界服务器连接
+    TSharedPtr<MServerConnection> RouterServerConn;
+    float WorldRouteQueryTimer = 0.0f;
+    uint64 NextRouteRequestId = 1;
     TSharedPtr<MServerConnection> WorldServerConn;
     
     // 场景管理
@@ -78,7 +83,12 @@ public:
     void Run();
     
 private:
+    void ConnectToRouterServer();
     void ConnectToWorldServer();
+    void HandleRouterServerMessage(uint8 Type, const TArray& Data);
+    void SendRouterRegister();
+    void QueryWorldServerRoute();
+    void ApplyWorldServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
     void ProcessWorldServerMessages();
     void HandleWorldPacket(uint8 Type, const TArray& Data);
     

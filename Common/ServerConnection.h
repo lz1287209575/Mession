@@ -13,7 +13,8 @@ enum class EServerType : uint8
     Gateway = 1,
     Login = 2,
     World = 3,
-    Scene = 4
+    Scene = 4,
+    Router = 5
 };
 
 // 服务器间消息类型
@@ -29,6 +30,12 @@ enum class EServerMessageType : uint8
     MT_PlayerDataSync = 23,       // 玩家数据同步
     MT_SessionValidateRequest = 24, // Session 校验请求
     MT_SessionValidateResponse = 25, // Session 校验响应
+    MT_ServerRegister = 50,       // 服务注册
+    MT_ServerRegisterAck = 51,    // 服务注册响应
+    MT_ServerUnregister = 52,     // 服务注销
+    MT_ServerLoadReport = 53,     // 服务负载上报
+    MT_RouteQuery = 54,           // 路由查询
+    MT_RouteResponse = 55,        // 路由查询结果
     MT_ChatMessage = 30,         // 聊天消息
     MT_Broadcast = 40,            // 广播消息
 };

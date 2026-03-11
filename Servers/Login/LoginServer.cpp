@@ -12,6 +12,13 @@ void AppendValue(TArray& OutData, const T& Value)
     OutData.insert(OutData.end(), ValueBytes, ValueBytes + sizeof(T));
 }
 
+void AppendString(TArray& OutData, const FString& Value)
+{
+    const uint16 Length = static_cast<uint16>(Value.size());
+    AppendValue(OutData, Length);
+    OutData.insert(OutData.end(), Value.begin(), Value.end());
+}
+
 template<typename T>
 bool ReadValue(const TArray& Data, size_t& Offset, T& OutValue)
 {
@@ -32,6 +39,9 @@ MLoginServer::MLoginServer()
 
 bool MLoginServer::Init(int InPort)
 {
+    Config.ListenPort = static_cast<uint16>(InPort);
+    MServerConnection::SetLocalInfo(2, EServerType::Login, "Login01");
+
     // 创建监听socket
     ListenSocket = MSocket::CreateListenSocket((uint16)InPort);
     if (ListenSocket < 0)
@@ -46,6 +56,17 @@ bool MLoginServer::Init(int InPort)
     printf("  Mession Login Server\n");
     printf("  Listening on port %d (fd=%d)\n", InPort, ListenSocket);
     printf("=====================================\n");
+
+    SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
+    RouterServerConn = TSharedPtr<MServerConnection>(new MServerConnection(RouterConfig));
+    RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
+        LOG_INFO("Router server authenticated: %s", Info.ServerName.c_str());
+        SendRouterRegister();
+    });
+    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+        HandleRouterServerMessage(Type, Data);
+    });
+    RouterServerConn->Connect();
     
     return true;
 }
@@ -64,6 +85,9 @@ void MLoginServer::Shutdown()
             Peer.Connection->Close();
     }
     GatewayConnections.clear();
+
+    if (RouterServerConn)
+        RouterServerConn->Disconnect();
     
     // 清理会话
     Sessions.clear();
@@ -89,6 +113,9 @@ void MLoginServer::Tick()
     
     // 处理网关消息
     ProcessGatewayMessages();
+
+    if (RouterServerConn)
+        RouterServerConn->Tick(0.016f);
     
     // 清理过期会话
     const uint64 Now = static_cast<uint64>(time(nullptr));
@@ -409,4 +436,24 @@ uint32 MLoginServer::GenerateSessionKey()
 {
     std::uniform_int_distribution<uint32> Dist(Config.SessionKeyMin, Config.SessionKeyMax);
     return Dist(Rng);
+}
+
+void MLoginServer::HandleRouterServerMessage(uint8 Type, const TArray& /*Data*/)
+{
+    if (Type == (uint8)EServerMessageType::MT_ServerRegisterAck)
+        LOG_INFO("Login server registered to RouterServer");
+}
+
+void MLoginServer::SendRouterRegister()
+{
+    if (!RouterServerConn || !RouterServerConn->IsConnected())
+        return;
+
+    TArray Payload;
+    AppendValue(Payload, static_cast<uint32>(2));
+    Payload.push_back((uint8)EServerType::Login);
+    AppendString(Payload, "Login01");
+    AppendString(Payload, "127.0.0.1");
+    AppendValue(Payload, Config.ListenPort);
+    RouterServerConn->Send((uint8)EServerMessageType::MT_ServerRegister, Payload.data(), Payload.size());
 }

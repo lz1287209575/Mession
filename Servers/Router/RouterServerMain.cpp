@@ -1,0 +1,25 @@
+#include "RouterServer.h"
+#include <csignal>
+#include <iostream>
+
+void SignalHandler(int Signal)
+{
+    printf("Received signal %d, shutting down...\n", Signal);
+    exit(0);
+}
+
+int main(int /*argc*/, char* /*argv*/[])
+{
+    signal(SIGINT, SignalHandler);
+    signal(SIGTERM, SignalHandler);
+
+    MRouterServer Server;
+    if (!Server.Init(8005))
+    {
+        printf("Failed to start RouterServer\n");
+        return 1;
+    }
+
+    Server.Run();
+    return 0;
+}

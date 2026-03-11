@@ -64,12 +64,22 @@ add_executable(SceneServer
 )
 target_link_libraries(SceneServer m)
 
+# 5. Router Server - 控制面路由服务器
+add_executable(RouterServer
+    ${COMMON_SOURCES}
+    Servers/Router/RouterServer.h
+    Servers/Router/RouterServer.cpp
+    Servers/Router/RouterServerMain.cpp
+)
+target_link_libraries(RouterServer m)
+
 # 安装目标
 install(TARGETS 
     GatewayServer 
     LoginServer 
     WorldServer 
     SceneServer 
+    RouterServer
     DESTINATION bin
 )
 
@@ -78,5 +88,5 @@ message(STATUS "  Mession - Distributed MMO Server")
 message(STATUS "=====================================")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
-message(STATUS "  Servers: Gateway, Login, World, Scene")
+message(STATUS "  Servers: Gateway, Login, World, Scene, Router")
 message(STATUS "=====================================")

@@ -2,6 +2,11 @@
 
 基于C++20的分布式游戏服务器框架，支持多服务器架构、长连接通信、属性复制等核心功能。
 
+## 📚 文档导航
+
+- 模块化文档入口见 `readme/README.md`
+- Router 模块文档见 `readme/router.md`
+
 ## 📁 项目结构
 
 ```
@@ -279,6 +284,13 @@ make -j4
 - **SceneServer**: 主动连接 World，维护场景内实体视图，处理进场和位置更新。
 - **ServerConnection**: 封装服务器间长连接、握手、心跳和业务消息分发。
 - **Socket / MTcpConnection**: 统一底层 TCP 包收发，处理半包、粘包和非阻塞发送。
+
+## 🧭 RouterServer 设计
+
+- 当前更适合引入一个**控制面 RouterServer**，统一做服务注册、心跳、健康检查和路由查询，而不是把高频业务流量都中转过去。
+- `Gateway / Login / World / Scene` 仍然保持业务直连，`RouterServer` 只回答“该连谁”以及“谁还活着”。
+- 这样既能消掉硬编码地址，也不会把 `MT_PlayerDataSync`、复制消息和移动同步压到一个新的热点节点。
+- 详细设计与当前实现说明见 `readme/router.md`。
 
 ### 关键消息职责
 
