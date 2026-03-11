@@ -1,4 +1,5 @@
 #include "WorldServer.h"
+#include "../../Messages/NetMessages.h"
 #include <poll.h>
 
 namespace
@@ -29,6 +30,8 @@ MWorldServer::MWorldServer()
 
 bool MWorldServer::Init(int InPort)
 {
+    MServerConnection::SetLocalInfo(3, EServerType::World, Config.ServerName);
+
     // 创建监听socket
     ListenSocket = MSocket::CreateListenSocket((uint16)InPort);
     if (ListenSocket < 0)
@@ -45,6 +48,16 @@ bool MWorldServer::Init(int InPort)
     printf("=====================================\n");
     LOG_INFO("  Listening on port %d", Config.ListenPort);
     LOG_INFO("=====================================");
+
+    SServerConnectionConfig LoginConfig(2, EServerType::Login, "Login01", Config.LoginServerAddr, Config.LoginServerPort);
+    LoginServerConn = TSharedPtr<MServerConnection>(new MServerConnection(LoginConfig));
+    LoginServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
+        LOG_INFO("Login server authenticated: %s", Info.ServerName.c_str());
+    });
+    LoginServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+        HandleLoginServerMessage(Type, Data);
+    });
+    LoginServerConn->Connect();
     
     return true;
 }
@@ -63,6 +76,10 @@ void MWorldServer::Shutdown()
             Peer.Connection->Close();
     }
     BackendConnections.clear();
+
+    if (LoginServerConn)
+        LoginServerConn->Disconnect();
+    PendingSessionValidations.clear();
     
     // 清理玩家
     Players.clear();
@@ -89,6 +106,9 @@ void MWorldServer::Tick()
     
     // 接受新连接
     AcceptConnections();
+
+    if (LoginServerConn)
+        LoginServerConn->Tick(DEFAULT_TICK_RATE);
     
     // 处理消息
     ProcessMessages();
@@ -271,10 +291,7 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
                 return;
             }
 
-            AddPlayer(PlayerId, "Player" + std::to_string(PlayerId), ClientConnectionId);
-            auto* Player = GetPlayerById(PlayerId);
-            if (Player)
-                Player->SessionKey = SessionKey;
+            RequestSessionValidation(ClientConnectionId, PlayerId, SessionKey);
             break;
         }
 
@@ -323,11 +340,11 @@ void MWorldServer::HandleGameplayPacket(uint64 ConnectionId, const TArray& Data)
     if (Data.empty())
         return;
 
-    const uint8 MsgType = Data[0];
+    const EClientMessageType MsgType = (EClientMessageType)Data[0];
 
     switch (MsgType)
     {
-        case 5: // PlayerMove
+        case EClientMessageType::MT_PlayerMove:
         {
             if (Data.size() < 1 + sizeof(float) * 3)
                 return;
@@ -356,7 +373,7 @@ void MWorldServer::HandleGameplayPacket(uint64 ConnectionId, const TArray& Data)
             break;
         }
         default:
-            LOG_DEBUG("Unknown message type: %d", MsgType);
+            LOG_DEBUG("Unknown message type: %d", (int)MsgType);
             break;
     }
 }
@@ -476,4 +493,60 @@ void MWorldServer::BroadcastToScenes(uint8 Type, const TArray& Payload)
 
         SendServerMessage(ConnectionId, Type, Payload);
     }
+}
+
+void MWorldServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
+{
+    if (Type != (uint8)EServerMessageType::MT_SessionValidateResponse)
+        return;
+
+    size_t Offset = 0;
+    uint64 ConnectionId = 0;
+    uint64 PlayerId = 0;
+    uint8 bValid = 0;
+    if (!ReadValue(Data, Offset, ConnectionId) ||
+        !ReadValue(Data, Offset, PlayerId) ||
+        !ReadValue(Data, Offset, bValid))
+    {
+        LOG_WARN("Invalid session validation response size: %zu", Data.size());
+        return;
+    }
+
+    auto PendingIt = PendingSessionValidations.find(ConnectionId);
+    if (PendingIt == PendingSessionValidations.end())
+        return;
+
+    const SPendingSessionValidation Pending = PendingIt->second;
+    PendingSessionValidations.erase(PendingIt);
+
+    if (!bValid || Pending.PlayerId != PlayerId)
+    {
+        LOG_WARN("Session validation failed for player %llu on connection %llu",
+                 (unsigned long long)Pending.PlayerId,
+                 (unsigned long long)ConnectionId);
+        return;
+    }
+
+    AddPlayer(PlayerId, "Player" + std::to_string(PlayerId), ConnectionId);
+    auto* Player = GetPlayerById(PlayerId);
+    if (Player)
+        Player->SessionKey = Pending.SessionKey;
+}
+
+void MWorldServer::RequestSessionValidation(uint64 ConnectionId, uint64 PlayerId, uint32 SessionKey)
+{
+    if (!LoginServerConn || !LoginServerConn->IsConnected())
+    {
+        LOG_WARN("Login server unavailable, cannot validate session for player %llu",
+                 (unsigned long long)PlayerId);
+        return;
+    }
+
+    PendingSessionValidations[ConnectionId] = {ConnectionId, PlayerId, SessionKey};
+
+    TArray Payload;
+    AppendValue(Payload, ConnectionId);
+    AppendValue(Payload, PlayerId);
+    AppendValue(Payload, SessionKey);
+    LoginServerConn->Send((uint8)EServerMessageType::MT_SessionValidateRequest, Payload.data(), Payload.size());
 }

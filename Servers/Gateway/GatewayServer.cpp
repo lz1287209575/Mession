@@ -1,8 +1,14 @@
 #include "GatewayServer.h"
+#include "../../Messages/NetMessages.h"
 #include <poll.h>
 
 namespace
 {
+bool IsLoginRoutingMessage(EClientMessageType Type)
+{
+    return Type == EClientMessageType::MT_Login || Type == EClientMessageType::MT_Handshake;
+}
+
 template<typename T>
 void AppendValue(TArray& OutData, const T& Value)
 {
@@ -235,10 +241,10 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TArray& Data)
     // 实际应该解析消息头，判断类型
     
     // 假设第一个字节是消息类型
-    uint8 MsgType = Data[0];
+    const EClientMessageType MsgType = (EClientMessageType)Data[0];
     
     // 登录相关消息转发到LoginServer
-    if (MsgType == 1 || MsgType == 3) // Handshake or Login
+    if (IsLoginRoutingMessage(MsgType))
     {
         ForwardToBackend(ConnectionId, Data);
     }
@@ -258,8 +264,8 @@ void MGatewayServer::ForwardToBackend(uint64 ConnectionId, const TArray& Data)
     if (Data.empty())
         return;
 
-    const uint8 MsgType = Data[0];
-    if (MsgType == 1 || MsgType == 3)
+    const EClientMessageType MsgType = (EClientMessageType)Data[0];
+    if (IsLoginRoutingMessage(MsgType))
     {
         if (!LoginServerConn || !LoginServerConn->IsConnected())
         {
@@ -286,13 +292,13 @@ void MGatewayServer::ForwardToBackend(uint64 ConnectionId, const TArray& Data)
 
     if (!ClientIt->second->bAuthenticated)
     {
-        LOG_WARN("Ignoring unauthenticated client message type %d", MsgType);
+        LOG_WARN("Ignoring unauthenticated client message type %d", (int)MsgType);
         return;
     }
 
     if (!WorldServerConn || !WorldServerConn->IsConnected())
     {
-        LOG_WARN("World server unavailable, dropping client message type %d", MsgType);
+        LOG_WARN("World server unavailable, dropping client message type %d", (int)MsgType);
         return;
     }
 
@@ -304,7 +310,7 @@ void MGatewayServer::ForwardToBackend(uint64 ConnectionId, const TArray& Data)
     Payload.insert(Payload.end(), Data.begin(), Data.end());
 
     WorldServerConn->Send((uint8)EServerMessageType::MT_PlayerDataSync, Payload.data(), Payload.size());
-    LOG_DEBUG("Forwarded client message type %d to WorldServer", MsgType);
+    LOG_DEBUG("Forwarded client message type %d to WorldServer", (int)MsgType);
 }
 
 void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
@@ -338,7 +344,7 @@ void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
 
     TArray Response;
     Response.resize(1 + sizeof(SessionKey) + sizeof(PlayerId));
-    Response[0] = 2;
+    Response[0] = (uint8)EClientMessageType::MT_LoginResponse;
     memcpy(Response.data() + 1, &SessionKey, sizeof(SessionKey));
     memcpy(Response.data() + 1 + sizeof(SessionKey), &PlayerId, sizeof(PlayerId));
     Client->Connection->Send(Response.data(), Response.size());

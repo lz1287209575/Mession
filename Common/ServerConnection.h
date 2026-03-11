@@ -27,6 +27,8 @@ enum class EServerMessageType : uint8
     MT_PlayerLogout = 21,         // 玩家登出通知
     MT_PlayerSwitchServer = 22,   // 玩家切换服务器
     MT_PlayerDataSync = 23,       // 玩家数据同步
+    MT_SessionValidateRequest = 24, // Session 校验请求
+    MT_SessionValidateResponse = 25, // Session 校验响应
     MT_ChatMessage = 30,         // 聊天消息
     MT_Broadcast = 40,            // 广播消息
 };

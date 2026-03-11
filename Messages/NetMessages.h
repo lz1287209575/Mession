@@ -3,6 +3,21 @@
 #include "../Core/NetCore.h"
 #include "../NetDriver/Replicate.h"
 
+// 当前客户端协议消息类型
+enum class EClientMessageType : uint8
+{
+    MT_Login = 1,           // 登录请求
+    MT_LoginResponse = 2,   // 登录响应
+    MT_Handshake = 3,       // 客户端握手
+    MT_PlayerMove = 5,      // 玩家移动
+    MT_ActorCreate = 6,     // 创建Actor
+    MT_ActorDestroy = 7,    // 销毁Actor
+    MT_ActorUpdate = 8,     // Actor属性更新
+    MT_Chat = 10,           // 聊天
+    MT_Heartbeat = 11,      // 心跳
+    MT_Error = 12,          // 错误
+};
+
 // 网络消息类型
 enum class ENetMessageType : uint8
 {
@@ -131,7 +146,7 @@ public:
             Handler->OnLogin(ConnId, Msg);
         };
         
-        Handlers[ENetMessageType::MT_Logout] = [this](uint64 ConnId, MArchive& Ar)
+        Handlers[ENetMessageType::MT_Logout] = [this](uint64 ConnId, MArchive& /*Ar*/)
         {
             Handler->OnLogout(ConnId);
         };
@@ -153,7 +168,7 @@ public:
             Handler->OnActorUpdate(ConnId, ActorId, Data);
         };
         
-        Handlers[ENetMessageType::MT_Heartbeat] = [this](uint64 ConnId, MArchive& Ar)
+        Handlers[ENetMessageType::MT_Heartbeat] = [this](uint64 ConnId, MArchive& /*Ar*/)
         {
             Handler->OnHeartbeat(ConnId);
         };

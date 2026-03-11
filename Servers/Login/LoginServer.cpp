@@ -1,4 +1,5 @@
 #include "LoginServer.h"
+#include "../../Messages/NetMessages.h"
 #include <poll.h>
 #include <time.h>
 
@@ -230,7 +231,7 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
 
                 TArray Response;
                 Response.resize(1 + sizeof(SessionKey) + sizeof(PlayerId));
-                Response[0] = 2;
+                Response[0] = (uint8)EClientMessageType::MT_LoginResponse;
                 memcpy(Response.data() + 1, &SessionKey, sizeof(SessionKey));
                 memcpy(Response.data() + 1 + sizeof(SessionKey), &PlayerId, sizeof(PlayerId));
                 Peer.Connection->Send(Response.data(), Response.size());
@@ -302,6 +303,43 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
 
             LOG_INFO("Player %llu logged in, session key: %u", 
                      (unsigned long long)PlayerId, SessionKey);
+            break;
+        }
+
+        case EServerMessageType::MT_SessionValidateRequest:
+        {
+            if (!Peer.bAuthenticated)
+            {
+                LOG_WARN("Rejecting session validation from unauthenticated connection %llu",
+                         (unsigned long long)ConnectionId);
+                return;
+            }
+
+            size_t Offset = 0;
+            uint64 ClientConnectionId = 0;
+            uint64 PlayerId = 0;
+            uint32 SessionKey = 0;
+            if (!ReadValue(Payload, Offset, ClientConnectionId) ||
+                !ReadValue(Payload, Offset, PlayerId) ||
+                !ReadValue(Payload, Offset, SessionKey))
+            {
+                LOG_WARN("Invalid session validation payload size: %zu", Payload.size());
+                return;
+            }
+
+            uint64 ValidatedPlayerId = 0;
+            const bool bValid = ValidateSession(SessionKey, ValidatedPlayerId) && ValidatedPlayerId == PlayerId;
+
+            TArray ResponsePayload;
+            AppendValue(ResponsePayload, ClientConnectionId);
+            AppendValue(ResponsePayload, PlayerId);
+            ResponsePayload.push_back(bValid ? 1 : 0);
+            SendServerMessage(ConnectionId, (uint8)EServerMessageType::MT_SessionValidateResponse, ResponsePayload);
+
+            LOG_INFO("Session validation for player %llu on connection %llu: %s",
+                     (unsigned long long)PlayerId,
+                     (unsigned long long)ClientConnectionId,
+                     bValid ? "valid" : "invalid");
             break;
         }
 

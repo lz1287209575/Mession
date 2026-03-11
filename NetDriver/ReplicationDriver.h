@@ -2,6 +2,7 @@
 
 #include "NetObject.h"
 #include "../Core/Socket.h"
+#include "../Messages/NetMessages.h"
 
 // 连接通道
 class MReplicationChannel
@@ -148,7 +149,7 @@ public:
     {
         // 消息格式: [MsgType(1)][ActorId(8)][DataSize(4)][Data...]
         TArray Packet;
-        uint8 MsgType = 8; // ActorUpdate
+        uint8 MsgType = (uint8)EClientMessageType::MT_ActorUpdate;
         uint64 ActorIdBE = ActorId;
         uint32 DataSize = (uint32)Data.size();
         
@@ -178,7 +179,7 @@ public:
         
         // 创建消息
         TArray Packet;
-        uint8 MsgType = 3; // ActorCreate
+        uint8 MsgType = (uint8)EClientMessageType::MT_ActorCreate;
         uint64 ActorId = Actor->GetObjectId();
         uint32 DataSize = (uint32)Ar.GetData().size();
         
@@ -201,7 +202,7 @@ public:
     void BroadcastActorDestroy(uint64 ActorId, uint64 ExcludeConnectionId = 0)
     {
         TArray Packet;
-        uint8 MsgType = 4; // ActorDestroy
+        uint8 MsgType = (uint8)EClientMessageType::MT_ActorDestroy;
         Packet.push_back(MsgType);
         Packet.insert(Packet.end(), (uint8*)&ActorId, (uint8*)&ActorId + sizeof(ActorId));
         
