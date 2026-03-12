@@ -49,31 +49,8 @@ void MNetEventLoop::UnregisterConnection(uint64 ConnectionId)
     Connections.erase(ConnectionId);
 }
 
-void MNetEventLoop::PostTask(TTask Task)
+void MNetEventLoop::RunOnce(int TimeoutMs)
 {
-    if (!Task)
-    {
-        return;
-    }
-    std::lock_guard<std::mutex> Lock(TaskMutex);
-    PendingTasks.push_back(std::move(Task));
-}
-
-int32 MNetEventLoop::RunOnce(int TimeoutMs)
-{
-    TDeque<TTask> ToRun;
-    {
-        std::lock_guard<std::mutex> Lock(TaskMutex);
-        ToRun.swap(PendingTasks);
-    }
-    for (TTask& T : ToRun)
-    {
-        if (T)
-        {
-            T();
-        }
-    }
-
     TVector<pollfd> PollFds;
     TVector<TPair<bool, uint64>> PollMeta;
 
@@ -109,20 +86,15 @@ int32 MNetEventLoop::RunOnce(int TimeoutMs)
 
     if (PollFds.empty())
     {
-        return 0;
+        return;
     }
 
     const int N = poll(PollFds.data(), PollFds.size(), TimeoutMs);
-    if (N < 0)
+    if (N < 0 || N == 0)
     {
-        return -1;
-    }
-    if (N == 0)
-    {
-        return 0;
+        return;
     }
 
-    int32 Processed = 0;
     TVector<uint64> ToClose;
 
     for (size_t i = 0; i < PollFds.size(); ++i)
@@ -154,7 +126,6 @@ int32 MNetEventLoop::RunOnce(int TimeoutMs)
                 {
                     L.OnAccept(ConnId, Conn);
                 }
-                ++Processed;
                 break;
             }
             continue;
@@ -180,7 +151,6 @@ int32 MNetEventLoop::RunOnce(int TimeoutMs)
                 C.OnClose(Id);
             }
             ToClose.push_back(Id);
-            ++Processed;
             continue;
         }
 
@@ -193,7 +163,6 @@ int32 MNetEventLoop::RunOnce(int TimeoutMs)
                 {
                     C.OnRead(Id, Packet);
                 }
-                ++Processed;
                 Packet.clear();
             }
         }
@@ -203,8 +172,6 @@ int32 MNetEventLoop::RunOnce(int TimeoutMs)
     {
         Connections.erase(Id);
     }
-
-    return Processed;
 }
 
 void MNetEventLoop::Run()

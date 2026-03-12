@@ -1,17 +1,17 @@
 #pragma once
 
 #include "NetCore.h"
-#include "EventLoop.h"
+#include "ITaskRunner.h"
 
 namespace MAsync
 {
 
-/** 将 Next 投递到 Loop 的下一轮 RunOnce 执行（即“让出”到下一 tick）。 */
-inline void Yield(MNetEventLoop* Loop, TFunction<void()> Next)
+/** 将 Next 投递到 Runner 的下一 tick 执行（即“让出”）。Runner 可为任意实现 ITaskRunner 的循环（如 MNetEventLoop）。 */
+inline void Yield(ITaskRunner* Runner, TFunction<void()> Next)
 {
-    if (Loop && Next)
+    if (Runner && Next)
     {
-        Loop->PostTask(std::move(Next));
+        Runner->PostTask(std::move(Next));
     }
 }
 
@@ -19,11 +19,11 @@ inline void Yield(MNetEventLoop* Loop, TFunction<void()> Next)
 class MSequence : public TEnableSharedFromThis<MSequence>
 {
 public:
-    explicit MSequence(MNetEventLoop* InLoop) : Loop(InLoop) {}
+    explicit MSequence(ITaskRunner* InRunner) : Runner(InRunner) {}
 
-    static TSharedPtr<MSequence> Create(MNetEventLoop* Loop)
+    static TSharedPtr<MSequence> Create(ITaskRunner* Runner)
     {
-        return MakeShared<MSequence>(Loop);
+        return MakeShared<MSequence>(Runner);
     }
 
     void Do(TFunction<void()> Step)
@@ -55,14 +55,14 @@ private:
         {
             TSharedPtr<MSequence> Self = shared_from_this();
             const size_t Next = i + 1;
-            Loop->PostTask([Self, Next]()
+            Runner->PostTask([Self, Next]()
             {
                 Self->RunStep(Next);
             });
         }
     }
 
-    MNetEventLoop* Loop = nullptr;
+    ITaskRunner* Runner = nullptr;
     TVector<TFunction<void()>> Steps;
 };
 

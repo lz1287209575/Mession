@@ -40,6 +40,8 @@ set(COMMON_SOURCES
     Core/SocketPlatform.cpp
     Core/Socket.cpp
     Core/EventLoop.cpp
+    Core/MEventLoop.cpp
+    Core/TaskEventLoop.cpp
     Core/TaskQueue.cpp
     Core/ThreadPool.cpp
     Common/Logger.cpp

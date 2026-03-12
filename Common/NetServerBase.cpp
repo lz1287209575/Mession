@@ -23,9 +23,16 @@ void MNetServerBase::Run()
 
     OnRunStarted();
 
+    if (!bStepsRegistered)
+    {
+        MasterLoop.AddStep(&TaskLoop, 0);
+        MasterLoop.AddStep(&EventLoop, 16);
+        bStepsRegistered = true;
+    }
+
     while (bRunning)
     {
-        EventLoop.RunOnce(16);
+        MasterLoop.RunOnce();
         TickBackends();
     }
 

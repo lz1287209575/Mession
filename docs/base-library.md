@@ -26,13 +26,16 @@
 
 - **Socket**：`Core/Socket.h`、`SocketPlatform.h`、`SocketAddress.h`、`SocketHandle.h`、`PacketCodec.h`；`MSocket::CreateListenSocket`、`MTcpConnection`、`MLengthPrefixedPacketCodec`。
 - **轮询**：`Core/Poll.h`、`MSocketPoller`。
-- **事件循环**：`Core/EventLoop.h`（`MNetEventLoop`）；`PostTask(TTask)` 将任务投递到下一轮 `RunOnce` 执行，线程安全。
+- **主事件循环**：`Core/MEventLoop.h`（`MEventLoop`）；容纳若干**子 EventLoop**（`IEventLoopStep`），每帧按注册顺序依次执行各子的 `RunOnce(timeoutMs)`。服务器只驱动 `MasterLoop.RunOnce()`，不再直接调用各子循环。
+- **子循环接口**：`Core/IEventLoopStep.h`（`IEventLoopStep`）；子类实现 `RunOnce(int timeoutMs)`，由主循环每帧调用。
+- **网络子循环**：`Core/EventLoop.h`（`MNetEventLoop`）；实现 `IEventLoopStep`，仅负责监听 + 连接 poll + 可读分发。
+- **任务子循环**：`Core/ITaskRunner.h`（接口）、`Core/TaskEventLoop.h`（`MTaskEventLoop`）；实现 `ITaskRunner` 与 `IEventLoopStep`，`PostTask` 投递任务，`RunOnce` 执行任务队列；通常注册为第一步（timeout 0），网络循环为第二步（timeout 16）。
 
 ## 异步与并发（Core）
 
 - **Promise/Future**：`Core/Promise.h`；`MPromise<T>`、`MFuture<T>`（含 `void` 特化）；`SetValue`/`SetException`、`Get`/`Wait`/`Then`。单消费者，线程安全。
 - **任务队列与线程池**：`Core/TaskQueue.h`（`MTaskQueue`：Push/TryPop/Pop/Shutdown）、`Core/ThreadPool.h`（`MThreadPool`：Submit/Shutdown，固定 N 工作线程）。
-- **协程风格（库级，C++17）**：`Core/Async.h`；`MAsync::Yield(Loop, next)` 下一 tick 执行 `next`；`MAsync::MSequence::Create(Loop)` → `Do(step)`、`Run()`，步与步之间自动在下一 tick 衔接。详见 `docs/async-promise-coroutine.md`、`docs/taskqueue-threadpool.md`。
+- **协程风格（库级，C++17）**：`Core/Async.h`；`MAsync::Yield(runner, next)` 下一 tick 执行 `next`（`runner` 为 `ITaskRunner*`，如 `GetTaskRunner()`）；`MAsync::MSequence::Create(runner)` → `Do(step)`、`Run()`，步与步之间自动在下一 tick 衔接。详见 `docs/async-promise-coroutine.md`、`docs/taskqueue-threadpool.md`。
 
 ## 使用建议
 

@@ -6,11 +6,14 @@
 
 | 成员 / 方法 | 说明 |
 |-------------|------|
-| `EventLoop` | `MNetEventLoop`，统一做监听 + 连接 poll + 可读分发 |
+| `MasterLoop` | **MEventLoop**（主事件循环），内挂若干 **子 EventLoop**（`IEventLoopStep`）；每帧 `MasterLoop.RunOnce()` 按注册顺序依次执行各子的 `RunOnce(timeoutMs)` |
+| `TaskLoop` | `MTaskEventLoop`，子循环之一：纯任务队列，timeout 忽略 |
+| `EventLoop` | `MNetEventLoop`，子循环之一：监听 + 连接 poll + 可读分发 |
+| `GetTaskRunner()` | 返回 `ITaskRunner*`（即 `&TaskLoop`），供 `MAsync::Yield`、`MSequence` 投递任务 |
 | `ListenerId` | 当前监听器 ID，用于 `UnregisterListener` |
 | `bRunning` | 主循环是否继续；`RequestShutdown()` 置 false 并 `EventLoop.Stop()` |
 | `bShutdownDone` | 是否已执行过 `Shutdown()`，避免重复清理 |
-| `Run()` | 模板主循环：`RegisterListener(GetListenPort())` → `OnRunStarted()` → `while(bRunning){ RunOnce(16); TickBackends(); }` → `UnregisterListener` |
+| `Run()` | 模板主循环：`RegisterListener` → `OnRunStarted()` → 注册子循环（`MasterLoop.AddStep(&TaskLoop, 0); AddStep(&EventLoop, 16)`）→ `while(bRunning){ MasterLoop.RunOnce(); TickBackends(); }` → `UnregisterListener` |
 | `RequestShutdown()` | 置 `bRunning = false` 并 `EventLoop.Stop()` |
 | `Shutdown()` | 若未关过则置标志、调 `ShutdownConnections()`、再 `UnregisterListener` |
 
@@ -47,8 +50,14 @@
 | World | Gateway 后端 | 建 `SBackendPeer`，RegisterConnection(OnRead→HandlePacket, OnClose→按连接删玩家 + erase) | Router/Login Tick，FlushSendBuffer，UpdateGameLogic，ReplicationDriver |
 | Scene | 仅占端口 | `Conn->Close()`，不 RegisterConnection | Router/World Tick，场景 Tick |
 
-## 6. 文件与依赖
+## 6. 主/子事件循环结构
+
+- **主循环**：`MEventLoop`（`Core/MEventLoop.h`），通过 `AddStep(IEventLoopStep* step, int timeoutMs)` 注册子循环，不持有所有权。
+- **子循环接口**：`IEventLoopStep`（`Core/IEventLoopStep.h`），仅 `RunOnce(int timeoutMs)`；当前实现为 `MTaskEventLoop`、`MNetEventLoop`。
+- 扩展：新增子循环时实现 `IEventLoopStep`，在 `Run()` 前对 `MasterLoop` 调用 `AddStep(&YourLoop, timeoutMs)` 即可。
+
+## 7. 文件与依赖
 
 - 基类：`Common/NetServerBase.h`、`Common/NetServerBase.cpp`（编入 `mession_common`）
-- 基类依赖：`Core/EventLoop.h`、`Core/NetCore.h`
-- 子类只需 `#include "Common/NetServerBase.h"`，继承 `MNetServerBase` 并实现上表接口即可复用整段主循环与关服逻辑。
+- 基类依赖：`Core/MEventLoop.h`、`Core/EventLoop.h`（`MNetEventLoop`）、`Core/TaskEventLoop.h`（`MTaskEventLoop`）、`Core/IEventLoopStep.h`、`Core/ITaskRunner.h`、`Core/NetCore.h`
+- 子类只需 `#include "Common/NetServerBase.h"`，继承 `MNetServerBase` 并实现上表接口即可复用整段主循环与关服逻辑；异步投递用 `GetTaskRunner()`。

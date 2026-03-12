@@ -485,8 +485,8 @@ Recommended next steps:
 
 ### 网络循环与 EventLoop 迁移（已收口）
 
-- **现状**：Gateway / Login / World / Router / Scene 均已改为使用 **`MNetEventLoop`** 驱动监听与连接：`Run()` 内 `RegisterListener(port, OnAccept)`，在 `OnAccept` 中 `RegisterConnection(connId, conn, OnRead, OnClose)`，主循环为 `while (bRunning) { EventLoop.RunOnce(16); TickBackends(); }`。后端长连接（`MServerConnection`）仍在 `TickBackends()` 中 `Tick()`，未纳入 EventLoop。
-- **决策**：采用自研单线程 `MNetEventLoop`（`Core/EventLoop.h/.cpp`）统一「监听 + 连接 poll + 可读时收包/断线」；各服通过回调实现断线与业务（如 Gateway 登出通知 World、World 删玩家并 BroadcastActorDestroy）。读包使用 `INetConnection::ReceivePacket`（先 recv 再解码），避免仅调 `ProcessRecvBuffer` 导致未读 socket 即解码。
+- **现状**：各服有一个**主事件循环** **`MEventLoop`**（`Core/MEventLoop.h`），其内注册若干**子 EventLoop**（`IEventLoopStep`）：先 `TaskLoop`（`MTaskEventLoop`，timeout 0），再 `EventLoop`（`MNetEventLoop`，timeout 16）。每帧只调用 `MasterLoop.RunOnce()`，由主循环依次执行各子循环。`Run()` 内 `RegisterListener(port, OnAccept)`，在 `OnAccept` 中 `RegisterConnection(...)`。后端长连接（`MServerConnection`）仍在 `TickBackends()` 中 `Tick()`，未纳入 EventLoop。
+- **决策**：一大（`MEventLoop`）多子（`IEventLoopStep`）：主循环不持有子循环所有权，仅按序调用；网络、任务等均为子循环实现，扩展时新增 `IEventLoopStep` 并 `AddStep` 即可。读包使用 `INetConnection::ReceivePacket`（先 recv 再解码）。
 - **MSocketPoller**：仍保留为薄封装，可用于其他场景；各服主循环已不再使用，由 EventLoop 替代。
 
 ---
@@ -504,7 +504,9 @@ Recommended next steps:
 | 组包 | `MLengthPrefixedPacketCodec`：Length(4)+Payload(N)，单一实现 | `Core/PacketCodec.h` |
 | 传输 | `MTcpConnection`：统一 TCP（accept + 主动 ConnectTo）、收发缓冲、ProcessRecvBuffer、FlushSendBuffer | `Core/Socket.h/.cpp` |
 | 服务端协议 | `MServerConnection`：基于 `MTcpConnection`，握手/心跳/重连、Send(Type,Data)、OnMessage | `Common/ServerConnection.h/.cpp` |
-| 监听与轮询 | `MNetEventLoop`：RegisterListener / RegisterConnection、RunOnce（poll + 可读时 ReceivePacket + OnRead/OnClose）；各服 Run() 使用 EventLoop 驱动客户端/对端连接 | `Core/EventLoop.h/.cpp` |
+| 主事件循环 | `MEventLoop`：容纳若干 `IEventLoopStep`，AddStep(step, timeoutMs)，每帧 RunOnce() 依次执行各子 | `Core/MEventLoop.h/.cpp`、`Core/IEventLoopStep.h` |
+| 任务子循环 | `MTaskEventLoop`：实现 `ITaskRunner`、`IEventLoopStep`，PostTask / RunOnce 仅执行任务队列 | `Core/ITaskRunner.h`、`Core/TaskEventLoop.h/.cpp` |
+| 网络子循环 | `MNetEventLoop`：实现 `IEventLoopStep`，RegisterListener / RegisterConnection、RunOnce（poll + 可读时 ReceivePacket + OnRead/OnClose） | `Core/EventLoop.h/.cpp` |
 
 **验收**：构建通过、`scripts/validate.py` 主链路验证通过；Phase 1 目标（单一 TCP 传输、单一组包、监听 RAII）均已满足。
 

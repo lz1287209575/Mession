@@ -3,15 +3,15 @@
 #include "NetCore.h"
 #include "Socket.h"
 #include "Poll.h"
+#include "IEventLoopStep.h"
 
-// 单线程事件循环：监听 + 连接统一 poll，可读时 accept 或收包并回调；支持 PostTask 延后执行。
-class MNetEventLoop
+/** 单线程网络事件循环：仅负责监听 + 连接 poll，可读时 accept 或收包并回调；不包含任务队列。实现 IEventLoopStep。 */
+class MNetEventLoop : public IEventLoopStep
 {
 public:
     using TAcceptCallback = TFunction<void(uint64 ConnectionId, TSharedPtr<INetConnection> Connection)>;
     using TReadCallback = TFunction<void(uint64 ConnectionId, const TArray& Payload)>;
     using TCloseCallback = TFunction<void(uint64 ConnectionId)>;
-    using TTask = TFunction<void()>;
 
     // 注册监听端口；返回 ListenerId，失败返回 0。OnAccept 收到新连接后由调用方再 RegisterConnection。
     uint64 RegisterListener(uint16 Port, TAcceptCallback OnAccept);
@@ -23,11 +23,8 @@ public:
 
     void UnregisterConnection(uint64 ConnectionId);
 
-    /** 将任务投递到下一轮 RunOnce 执行；线程安全。 */
-    void PostTask(TTask Task);
-
-    // 执行一次 poll + 分发，TimeoutMs 为 poll 超时。返回处理到的事件数，<0 表示内部错误。
-    int32 RunOnce(int TimeoutMs = 100);
+    /** 执行一次 poll + 分发；TimeoutMs 为 poll 超时。返回处理到的事件数，<0 表示内部错误。 */
+    void RunOnce(int TimeoutMs = 100) override;
 
     // 循环 RunOnce 直到 Stop() 被调用（可在回调中调用）。
     void Run();
@@ -55,7 +52,4 @@ private:
     TMap<uint64, SConnection> Connections;
     uint64 NextListenerId = 1;
     bool bRunning = false;
-
-    TDeque<TTask> PendingTasks;
-    mutable std::mutex TaskMutex;
 };
