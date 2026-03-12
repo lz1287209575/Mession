@@ -37,6 +37,7 @@ endfunction()
 # 公共源文件
 set(COMMON_SOURCES
     Core/NetCore.cpp
+    Core/SocketPlatform.cpp
     Core/Socket.cpp
     Common/ServerConnection.cpp
 )

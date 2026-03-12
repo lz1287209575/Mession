@@ -30,6 +30,7 @@ enum class EServerMessageType : uint8
     MT_PlayerDataSync = 23,       // 玩家数据同步
     MT_SessionValidateRequest = 24, // Session 校验请求
     MT_SessionValidateResponse = 25, // Session 校验响应
+    MT_PlayerClientSync = 26,     // 按 PlayerId 路由的客户端数据
     MT_ServerRegister = 50,       // 服务注册
     MT_ServerRegisterAck = 51,    // 服务注册响应
     MT_ServerUnregister = 52,     // 服务注销
@@ -102,7 +103,7 @@ struct SServerConnectionConfig
 class MServerConnection : public TEnableSharedFromThis<MServerConnection>
 {
 private:
-    TSocketFd SocketFd = INVALID_SOCKET_FD;
+    TSharedPtr<MTcpConnection> Transport;
     EConnectionState State = EConnectionState::Disconnected;
     SServerConnectionConfig Config;
     
@@ -124,9 +125,6 @@ private:
     TFunction<void(TSharedPtr<MServerConnection>)> OnDisconnectCallback;
     TFunction<void(TSharedPtr<MServerConnection>, uint8, const TArray&)> OnMessageCallback;
     TFunction<void(TSharedPtr<MServerConnection>, const SServerInfo&)> OnServerAuthenticatedCallback;
-    
-    // 接收缓冲
-    TArray RecvBuffer;
     
     // 日志前缀
     FString LogPrefix;
@@ -225,7 +223,7 @@ public:
     // 添加远程服务器
     TSharedPtr<MServerConnection> AddServer(const SServerConnectionConfig& Config)
     {
-        auto Conn = TSharedPtr<MServerConnection>(new MServerConnection(Config));
+        auto Conn = MakeShared<MServerConnection>(Config);
         Connections[Config.ServerId] = Conn;
         
         LOG_INFO("[ServerMgr] Added server: %s (%s:%d)", 

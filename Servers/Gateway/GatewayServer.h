@@ -45,7 +45,7 @@ struct SPendingWorldLoginRoute
 class MGatewayServer
 {
 private:
-    TSocketFd ListenSocket = INVALID_SOCKET_FD;
+    MSocketHandle ListenSocket;
     bool bRunning = false;
     bool bShutdownDone = false;
     
@@ -85,6 +85,8 @@ private:
     void ConnectToLoginServer();
     void ConnectToWorldServer();
     void ConnectToRouterServer();
+    TSharedPtr<MClientConnection> FindClientByPlayerId(uint64 PlayerId);
+    void ResetClientAuthState(const TSharedPtr<MClientConnection>& Client);
     void HandleClientPacket(uint64 ConnectionId, const TArray& Data);
     void ForwardToBackend(uint64 ConnectionId, const TArray& Data);
     void HandleLoginServerMessage(uint8 Type, const TArray& Data);

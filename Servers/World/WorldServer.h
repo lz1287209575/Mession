@@ -29,7 +29,7 @@ struct SPlayer
 {
     uint64 PlayerId;
     FString Name;
-    uint64 ConnectionId;
+    uint64 GatewayConnectionId = 0;
     uint32 SessionKey;
     MActor* Character = nullptr;
     uint32 CurrentSceneId = 0;
@@ -47,7 +47,8 @@ struct SBackendPeer
 
 struct SPendingSessionValidation
 {
-    uint64 ConnectionId = 0;
+    uint64 ValidationRequestId = 0;
+    uint64 GatewayConnectionId = 0;
     uint64 PlayerId = 0;
     uint32 SessionKey = 0;
 };
@@ -56,7 +57,7 @@ struct SPendingSessionValidation
 class MWorldServer
 {
 private:
-    TSocketFd ListenSocket = INVALID_SOCKET_FD;
+    MSocketHandle ListenSocket;
     bool bRunning = false;
     bool bShutdownDone = false;
     
@@ -71,12 +72,12 @@ private:
     float LoginRouteQueryTimer = 0.0f;
     float LoadReportTimer = 0.0f;
     uint64 NextRouteRequestId = 1;
+    uint64 NextSessionValidationId = 1;
     TSharedPtr<MServerConnection> LoginServerConn;
     TMap<uint64, SPendingSessionValidation> PendingSessionValidations;
     
     // 玩家管理
     TMap<uint64, SPlayer> Players;  // PlayerId -> Player
-    TMap<uint64, uint64> ConnectionToPlayer;  // ConnectionId -> PlayerId
     
     // 复制系统
     MReplicationDriver* ReplicationDriver;
@@ -96,7 +97,7 @@ private:
     void AcceptConnections();
     void ProcessMessages();
     void HandlePacket(uint64 ConnectionId, const TArray& Data);
-    void HandleGameplayPacket(uint64 ConnectionId, const TArray& Data);
+    void HandleGameplayPacket(uint64 PlayerId, const TArray& Data);
     bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
     template<typename TMessage>
     bool SendServerMessage(uint64 ConnectionId, EServerMessageType Type, const TMessage& Message)
@@ -110,13 +111,12 @@ private:
     void SendLoadReport();
     void ApplyLoginServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
     void HandleLoginServerMessage(uint8 Type, const TArray& Data);
-    void RequestSessionValidation(uint64 ConnectionId, uint64 PlayerId, uint32 SessionKey);
+    void RequestSessionValidation(uint64 GatewayConnectionId, uint64 PlayerId, uint32 SessionKey);
     
     // 玩家管理
-    void AddPlayer(uint64 PlayerId, const FString& Name, uint64 ConnectionId);
+    void AddPlayer(uint64 PlayerId, const FString& Name, uint64 GatewayConnectionId);
     void RemovePlayer(uint64 PlayerId);
     SPlayer* GetPlayerById(uint64 PlayerId);
-    SPlayer* GetPlayerByConnection(uint64 ConnectionId);
     
     // 游戏逻辑
     void UpdateGameLogic(float DeltaTime);

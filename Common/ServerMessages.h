@@ -422,6 +422,32 @@ inline bool Deserialize(MMessageReader& Reader, SGameplaySyncMessage& OutMessage
     return true;
 }
 
+struct SPlayerClientSyncMessage
+{
+    uint64 PlayerId = 0;
+    TArray Data;
+};
+
+inline void Serialize(MMessageWriter& Writer, const SPlayerClientSyncMessage& Message)
+{
+    Writer.Write(Message.PlayerId)
+        .Write(static_cast<uint32>(Message.Data.size()))
+        .WriteBytes(Message.Data);
+}
+
+inline bool Deserialize(MMessageReader& Reader, SPlayerClientSyncMessage& OutMessage)
+{
+    uint32 DataSize = 0;
+    if (!Reader.Read(OutMessage.PlayerId) ||
+        !Reader.Read(DataSize) ||
+        !Reader.ReadBytes(DataSize, OutMessage.Data))
+    {
+        return false;
+    }
+
+    return true;
+}
+
 template<typename TMessage>
 inline TArray BuildPayload(const TMessage& Message)
 {

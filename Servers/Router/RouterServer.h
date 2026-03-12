@@ -39,7 +39,7 @@ struct SPlayerRouteBinding
 class MRouterServer
 {
 private:
-    TSocketFd ListenSocket = INVALID_SOCKET_FD;
+    MSocketHandle ListenSocket;
     bool bRunning = false;
     bool bShutdownDone = false;
     SRouterConfig Config;

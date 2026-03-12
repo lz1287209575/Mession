@@ -43,6 +43,7 @@
 - `MT_PlayerLogin`
 - `MT_PlayerLogout`
 - `MT_PlayerSwitchServer`
+- `MT_PlayerClientSync`
 - `MT_PlayerDataSync`
 - `MT_SessionValidateRequest`
 - `MT_SessionValidateResponse`
@@ -89,6 +90,17 @@
 
 - `PlayerId = 0` 表示普通服务发现
 - `PlayerId != 0` 表示按玩家做世界服稳定路由
+
+### 玩家客户端同步
+
+- `MT_PlayerClientSync`
+- 负载：`PlayerId(8) + DataSize(4) + Data`
+- 用途：`Gateway -> World` 的客户端业务包转发，以及 `World -> Gateway` 的按 `PlayerId` 回程复制转发
+
+### 世界到场景同步
+
+- `MT_PlayerDataSync`
+- 当前用于 `World -> Scene` 的位置/状态同步
 
 ## 协议分层建议
 

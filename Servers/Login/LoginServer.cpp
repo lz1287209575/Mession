@@ -42,8 +42,8 @@ bool MLoginServer::Init(int InPort)
     MServerConnection::SetLocalInfo(2, EServerType::Login, "Login01");
 
     // 创建监听socket
-    ListenSocket = MSocket::CreateListenSocket(Config.ListenPort);
-    if (ListenSocket == INVALID_SOCKET_FD)
+    ListenSocket.Reset(MSocket::CreateListenSocket(Config.ListenPort));
+    if (!ListenSocket.IsValid())
     {
         printf("ERROR: Failed to create listen socket on port %d\n", Config.ListenPort);
         return false;
@@ -53,11 +53,11 @@ bool MLoginServer::Init(int InPort)
 
     printf("=====================================\n");
     printf("  Mession Login Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket);
+    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket.Get());
     printf("=====================================\n");
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
-    RouterServerConn = TSharedPtr<MServerConnection>(new MServerConnection(RouterConfig));
+    RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
     RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
         LOG_INFO("Router server authenticated: %s", Info.ServerName.c_str());
         SendRouterRegister();
@@ -73,10 +73,9 @@ bool MLoginServer::Init(int InPort)
 void MLoginServer::RequestShutdown()
 {
     bRunning = false;
-    if (ListenSocket != INVALID_SOCKET_FD)
+    if (ListenSocket.IsValid())
     {
-        MSocket::Close(ListenSocket);
-        ListenSocket = INVALID_SOCKET_FD;
+        ListenSocket.Reset();
     }
 }
 
@@ -109,10 +108,9 @@ void MLoginServer::Shutdown()
     PlayerSessions.clear();
     
     // 关闭监听socket
-    if (ListenSocket != INVALID_SOCKET_FD)
+    if (ListenSocket.IsValid())
     {
-        MSocket::Close(ListenSocket);
-        ListenSocket = INVALID_SOCKET_FD;
+        ListenSocket.Reset();
     }
     
     LOG_INFO("Login server shutdown complete");
@@ -173,15 +171,15 @@ void MLoginServer::Run()
 
 void MLoginServer::AcceptGateways()
 {
-    TString Address;
-    uint16 Port;
-    
-    TSocketFd ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
+    SAcceptedSocket Accepted = MSocket::AcceptConnection(ListenSocket.Get());
 
-    while (ClientSocket != INVALID_SOCKET_FD)
+    while (Accepted.IsValid())
     {
         uint64 ConnectionId = NextConnectionId++;
-        auto Connection = TSharedPtr<INetConnection>(new MTcpConnection(ClientSocket));
+        TSharedPtr<INetConnection> Connection = MakeShared<MTcpConnection>(
+            std::move(Accepted.Socket),
+            Accepted.RemoteAddress,
+            Accepted.RemotePort);
         Connection->SetNonBlocking(true);
 
         SGatewayPeer Peer;
@@ -189,64 +187,61 @@ void MLoginServer::AcceptGateways()
         GatewayConnections[ConnectionId] = Peer;
         
         LOG_INFO("New gateway connected: %s (connection_id=%llu)", 
-                 Address.c_str(), (unsigned long long)ConnectionId);
+                 Accepted.RemoteAddress.c_str(), (unsigned long long)ConnectionId);
         
-        ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
+        Accepted = MSocket::AcceptConnection(ListenSocket.Get());
     }
 }
 
 void MLoginServer::ProcessGatewayMessages()
 {
     TVector<uint64> DisconnectedGateways;
-    
-    TVector<pollfd> PollFds;
-    for (auto& [ConnId, Peer] : GatewayConnections)
-    {
-        if (Peer.Connection && Peer.Connection->IsConnected())
+    TVector<SSocketPollItem> PollItems = MSocketPoller::BuildReadableItems(
+        GatewayConnections,
+        [](SGatewayPeer& Peer) -> INetConnection*
         {
-            Peer.Connection->FlushSendBuffer();
-            pollfd Pfd;
-            Pfd.fd = Peer.Connection->GetSocketFd();
-            Pfd.events = POLLIN;
-            PollFds.push_back(Pfd);
-        }
-    }
-    
-    if (PollFds.empty())
+            return Peer.Connection ? Peer.Connection.get() : nullptr;
+        });
+
+    if (PollItems.empty())
     {
         return;
     }
-    
-    int32 Ret = poll(PollFds.data(), PollFds.size(), 10);
+
+    TVector<SSocketPollResult> PollResults;
+    int32 Ret = MSocketPoller::PollReadable(PollItems, PollResults, 10);
     
     if (Ret < 0)
     {
         return;
     }
-    
-    size_t Index = 0;
-    for (auto& [ConnId, Peer] : GatewayConnections)
+
+    for (const SSocketPollResult& PollResult : PollResults)
     {
-        if (Index >= PollFds.size())
+        auto PeerIt = GatewayConnections.find(PollResult.ConnectionId);
+        if (PeerIt == GatewayConnections.end())
         {
-            break;
+            continue;
         }
-        
-        if (PollFds[Index].revents & POLLIN)
+
+        SGatewayPeer& Peer = PeerIt->second;
+        if (MSocketPoller::IsReadable(PollResult))
         {
             TArray Packet;
             while (Peer.Connection->ReceivePacket(Packet))
             {
-                HandleGatewayPacket(ConnId, Packet);
+                HandleGatewayPacket(PollResult.ConnectionId, Packet);
             }
             
             if (!Peer.Connection->IsConnected())
             {
-                DisconnectedGateways.push_back(ConnId);
+                DisconnectedGateways.push_back(PollResult.ConnectionId);
             }
         }
-        
-        Index++;
+        else if (MSocketPoller::HasError(PollResult))
+        {
+            DisconnectedGateways.push_back(PollResult.ConnectionId);
+        }
     }
     
     for (uint64 ConnId : DisconnectedGateways)

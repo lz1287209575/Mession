@@ -30,7 +30,8 @@
 
 1. 客户端发送移动等游戏消息
 2. `Gateway` 校验客户端已认证
-3. `Gateway` 转发 `MT_PlayerDataSync` 到 `World`
+3. `Gateway` 转发 `MT_PlayerClientSync` 到 `World`
+4. `World` 回推的复制包也通过 `MT_PlayerClientSync` 回到 `Gateway`，再按 `PlayerId` 下发给客户端
 
 ## 与 Router 的关系
 

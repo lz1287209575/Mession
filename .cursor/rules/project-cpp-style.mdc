@@ -18,6 +18,13 @@ alwaysApply: true
 - Prefer extending the existing core type layer instead of scattering `std::vector`, `std::map`, `std::string`, `std::shared_ptr`, or similar types across feature code.
 - If a required STL type does not yet have a project name, add the alias/wrapper first, then consume the project name in calling code.
 
+# Shared Pointer Construction
+
+- When creating a `TSharedPtr`, prefer the project helper `MakeShared<T>(...)`.
+- Do not construct `TSharedPtr` from a raw `new` in normal code.
+- If shared ownership is needed for a concrete type assigned to an interface pointer, prefer `TSharedPtr<IBase> Ptr = MakeShared<MImpl>(...)`.
+- Only fall back to raw `new` with `TSharedPtr` when `MakeShared` is not viable, such as private constructors or custom deleters.
+
 # Safety Notes
 
 - Keep packet parsing and serialization code explicit and bounds-checked.

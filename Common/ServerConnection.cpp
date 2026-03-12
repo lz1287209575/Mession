@@ -1,6 +1,5 @@
 #include "ServerConnection.h"
 #include "Common/ServerMessages.h"
-#include "Core/Poll.h"
 
 // 静态成员定义
 SServerInfo MServerConnection::LocalServerInfo;
@@ -42,87 +41,38 @@ bool MServerConnection::TryConnect()
         return false;
     }
 
-    SocketFd = socket(AF_INET, SOCK_STREAM, 0);
-    if (SocketFd == INVALID_SOCKET_FD)
-    {
-        LOG_ERROR("%s Failed to create socket", LogPrefix.c_str());
-        State = EConnectionState::Disconnected;
-        return false;
-    }
-
-    MSocket::SetNonBlocking(SocketFd, true);
-    MSocket::SetNoDelay(SocketFd, true);
-
-    sockaddr_in Addr = {};
-    Addr.sin_family = AF_INET;
-    Addr.sin_port = htons(Config.Port);
-
-    if (inet_pton(AF_INET, Config.Address.c_str(), &Addr.sin_addr) <= 0)
-    {
-        LOG_ERROR("%s Invalid address: %s", LogPrefix.c_str(), Config.Address.c_str());
-        MSocket::Close(SocketFd);
-        SocketFd = INVALID_SOCKET_FD;
-        State = EConnectionState::Disconnected;
-        return false;
-    }
-
-    int Result = connect(SocketFd, (sockaddr*)&Addr, sizeof(Addr));
-
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    int LastErr = MSocket::GetLastError();
-    if (Result != 0 && LastErr != WSAEWOULDBLOCK && LastErr != WSAEINPROGRESS)
-#else
-    if (Result < 0 && errno != EINPROGRESS)
-#endif
+    Transport = MTcpConnection::ConnectTo(SSocketAddress(Config.Address, Config.Port), Config.ConnectTimeout);
+    if (!Transport || !Transport->IsConnected())
     {
         LOG_ERROR("%s Connect failed", LogPrefix.c_str());
-        MSocket::Close(SocketFd);
-        SocketFd = INVALID_SOCKET_FD;
+        Transport.reset();
         State = EConnectionState::Disconnected;
         return false;
     }
 
     LOG_INFO("%s Connecting to %s:%d...", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
+    State = EConnectionState::Connected;
+    LOG_INFO("%s Connected to %s:%d!", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
 
-    pollfd Pfd;
-    Pfd.fd = SocketFd;
-    Pfd.events = POLLOUT;
-    Pfd.revents = 0;
+    SendHandshake();
 
-    int Ret = poll(&Pfd, 1, (int)(Config.ConnectTimeout * 1000));
-
-    if (Ret > 0 && (Pfd.revents & POLLOUT))
+    if (OnConnectCallback)
     {
-        State = EConnectionState::Connected;
-        LOG_INFO("%s Connected to %s:%d!", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
-
-        SendHandshake();
-
-        if (OnConnectCallback)
-        {
-            OnConnectCallback(shared_from_this());
-        }
-
-        return true;
+        OnConnectCallback(shared_from_this());
     }
 
-    LOG_WARN("%s Connection timeout to %s:%d", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
-    MSocket::Close(SocketFd);
-    SocketFd = INVALID_SOCKET_FD;
-    State = EConnectionState::Disconnected;
-    return false;
+    return true;
 }
 
 void MServerConnection::Disconnect()
 {
-    if (SocketFd != INVALID_SOCKET_FD)
+    if (Transport)
     {
-        MSocket::Close(SocketFd);
-        SocketFd = INVALID_SOCKET_FD;
+        Transport->Close();
+        Transport.reset();
     }
     
     State = EConnectionState::Disconnected;
-    RecvBuffer.clear();
     HeartbeatTimer = 0.0f;
     
     LOG_INFO("%s Disconnected", LogPrefix.c_str());
@@ -140,45 +90,25 @@ bool MServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
         return false;
     }
     
-    // 消息格式: [Length(4)][Type(1)][Data...]
-    TArray Packet;
-    uint32 TotalSize = 1 + Size;
-    Packet.resize(4 + TotalSize);
-    
-    *(uint32*)Packet.data() = TotalSize;
-    Packet[4] = Type;
+    TArray Payload;
+    Payload.resize(1 + Size);
+    Payload[0] = Type;
     if (Size > 0 && Data)
     {
-        memcpy(Packet.data() + 5, Data, Size);
+        memcpy(Payload.data() + 1, Data, Size);
     }
-    
-    return SendRaw(Packet);
+
+    return SendRaw(Payload);
 }
 
 bool MServerConnection::SendRaw(const TArray& Data)
 {
-    if (SocketFd == INVALID_SOCKET_FD || Data.empty())
+    if (!Transport || !Transport->IsConnected() || Data.empty())
     {
         return false;
     }
 
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    int Sent = send(SocketFd, (const char*)Data.data(), (int)Data.size(), 0);
-#else
-    ssize_t Sent = send(SocketFd, Data.data(), Data.size(), 0);
-#endif
-
-    if (Sent < 0)
-    {
-        if (!MSocket::IsWouldBlock(MSocket::GetLastError()))
-        {
-            LOG_ERROR("%s Send failed", LogPrefix.c_str());
-            Disconnect();
-            return false;
-        }
-    }
-
-    return true;
+    return Transport->Send(Data.data(), static_cast<uint32>(Data.size()));
 }
 
 void MServerConnection::Tick(float DeltaTime)
@@ -220,57 +150,25 @@ void MServerConnection::Tick(float DeltaTime)
 
 void MServerConnection::ProcessRecv()
 {
-    if (SocketFd == INVALID_SOCKET_FD)
+    if (!Transport)
     {
         return;
     }
 
-    uint8 Buffer[8192];
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    int BytesRead = recv(SocketFd, (char*)Buffer, (int)sizeof(Buffer), 0);
-#else
-    ssize_t BytesRead = recv(SocketFd, Buffer, sizeof(Buffer), 0);
-#endif
-
-    if (BytesRead > 0)
+    TArray Packet;
+    while (Transport->ReceivePacket(Packet))
     {
-        RecvBuffer.insert(RecvBuffer.end(), Buffer, Buffer + BytesRead);
-
-        while (RecvBuffer.size() >= 4)
+        if (!Packet.empty())
         {
-            uint32 PacketSize = *(uint32*)RecvBuffer.data();
-
-            if (PacketSize > 65535 || PacketSize == 0)
-            {
-                LOG_ERROR("%s Invalid packet size: %u", LogPrefix.c_str(), PacketSize);
-                Disconnect();
-                return;
-            }
-
-            if (RecvBuffer.size() < 4 + PacketSize)
-            {
-                break;
-            }
-
-            TArray Packet(RecvBuffer.begin() + 4, RecvBuffer.begin() + 4 + PacketSize);
-            RecvBuffer.erase(RecvBuffer.begin(), RecvBuffer.begin() + 4 + PacketSize);
-
-            if (!Packet.empty())
-            {
-                uint8 Type = Packet[0];
-                TArray Payload(Packet.begin() + 1, Packet.end());
-                HandleMessage(Type, Payload);
-            }
+            const uint8 Type = Packet[0];
+            TArray Payload(Packet.begin() + 1, Packet.end());
+            HandleMessage(Type, Payload);
         }
     }
-    else if (BytesRead == 0)
+
+    if (Transport && !Transport->IsConnected())
     {
         LOG_INFO("%s Connection closed by remote", LogPrefix.c_str());
-        Disconnect();
-    }
-    else if (!MSocket::IsWouldBlock(MSocket::GetLastError()))
-    {
-        LOG_ERROR("%s Recv error", LogPrefix.c_str());
         Disconnect();
     }
 }

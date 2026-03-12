@@ -31,6 +31,8 @@
 - 输入：`MT_PlayerDataSync`
 - 行为：更新实体位置
 
+这里的 `MT_PlayerDataSync` 当前只表示 `World -> Scene` 的状态同步，不再承担 `Gateway -> World` 的客户端包转发职责。
+
 ## 当前场景模型
 
 `SceneServer` 当前围绕两个对象工作：

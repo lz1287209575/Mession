@@ -1,86 +1,77 @@
-# Mession 基础框架 TODO
+# Mession Sprint Board
 
-> 基于代码扫描整理，用于指导后续补齐与重构。
+> 仓库统一 TODO，只维护这一份。  
+> 当前目标：先把主链路补完整并稳定回归，再推进 AOI、协议和架构整理。
 
----
+## Snapshot
 
-## 1. 类型层（NetCore）— STL 封装不全
+- [x] CMake 构建通过
+- [x] `scripts/validate.py` 登录 / 移动 / 重连验证通过
+- [x] Router / Gateway / Login / World / Scene 最小链路已打通
+- [x] `GameServer` 已纳入 CMake 构建
+- [x] Core 类型补齐、时间抽象、基础线程安全项已完成
 
-按项目 STL Wrapping 规则，以下常用类型尚未在 Core 中提供别名或封装：
-
-| 缺失类型 | 对应 STL | 可能用途 | 状态 |
-|----------|----------|----------|------|
-| `TUnorderedMap` / `THashMap` | `std::unordered_map` | 高频 O(1) 查找 | ✅ 已添加 |
-| `TOptional` | `std::optional` | 可选返回值、解析结果 | ✅ 已添加 |
-| `TPair` | `std::pair` | 键值对、多返回值 | ✅ 已添加 |
-
----
-
-## 2. 线程安全
-
-- [x] **MUniqueIdGenerator**：已改为 `std::atomic` 保证线程安全
-- [x] **MLogger**：`MinLevel`、`bConsoleOutput` 等已改为 `std::atomic`，支持运行时 `SetMinLevel` 及文件输出
+当前缺口：
+- [ ] 状态回收仍不够一致
+- [ ] 分布式复制链路未真正补完
+- [ ] 测试体系还没有形成正式入口
+- [x] Socket 网络层第一阶段收口已完成
 
 ---
 
-## 3. 时间与定时
+## Now
 
-- [x] 无统一时间抽象（`TTime`、`TDuration` 等）→ 已添加 `MTime`（`GetTimeSeconds`、`SleepSeconds`、`SleepMilliseconds`）
-- [x] 各服务器直接用 `std::chrono` 和 `sleep_for` → 已替换为 `MTime::SleepMilliseconds`
-- [x] 无统一 Tick 时钟（如 `GetTimeSeconds()`）→ 已提供 `MTime::GetTimeSeconds()`
+- [ ] 修复 `Gateway` 处理 `MT_PlayerLogout` 时的连接索引错误
+- [ ] 统一客户端断线、World 清理、Gateway 鉴权状态回收的行为
+- [ ] 检查 `World -> Gateway -> Client` 的登出 / 失效通知是否完整闭环
+- [ ] 为上述清理路径补最小可复现验证
+- [ ] 在 `WorldServer` 中为客户端连接补 `MReplicationDriver::AddConnection()`
+- [ ] 玩家进入世界时补齐 `BroadcastActorCreate()`
+- [ ] 玩家离开世界时补齐 `RemoveConnection()` / `ActorDestroy` / 相关可见性清理
+- [ ] 验证 `ActorCreate / ActorUpdate / ActorDestroy` 在分布式模式下真实可达
 
----
+## Next
 
-## 4. 模块与构建
+- [ ] 整理 CMake / CI 测试入口，明确 `ctest` 是否承载真实测试
+- [ ] 为 `ServerMessages` / `MessageUtils` / 协议组包解包补单元测试
+- [ ] 把登录、进世界、断线清理整理成稳定的集成测试脚本
+- [ ] 补一条“多玩家进入世界后复制链路正常”的验证
+- [ ] 对齐 `GameServer` 与 `WorldServer` 的复制接入方式，避免两套行为长期分叉
+- [ ] 清理 `SceneServer` 和剩余服务上的网络循环样板，决定是否继续扩展 `MSocketPoller`
 
-- [x] **Game/GameServer.h**、**Main.cpp**：已加入 CMake 作为 GameServer 目标（端口 7777）
-- [x] **MServerConnectionManager**：已实现但未被 Gateway/World 等使用（见下方说明）
-- [ ] **NetDriver/Reflection.h**：反射系统存在，使用范围有限
+## Later
 
-**MServerConnectionManager 未使用说明**：`MServerConnectionManager` 提供集中式服务器间连接管理（AddServer/RemoveServer、SendToServer、Broadcast、Tick）。当前各服务器（Gateway/World/Scene）采用分散式连接：通过 Router 下发的路由信息，在 `ApplyRoute` 回调中自行创建并持有 `MTcpConnection`。若未来需要统一重连、心跳、连接池等能力，可考虑将各服务器的连接逻辑迁移到 `MServerConnectionManager`。
+- [ ] 修正 `AOIComponent` 中 `TMap<SAOICell, SAOICell>` 的语义设计
+- [ ] 明确 AOI 数据结构，改为“格子 -> 对象集合”
+- [ ] 将 AOI 接入 `WorldServer` 的可见性计算
+- [ ] 让 AOI 结果驱动 `ReplicationDriver::RelevantActors`
+- [ ] 为跨格移动、进出视野、离线清理补验证
+- [ ] 将 `ParsePayload` 从纯 `bool` 结果逐步提升为带错误信息的返回值
+- [ ] 统一协议解析失败时的日志格式和上下文信息
+- [ ] 继续收敛跨服消息结构体，减少裸 payload 处理
+- [ ] 评估并逐步统一字节序策略，避免跨平台协议隐患
+- [ ] 评估 `NetDriver/Reflection.h` 是正式接入主线，还是降级为示例 / 实验代码
+- [ ] 若继续保留 `Reflection`，明确它和复制系统、运行时对象系统的边界
 
----
+## Watchlist
 
-## 5. 配置与日志
+- [ ] `MServerConnectionManager` 是否还有重新接入的必要，现阶段先保持文档说明即可
+- [ ] 更系统的 `TResult` / 错误码体系改造
+- [ ] 继续收敛散落的设计说明，避免新的文档分叉
 
-- [x] **Config.h**：已改用 `TIfstream`（NetCore 别名）
-- [x] **Logger**：已用 `FString`，支持 `SetMinLevel` 运行时切换、文件输出（`Init(LogPath)`）
+## Done
 
----
-
-## 6. 协议与序列化
-
-- [x] **MessageUtils**：已添加 `HostToNetwork`/`NetworkToHost`（NetCore）及 `AppendValueBE`/`ReadValueBE`（MessageUtils），协议可逐步迁移
-- [ ] **ParsePayload**：仅返回 bool，无错误码或错误信息；可逐步迁移为 `TResult`
-- [x] 无统一 Result/Error 类型 → 已添加 `TResult<T, E>` 与 `TResult<void, E>`（NetCore.h）
-
----
-
-## 7. AOI 实现
-
-- [ ] **AOIComponent**：`TMap<SAOICell, SAOICell>` 的 key/value 语义不清晰，通常应为「格子 → 对象集合」映射
-
----
-
-## 8. 架构一致性
-
-- [x] **INetConnection**：Gateway、Router、Login、World、GameServer、ReplicationDriver 均改为 `TSharedPtr<INetConnection>`，接口已补充 `ReceivePacket`/`ProcessRecvBuffer`/`FlushSendBuffer`/`HasPendingSendData`
-- [x] 客户端连接统一通过 `INetConnection` 抽象
-
----
-
-## 建议的补齐顺序
-
-| 优先级 | 项目 | 说明 |
-|--------|------|------|
-| ~~高~~ | ~~补齐 Core 类型~~ | ✅ 已完成 |
-| ~~高~~ | ~~MUniqueIdGenerator 线程安全~~ | ✅ 已完成 |
-| ~~中~~ | ~~统一时间抽象~~ | ✅ 已完成 |
-| ~~中~~ | ~~清理/接入孤立代码~~ | ✅ GameServer 已加入 CMake |
-| ~~中~~ | ~~使用 MServerConnectionManager~~ | ✅ 已文档说明为何不用 |
-| 低 | Result/Error 类型 | 统一错误返回方式 |
-| 低 | 字节序显式处理 | 跨平台协议兼容 |
+- [x] Core 常用 STL 类型补齐
+- [x] `MUniqueIdGenerator` 线程安全
+- [x] `MLogger` 基础线程安全与文件输出
+- [x] `MTime` 统一时间抽象
+- [x] `INetConnection` 抽象统一
+- [x] `GameServer` 加入 CMake
+- [x] `MServerConnectionManager` 未接入原因已文档化
+- [x] `TResult<T, E>` 基础类型已提供
+- [x] 共享指针构造统一为项目级 `MakeShared`
+- [x] Socket 网络层第一阶段收口：`SocketPlatform` / `SocketAddress` / `SocketHandle` / `PacketCodec` / `MTcpConnection` / `MServerConnection` / `MSocketPoller`
 
 ---
 
-*最后更新：基于代码扫描*
+*最后更新：基于仓库扫描、构建结果和 `scripts/validate.py` 验证结果整理*

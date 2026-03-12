@@ -28,7 +28,7 @@
 
 ### 玩家移动
 
-1. `Gateway -> World`: `MT_PlayerDataSync`
+1. `Gateway -> World`: `MT_PlayerClientSync`
 2. `World` 更新玩家位置
 3. `World -> Scene`: `MT_PlayerDataSync`
 
@@ -44,10 +44,11 @@
 ## 核心内存对象
 
 - `Players`
-- `ConnectionToPlayer`
 - `PendingSessionValidations`
 - `ReplicationDriver`
 - `BackendConnections`
+
+当前 `World` 内部玩家主索引已经统一收敛到 `PlayerId`，不再依赖 `Gateway` 本地 `ConnectionId` 做业务路由。
 
 ## 设计边界
 

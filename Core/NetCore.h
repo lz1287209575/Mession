@@ -59,6 +59,12 @@ using TSet = std::set<T, Compare>;
 template<typename T>
 using TSharedPtr = std::shared_ptr<T>;
 
+template<typename T, typename... TArgs>
+TSharedPtr<T> MakeShared(TArgs&&... Args)
+{
+    return std::make_shared<T>(std::forward<TArgs>(Args)...);
+}
+
 template<typename T>
 using TWeakPtr = std::weak_ptr<T>;
 

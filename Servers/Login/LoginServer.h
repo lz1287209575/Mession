@@ -41,7 +41,7 @@ struct SGatewayPeer
 class MLoginServer
 {
 private:
-    TSocketFd ListenSocket = INVALID_SOCKET_FD;
+    MSocketHandle ListenSocket;
     bool bRunning = false;
     bool bShutdownDone = false;
     

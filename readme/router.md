@@ -107,6 +107,7 @@ flowchart LR
 
 `RouterServer` 目前不转发这些消息：
 
+- `MT_PlayerClientSync`
 - `MT_PlayerDataSync`
 - `MT_PlayerSwitchServer`
 - 复制消息

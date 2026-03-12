@@ -39,8 +39,8 @@ bool MSceneServer::Init(int InPort)
         Config.ListenPort = static_cast<uint16>(InPort);
     }
     // 创建监听socket
-    ListenSocket = MSocket::CreateListenSocket(Config.ListenPort);
-    if (ListenSocket == INVALID_SOCKET_FD)
+    ListenSocket.Reset(MSocket::CreateListenSocket(Config.ListenPort));
+    if (!ListenSocket.IsValid())
     {
         printf("ERROR: Failed to create listen socket on port %d\n", Config.ListenPort);
         return false;
@@ -55,7 +55,7 @@ bool MSceneServer::Init(int InPort)
 
     printf("=====================================\n");
     printf("  Mession Scene Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket);
+    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket.Get());
     printf("=====================================\n");
     
     return true;
@@ -64,10 +64,9 @@ bool MSceneServer::Init(int InPort)
 void MSceneServer::RequestShutdown()
 {
     bRunning = false;
-    if (ListenSocket != INVALID_SOCKET_FD)
+    if (ListenSocket.IsValid())
     {
-        MSocket::Close(ListenSocket);
-        ListenSocket = INVALID_SOCKET_FD;
+        ListenSocket.Reset();
     }
 }
 
@@ -94,10 +93,9 @@ void MSceneServer::Shutdown()
     Scenes.clear();
     
     // 关闭监听socket
-    if (ListenSocket != INVALID_SOCKET_FD)
+    if (ListenSocket.IsValid())
     {
-        MSocket::Close(ListenSocket);
-        ListenSocket = INVALID_SOCKET_FD;
+        ListenSocket.Reset();
     }
     
     LOG_INFO("Scene server shutdown complete");
@@ -167,7 +165,7 @@ void MSceneServer::ConnectToRouterServer()
     MServerConnection::SetLocalInfo(Config.SceneId, EServerType::Scene, Config.SceneName);
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
-    RouterServerConn = TSharedPtr<MServerConnection>(new MServerConnection(RouterConfig));
+    RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
     RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
         LOG_INFO("Connected to router server: %s", Info.ServerName.c_str());
         SendRouterRegister();
@@ -188,7 +186,7 @@ void MSceneServer::ConnectToWorldServer()
     if (!WorldServerConn)
     {
         SServerConnectionConfig WorldConfig(3, EServerType::World, "World01", Config.WorldServerAddr, Config.WorldServerPort);
-        WorldServerConn = TSharedPtr<MServerConnection>(new MServerConnection(WorldConfig));
+        WorldServerConn = MakeShared<MServerConnection>(WorldConfig);
     }
     WorldServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Connected to world server: %s", Info.ServerName.c_str());
@@ -301,7 +299,7 @@ void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const FString& ServerN
     if (!WorldServerConn)
     {
         SServerConnectionConfig WorldConfig(ServerId, EServerType::World, ServerName, Address, Port);
-        WorldServerConn = TSharedPtr<MServerConnection>(new MServerConnection(WorldConfig));
+        WorldServerConn = MakeShared<MServerConnection>(WorldConfig);
     }
 
     const SServerConnectionConfig& CurrentConfig = WorldServerConn->GetConfig();
@@ -407,7 +405,7 @@ void MSceneServer::HandleWorldPacket(uint8 Type, const TArray& Data)
 void MSceneServer::CreateDefaultScenes()
 {
     // 创建默认场景
-    auto Scene = TSharedPtr<MScene>(new MScene(Config.SceneId, Config.SceneName, Config.SceneSize));
+    auto Scene = MakeShared<MScene>(Config.SceneId, Config.SceneName, Config.SceneSize);
     Scenes[Config.SceneId] = Scene;
     
     LOG_INFO("Created scene: %s (id=%d)", Config.SceneName.c_str(), Config.SceneId);

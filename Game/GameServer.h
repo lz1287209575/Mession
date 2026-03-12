@@ -14,7 +14,7 @@ class MGameServer : public IMessageHandler
 private:
     // 服务器配置
     uint16 Port = 7777;
-    TSocketFd ListenSocket = INVALID_SOCKET_FD;
+    MSocketHandle ListenSocket;
     bool bRunning = false;
     
     // 网络
@@ -62,8 +62,8 @@ public:
         Port = InPort;
         
         // 创建监听socket
-        ListenSocket = MSocket::CreateListenSocket(Port);
-        if (ListenSocket == INVALID_SOCKET_FD)
+        ListenSocket.Reset(MSocket::CreateListenSocket(Port));
+        if (!ListenSocket.IsValid())
         {
             LOG_ERROR("Failed to start server on port %d", Port);
             return false;
@@ -98,10 +98,9 @@ public:
         Players.clear();
         
         // 关闭监听socket
-        if (ListenSocket != INVALID_SOCKET_FD)
+        if (ListenSocket.IsValid())
         {
-            MSocket::Close(ListenSocket);
-            ListenSocket = INVALID_SOCKET_FD;
+            ListenSocket.Reset();
         }
         
         LOG_INFO("Server shutdown complete");
@@ -153,15 +152,15 @@ private:
     // 接受新连接
     void AcceptNewConnections()
     {
-        TString Address;
-        uint16 PortNum;
-        
-        TSocketFd ClientSocket = MSocket::Accept(ListenSocket, Address, PortNum);
+        SAcceptedSocket Accepted = MSocket::AcceptConnection(ListenSocket.Get());
 
-        while (ClientSocket != INVALID_SOCKET_FD)
+        while (Accepted.IsValid())
         {
             uint64 ConnectionId = NextConnectionId++;
-            auto Connection = TSharedPtr<INetConnection>(new MTcpConnection(ClientSocket));
+            TSharedPtr<INetConnection> Connection = MakeShared<MTcpConnection>(
+                std::move(Accepted.Socket),
+                Accepted.RemoteAddress,
+                Accepted.RemotePort);
             Connection->SetPlayerId(ConnectionId);
             Connection->SetNonBlocking(true);
             
@@ -169,10 +168,10 @@ private:
             ReplicationDriver->AddConnection(ConnectionId, Connection);
             
             LOG_INFO("New connection: %s (connection_id=%llu)", 
-                     Address.c_str(), (unsigned long long)ConnectionId);
+                     Accepted.RemoteAddress.c_str(), (unsigned long long)ConnectionId);
             
             // 继续接受下一个
-            ClientSocket = MSocket::Accept(ListenSocket, Address, PortNum);
+            Accepted = MSocket::AcceptConnection(ListenSocket.Get());
         }
     }
     
@@ -180,29 +179,22 @@ private:
     void ProcessNetworkMessages()
     {
         TVector<uint64> DisconnectedConns;
-        
-        // 准备pollfd
-        TVector<pollfd> PollFds;
-        for (auto& [ConnId, Conn] : Connections)
-        {
-            if (Conn->IsConnected())
+
+        TVector<SSocketPollItem> PollItems = MSocketPoller::BuildReadableItems(
+            Connections,
+            [](TSharedPtr<INetConnection>& Conn) -> INetConnection*
             {
-                Conn->FlushSendBuffer();
-                pollfd Pfd;
-                Pfd.fd = Conn->GetSocketFd();
-                Pfd.events = POLLIN;
-                Pfd.revents = 0;
-                PollFds.push_back(Pfd);
-            }
-        }
-        
-        if (PollFds.empty())
+                return Conn.get();
+            });
+
+        if (PollItems.empty())
         {
             return;
         }
         
         // 等待100ms
-        int32 Ret = poll(PollFds.data(), PollFds.size(), 100);
+        TVector<SSocketPollResult> PollResults;
+        int32 Ret = MSocketPoller::PollReadable(PollItems, PollResults, 100);
         
         if (Ret < 0)
         {
@@ -214,29 +206,32 @@ private:
         }
         
         // 处理可读socket
-        size_t Index = 0;
-        for (auto& [ConnId, Conn] : Connections)
+        for (const SSocketPollResult& PollResult : PollResults)
         {
-            if (Index >= PollFds.size())
+            auto ConnIt = Connections.find(PollResult.ConnectionId);
+            if (ConnIt == Connections.end())
             {
-                break;
+                continue;
             }
-            
-            if (PollFds[Index].revents & POLLIN)
+
+            TSharedPtr<INetConnection>& Conn = ConnIt->second;
+            if (MSocketPoller::IsReadable(PollResult))
             {
                 TArray Packet;
                 while (Conn->ReceivePacket(Packet))
                 {
-                    MessageDispatcher->Dispatch(ConnId, Packet);
+                    MessageDispatcher->Dispatch(PollResult.ConnectionId, Packet);
                 }
                 
                 if (!Conn->IsConnected())
                 {
-                    DisconnectedConns.push_back(ConnId);
+                    DisconnectedConns.push_back(PollResult.ConnectionId);
                 }
             }
-            
-            Index++;
+            else if (MSocketPoller::HasError(PollResult))
+            {
+                DisconnectedConns.push_back(PollResult.ConnectionId);
+            }
         }
         
         // 处理断开的连接
@@ -293,6 +288,7 @@ private:
     // 游戏逻辑更新
     void UpdateGameLogic(float DeltaTime)
     {
+        (void)DeltaTime;
         // 这里更新游戏逻辑
     }
     

@@ -29,8 +29,8 @@ bool MRouterServer::Init(int InPort)
     {
         Config.ListenPort = static_cast<uint16>(InPort);
     }
-    ListenSocket = MSocket::CreateListenSocket(static_cast<uint16>(Config.ListenPort));
-    if (ListenSocket == INVALID_SOCKET_FD)
+    ListenSocket.Reset(MSocket::CreateListenSocket(static_cast<uint16>(Config.ListenPort)));
+    if (!ListenSocket.IsValid())
     {
         LOG_ERROR("Failed to create router listen socket on port %d", Config.ListenPort);
         return false;
@@ -40,7 +40,7 @@ bool MRouterServer::Init(int InPort)
 
     printf("=====================================\n");
     printf("  Mession Router Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket);
+    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket.Get());
     printf("=====================================\n");
 
     return true;
@@ -49,10 +49,9 @@ bool MRouterServer::Init(int InPort)
 void MRouterServer::RequestShutdown()
 {
     bRunning = false;
-    if (ListenSocket != INVALID_SOCKET_FD)
+    if (ListenSocket.IsValid())
     {
-        MSocket::Close(ListenSocket);
-        ListenSocket = INVALID_SOCKET_FD;
+        ListenSocket.Reset();
     }
 }
 
@@ -74,10 +73,9 @@ void MRouterServer::Shutdown()
     }
     Peers.clear();
 
-    if (ListenSocket != INVALID_SOCKET_FD)
+    if (ListenSocket.IsValid())
     {
-        MSocket::Close(ListenSocket);
-        ListenSocket = INVALID_SOCKET_FD;
+        ListenSocket.Reset();
     }
 
     LOG_INFO("Router server shutdown complete");
@@ -113,80 +111,77 @@ void MRouterServer::Run()
 
 void MRouterServer::AcceptServers()
 {
-    TString Address;
-    uint16 Port = 0;
-    TSocketFd ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
+    SAcceptedSocket Accepted = MSocket::AcceptConnection(ListenSocket.Get());
 
-    while (ClientSocket != INVALID_SOCKET_FD)
+    while (Accepted.IsValid())
     {
         const uint64 ConnectionId = NextConnectionId++;
-        auto Connection = TSharedPtr<INetConnection>(new MTcpConnection(ClientSocket));
+        TSharedPtr<INetConnection> Connection = MakeShared<MTcpConnection>(
+            std::move(Accepted.Socket),
+            Accepted.RemoteAddress,
+            Accepted.RemotePort);
         Connection->SetNonBlocking(true);
 
         SRouterPeer Peer;
         Peer.Connection = Connection;
-        Peer.Address = Address;
+        Peer.Address = Accepted.RemoteAddress;
         Peers[ConnectionId] = Peer;
 
         LOG_INFO("New router peer connected: %s:%d (connection_id=%llu)",
-                 Address.c_str(), Port, (unsigned long long)ConnectionId);
+                 Accepted.RemoteAddress.c_str(), Accepted.RemotePort, (unsigned long long)ConnectionId);
 
-        ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
+        Accepted = MSocket::AcceptConnection(ListenSocket.Get());
     }
 }
 
 void MRouterServer::ProcessMessages()
 {
     TVector<uint64> DisconnectedConnections;
-    TVector<pollfd> PollFds;
-
-    for (auto& [ConnectionId, Peer] : Peers)
-    {
-        if (Peer.Connection && Peer.Connection->IsConnected())
+    TVector<SSocketPollItem> PollItems = MSocketPoller::BuildReadableItems(
+        Peers,
+        [](SRouterPeer& Peer) -> INetConnection*
         {
-            Peer.Connection->FlushSendBuffer();
-            pollfd Pfd;
-            Pfd.fd = Peer.Connection->GetSocketFd();
-            Pfd.events = POLLIN;
-            Pfd.revents = 0;
-            PollFds.push_back(Pfd);
-        }
-    }
+            return Peer.Connection ? Peer.Connection.get() : nullptr;
+        });
 
-    if (PollFds.empty())
+    if (PollItems.empty())
     {
         return;
     }
 
-    const int32 Ret = poll(PollFds.data(), PollFds.size(), 10);
+    TVector<SSocketPollResult> PollResults;
+    const int32 Ret = MSocketPoller::PollReadable(PollItems, PollResults, 10);
     if (Ret < 0)
     {
         return;
     }
 
-    size_t Index = 0;
-    for (auto& [ConnectionId, Peer] : Peers)
+    for (const SSocketPollResult& PollResult : PollResults)
     {
-        if (Index >= PollFds.size())
+        auto PeerIt = Peers.find(PollResult.ConnectionId);
+        if (PeerIt == Peers.end())
         {
-            break;
+            continue;
         }
 
-        if (PollFds[Index].revents & POLLIN)
+        SRouterPeer& Peer = PeerIt->second;
+        if (MSocketPoller::IsReadable(PollResult))
         {
             TArray Packet;
             while (Peer.Connection->ReceivePacket(Packet))
             {
-                HandlePacket(ConnectionId, Packet);
+                HandlePacket(PollResult.ConnectionId, Packet);
             }
 
             if (!Peer.Connection->IsConnected())
             {
-                DisconnectedConnections.push_back(ConnectionId);
+                DisconnectedConnections.push_back(PollResult.ConnectionId);
             }
         }
-
-        ++Index;
+        else if (MSocketPoller::HasError(PollResult))
+        {
+            DisconnectedConnections.push_back(PollResult.ConnectionId);
+        }
     }
 
     for (uint64 ConnectionId : DisconnectedConnections)

@@ -1,93 +1,85 @@
 #include "Socket.h"
-#if !defined(_WIN32) && !defined(_WIN64) && !defined(WIN32) && !defined(WIN64)
-#include <netinet/tcp.h>
-#endif
-
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-namespace
-{
-    static bool EnsureWinsockInit()
-    {
-        static bool bDone = false;
-        if (bDone)
-        {
-            return true;
-        }
-        WSADATA WsaData;
-        if (WSAStartup(MAKEWORD(2, 2), &WsaData) != 0)
-        {
-            return false;
-        }
-        bDone = true;
-        return true;
-    }
-    static bool IsValidSocket(TSocketFd Fd) { return Fd != INVALID_SOCKET; }
-    static int SocketGetLastError() { return WSAGetLastError(); }
-    static bool SocketIsWouldBlock(int Err) { return Err == WSAEWOULDBLOCK; }
-    static void SocketClose(TSocketFd Fd) { if (IsValidSocket(Fd)) { closesocket(Fd); } }
-}
-bool MSocket::EnsureInit()
-{
-    return EnsureWinsockInit();
-}
-#else
-namespace
-{
-    static bool EnsureWinsockInit() { return true; }
-    static bool IsValidSocket(TSocketFd Fd) { return Fd >= 0; }
-    static int SocketGetLastError() { return errno; }
-    static bool SocketIsWouldBlock(int Err) { return Err == EWOULDBLOCK || Err == EAGAIN; }
-    static void SocketClose(TSocketFd Fd) { if (Fd >= 0) { close(Fd); } }
-}
-bool MSocket::EnsureInit()
-{
-    return true;
-}
-#endif
+#include "PacketCodec.h"
+#include "Poll.h"
 
 // MTcpConnection implementation
 MTcpConnection::MTcpConnection(TSocketFd InSocketFd)
-    : SocketFd(InSocketFd), PlayerId(0), bConnected(true)
+    : Socket(InSocketFd), PlayerId(0), bConnected(true)
 {
-    (void)EnsureWinsockInit();
-    sockaddr_in ClientAddr = {};
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    int AddrLen = sizeof(ClientAddr);
-#else
-    socklen_t AddrLen = sizeof(ClientAddr);
-#endif
-    if (getpeername(SocketFd, (sockaddr*)&ClientAddr, &AddrLen) == 0)
+    (void)MSocketPlatform::EnsureInit();
+    MSocketPlatform::GetPeerAddress(Socket.Get(), RemoteAddress, RemotePort);
+
+    RecvBuffer.reserve(RECV_BUFFER_SIZE);
+
+    LOG_INFO("New connection from %s:%d (fd=%zd)",
+             RemoteAddress.c_str(), (int)RemotePort, (intptr_t)Socket.Get());
+}
+
+MTcpConnection::MTcpConnection(MSocketHandle&& InSocket, const FString& InRemoteAddress, uint16 InRemotePort)
+    : Socket(std::move(InSocket)), PlayerId(0), bConnected(Socket.IsValid()), RemoteAddress(InRemoteAddress), RemotePort(InRemotePort)
+{
+    (void)MSocketPlatform::EnsureInit();
+
+    if (RemoteAddress.empty() && Socket.IsValid())
     {
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-        char AddrBuf[64];
-        if (InetNtopA(AF_INET, &ClientAddr.sin_addr, AddrBuf, sizeof(AddrBuf)))
-        {
-            RemoteAddress = AddrBuf;
-        }
-        else
-        {
-            RemoteAddress = "unknown";
-        }
-#else
-        RemoteAddress = inet_ntoa(ClientAddr.sin_addr);
-#endif
-        RemotePort = ntohs(ClientAddr.sin_port);
-    }
-    else
-    {
-        RemoteAddress = "unknown";
-        RemotePort = 0;
+        MSocketPlatform::GetPeerAddress(Socket.Get(), RemoteAddress, RemotePort);
     }
 
     RecvBuffer.reserve(RECV_BUFFER_SIZE);
 
     LOG_INFO("New connection from %s:%d (fd=%zd)",
-             RemoteAddress.c_str(), (int)RemotePort, (intptr_t)SocketFd);
+             RemoteAddress.c_str(), (int)RemotePort, (intptr_t)Socket.Get());
 }
 
 MTcpConnection::~MTcpConnection()
 {
     Close();
+}
+
+TSharedPtr<MTcpConnection> MTcpConnection::ConnectTo(const SSocketAddress& Address, float TimeoutSeconds)
+{
+    if (!MSocketPlatform::EnsureInit())
+    {
+        return nullptr;
+    }
+
+    TSocketFd NewSocketFd = MSocketPlatform::CreateTcpSocket();
+    if (NewSocketFd == INVALID_SOCKET_FD)
+    {
+        return nullptr;
+    }
+
+    MSocketPlatform::SetNonBlocking(NewSocketFd, true);
+    MSocketPlatform::SetNoDelay(NewSocketFd, true);
+
+    sockaddr_in SockAddr = {};
+    if (!Address.IsValid() || !MSocketPlatform::ParseIPv4Address(Address, SockAddr))
+    {
+        MSocketPlatform::CloseSocket(NewSocketFd);
+        return nullptr;
+    }
+
+    const int Result = MSocketPlatform::Connect(NewSocketFd, SockAddr);
+    const int LastError = MSocketPlatform::GetLastError();
+    if (Result != 0 && !MSocketPlatform::IsConnectInProgress(LastError))
+    {
+        MSocketPlatform::CloseSocket(NewSocketFd);
+        return nullptr;
+    }
+
+    pollfd PollFd;
+    PollFd.fd = NewSocketFd;
+    PollFd.events = POLLOUT;
+    PollFd.revents = 0;
+
+    const int PollResult = poll(&PollFd, 1, static_cast<int>(TimeoutSeconds * 1000.0f));
+    if (PollResult <= 0 || !(PollFd.revents & POLLOUT))
+    {
+        MSocketPlatform::CloseSocket(NewSocketFd);
+        return nullptr;
+    }
+
+    return MakeShared<MTcpConnection>(NewSocketFd);
 }
 
 bool MTcpConnection::Send(const void* Data, uint32 Size)
@@ -103,18 +95,27 @@ bool MTcpConnection::Send(const void* Data, uint32 Size)
         return false;
     }
 
-    if (SendBuffer.size() + 4 + Size > SEND_BUFFER_SIZE)
+    TArray Payload;
+    Payload.resize(Size);
+    memcpy(Payload.data(), Data, Size);
+
+    TArray EncodedPacket;
+    if (!MLengthPrefixedPacketCodec::EncodePacket(Payload, EncodedPacket))
     {
-        LOG_ERROR("Send buffer overflow on fd=%zd", (intptr_t)SocketFd);
+        LOG_ERROR("Failed to encode packet for send: %u", Size);
+        return false;
+    }
+
+    if (SendBuffer.size() + EncodedPacket.size() > SEND_BUFFER_SIZE)
+    {
+        LOG_ERROR("Send buffer overflow on fd=%zd", (intptr_t)Socket.Get());
         bConnected = false;
         return false;
     }
 
     const size_t OldSize = SendBuffer.size();
-    SendBuffer.resize(OldSize + 4 + Size);
-
-    memcpy(SendBuffer.data() + OldSize, &Size, sizeof(Size));
-    memcpy(SendBuffer.data() + OldSize + 4, Data, Size);
+    SendBuffer.resize(OldSize + EncodedPacket.size());
+    memcpy(SendBuffer.data() + OldSize, EncodedPacket.data(), EncodedPacket.size());
 
     return FlushSendBuffer();
 }
@@ -159,17 +160,13 @@ bool MTcpConnection::ReceivePacket(TArray& OutPacket)
         }
 
         uint8 Buffer[8192];
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-        int BytesRead = recv(SocketFd, (char*)Buffer, (int)sizeof(Buffer), 0);
-#else
-        ssize_t BytesRead = recv(SocketFd, Buffer, sizeof(Buffer), 0);
-#endif
+        const int32 BytesRead = MSocketPlatform::Recv(Socket.Get(), Buffer, sizeof(Buffer));
 
         if (BytesRead > 0)
         {
             if (RecvBuffer.size() + static_cast<size_t>(BytesRead) > RECV_BUFFER_SIZE)
             {
-                LOG_ERROR("Receive buffer overflow on fd=%zd", (intptr_t)SocketFd);
+                LOG_ERROR("Receive buffer overflow on fd=%zd", (intptr_t)Socket.Get());
                 bConnected = false;
                 return false;
             }
@@ -185,16 +182,12 @@ bool MTcpConnection::ReceivePacket(TArray& OutPacket)
             return false;
         }
 
-        if (SocketIsWouldBlock(SocketGetLastError()))
+        if (MSocketPlatform::IsWouldBlock(MSocketPlatform::GetLastError()))
         {
             return false;
         }
 
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-        LOG_ERROR("Receive failed: %d", SocketGetLastError());
-#else
-        LOG_ERROR("Receive failed: %s", strerror(errno));
-#endif
+        LOG_ERROR("Receive failed: %s", MSocketPlatform::GetLastErrorMessage().c_str());
         bConnected = false;
         return false;
     }
@@ -211,11 +204,7 @@ bool MTcpConnection::FlushSendBuffer()
 
     while (!SendBuffer.empty())
     {
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-        int Sent = send(SocketFd, (const char*)SendBuffer.data(), (int)SendBuffer.size(), 0);
-#else
-        ssize_t Sent = send(SocketFd, SendBuffer.data(), SendBuffer.size(), 0);
-#endif
+        const int32 Sent = MSocketPlatform::Send(Socket.Get(), SendBuffer.data(), static_cast<uint32>(SendBuffer.size()));
 
         if (Sent > 0)
         {
@@ -223,16 +212,12 @@ bool MTcpConnection::FlushSendBuffer()
             continue;
         }
 
-        if (Sent < 0 && SocketIsWouldBlock(SocketGetLastError()))
+        if (Sent < 0 && MSocketPlatform::IsWouldBlock(MSocketPlatform::GetLastError()))
         {
             return true;
         }
 
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-        LOG_ERROR("Send failed: %d", SocketGetLastError());
-#else
-        LOG_ERROR("Send failed: %s", strerror(errno));
-#endif
+        LOG_ERROR("Send failed: %s", MSocketPlatform::GetLastErrorMessage().c_str());
         bConnected = false;
         return false;
     }
@@ -242,7 +227,7 @@ bool MTcpConnection::FlushSendBuffer()
 
 void MTcpConnection::SetNonBlocking(bool bNonBlocking)
 {
-    MSocket::SetNonBlocking(SocketFd, bNonBlocking);
+    MSocket::SetNonBlocking(Socket.Get(), bNonBlocking);
 }
 
 void MTcpConnection::Close()
@@ -250,8 +235,8 @@ void MTcpConnection::Close()
     if (bConnected)
     {
         LOG_DEBUG("Closing connection (player=%llu, fd=%zd)",
-                  (unsigned long long)PlayerId, (intptr_t)SocketFd);
-        MSocket::Close(SocketFd);
+                  (unsigned long long)PlayerId, (intptr_t)Socket.Get());
+        Socket.Reset();
         bConnected = false;
     }
 
@@ -261,57 +246,43 @@ void MTcpConnection::Close()
 
 bool MTcpConnection::ProcessRecvBuffer(TArray& OutPacket)
 {
-    // 简单的粘包处理：先读4字节长度头
-    if (RecvBuffer.size() < 4)
+    const EPacketDecodeResult DecodeResult = MLengthPrefixedPacketCodec::TryDecodePacket(RecvBuffer, OutPacket);
+    if (DecodeResult == EPacketDecodeResult::PacketReady)
     {
-        return false;
+        return true;
     }
 
-    uint32 PacketSize = 0;
-    memcpy(&PacketSize, RecvBuffer.data(), sizeof(PacketSize));
-    
-    if (PacketSize == 0 || PacketSize > MAX_PACKET_SIZE)
+    if (DecodeResult == EPacketDecodeResult::InvalidPacket)
     {
-        LOG_ERROR("Invalid packet size: %u", PacketSize);
+        LOG_ERROR("Invalid packet in recv buffer on fd=%zd", (intptr_t)Socket.Get());
         bConnected = false;
-        return false;
     }
-    
-    if (RecvBuffer.size() < 4 + PacketSize)
-    {
-        return false;
-    }
-    
-    // 提取数据包
-    OutPacket.assign(RecvBuffer.begin() + 4, RecvBuffer.begin() + 4 + PacketSize);
-    
-    // 移除已处理的数据
-    RecvBuffer.erase(RecvBuffer.begin(), RecvBuffer.begin() + 4 + PacketSize);
-    
-    return true;
+
+    return false;
 }
 
 // MSocket implementation
+bool MSocket::EnsureInit()
+{
+    return MSocketPlatform::EnsureInit();
+}
+
 TSocketFd MSocket::CreateListenSocket(uint16 Port, int32 MaxBacklog)
 {
-    if (!EnsureWinsockInit())
+    if (!MSocketPlatform::EnsureInit())
     {
-        LOG_ERROR("WSAStartup failed");
-        return INVALID_SOCKET_FD;
-    }
-    TSocketFd ListenFd = socket(AF_INET, SOCK_STREAM, 0);
-    if (!IsValidSocket(ListenFd))
-    {
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-        LOG_ERROR("Failed to create socket: %d", SocketGetLastError());
-#else
-        LOG_ERROR("Failed to create socket: %s", strerror(errno));
-#endif
+        LOG_ERROR("Socket platform init failed");
         return INVALID_SOCKET_FD;
     }
 
-    int32 ReuseAddr = 1;
-    setsockopt(ListenFd, SOL_SOCKET, SO_REUSEADDR, (const char*)&ReuseAddr, sizeof(ReuseAddr));
+    TSocketFd ListenFd = MSocketPlatform::CreateTcpSocket();
+    if (ListenFd == INVALID_SOCKET_FD)
+    {
+        LOG_ERROR("Failed to create socket: %s", MSocketPlatform::GetLastErrorMessage().c_str());
+        return INVALID_SOCKET_FD;
+    }
+
+    MSocketPlatform::SetReuseAddress(ListenFd, true);
 
     sockaddr_in Addr = {};
     Addr.sin_family = AF_INET;
@@ -320,22 +291,14 @@ TSocketFd MSocket::CreateListenSocket(uint16 Port, int32 MaxBacklog)
 
     if (bind(ListenFd, (sockaddr*)&Addr, sizeof(Addr)) != 0)
     {
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-        LOG_ERROR("Failed to bind port %d: %d", Port, SocketGetLastError());
-#else
-        LOG_ERROR("Failed to bind port %d: %s", Port, strerror(errno));
-#endif
+        LOG_ERROR("Failed to bind port %d: %s", Port, MSocketPlatform::GetLastErrorMessage().c_str());
         Close(ListenFd);
         return INVALID_SOCKET_FD;
     }
 
     if (listen(ListenFd, MaxBacklog) != 0)
     {
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-        LOG_ERROR("Failed to listen: %d", SocketGetLastError());
-#else
-        LOG_ERROR("Failed to listen: %s", strerror(errno));
-#endif
+        LOG_ERROR("Failed to listen: %s", MSocketPlatform::GetLastErrorMessage().c_str());
         Close(ListenFd);
         return INVALID_SOCKET_FD;
     }
@@ -348,12 +311,13 @@ TSocketFd MSocket::CreateListenSocket(uint16 Port, int32 MaxBacklog)
 
 TSocketFd MSocket::CreateNonBlockingSocket()
 {
-    if (!EnsureWinsockInit())
+    if (!MSocketPlatform::EnsureInit())
     {
         return INVALID_SOCKET_FD;
     }
-    TSocketFd Fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (IsValidSocket(Fd))
+
+    TSocketFd Fd = MSocketPlatform::CreateTcpSocket();
+    if (Fd != INVALID_SOCKET_FD)
     {
         SetNonBlocking(Fd, true);
         SetNoDelay(Fd, true);
@@ -363,78 +327,51 @@ TSocketFd MSocket::CreateNonBlockingSocket()
 
 bool MSocket::SetNonBlocking(TSocketFd Fd, bool bNonBlocking)
 {
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    u_long Mode = bNonBlocking ? 1 : 0;
-    return ioctlsocket(Fd, FIONBIO, &Mode) == 0;
-#else
-    int32 Flags = fcntl(Fd, F_GETFL, 0);
-    if (Flags < 0)
-    {
-        return false;
-    }
-    if (bNonBlocking)
-    {
-        Flags |= O_NONBLOCK;
-    }
-    else
-    {
-        Flags &= ~O_NONBLOCK;
-    }
-    return fcntl(Fd, F_SETFL, Flags) == 0;
-#endif
+    return MSocketPlatform::SetNonBlocking(Fd, bNonBlocking);
 }
 
 bool MSocket::SetNoDelay(TSocketFd Fd, bool bNoDelay)
 {
-    int32 NoDelay = bNoDelay ? 1 : 0;
-    return setsockopt(Fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&NoDelay, sizeof(NoDelay)) == 0;
+    return MSocketPlatform::SetNoDelay(Fd, bNoDelay);
 }
 
 TSocketFd MSocket::Accept(TSocketFd ListenFd, TString& OutAddress, uint16& OutPort)
 {
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    int AddrLen = sizeof(sockaddr_in);
-#else
-    socklen_t AddrLen = sizeof(sockaddr_in);
-#endif
+    SAcceptedSocket Accepted = AcceptConnection(ListenFd);
+    OutAddress = Accepted.RemoteAddress;
+    OutPort = Accepted.RemotePort;
+    return Accepted.Socket.Release();
+}
+
+SAcceptedSocket MSocket::AcceptConnection(TSocketFd ListenFd)
+{
+    SAcceptedSocket Result;
+
     sockaddr_in ClientAddr = {};
-    TSocketFd ClientFd = accept(ListenFd, (sockaddr*)&ClientAddr, &AddrLen);
-
-    if (IsValidSocket(ClientFd))
+    TSocketFd ClientFd = MSocketPlatform::Accept(ListenFd, ClientAddr);
+    if (ClientFd == INVALID_SOCKET_FD)
     {
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-        char AddrBuf[64];
-        if (InetNtopA(AF_INET, &ClientAddr.sin_addr, AddrBuf, sizeof(AddrBuf)))
-        {
-            OutAddress = AddrBuf;
-        }
-        else
-        {
-            OutAddress = "unknown";
-        }
-#else
-        OutAddress = inet_ntoa(ClientAddr.sin_addr);
-#endif
-        OutPort = ntohs(ClientAddr.sin_port);
-
-        SetNonBlocking(ClientFd, true);
-        SetNoDelay(ClientFd, true);
+        return Result;
     }
 
-    return ClientFd;
+    Result.Socket.Reset(ClientFd);
+    MSocketPlatform::DescribeAddress(ClientAddr, Result.RemoteAddress, Result.RemotePort);
+    SetNonBlocking(Result.Socket.Get(), true);
+    SetNoDelay(Result.Socket.Get(), true);
+    return Result;
 }
 
 void MSocket::Close(TSocketFd Fd)
 {
-    SocketClose(Fd);
+    MSocketPlatform::CloseSocket(Fd);
 }
 
 int MSocket::GetLastError()
 {
-    return SocketGetLastError();
+    return MSocketPlatform::GetLastError();
 }
 
 bool MSocket::IsWouldBlock(int Error)
 {
-    return SocketIsWouldBlock(Error);
+    return MSocketPlatform::IsWouldBlock(Error);
 }

@@ -1,27 +1,10 @@
 #pragma once
 
 #include "NetCore.h"
+#include "SocketHandle.h"
+#include "SocketPlatform.h"
 #include "Common/Logger.h"
 #include <cstring>
-
-#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    #ifndef _WIN32_WINNT
-        #define _WIN32_WINNT 0x0600
-    #endif
-    #include <winsock2.h>
-    #include <ws2tcpip.h>
-    typedef SOCKET TSocketFd;
-    constexpr SOCKET INVALID_SOCKET_FD = INVALID_SOCKET;
-#else
-    #include <sys/socket.h>
-    #include <netinet/in.h>
-    #include <arpa/inet.h>
-    #include <unistd.h>
-    #include <fcntl.h>
-    #include <errno.h>
-    typedef int TSocketFd;
-    constexpr int INVALID_SOCKET_FD = -1;
-#endif
 
 // 网络错误码
 enum class ENetError
@@ -32,6 +15,18 @@ enum class ENetError
     InvalidPacket = 3,
     SendFailed = 4,
     ReceiveFailed = 5
+};
+
+struct SAcceptedSocket
+{
+    MSocketHandle Socket;
+    FString RemoteAddress;
+    uint16 RemotePort = 0;
+
+    bool IsValid() const
+    {
+        return Socket.IsValid();
+    }
 };
 
 // 网络连接接口（客户端连接统一通过此抽象）
@@ -59,7 +54,7 @@ public:
 class MTcpConnection : public INetConnection
 {
 private:
-    TSocketFd SocketFd;
+    MSocketHandle Socket;
     uint64 PlayerId;
     bool bConnected;
     TString RemoteAddress;
@@ -73,7 +68,10 @@ private:
 
 public:
     MTcpConnection(TSocketFd InSocketFd);
+    MTcpConnection(MSocketHandle&& InSocket, const FString& InRemoteAddress = "", uint16 InRemotePort = 0);
     virtual ~MTcpConnection();
+
+    static TSharedPtr<MTcpConnection> ConnectTo(const SSocketAddress& Address, float TimeoutSeconds);
     
     // INetConnection接口
     bool Send(const void* Data, uint32 Size) override;
@@ -83,7 +81,7 @@ public:
     bool HasPendingSendData() const override { return !SendBuffer.empty(); }
     uint64 GetPlayerId() const override { return PlayerId; }
     void SetPlayerId(uint64 Id) override { PlayerId = Id; }
-    TSocketFd GetSocketFd() const override { return SocketFd; }
+    TSocketFd GetSocketFd() const override { return Socket.Get(); }
     void SetNonBlocking(bool bNonBlocking) override;
     bool IsConnected() const override { return bConnected; }
     void Close() override;
@@ -117,6 +115,7 @@ public:
     
     // 接受新连接
     static TSocketFd Accept(TSocketFd ListenFd, TString& OutAddress, uint16& OutPort);
+    static SAcceptedSocket AcceptConnection(TSocketFd ListenFd);
     
     // 关闭socket
     static void Close(TSocketFd Fd);

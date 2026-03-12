@@ -13,6 +13,72 @@ const TMap<FString, const char*> WorldEnvMap = {
     {"login_port", "MESSION_LOGIN_PORT"},
     {"zone_id", "MESSION_ZONE_ID"},
 };
+
+class MGatewayClientTunnelConnection : public INetConnection
+{
+public:
+    MGatewayClientTunnelConnection(
+        TFunction<bool(const void*, uint32)> InSendCallback,
+        TFunction<bool()> InIsConnectedCallback)
+        : SendCallback(InSendCallback)
+        , IsConnectedCallback(InIsConnectedCallback)
+    {
+    }
+
+    bool Send(const void* Data, uint32 Size) override
+    {
+        if (!Data || Size == 0 || !SendCallback)
+        {
+            return false;
+        }
+
+        return SendCallback(Data, Size);
+    }
+
+    bool Receive(void* /*Buffer*/, uint32 /*BufferSize*/, uint32& OutBytesReceived) override
+    {
+        OutBytesReceived = 0;
+        return false;
+    }
+
+    uint64 GetPlayerId() const override
+    {
+        return PlayerId;
+    }
+
+    void SetPlayerId(uint64 Id) override
+    {
+        PlayerId = Id;
+    }
+
+    bool ReceivePacket(TArray& /*OutPayload*/) override
+    {
+        return false;
+    }
+
+    void Close() override
+    {
+    }
+
+    bool IsConnected() const override
+    {
+        return IsConnectedCallback ? IsConnectedCallback() : false;
+    }
+
+    TSocketFd GetSocketFd() const override
+    {
+        return INVALID_SOCKET_FD;
+    }
+
+    void SetNonBlocking(bool /*bNonBlocking*/) override
+    {
+    }
+
+private:
+    uint64 PlayerId = 0;
+    TFunction<bool(const void*, uint32)> SendCallback;
+    TFunction<bool()> IsConnectedCallback;
+};
 }
 
 MWorldServer::MWorldServer()
@@ -46,8 +112,8 @@ bool MWorldServer::Init(int InPort)
     MServerConnection::SetLocalInfo(3, EServerType::World, Config.ServerName);
 
     // 创建监听socket
-    ListenSocket = MSocket::CreateListenSocket(Config.ListenPort);
-    if (ListenSocket == INVALID_SOCKET_FD)
+    ListenSocket.Reset(MSocket::CreateListenSocket(Config.ListenPort));
+    if (!ListenSocket.IsValid())
     {
         printf("ERROR: Failed to create listen socket on port %d\n", InPort);
         return false;
@@ -57,13 +123,13 @@ bool MWorldServer::Init(int InPort)
 
     printf("=====================================\n");
     printf("  Mession World Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket);
+    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket.Get());
     printf("=====================================\n");
     LOG_INFO("  Listening on port %d", Config.ListenPort);
     LOG_INFO("=====================================");
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
-    RouterServerConn = TSharedPtr<MServerConnection>(new MServerConnection(RouterConfig));
+    RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
     RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
         LOG_INFO("Router server authenticated: %s", Info.ServerName.c_str());
         SendRouterRegister();
@@ -75,7 +141,7 @@ bool MWorldServer::Init(int InPort)
     RouterServerConn->Connect();
 
     SServerConnectionConfig LoginConfig(2, EServerType::Login, "Login01", "", 0);
-    LoginServerConn = TSharedPtr<MServerConnection>(new MServerConnection(LoginConfig));
+    LoginServerConn = MakeShared<MServerConnection>(LoginConfig);
     LoginServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Login server authenticated: %s", Info.ServerName.c_str());
     });
@@ -89,10 +155,9 @@ bool MWorldServer::Init(int InPort)
 void MWorldServer::RequestShutdown()
 {
     bRunning = false;
-    if (ListenSocket != INVALID_SOCKET_FD)
+    if (ListenSocket.IsValid())
     {
-        MSocket::Close(ListenSocket);
-        ListenSocket = INVALID_SOCKET_FD;
+        ListenSocket.Reset();
     }
 }
 
@@ -127,17 +192,15 @@ void MWorldServer::Shutdown()
     
     // 清理玩家
     Players.clear();
-    ConnectionToPlayer.clear();
     
     // 清理复制系统
     delete ReplicationDriver;
     ReplicationDriver = nullptr;
     
     // 关闭监听socket
-    if (ListenSocket != INVALID_SOCKET_FD)
+    if (ListenSocket.IsValid())
     {
-        MSocket::Close(ListenSocket);
-        ListenSocket = INVALID_SOCKET_FD;
+        ListenSocket.Reset();
     }
     
     LOG_INFO("World server shutdown complete");
@@ -212,15 +275,15 @@ void MWorldServer::Run()
 
 void MWorldServer::AcceptConnections()
 {
-    TString Address;
-    uint16 Port;
-    
-    TSocketFd ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
+    SAcceptedSocket Accepted = MSocket::AcceptConnection(ListenSocket.Get());
 
-    while (ClientSocket != INVALID_SOCKET_FD)
+    while (Accepted.IsValid())
     {
         uint64 ConnectionId = NextConnectionId++;
-        auto Connection = TSharedPtr<INetConnection>(new MTcpConnection(ClientSocket));
+        TSharedPtr<INetConnection> Connection = MakeShared<MTcpConnection>(
+            std::move(Accepted.Socket),
+            Accepted.RemoteAddress,
+            Accepted.RemotePort);
         Connection->SetNonBlocking(true);
 
         SBackendPeer Peer;
@@ -228,74 +291,78 @@ void MWorldServer::AcceptConnections()
         BackendConnections[ConnectionId] = Peer;
         
         LOG_INFO("New connection: %s (connection_id=%llu)", 
-                 Address.c_str(), (unsigned long long)ConnectionId);
+                 Accepted.RemoteAddress.c_str(), (unsigned long long)ConnectionId);
         
-        ClientSocket = MSocket::Accept(ListenSocket, Address, Port);
+        Accepted = MSocket::AcceptConnection(ListenSocket.Get());
     }
 }
 
 void MWorldServer::ProcessMessages()
 {
     TVector<uint64> DisconnectedConnections;
-    
-    TVector<pollfd> PollFds;
-    for (auto& [ConnId, Peer] : BackendConnections)
-    {
-        if (Peer.Connection && Peer.Connection->IsConnected())
+    TVector<SSocketPollItem> PollItems = MSocketPoller::BuildReadableItems(
+        BackendConnections,
+        [](SBackendPeer& Peer) -> INetConnection*
         {
-            Peer.Connection->FlushSendBuffer();
-            pollfd Pfd;
-            Pfd.fd = Peer.Connection->GetSocketFd();
-            Pfd.events = POLLIN;
-            PollFds.push_back(Pfd);
-        }
-    }
-    
-    if (PollFds.empty())
+            return Peer.Connection ? Peer.Connection.get() : nullptr;
+        });
+
+    if (PollItems.empty())
     {
         return;
     }
-    
-    int32 Ret = poll(PollFds.data(), PollFds.size(), 10);
+
+    TVector<SSocketPollResult> PollResults;
+    int32 Ret = MSocketPoller::PollReadable(PollItems, PollResults, 10);
     
     if (Ret < 0)
     {
         return;
     }
-    
-    size_t Index = 0;
-    
-    for (auto& [ConnId, Peer] : BackendConnections)
+
+    for (const SSocketPollResult& PollResult : PollResults)
     {
-        if (Index >= PollFds.size())
+        auto PeerIt = BackendConnections.find(PollResult.ConnectionId);
+        if (PeerIt == BackendConnections.end())
         {
-            break;
+            continue;
         }
-        
-        if (PollFds[Index].revents & POLLIN)
+
+        SBackendPeer& Peer = PeerIt->second;
+        if (MSocketPoller::IsReadable(PollResult))
         {
             TArray Packet;
             while (Peer.Connection->ReceivePacket(Packet))
             {
-                HandlePacket(ConnId, Packet);
+                HandlePacket(PollResult.ConnectionId, Packet);
             }
             
             if (!Peer.Connection->IsConnected())
             {
-                DisconnectedConnections.push_back(ConnId);
+                DisconnectedConnections.push_back(PollResult.ConnectionId);
             }
         }
-        
-        Index++;
+        else if (MSocketPoller::HasError(PollResult))
+        {
+            DisconnectedConnections.push_back(PollResult.ConnectionId);
+        }
     }
     
     // 处理断开的连接
     for (uint64 ConnId : DisconnectedConnections)
     {
-        auto* Player = GetPlayerByConnection(ConnId);
-        if (Player)
+        TVector<uint64> PlayerIdsToRemove;
+        for (const auto& [PlayerId, Player] : Players)
         {
-            RemovePlayer(Player->PlayerId);
+            if (Player.GatewayConnectionId == ConnId)
+            {
+                PlayerIdsToRemove.push_back(PlayerId);
+            }
+        }
+
+        for (uint64 PlayerId : PlayerIdsToRemove)
+        {
+            RemovePlayer(PlayerId);
         }
         
         LOG_INFO("Connection disconnected: %llu", (unsigned long long)ConnId);
@@ -362,7 +429,7 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
                 return;
             }
 
-            RequestSessionValidation(Message.ConnectionId, Message.PlayerId, Message.SessionKey);
+            RequestSessionValidation(ConnectionId, Message.PlayerId, Message.SessionKey);
             break;
         }
 
@@ -383,21 +450,21 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
             break;
         }
 
-        case EServerMessageType::MT_PlayerDataSync:
+        case EServerMessageType::MT_PlayerClientSync:
         {
             if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Gateway)
             {
                 return;
             }
 
-            SGameplaySyncMessage Message;
+            SPlayerClientSyncMessage Message;
             if (!ParsePayload(Payload, Message))
             {
                 LOG_WARN("Invalid gameplay payload size: %zu", Payload.size());
                 return;
             }
 
-            HandleGameplayPacket(Message.ConnectionId, Message.Data);
+            HandleGameplayPacket(Message.PlayerId, Message.Data);
             break;
         }
 
@@ -406,7 +473,7 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
     }
 }
 
-void MWorldServer::HandleGameplayPacket(uint64 ConnectionId, const TArray& Data)
+void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
 {
     if (Data.empty())
     {
@@ -424,7 +491,7 @@ void MWorldServer::HandleGameplayPacket(uint64 ConnectionId, const TArray& Data)
                 return;
             }
             
-            auto* Player = GetPlayerByConnection(ConnectionId);
+            auto* Player = GetPlayerById(PlayerId);
             if (!Player || !Player->Character)
             {
                 return;
@@ -456,7 +523,7 @@ void MWorldServer::HandleGameplayPacket(uint64 ConnectionId, const TArray& Data)
     }
 }
 
-void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 ConnectionId)
+void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 GatewayConnectionId)
 {
     if (Players.find(PlayerId) != Players.end())
     {
@@ -466,7 +533,7 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 Connec
     SPlayer Player;
     Player.PlayerId = PlayerId;
     Player.Name = Name;
-    Player.ConnectionId = ConnectionId;
+    Player.GatewayConnectionId = GatewayConnectionId;
     Player.CurrentSceneId = 1;
     Player.bOnline = true;
     
@@ -480,11 +547,34 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 Connec
     Player.Character = Character;
     
     Players[PlayerId] = Player;
-    ConnectionToPlayer[ConnectionId] = PlayerId;
-    
+
+    TSharedPtr<INetConnection> ReplicationConnection = MakeShared<MGatewayClientTunnelConnection>(
+        [this, GatewayConnectionId, PlayerId](const void* Data, uint32 Size) -> bool
+        {
+            TArray PacketBytes;
+            const uint8* ByteData = static_cast<const uint8*>(Data);
+            PacketBytes.insert(PacketBytes.end(), ByteData, ByteData + Size);
+            return SendServerMessage(
+                GatewayConnectionId,
+                EServerMessageType::MT_PlayerClientSync,
+                SPlayerClientSyncMessage{PlayerId, PacketBytes});
+        },
+        [this, GatewayConnectionId]() -> bool
+        {
+            auto GatewayIt = BackendConnections.find(GatewayConnectionId);
+            return GatewayIt != BackendConnections.end() &&
+                GatewayIt->second.bAuthenticated &&
+                GatewayIt->second.ServerType == EServerType::Gateway &&
+                GatewayIt->second.Connection &&
+                GatewayIt->second.Connection->IsConnected();
+        });
+    ReplicationConnection->SetPlayerId(PlayerId);
+
     // 注册到复制系统
     ReplicationDriver->RegisterActor(Character);
-    ReplicationDriver->AddRelevantActor(ConnectionId, Character->GetObjectId());
+    ReplicationDriver->AddConnection(PlayerId, ReplicationConnection);
+    ReplicationDriver->AddRelevantActor(PlayerId, Character->GetObjectId());
+    ReplicationDriver->BroadcastActorCreate(Character, PlayerId);
 
     const SPlayerSceneStateMessage Message{
         Player.PlayerId,
@@ -510,6 +600,7 @@ void MWorldServer::RemovePlayer(uint64 PlayerId)
     SPlayer& Player = It->second;
     
     // 移除复制
+    ReplicationDriver->RemoveConnection(Player.PlayerId);
     if (Player.Character)
     {
         ReplicationDriver->BroadcastActorDestroy(Player.Character->GetObjectId());
@@ -520,7 +611,6 @@ void MWorldServer::RemovePlayer(uint64 PlayerId)
         (uint8)EServerMessageType::MT_PlayerLogout,
         BuildPayload(SPlayerSceneLeaveMessage{Player.PlayerId, static_cast<uint16>(Player.CurrentSceneId)}));
     
-    ConnectionToPlayer.erase(Player.ConnectionId);
     Players.erase(It);
     
     LOG_INFO("Player %llu removed from world", (unsigned long long)PlayerId);
@@ -530,17 +620,6 @@ SPlayer* MWorldServer::GetPlayerById(uint64 PlayerId)
 {
     auto It = Players.find(PlayerId);
     return (It != Players.end()) ? &It->second : nullptr;
-}
-
-SPlayer* MWorldServer::GetPlayerByConnection(uint64 ConnectionId)
-{
-    auto It = ConnectionToPlayer.find(ConnectionId);
-    if (It == ConnectionToPlayer.end())
-    {
-        return nullptr;
-    }
-    
-    return GetPlayerById(It->second);
 }
 
 void MWorldServer::UpdateGameLogic(float DeltaTime)
@@ -614,7 +693,7 @@ void MWorldServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
         return;
     }
 
-    AddPlayer(Message.PlayerId, "Player" + std::to_string(Message.PlayerId), Message.ConnectionId);
+    AddPlayer(Message.PlayerId, "Player" + std::to_string(Message.PlayerId), Pending.GatewayConnectionId);
     auto* Player = GetPlayerById(Message.PlayerId);
     if (Player)
     {
@@ -622,7 +701,7 @@ void MWorldServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
     }
 }
 
-void MWorldServer::RequestSessionValidation(uint64 ConnectionId, uint64 PlayerId, uint32 SessionKey)
+void MWorldServer::RequestSessionValidation(uint64 GatewayConnectionId, uint64 PlayerId, uint32 SessionKey)
 {
     if (!LoginServerConn || !LoginServerConn->IsConnected())
     {
@@ -631,12 +710,18 @@ void MWorldServer::RequestSessionValidation(uint64 ConnectionId, uint64 PlayerId
         return;
     }
 
-    PendingSessionValidations[ConnectionId] = {ConnectionId, PlayerId, SessionKey};
+    uint64 ValidationRequestId = NextSessionValidationId++;
+    if (ValidationRequestId == 0)
+    {
+        ValidationRequestId = NextSessionValidationId++;
+    }
+
+    PendingSessionValidations[ValidationRequestId] = {ValidationRequestId, GatewayConnectionId, PlayerId, SessionKey};
 
     SendTypedServerMessage(
         LoginServerConn,
         EServerMessageType::MT_SessionValidateRequest,
-        SSessionValidateRequestMessage{ConnectionId, PlayerId, SessionKey});
+        SSessionValidateRequestMessage{ValidationRequestId, PlayerId, SessionKey});
 }
 
 void MWorldServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)

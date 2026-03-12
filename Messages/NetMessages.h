@@ -184,7 +184,7 @@ public:
         MMemoryArchive Ar(Data);
         
         // 读取消息类型
-        uint8 TypeByte;
+        uint8 TypeByte = 0;
         Ar << TypeByte;
         ENetMessageType Type = (ENetMessageType)TypeByte;
         

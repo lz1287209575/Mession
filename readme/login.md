@@ -26,6 +26,8 @@
 - 输入：`MT_SessionValidateRequest`
 - 输出：`MT_SessionValidateResponse`
 
+其中 `MT_SessionValidateRequest.ConnectionId` 当前更准确地说是 `WorldServer` 生成的校验请求关联 ID，用于把响应匹配回待校验上下文，并不要求等于 `Gateway` 本地客户端连接号。
+
 这条链路保证 `WorldServer` 不会在未校验 `SessionKey` 的情况下直接放玩家进世界。
 
 ## 会话数据

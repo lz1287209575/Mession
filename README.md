@@ -147,7 +147,7 @@ sequenceDiagram
     Scene-->>Scene: 玩家进入场景
 
     Client->>Gateway: EClientMessageType::MT_PlayerMove
-    Gateway->>World: MT_PlayerDataSync
+    Gateway->>World: MT_PlayerClientSync
     World->>Scene: MT_PlayerDataSync
 ```
 
@@ -217,6 +217,7 @@ flowchart TD
     SMsg --> SV[MT_SessionValidateRequest Response]
     SMsg --> PS[MT_PlayerSwitchServer]
     SMsg --> PD[MT_PlayerDataSync]
+    SMsg --> PC[MT_PlayerClientSync]
     SMsg --> PO[MT_PlayerLogout]
 ```
 
@@ -290,7 +291,7 @@ make -j4
 
 - 当前更适合引入一个**控制面 RouterServer**，统一做服务注册、心跳、健康检查和路由查询，而不是把高频业务流量都中转过去。
 - `Gateway / Login / World / Scene` 仍然保持业务直连，`RouterServer` 只回答“该连谁”以及“谁还活着”。
-- 这样既能消掉硬编码地址，也不会把 `MT_PlayerDataSync`、复制消息和移动同步压到一个新的热点节点。
+- 这样既能消掉硬编码地址，也不会把 `MT_PlayerClientSync`、`MT_PlayerDataSync`、复制消息和移动同步压到一个新的热点节点。
 - 详细设计与当前实现说明见 `readme/router.md`。
 
 ### 关键消息职责
@@ -301,7 +302,8 @@ make -j4
 - **`MT_PlayerLogin`**: `LoginServer` 用它生成 `SessionKey`；`GatewayServer` 再把成功结果同步给 `WorldServer`。
 - **`MT_SessionValidateRequest / MT_SessionValidateResponse`**: `WorldServer` 进入业务前向 `LoginServer` 校验 `SessionKey`。
 - **`MT_PlayerSwitchServer`**: 由 `WorldServer` 发给 `SceneServer`，表示玩家进入某个场景。
-- **`MT_PlayerDataSync`**: 用于 `Gateway -> World` 的游戏数据转发，以及 `World -> Scene` 的位置/状态同步。
+- **`MT_PlayerClientSync`**: 用于 `Gateway -> World` 的客户端业务包转发，以及 `World -> Gateway` 的按 `PlayerId` 回程复制转发。
+- **`MT_PlayerDataSync`**: 用于 `World -> Scene` 的位置/状态同步。
 - **握手/心跳消息**: 全部走 `ServerConnection`，用于后端长连接认证和保活，不进入业务层消息分发。
 
 ### 三层理解
@@ -339,7 +341,8 @@ make -j4
 | `MT_PlayerLogin` | Gateway 请求登录，或把登录结果同步给 World |
 | `MT_SessionValidateRequest / MT_SessionValidateResponse` | World 向 Login 校验 `SessionKey` |
 | `MT_PlayerSwitchServer` | World 通知 Scene 玩家进入场景 |
-| `MT_PlayerDataSync` | Gateway 到 World 的客户端数据转发，以及 World 到 Scene 的状态同步 |
+| `MT_PlayerClientSync` | Gateway 到 World 的客户端数据转发，以及 World 到 Gateway 的按 `PlayerId` 回程转发 |
+| `MT_PlayerDataSync` | World 到 Scene 的状态同步 |
 | `MT_PlayerLogout` | 玩家离线或离场通知 |
 
 ## 📡 服务器间通信
