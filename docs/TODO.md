@@ -43,8 +43,8 @@
 - [ ] 为跨格移动、进出视野、离线清理补验证
 - [x] 将 `ParsePayload` 从纯 `bool` 结果提升为 `TResult<void, FString>`，失败时返回描述信息（payload_size / deserialize_failed | read_overflow | trailing_bytes）
 - [x] 统一协议解析失败时的日志格式：调用处统一为 `LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str())`，可选 Context 参数写入错误串前缀
-- [ ] 继续收敛跨服消息结构体，减少裸 payload 处理
-- [ ] 评估并逐步统一字节序策略，避免跨平台协议隐患
+- [x] 继续收敛跨服/客户端载荷：新增 SPlayerIdPayload、SClientLoginResponsePayload、SPlayerMovePayload，Login/Gateway/World 中移除裸 memcpy，改用 ParsePayload/BuildPayload
+- [ ] 评估并逐步统一字节序策略，避免跨平台协议隐患（当前约定见 docs/protocol-byteorder.md）
 - [ ] 评估 `NetDriver/Reflection.h` 是正式接入主线，还是降级为示例 / 实验代码
 - [ ] 若继续保留 `Reflection`，明确它和复制系统、运行时对象系统的边界
 
@@ -76,6 +76,9 @@
 - [x] 网络循环样板与 MSocketPoller 决策：保持薄封装、各服独立循环，见 `docs/socket-layer-refactor.md`
 - [x] 基础库补齐：Config 增加 GetInt/GetU32/GetU64/GetBool；Core 增加 MNonCopyable、TSpan/TSpanMutable（C++20）；World/Login 配置项从 Config 读取 max_players、server_name、session_key_min/max
 - [x] ParsePayload 返回 `TResult<void, FString>`，可选 Context 参数；所有调用处统一日志格式 "ParsePayload failed: %s"
+- [x] 协议收敛：SPlayerIdPayload / SClientLoginResponsePayload / SPlayerMovePayload；Gateway/Login/World 中登录与移动解析改为 ParsePayload/BuildPayload；docs/protocol-byteorder.md 约定当前主机序与后续可选网络序
+- [x] 基础库建设：Core 增加 TUnorderedSet、Clamp/Lerp；Common 增加 StringUtils（MString::ToString、TrimInPlace/TrimCopy）；docs/base-library.md 说明 Core/Common 设施与使用建议；WorldServer 示例改用 MString::ToString
+- [x] 基础库按优先级补齐：统一 ToString（ServerMessages、SocketPlatform 改用 MString::ToString）；SVector 增加 Normalized()、Dot()、Distance(A,B)；MString::Split/Join；base-library.md 更新
 
 ---
 

@@ -400,20 +400,20 @@ void MGatewayServer::ForwardToBackend(uint64 ConnectionId, const TArray& Data)
             return;
         }
 
-        if (Data.size() < 1 + sizeof(uint64))
+        TArray Payload(Data.begin() + 1, Data.end());
+        SPlayerIdPayload IdPayload;
+        auto ParseResult = ParsePayload(Payload, IdPayload, "client_login");
+        if (!ParseResult.IsOk())
         {
-            LOG_WARN("Invalid client login packet size: %zu", Data.size());
+            LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
             return;
         }
-
-        uint64 PlayerId = 0;
-        memcpy(&PlayerId, Data.data() + 1, sizeof(PlayerId));
 
         SendTypedServerMessage(
             LoginServerConn,
             EServerMessageType::MT_PlayerLogin,
-            SPlayerLoginRequestMessage{ConnectionId, PlayerId});
-        LOG_DEBUG("Forwarded login request for player %llu", (unsigned long long)PlayerId);
+            SPlayerLoginRequestMessage{ConnectionId, IdPayload.PlayerId});
+        LOG_DEBUG("Forwarded login request for player %llu", (unsigned long long)IdPayload.PlayerId);
         return;
     }
 
@@ -463,12 +463,12 @@ void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
     Client->SessionToken = Message.SessionKey;
     Client->bAuthenticated = true;
 
-    TArray Response;
-    Response.resize(1 + sizeof(Message.SessionKey) + sizeof(Message.PlayerId));
-    Response[0] = (uint8)EClientMessageType::MT_LoginResponse;
-    memcpy(Response.data() + 1, &Message.SessionKey, sizeof(Message.SessionKey));
-    memcpy(Response.data() + 1 + sizeof(Message.SessionKey), &Message.PlayerId, sizeof(Message.PlayerId));
-    Client->Connection->Send(Response.data(), Response.size());
+    TArray RespPayload = BuildPayload(SClientLoginResponsePayload{Message.SessionKey, Message.PlayerId});
+    TArray Packet;
+    Packet.reserve(1 + RespPayload.size());
+    Packet.push_back(static_cast<uint8>(EClientMessageType::MT_LoginResponse));
+    Packet.insert(Packet.end(), RespPayload.begin(), RespPayload.end());
+    Client->Connection->Send(Packet.data(), static_cast<uint32>(Packet.size()));
 
     const uint64 RouteRequestId = QueryRoute(EServerType::World, Message.PlayerId);
     if (RouteRequestId != 0)

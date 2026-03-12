@@ -1,4 +1,5 @@
 #include "SocketPlatform.h"
+#include "Common/StringUtils.h"
 #include <cstring>
 
 namespace
@@ -200,7 +201,7 @@ FString MSocketPlatform::GetLastErrorMessage()
 {
     const int Error = GetLastError();
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    return std::to_string(Error);
+    return MString::ToString(static_cast<uint32>(Error));
 #else
     return strerror(Error);
 #endif

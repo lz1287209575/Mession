@@ -1,5 +1,6 @@
 #include "WorldServer.h"
 #include "Common/Config.h"
+#include "Common/StringUtils.h"
 #include "Messages/NetMessages.h"
 #include "Core/Poll.h"
 
@@ -496,22 +497,22 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
     {
         case EClientMessageType::MT_PlayerMove:
         {
-            if (Data.size() < 1 + sizeof(float) * 3)
+            TArray Payload(Data.begin() + 1, Data.end());
+            SPlayerMovePayload MovePayload;
+            auto ParseResult = ParsePayload(Payload, MovePayload, "MT_PlayerMove");
+            if (!ParseResult.IsOk())
             {
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
-            
+
             auto* Player = GetPlayerById(PlayerId);
             if (!Player || !Player->Character)
             {
                 return;
             }
-            
-            SVector NewPos;
-            memcpy(&NewPos.X, Data.data() + 1, sizeof(float));
-            memcpy(&NewPos.Y, Data.data() + 1 + sizeof(float), sizeof(float));
-            memcpy(&NewPos.Z, Data.data() + 1 + sizeof(float) * 2, sizeof(float));
-            
+
+            const SVector NewPos(MovePayload.X, MovePayload.Y, MovePayload.Z);
             Player->Character->SetLocation(NewPos);
 
             const SPlayerSceneStateMessage Message{
@@ -710,7 +711,7 @@ void MWorldServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
         return;
     }
 
-    AddPlayer(Message.PlayerId, "Player" + std::to_string(Message.PlayerId), Pending.GatewayConnectionId);
+    AddPlayer(Message.PlayerId, "Player" + MString::ToString(Message.PlayerId), Pending.GatewayConnectionId);
     auto* Player = GetPlayerById(Message.PlayerId);
     if (Player)
     {

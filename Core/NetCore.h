@@ -14,6 +14,7 @@
 #include <set>
 #include <deque>
 #include <unordered_map>
+#include <unordered_set>
 #include <optional>
 #include <utility>
 #include <atomic>
@@ -80,6 +81,9 @@ using TFunction = std::function<Signature>;
 template<typename K, typename V, typename Hash = std::hash<K>, typename KeyEqual = std::equal_to<K>>
 using TUnorderedMap = std::unordered_map<K, V, Hash, KeyEqual>;
 
+template<typename T, typename Hash = std::hash<T>, typename KeyEqual = std::equal_to<T>>
+using TUnorderedSet = std::unordered_set<T, Hash, KeyEqual>;
+
 template<typename T>
 using TOptional = std::optional<T>;
 
@@ -133,10 +137,57 @@ struct SVector
     
     float Size() const { return std::sqrt(X * X + Y * Y + Z * Z); }
     float SizeSquared() const { return X * X + Y * Y + Z * Z; }
-    
+
+    // 归一化，返回单位向量；若长度为 0 则返回 Zero()
+    SVector Normalized() const
+    {
+        const float Len = Size();
+        if (Len <= 0.0f)
+        {
+            return Zero();
+        }
+        return SVector(X / Len, Y / Len, Z / Len);
+    }
+
+    // 点积
+    float Dot(const SVector& V) const
+    {
+        return X * V.X + Y * V.Y + Z * V.Z;
+    }
+
     static SVector Zero() { return SVector(0, 0, 0); }
     static SVector One() { return SVector(1, 1, 1); }
 };
+
+// 两点距离
+inline float Distance(const SVector& A, const SVector& B)
+{
+    return (B - A).Size();
+}
+
+// 基础数学：Clamp / Lerp（数值与向量）
+inline float Clamp(float Value, float MinVal, float MaxVal)
+{
+    if (Value < MinVal)
+    {
+        return MinVal;
+    }
+    if (Value > MaxVal)
+    {
+        return MaxVal;
+    }
+    return Value;
+}
+
+inline float Lerp(float A, float B, float T)
+{
+    return A + (B - A) * T;
+}
+
+inline SVector Lerp(const SVector& A, const SVector& B, float T)
+{
+    return SVector(Lerp(A.X, B.X, T), Lerp(A.Y, B.Y, T), Lerp(A.Z, B.Z, T));
+}
 
 // 旋转向量
 struct SRotator

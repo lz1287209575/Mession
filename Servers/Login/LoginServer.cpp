@@ -271,25 +271,25 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
     {
         case EServerMessageType::MT_ServerHandshake:
         {
-            if (!Peer.bAuthenticated &&
-                (Payload.size() == sizeof(uint64) || Payload.size() == sizeof(uint64) + 1))
+            if (!Peer.bAuthenticated)
             {
-                uint64 PlayerId = 0;
-                memcpy(&PlayerId, Payload.data(), sizeof(PlayerId));
+                SPlayerIdPayload IdPayload;
+                auto ParseResult = ParsePayload(Payload, IdPayload, "handshake_minimal");
+                if (ParseResult.IsOk() && IdPayload.PlayerId != 0)
+                {
+                    const uint32 SessionKey = CreateSession(IdPayload.PlayerId, ConnectionId);
+                    TArray RespPayload = BuildPayload(SClientLoginResponsePayload{SessionKey, IdPayload.PlayerId});
+                    TArray Packet;
+                    Packet.reserve(1 + RespPayload.size());
+                    Packet.push_back(static_cast<uint8>(EClientMessageType::MT_LoginResponse));
+                    Packet.insert(Packet.end(), RespPayload.begin(), RespPayload.end());
+                    Peer.Connection->Send(Packet.data(), static_cast<uint32>(Packet.size()));
 
-                const uint32 SessionKey = CreateSession(PlayerId, ConnectionId);
-
-                TArray Response;
-                Response.resize(1 + sizeof(SessionKey) + sizeof(PlayerId));
-                Response[0] = (uint8)EClientMessageType::MT_LoginResponse;
-                memcpy(Response.data() + 1, &SessionKey, sizeof(SessionKey));
-                memcpy(Response.data() + 1 + sizeof(SessionKey), &PlayerId, sizeof(PlayerId));
-                Peer.Connection->Send(Response.data(), Response.size());
-
-                LOG_INFO("Player %llu logged in, session key: %u",
-                         (unsigned long long)PlayerId,
-                         SessionKey);
-                break;
+                    LOG_INFO("Player %llu logged in, session key: %u",
+                             (unsigned long long)IdPayload.PlayerId,
+                             SessionKey);
+                    break;
+                }
             }
 
             SServerHandshakeMessage Message;

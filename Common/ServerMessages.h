@@ -2,6 +2,7 @@
 
 #include "Common/MessageUtils.h"
 #include "Common/ServerConnection.h"
+#include "Common/StringUtils.h"
 
 struct SEmptyServerMessage
 {
@@ -448,6 +449,57 @@ inline bool Deserialize(MMessageReader& Reader, SPlayerClientSyncMessage& OutMes
     return true;
 }
 
+// 仅含 PlayerId 的载荷（客户端登录请求、最小握手等）
+struct SPlayerIdPayload
+{
+    uint64 PlayerId = 0;
+};
+
+inline void Serialize(MMessageWriter& Writer, const SPlayerIdPayload& Message)
+{
+    Writer.Write(Message.PlayerId);
+}
+
+inline bool Deserialize(MMessageReader& Reader, SPlayerIdPayload& OutMessage)
+{
+    return Reader.Read(OutMessage.PlayerId);
+}
+
+// 客户端登录响应载荷：SessionKey + PlayerId（Gateway 下发给客户端）
+struct SClientLoginResponsePayload
+{
+    uint32 SessionKey = 0;
+    uint64 PlayerId = 0;
+};
+
+inline void Serialize(MMessageWriter& Writer, const SClientLoginResponsePayload& Message)
+{
+    Writer.Write(Message.SessionKey).Write(Message.PlayerId);
+}
+
+inline bool Deserialize(MMessageReader& Reader, SClientLoginResponsePayload& OutMessage)
+{
+    return Reader.Read(OutMessage.SessionKey) && Reader.Read(OutMessage.PlayerId);
+}
+
+// 客户端移动载荷：位置 XYZ（World 解析 Gateway 转发的 gameplay 包）
+struct SPlayerMovePayload
+{
+    float X = 0.0f;
+    float Y = 0.0f;
+    float Z = 0.0f;
+};
+
+inline void Serialize(MMessageWriter& Writer, const SPlayerMovePayload& Message)
+{
+    Writer.Write(Message.X).Write(Message.Y).Write(Message.Z);
+}
+
+inline bool Deserialize(MMessageReader& Reader, SPlayerMovePayload& OutMessage)
+{
+    return Reader.Read(OutMessage.X) && Reader.Read(OutMessage.Y) && Reader.Read(OutMessage.Z);
+}
+
 template<typename TMessage>
 inline TArray BuildPayload(const TMessage& Message)
 {
@@ -466,20 +518,20 @@ inline TResult<void, FString> ParsePayload(const TArray& Data, TMessage& OutMess
     if (!Deserialize(Reader, OutMessage))
     {
         FString Err = (Context && Context[0]) ? (FString(Context) + ": ") : FString();
-        Err += "payload_size=" + std::to_string(PayloadSize) + ", deserialize_failed";
+        Err += "payload_size=" + MString::ToString(static_cast<uint64>(PayloadSize)) + ", deserialize_failed";
         return TResult<void, FString>::Err(std::move(Err));
     }
     if (!Reader.IsValid())
     {
         FString Err = (Context && Context[0]) ? (FString(Context) + ": ") : FString();
-        Err += "payload_size=" + std::to_string(PayloadSize) + ", read_overflow";
+        Err += "payload_size=" + MString::ToString(static_cast<uint64>(PayloadSize)) + ", read_overflow";
         return TResult<void, FString>::Err(std::move(Err));
     }
     const size_t Trailing = Reader.GetRemainingSize();
     if (Trailing != 0)
     {
         FString Err = (Context && Context[0]) ? (FString(Context) + ": ") : FString();
-        Err += "payload_size=" + std::to_string(PayloadSize) + ", trailing_bytes=" + std::to_string(Trailing);
+        Err += "payload_size=" + MString::ToString(static_cast<uint64>(PayloadSize)) + ", trailing_bytes=" + MString::ToString(static_cast<uint64>(Trailing));
         return TResult<void, FString>::Err(std::move(Err));
     }
     return TResult<void, FString>::Ok();
