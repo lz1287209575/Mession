@@ -41,8 +41,8 @@
 - [ ] 将 AOI 接入 `WorldServer` 的可见性计算
 - [ ] 让 AOI 结果驱动 `ReplicationDriver::RelevantActors`
 - [ ] 为跨格移动、进出视野、离线清理补验证
-- [ ] 将 `ParsePayload` 从纯 `bool` 结果逐步提升为带错误信息的返回值
-- [ ] 统一协议解析失败时的日志格式和上下文信息
+- [x] 将 `ParsePayload` 从纯 `bool` 结果提升为 `TResult<void, FString>`，失败时返回描述信息（payload_size / deserialize_failed | read_overflow | trailing_bytes）
+- [x] 统一协议解析失败时的日志格式：调用处统一为 `LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str())`，可选 Context 参数写入错误串前缀
 - [ ] 继续收敛跨服消息结构体，减少裸 payload 处理
 - [ ] 评估并逐步统一字节序策略，避免跨平台协议隐患
 - [ ] 评估 `NetDriver/Reflection.h` 是正式接入主线，还是降级为示例 / 实验代码
@@ -74,6 +74,8 @@
 - [x] `scripts/validate.py` Test 2 复制链路改为硬断言；Test 3 清理路径已硬断言
 - [x] CI：脚本验证入口与前置条件文档化（README + docs/validation.md）；协议小验证 `scripts/verify_protocol.py` 全矩阵执行；主链路验证 Linux GCC 执行
 - [x] 网络循环样板与 MSocketPoller 决策：保持薄封装、各服独立循环，见 `docs/socket-layer-refactor.md`
+- [x] 基础库补齐：Config 增加 GetInt/GetU32/GetU64/GetBool；Core 增加 MNonCopyable、TSpan/TSpanMutable（C++20）；World/Login 配置项从 Config 读取 max_players、server_name、session_key_min/max
+- [x] ParsePayload 返回 `TResult<void, FString>`，可选 Context 参数；所有调用处统一日志格式 "ParsePayload failed: %s"
 
 ---
 

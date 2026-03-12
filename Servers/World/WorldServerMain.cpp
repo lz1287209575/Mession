@@ -1,14 +1,13 @@
 #include "WorldServer.h"
 #include "Common/ParseArgs.h"
 #include <csignal>
-#include <iostream>
 
 static MWorldServer* GWorldServer = nullptr;
 
 void SignalHandler(int Signal)
 {
     (void)Signal;
-    printf("Received signal, graceful shutdown...\n");
+    LOG_INFO("Received signal, graceful shutdown...");
     if (GWorldServer)
     {
         GWorldServer->RequestShutdown();
@@ -27,11 +26,14 @@ int main(int argc, char* argv[])
     MWorldServer Server;
     GWorldServer = &Server;
     Server.LoadConfig(ConfigPath);
+
+    const double StartTime = MTime::GetTimeSeconds();
     if (!Server.Init(Port > 0 ? Port : 0))
     {
-        printf("Failed to start WorldServer\n");
+        LOG_ERROR("Failed to start WorldServer");
         return 1;
     }
+    MLogger::LogStarted("WorldServer", MTime::GetTimeSeconds() - StartTime);
 
     Server.Run();
     GWorldServer = nullptr;

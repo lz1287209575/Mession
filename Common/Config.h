@@ -85,6 +85,16 @@ inline void ApplyEnvOverrides(TMap<FString, FString>& Vars,
     }
 }
 
+inline int32 GetInt(const TMap<FString, FString>& Vars, const FString& Key, int32 Default)
+{
+    auto It = Vars.find(Key);
+    if (It == Vars.end())
+    {
+        return Default;
+    }
+    return std::atoi(It->second.c_str());
+}
+
 inline uint16 GetU16(const TMap<FString, FString>& Vars, const FString& Key, uint16 Default)
 {
     auto It = Vars.find(Key);
@@ -94,6 +104,75 @@ inline uint16 GetU16(const TMap<FString, FString>& Vars, const FString& Key, uin
     }
     int Val = std::atoi(It->second.c_str());
     return (Val > 0 && Val <= 65535) ? static_cast<uint16>(Val) : Default;
+}
+
+inline uint32 GetU32(const TMap<FString, FString>& Vars, const FString& Key, uint32 Default)
+{
+    auto It = Vars.find(Key);
+    if (It == Vars.end())
+    {
+        return Default;
+    }
+    const FString& S = It->second;
+    if (S.empty())
+    {
+        return Default;
+    }
+    char* End = nullptr;
+    unsigned long Val = std::strtoul(S.c_str(), &End, 10);
+    if (End == S.c_str())
+    {
+        return Default;
+    }
+    return static_cast<uint32>(Val);
+}
+
+inline uint64 GetU64(const TMap<FString, FString>& Vars, const FString& Key, uint64 Default)
+{
+    auto It = Vars.find(Key);
+    if (It == Vars.end())
+    {
+        return Default;
+    }
+    const FString& S = It->second;
+    if (S.empty())
+    {
+        return Default;
+    }
+    char* End = nullptr;
+    unsigned long long Val = std::strtoull(S.c_str(), &End, 10);
+    if (End == S.c_str())
+    {
+        return Default;
+    }
+    return static_cast<uint64>(Val);
+}
+
+inline bool GetBool(const TMap<FString, FString>& Vars, const FString& Key, bool Default)
+{
+    auto It = Vars.find(Key);
+    if (It == Vars.end() || It->second.empty())
+    {
+        return Default;
+    }
+    char c = It->second[0];
+    if (c == '1')
+    {
+        return true;
+    }
+    if (c == '0')
+    {
+        return false;
+    }
+    if (c == 't' || c == 'T' || c == 'y' || c == 'Y')
+    {
+        return true;
+    }
+    if (c == 'f' || c == 'F' || c == 'n' || c == 'N')
+    {
+        return false;
+    }
+    return std::atoi(It->second.c_str()) != 0;
 }
 
 inline FString GetStr(const TMap<FString, FString>& Vars, const FString& Key, const FString& Default)

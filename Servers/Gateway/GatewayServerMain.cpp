@@ -1,14 +1,13 @@
 #include "GatewayServer.h"
 #include "Common/ParseArgs.h"
 #include <csignal>
-#include <iostream>
 
 static MGatewayServer* GGatewayServer = nullptr;
 
 void SignalHandler(int Signal)
 {
     (void)Signal;
-    printf("Received signal, graceful shutdown...\n");
+    LOG_INFO("Received signal, graceful shutdown...");
     if (GGatewayServer)
     {
         GGatewayServer->RequestShutdown();
@@ -27,11 +26,14 @@ int main(int argc, char* argv[])
     MGatewayServer Server;
     GGatewayServer = &Server;
     Server.LoadConfig(ConfigPath);
+
+    const double StartTime = MTime::GetTimeSeconds();
     if (!Server.Init(Port > 0 ? Port : 0))
     {
-        printf("Failed to start GatewayServer\n");
+        LOG_ERROR("Failed to start GatewayServer");
         return 1;
     }
+    MLogger::LogStarted("GatewayServer", MTime::GetTimeSeconds() - StartTime);
 
     Server.Run();
     GGatewayServer = nullptr;

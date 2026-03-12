@@ -254,3 +254,22 @@ public:
         return CurrentId.fetch_add(1, std::memory_order_relaxed) + 1;
     }
 };
+
+// 不可复制基类（可移动），用于服务、连接等
+struct MNonCopyable
+{
+    MNonCopyable() = default;
+    MNonCopyable(const MNonCopyable&) = delete;
+    MNonCopyable& operator=(const MNonCopyable&) = delete;
+    MNonCopyable(MNonCopyable&&) = default;
+    MNonCopyable& operator=(MNonCopyable&&) = default;
+};
+
+// 只读缓冲区视图（C++20），协议解析等场景使用项目别名
+#if __cplusplus >= 202002L
+#include <span>
+template<typename T>
+using TSpan = std::span<const T>;
+template<typename T>
+using TSpanMutable = std::span<T>;
+#endif

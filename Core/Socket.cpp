@@ -305,7 +305,6 @@ TSocketFd MSocket::CreateListenSocket(uint16 Port, int32 MaxBacklog)
 
     SetNonBlocking(ListenFd, true);
 
-    LOG_INFO("Listening on port %d (fd=%zd)", Port, (intptr_t)ListenFd);
     return ListenFd;
 }
 

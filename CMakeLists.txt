@@ -39,6 +39,7 @@ set(COMMON_SOURCES
     Core/NetCore.cpp
     Core/SocketPlatform.cpp
     Core/Socket.cpp
+    Common/Logger.cpp
     Common/ServerConnection.cpp
 )
 

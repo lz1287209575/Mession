@@ -51,10 +51,7 @@ bool MGatewayServer::Init(int InPort)
 
     bRunning = true;
 
-    printf("=====================================\n");
-    printf("  Mession Gateway Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket.Get());
-    printf("=====================================\n");
+    MLogger::LogStartupBanner("GatewayServer", Config.ListenPort, static_cast<intptr_t>(ListenSocket.Get()));
     
     // 设置本服务器信息
     MServerConnection::SetLocalInfo(1, EServerType::Gateway, "Gateway01");
@@ -108,7 +105,7 @@ bool MGatewayServer::Init(int InPort)
     // 优先连接 Router，由 Router 返回当前可用后端地址
     RouterServerConn->Connect();
     
-    printf("Backend connections initialized\n");
+    LOG_INFO("Backend connections initialized");
     
     return true;
 }
@@ -447,9 +444,10 @@ void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
     }
 
     SPlayerLoginResponseMessage Message;
-    if (!ParsePayload(Data, Message))
+    auto ParseResult = ParsePayload(Data, Message, "MT_PlayerLogin");
+    if (!ParseResult.IsOk())
     {
-        LOG_WARN("Invalid login server payload size: %zu", Data.size());
+        LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
         return;
     }
 
@@ -488,8 +486,10 @@ void MGatewayServer::HandleWorldServerMessage(uint8 Type, const TArray& Data)
     if (Type == (uint8)EServerMessageType::MT_PlayerLogout)
     {
         SPlayerLogoutMessage Message;
-        if (!ParsePayload(Data, Message))
+        auto ParseResult = ParsePayload(Data, Message, "MT_PlayerLogout");
+        if (!ParseResult.IsOk())
         {
+            LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
             return;
         }
 
@@ -505,9 +505,10 @@ void MGatewayServer::HandleWorldServerMessage(uint8 Type, const TArray& Data)
     if (Type == (uint8)EServerMessageType::MT_PlayerClientSync)
     {
         SPlayerClientSyncMessage Message;
-        if (!ParsePayload(Data, Message))
+        auto ParseResult = ParsePayload(Data, Message, "MT_PlayerClientSync");
+        if (!ParseResult.IsOk())
         {
-            LOG_WARN("Invalid world gameplay payload size: %zu", Data.size());
+            LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
             return;
         }
 
@@ -536,9 +537,10 @@ void MGatewayServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
         case EServerMessageType::MT_RouteResponse:
         {
             SRouteResponseMessage Message;
-            if (!ParsePayload(Data, Message))
+            auto ParseResult = ParsePayload(Data, Message, "MT_RouteResponse");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid route response payload size: %zu", Data.size());
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
 

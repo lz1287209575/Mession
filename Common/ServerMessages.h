@@ -456,11 +456,33 @@ inline TArray BuildPayload(const TMessage& Message)
     return Writer.MoveData();
 }
 
+// 解析结果：成功为 Ok()，失败为 Err(描述信息)。Context 用于日志上下文（如消息类型名）。
 template<typename TMessage>
-inline bool ParsePayload(const TArray& Data, TMessage& OutMessage)
+inline TResult<void, FString> ParsePayload(const TArray& Data, TMessage& OutMessage, const char* Context = nullptr)
 {
     MMessageReader Reader(Data);
-    return Deserialize(Reader, OutMessage) && Reader.IsValid() && Reader.GetRemainingSize() == 0;
+    const size_t PayloadSize = Data.size();
+
+    if (!Deserialize(Reader, OutMessage))
+    {
+        FString Err = (Context && Context[0]) ? (FString(Context) + ": ") : FString();
+        Err += "payload_size=" + std::to_string(PayloadSize) + ", deserialize_failed";
+        return TResult<void, FString>::Err(std::move(Err));
+    }
+    if (!Reader.IsValid())
+    {
+        FString Err = (Context && Context[0]) ? (FString(Context) + ": ") : FString();
+        Err += "payload_size=" + std::to_string(PayloadSize) + ", read_overflow";
+        return TResult<void, FString>::Err(std::move(Err));
+    }
+    const size_t Trailing = Reader.GetRemainingSize();
+    if (Trailing != 0)
+    {
+        FString Err = (Context && Context[0]) ? (FString(Context) + ": ") : FString();
+        Err += "payload_size=" + std::to_string(PayloadSize) + ", trailing_bytes=" + std::to_string(Trailing);
+        return TResult<void, FString>::Err(std::move(Err));
+    }
+    return TResult<void, FString>::Ok();
 }
 
 template<typename TMessage>

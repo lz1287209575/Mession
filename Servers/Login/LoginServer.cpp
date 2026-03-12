@@ -30,6 +30,8 @@ bool MLoginServer::LoadConfig(const FString& ConfigPath)
     Config.ListenPort = MConfig::GetU16(Vars, "port", Config.ListenPort);
     Config.RouterServerAddr = MConfig::GetStr(Vars, "router_addr", Config.RouterServerAddr);
     Config.RouterServerPort = MConfig::GetU16(Vars, "router_port", Config.RouterServerPort);
+    Config.SessionKeyMin = MConfig::GetU32(Vars, "session_key_min", Config.SessionKeyMin);
+    Config.SessionKeyMax = MConfig::GetU32(Vars, "session_key_max", Config.SessionKeyMax);
     return true;
 }
 
@@ -45,16 +47,13 @@ bool MLoginServer::Init(int InPort)
     ListenSocket.Reset(MSocket::CreateListenSocket(Config.ListenPort));
     if (!ListenSocket.IsValid())
     {
-        printf("ERROR: Failed to create listen socket on port %d\n", Config.ListenPort);
+        LOG_ERROR("Failed to create listen socket on port %d", Config.ListenPort);
         return false;
     }
 
     bRunning = true;
 
-    printf("=====================================\n");
-    printf("  Mession Login Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket.Get());
-    printf("=====================================\n");
+    MLogger::LogStartupBanner("LoginServer", Config.ListenPort, static_cast<intptr_t>(ListenSocket.Get()));
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
@@ -294,10 +293,10 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
             }
 
             SServerHandshakeMessage Message;
-            if (!ParsePayload(Payload, Message))
+            auto ParseResult = ParsePayload(Payload, Message, "handshake");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid handshake payload from connection %llu",
-                         (unsigned long long)ConnectionId);
+                LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
                 return;
             }
 
@@ -329,9 +328,10 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
             }
 
             SPlayerLoginRequestMessage Request;
-            if (!ParsePayload(Payload, Request))
+            auto ParseResult = ParsePayload(Payload, Request, "MT_PlayerLogin");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid player login payload size: %zu", Payload.size());
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
 
@@ -357,9 +357,10 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
             }
 
             SSessionValidateRequestMessage Request;
-            if (!ParsePayload(Payload, Request))
+            auto ParseResult = ParsePayload(Payload, Request, "MT_SessionValidateRequest");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid session validation payload size: %zu", Payload.size());
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
 

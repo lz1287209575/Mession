@@ -42,7 +42,7 @@ bool MSceneServer::Init(int InPort)
     ListenSocket.Reset(MSocket::CreateListenSocket(Config.ListenPort));
     if (!ListenSocket.IsValid())
     {
-        printf("ERROR: Failed to create listen socket on port %d\n", Config.ListenPort);
+        LOG_ERROR("Failed to create listen socket on port %d", Config.ListenPort);
         return false;
     }
 
@@ -53,10 +53,7 @@ bool MSceneServer::Init(int InPort)
 
     bRunning = true;
 
-    printf("=====================================\n");
-    printf("  Mession Scene Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket.Get());
-    printf("=====================================\n");
+    MLogger::LogStartupBanner("SceneServer", Config.ListenPort, static_cast<intptr_t>(ListenSocket.Get()));
     
     return true;
 }
@@ -213,9 +210,10 @@ void MSceneServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
         case EServerMessageType::MT_RouteResponse:
         {
             SRouteResponseMessage Message;
-            if (!ParsePayload(Data, Message))
+            auto ParseResult = ParsePayload(Data, Message, "MT_RouteResponse");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid scene route response payload size: %zu", Data.size());
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
 
@@ -339,8 +337,10 @@ void MSceneServer::HandleWorldPacket(uint8 Type, const TArray& Data)
         case EServerMessageType::MT_PlayerSwitchServer:
         {
             SPlayerSceneStateMessage Message;
-            if (!ParsePayload(Data, Message))
+            auto ParseResult = ParsePayload(Data, Message, "MT_PlayerSwitchServer");
+            if (!ParseResult.IsOk())
             {
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
 
@@ -365,8 +365,10 @@ void MSceneServer::HandleWorldPacket(uint8 Type, const TArray& Data)
         case EServerMessageType::MT_PlayerLogout:
         {
             SPlayerSceneLeaveMessage Message;
-            if (!ParsePayload(Data, Message))
+            auto ParseResult = ParsePayload(Data, Message, "MT_PlayerLogout");
+            if (!ParseResult.IsOk())
             {
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
 
@@ -384,8 +386,10 @@ void MSceneServer::HandleWorldPacket(uint8 Type, const TArray& Data)
         case EServerMessageType::MT_PlayerDataSync:
         {
             SPlayerSceneStateMessage Message;
-            if (!ParsePayload(Data, Message))
+            auto ParseResult = ParsePayload(Data, Message, "MT_PlayerDataSync");
+            if (!ParseResult.IsOk())
             {
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
 

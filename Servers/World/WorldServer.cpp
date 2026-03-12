@@ -100,6 +100,8 @@ bool MWorldServer::LoadConfig(const FString& ConfigPath)
     Config.LoginServerAddr = MConfig::GetStr(Vars, "login_addr", Config.LoginServerAddr);
     Config.LoginServerPort = MConfig::GetU16(Vars, "login_port", Config.LoginServerPort);
     Config.ZoneId = MConfig::GetU16(Vars, "zone_id", Config.ZoneId);
+    Config.MaxPlayers = MConfig::GetU32(Vars, "max_players", Config.MaxPlayers);
+    Config.ServerName = MConfig::GetStr(Vars, "server_name", Config.ServerName);
     return true;
 }
 
@@ -115,18 +117,13 @@ bool MWorldServer::Init(int InPort)
     ListenSocket.Reset(MSocket::CreateListenSocket(Config.ListenPort));
     if (!ListenSocket.IsValid())
     {
-        printf("ERROR: Failed to create listen socket on port %d\n", InPort);
+        LOG_ERROR("Failed to create listen socket on port %d", InPort);
         return false;
     }
 
     bRunning = true;
 
-    printf("=====================================\n");
-    printf("  Mession World Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket.Get());
-    printf("=====================================\n");
-    LOG_INFO("  Listening on port %d", Config.ListenPort);
-    LOG_INFO("=====================================");
+    MLogger::LogStartupBanner("WorldServer", Config.ListenPort, static_cast<intptr_t>(ListenSocket.Get()));
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
@@ -401,10 +398,10 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
         case EServerMessageType::MT_ServerHandshake:
         {
             SServerHandshakeMessage Message;
-            if (!ParsePayload(Payload, Message))
+            auto ParseResult = ParsePayload(Payload, Message, "handshake");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid handshake payload from connection %llu",
-                         (unsigned long long)ConnectionId);
+                LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
                 return;
             }
 
@@ -432,9 +429,10 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
             }
 
             SPlayerLoginResponseMessage Message;
-            if (!ParsePayload(Payload, Message))
+            auto ParseResult = ParsePayload(Payload, Message, "MT_PlayerLogin");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid player login payload size: %zu", Payload.size());
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
 
@@ -450,8 +448,10 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
             }
 
             SPlayerLogoutMessage Message;
-            if (!ParsePayload(Payload, Message))
+            auto ParseResult = ParsePayload(Payload, Message, "MT_PlayerLogout");
+            if (!ParseResult.IsOk())
             {
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
 
@@ -467,9 +467,10 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
             }
 
             SPlayerClientSyncMessage Message;
-            if (!ParsePayload(Payload, Message))
+            auto ParseResult = ParsePayload(Payload, Message, "MT_PlayerClientSync");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid gameplay payload size: %zu", Payload.size());
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
 
@@ -685,9 +686,10 @@ void MWorldServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
     }
 
     SSessionValidateResponseMessage Message;
-    if (!ParsePayload(Data, Message))
+    auto ParseResult = ParsePayload(Data, Message, "MT_SessionValidateResponse");
+    if (!ParseResult.IsOk())
     {
-        LOG_WARN("Invalid session validation response size: %zu", Data.size());
+        LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
         return;
     }
 
@@ -750,9 +752,10 @@ void MWorldServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
         case EServerMessageType::MT_RouteResponse:
         {
             SRouteResponseMessage Message;
-            if (!ParsePayload(Data, Message))
+            auto ParseResult = ParsePayload(Data, Message, "MT_RouteResponse");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid router route response size: %zu", Data.size());
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
                 return;
             }
 

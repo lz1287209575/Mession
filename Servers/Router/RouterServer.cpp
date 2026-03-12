@@ -38,10 +38,7 @@ bool MRouterServer::Init(int InPort)
 
     bRunning = true;
 
-    printf("=====================================\n");
-    printf("  Mession Router Server\n");
-    printf("  Listening on port %d (fd=%zd)\n", Config.ListenPort, (intptr_t)ListenSocket.Get());
-    printf("=====================================\n");
+    MLogger::LogStartupBanner("RouterServer", Config.ListenPort, static_cast<intptr_t>(ListenSocket.Get()));
 
     return true;
 }
@@ -212,10 +209,10 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
         case EServerMessageType::MT_ServerHandshake:
         {
             SServerHandshakeMessage Message;
-            if (!ParsePayload(Payload, Message))
+            auto ParseResult = ParsePayload(Payload, Message, "handshake");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid router handshake payload from connection %llu",
-                         (unsigned long long)ConnectionId);
+                LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
                 return;
             }
 
@@ -244,10 +241,10 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
             }
 
             SServerRegisterMessage Message;
-            if (!ParsePayload(Payload, Message))
+            auto ParseResult = ParsePayload(Payload, Message, "MT_ServerRegister");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid server register payload from connection %llu",
-                         (unsigned long long)ConnectionId);
+                LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
                 return;
             }
 
@@ -278,10 +275,10 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
             }
 
             SServerLoadReportMessage Message;
-            if (!ParsePayload(Payload, Message))
+            auto ParseResult = ParsePayload(Payload, Message, "MT_ServerLoadReport");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid load report payload from connection %llu",
-                         (unsigned long long)ConnectionId);
+                LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
                 return;
             }
 
@@ -298,10 +295,10 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
             }
 
             SRouteQueryMessage Query;
-            if (!ParsePayload(Payload, Query))
+            auto ParseResult = ParsePayload(Payload, Query, "MT_RouteQuery");
+            if (!ParseResult.IsOk())
             {
-                LOG_WARN("Invalid route query payload from connection %llu",
-                         (unsigned long long)ConnectionId);
+                LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
                 return;
             }
 

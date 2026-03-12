@@ -1,14 +1,13 @@
 #include "RouterServer.h"
 #include "Common/ParseArgs.h"
 #include <csignal>
-#include <iostream>
 
 static MRouterServer* GRouterServer = nullptr;
 
 void SignalHandler(int Signal)
 {
     (void)Signal;
-    printf("Received signal, graceful shutdown...\n");
+    LOG_INFO("Received signal, graceful shutdown...");
     if (GRouterServer)
     {
         GRouterServer->RequestShutdown();
@@ -27,11 +26,14 @@ int main(int argc, char* argv[])
     MRouterServer Server;
     GRouterServer = &Server;
     Server.LoadConfig(ConfigPath);
+
+    const double StartTime = MTime::GetTimeSeconds();
     if (!Server.Init(Port > 0 ? Port : 0))
     {
-        printf("Failed to start RouterServer\n");
+        LOG_ERROR("Failed to start RouterServer");
         return 1;
     }
+    MLogger::LogStarted("RouterServer", MTime::GetTimeSeconds() - StartTime);
 
     Server.Run();
     GRouterServer = nullptr;
