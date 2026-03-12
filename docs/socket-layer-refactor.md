@@ -482,3 +482,9 @@ Recommended next steps:
 1. Keep current abstractions stable and avoid adding another large transport rewrite.
 2. Decide whether `MSocketPoller` should remain a thin helper or evolve into a more explicit event-loop abstraction.
 3. Shift attention back to gameplay-facing gaps: state cleanup, distributed replication, and tests.
+
+### 网络循环样板与 MSocketPoller 决策（已收口）
+
+- **现状**：Gateway / World / Login / Router 各自在 `Run()` 中完成「Accept → BuildReadableItems → PollReadable → 按结果收包/断线」；SceneServer 仅连接 Router/World，无监听连接，故只有 `Tick() + Sleep` 循环。
+- **决策**：保持 `MSocketPoller` 为薄封装（仅 `BuildReadableItems` + `PollReadable` + `IsReadable`/`HasError`），**不**引入统一事件循环或高层 RunLoop 抽象；各服保留独立 accept + poll + 处理逻辑，便于按服定制断线与业务。
+- **理由**：当前各服断线后的清理逻辑差异较大（如 Gateway 要通知 World 登出、World 要删玩家并 BroadcastActorDestroy），抽成通用循环需大量回调，收益有限；若日后需要 epoll/kqueue 等再考虑在 MSocketPoller 层扩展后端，而不改各服调用方式。

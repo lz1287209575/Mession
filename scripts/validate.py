@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-Mession 脚本验证 - 启动所有服务器并验证登录流程
+Mession 脚本验证 - 启动所有服务器并验证登录、复制与清理路径
 
 用法:
   ./scripts/validate.py [--build-dir build] [--timeout 30]
-  
+
 流程:
   1. 编译项目（如需要）
   2. 按顺序启动 Router -> Login -> World -> Scene -> Gateway
-  3. 连接 Gateway，发送登录包，验证登录响应
-  4. 可选：发送玩家移动，验证转发
-  5. 清理并退出
+  3. Test 1: 多玩家登录，验证 SessionKey/PlayerId
+  4. Test 2: 复制链路 - 登录后收包，断言至少收到 MT_ActorCreate
+  5. 发送玩家移动
+  6. Test 3: 清理路径 - 一端断线后重连同一 PlayerId，验证 Gateway/World 已回收状态
+  7. 清理并退出
 """
 
 import argparse
@@ -28,6 +30,9 @@ from pathlib import Path
 MT_LOGIN = 1
 MT_LOGIN_RESPONSE = 2
 MT_PLAYER_MOVE = 5
+MT_ACTOR_CREATE = 6
+MT_ACTOR_DESTROY = 7
+MT_ACTOR_UPDATE = 8
 
 # 端口
 ROUTER_PORT = 8005
@@ -78,6 +83,7 @@ def start_server(
     name: str,
     port: int,
     env_extra: Optional[dict] = None,
+    debug_log_dir: Optional[Path] = None,
 ) -> Optional[subprocess.Popen]:
     """启动单个服务器"""
     exe = get_executable_path(build_dir, name)
@@ -88,11 +94,20 @@ def start_server(
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
+    stdout_dst = subprocess.DEVNULL
+    stderr_dst = subprocess.DEVNULL
+    if debug_log_dir:
+        log_path = debug_log_dir / f"{name}.log"
+        try:
+            f = open(log_path, "w", encoding="utf-8")
+            stdout_dst = stderr_dst = f
+        except OSError:
+            pass
     proc = subprocess.Popen(
         [str(exe)],
         cwd=build_dir,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=stdout_dst,
+        stderr=stderr_dst,
         start_new_session=True,
         env=env,
     )
@@ -164,10 +179,55 @@ def send_player_move(sock: socket.socket, x: float, y: float, z: float) -> bool:
     return True
 
 
+def recv_one_packet(sock: socket.socket, timeout: float) -> Optional[tuple[int, bytes]]:
+    """
+    接收一个长度前缀包，返回 (msg_type, payload) 或 None（超时/断连）。
+    协议: Length(4) + MsgType(1) + Payload...
+    """
+    sock.settimeout(timeout)
+    try:
+        header = sock.recv(4)
+        if len(header) < 4:
+            return None
+        length = struct.unpack("<I", header)[0]
+        if length < 1:
+            return None
+        body = b""
+        while len(body) < length:
+            chunk = sock.recv(length - len(body))
+            if not chunk:
+                return None
+            body += chunk
+        return (body[0], body[1:])
+    except socket.timeout:
+        return None
+    except (socket.error, OSError):
+        return None
+
+
+def collect_replication_packets(
+    sock: socket.socket, duration: float, want_types: set[int]
+) -> list[tuple[int, bytes]]:
+    """
+    在 duration 秒内尽量收包，返回 msg_type 在 want_types 中的 (msg_type, payload) 列表。
+    """
+    deadline = time.time() + duration
+    found: list[tuple[int, bytes]] = []
+    while time.time() < deadline:
+        pkt = recv_one_packet(sock, timeout=0.3)
+        if pkt is None:
+            continue
+        msg_type, payload = pkt
+        if msg_type in want_types:
+            found.append((msg_type, payload))
+    return found
+
+
 def run_validation(
     build_dir: Path,
     timeout: float,
     zone_id: Optional[int] = None,
+    debug_log_dir: Optional[Path] = None,
 ) -> bool:
     """执行完整验证流程"""
     project_root = build_dir.parent
@@ -184,7 +244,7 @@ def run_validation(
 
     try:
         # 1. 启动 Router
-        p = start_server(build_dir, "RouterServer", ROUTER_PORT)
+        p = start_server(build_dir, "RouterServer", ROUTER_PORT, None, debug_log_dir)
         if not p:
             return False
         procs.append(p)
@@ -200,7 +260,7 @@ def run_validation(
             ("SceneServer", SCENE_PORT),
             ("GatewayServer", GATEWAY_PORT),
         ]:
-            p = start_server(build_dir, name, port, env_zone)
+            p = start_server(build_dir, name, port, env_zone, debug_log_dir)
             if not p:
                 return False
             procs.append(p)
@@ -230,22 +290,40 @@ def run_validation(
             log(f"  Player {pid} OK: SessionKey={session_key}")
             clients.append((sock, pid))
 
+        # 6. 复制链路：至少一名客户端应收到其他玩家的 MT_ActorCreate
+        log("Test 2: Replication (ActorCreate)...")
+        time.sleep(2.0)  # 等待路由、Session 校验、AddPlayer 与复制包下发
+        all_creates = []
+        for sock, _ in clients:
+            replication = collect_replication_packets(
+                sock, 1.5, {MT_ACTOR_CREATE, MT_ACTOR_UPDATE}
+            )
+            all_creates.extend(p for p in replication if p[0] == MT_ACTOR_CREATE)
+        if not all_creates:
+            log("  No MT_ActorCreate received; replication path broken")
+            for s, _ in clients:
+                if s:
+                    s.close()
+            return False
+        log(f"  Received {len(all_creates)} MT_ActorCreate (replication OK)")
+
         for sock, pid in clients:
             send_player_move(sock, float(pid % 10), 0.0, 0.0)
         log("  Multi-player move sent")
 
-        # 6. 断线重连
-        log("Test 2: Reconnect...")
+        # 7. 清理路径：断线后 Gateway/World 回收状态，该玩家可再次登录
+        log("Test 3: Cleanup path (disconnect then reconnect)...")
         clients[0][0].close()
         clients[0] = (None, clients[0][1])
-        time.sleep(0.2)
+        time.sleep(0.3)
+        send_player_move(clients[1][0], 1.0, 0.0, 0.0)
 
         sock2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock2.settimeout(10.0)
         sock2.connect(("127.0.0.1", GATEWAY_PORT))
         ok, session_key2, resp_pid2 = send_login(sock2, 10001)
         if not ok:
-            log("Reconnect login failed")
+            log("Reconnect login failed (cleanup path broken)")
             sock2.close()
             for s, _ in clients:
                 if s:
@@ -253,7 +331,7 @@ def run_validation(
             return False
         log(f"  Reconnect OK: SessionKey={session_key2}")
 
-        # 7. 清理
+        # 8. 清理
         for sock, _ in clients:
             if sock:
                 sock.close()
@@ -291,6 +369,11 @@ def main() -> int:
         metavar="ID",
         help="Test with zone_id (sets MESSION_ZONE_ID for all servers)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Write server stderr to build_dir/validate_logs/<Server>.log",
+    )
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parent.parent
@@ -306,7 +389,22 @@ def main() -> int:
         log(f"GatewayServer not found in {build_dir}")
         return 1
 
-    return 0 if run_validation(build_dir, args.timeout, args.zone) else 1
+    debug_log_dir = None
+    if args.debug:
+        debug_log_dir = build_dir / "validate_logs"
+        debug_log_dir.mkdir(parents=True, exist_ok=True)
+        log(f"Debug logs: {debug_log_dir}")
+
+    ok = run_validation(build_dir, args.timeout, args.zone, debug_log_dir)
+    if args.debug and debug_log_dir:
+        gateway_log = debug_log_dir / "GatewayServer.log"
+        if gateway_log.exists():
+            text = gateway_log.read_text(encoding="utf-8", errors="replace")
+            if "Forwarding World" in text:
+                log("Gateway log contains 'Forwarding World' (replication reached Gateway)")
+            else:
+                log("Gateway log has no 'Forwarding World' (replication did not reach Gateway)")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

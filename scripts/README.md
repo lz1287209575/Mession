@@ -1,5 +1,17 @@
 # 脚本
 
+## servers.py - 一键起服 / 停服
+
+不跑测试，只启动或停止五服，适合本地联调。
+
+```bash
+python3 scripts/servers.py start [--build-dir build]
+python3 scripts/servers.py stop  [--build-dir build]
+```
+
+- **start**：按序启动 Router → Login → World → Scene → Gateway，等待各端口就绪后写入 PID 到 `build/.mession_servers.pid`。可选 `--no-wait` 不等待端口。
+- **stop**：读取 PID 文件发送 SIGTERM；Linux 下会再对 8001–8005 执行 `fuser -k` 清理残留。
+
 ## validate.py - 脚本验证
 
 启动所有 Mession 服务器并验证登录流程是否正常。

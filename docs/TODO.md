@@ -11,31 +11,28 @@
 - [x] Core 类型补齐、时间抽象、基础线程安全项已完成
 
 当前缺口：
-- [ ] 状态回收仍不够一致
-- [ ] 分布式复制链路未真正补完
-- [ ] 测试体系还没有形成正式入口
+- [x] 测试体系：脚本验证入口与前置条件已文档化（README + docs/validation.md），CI 已跑协议脚本与主链路验证
 - [x] Socket 网络层第一阶段收口已完成
+- [x] 分布式复制链路（World 隧道 + AddConnection/BroadcastActorCreate/RemoveConnection）已补齐
+- [x] Gateway 登出与鉴权状态回收已与 World 闭环
 
 ---
 
 ## Now
 
-- [ ] 修复 `Gateway` 处理 `MT_PlayerLogout` 时的连接索引错误
-- [ ] 统一客户端断线、World 清理、Gateway 鉴权状态回收的行为
-- [ ] 检查 `World -> Gateway -> Client` 的登出 / 失效通知是否完整闭环
-- [ ] 为上述清理路径补最小可复现验证
-- [ ] 在 `WorldServer` 中为客户端连接补 `MReplicationDriver::AddConnection()`
-- [ ] 玩家进入世界时补齐 `BroadcastActorCreate()`
-- [ ] 玩家离开世界时补齐 `RemoveConnection()` / `ActorDestroy` / 相关可见性清理
-- [ ] 验证 `ActorCreate / ActorUpdate / ActorDestroy` 在分布式模式下真实可达
+- [ ] （无；当前项已收口）
+
+### 验证方案（脚本，不引入 ctest）
+
+- **清理路径**：多玩家登录后，关闭其中一人的连接；等待后由另一玩家发移动；断线玩家重连并用同一 `PlayerId` 登录。已接入 `scripts/validate.py`（Test 3），失败则脚本不通过。
+- **复制链路**：玩家登录后，在约定时间内从客户端连接收包，断言至少收到一条 `MT_ActorCreate`。已接入 `scripts/validate.py`（Test 2）为**硬断言**。根因与修复：World 每 Tick 未刷新后端连接发送缓冲，复制包在 EAGAIN 时滞留；已改为每帧对 `BackendConnections` 调用 `FlushSendBuffer()`。跑验证前需保证端口 8001–8005 未被旧进程占用。
 
 ## Next
 
-- [ ] 整理 CMake / CI 测试入口，明确 `ctest` 是否承载真实测试
-- [ ] 为 `ServerMessages` / `MessageUtils` / 协议组包解包补单元测试
-- [ ] 把登录、进世界、断线清理整理成稳定的集成测试脚本
-- [ ] 补一条“多玩家进入世界后复制链路正常”的验证
-- [ ] 清理 `SceneServer` 和剩余服务上的网络循环样板，决定是否继续扩展 `MSocketPoller`
+- [x] 整理 CI 下的脚本测试入口与文档（不引入 ctest）
+- [x] 为 `ServerMessages` / 协议组包解包补可脚本化或独立可执行的小验证（`scripts/verify_protocol.py`，CI 全矩阵执行）
+- [x] 把登录、进世界、断线清理整理成稳定的集成测试脚本并纳入 CI（`scripts/validate.py` Test 1/2/3，CI 中 Linux GCC 执行）
+- [x] 清理 `SceneServer` 和剩余服务上的网络循环样板，决定是否继续扩展 `MSocketPoller`（决策：保持 MSocketPoller 薄封装，各服保留独立 accept+poll+处理 循环，见 `docs/socket-layer-refactor.md`）
 
 ## Later
 
@@ -68,6 +65,15 @@
 - [x] `TResult<T, E>` 基础类型已提供
 - [x] 共享指针构造统一为项目级 `MakeShared`
 - [x] Socket 网络层第一阶段收口：`SocketPlatform` / `SocketAddress` / `SocketHandle` / `PacketCodec` / `MTcpConnection` / `MServerConnection` / `MSocketPoller`
+- [x] Gateway 处理 `MT_PlayerLogout` 时按 `PlayerId` 查找连接并重置鉴权状态
+- [x] World → Gateway 登出通知与 Gateway 鉴权状态回收闭环
+- [x] WorldServer 为每个玩家建立复制隧道、`AddConnection` / `BroadcastActorCreate` / `RemoveConnection`，按 `PlayerId` 的 `MT_PlayerClientSync` 回程
+- [x] 会话校验请求改用 World 内全局 `ValidationRequestId`，避免多网关连接号冲突
+- [x] Gateway ↔ World 玩家数据路由统一为 `PlayerId`（`MT_PlayerClientSync` + `SPlayerClientSyncMessage`）
+- [x] World 每 Tick 刷新后端连接发送缓冲，复制包可稳定到达 Gateway → Client
+- [x] `scripts/validate.py` Test 2 复制链路改为硬断言；Test 3 清理路径已硬断言
+- [x] CI：脚本验证入口与前置条件文档化（README + docs/validation.md）；协议小验证 `scripts/verify_protocol.py` 全矩阵执行；主链路验证 Linux GCC 执行
+- [x] 网络循环样板与 MSocketPoller 决策：保持薄封装、各服独立循环，见 `docs/socket-layer-refactor.md`
 
 ---
 

@@ -261,12 +261,37 @@ make -j4
 ### 运行
 
 ```bash
-# 启动各个服务器（分开终端）
-./GatewayServer   # 端口8001
-./LoginServer     # 端口8002
-./WorldServer    # 端口8003
-./SceneServer    # 端口8004
+# 启动各个服务器（分开终端，建议先起 Router 再起其余）
+./build/RouterServer   # 端口 8005
+./build/LoginServer    # 端口 8002
+./build/WorldServer    # 端口 8003
+./build/SceneServer    # 端口 8004
+./build/GatewayServer  # 端口 8001
 ```
+
+### 一键起服 / 停服
+
+```bash
+# 起服（按序启动五服并等待端口就绪）
+python3 scripts/servers.py start [--build-dir build]
+
+# 停服（按启动时记录的 PID 结束；Linux 下会再按端口 8001–8005 清理占用）
+python3 scripts/servers.py stop [--build-dir build]
+```
+
+起服顺序：Router(8005) → Login(8002) → World(8003) → Scene(8004) → Gateway(8001)。停服需与起服使用相同 `--build-dir`，否则可手动结束占用端口进程。
+
+### 主链路验证（脚本，不引入 ctest）
+
+在仓库根目录执行：
+
+```bash
+python3 scripts/validate.py [--build-dir build] [--timeout 50] [--no-build]
+```
+
+- 会编译（除非 `--no-build`）、按序启动 Router → Login → World → Scene → Gateway，并执行：**Test 1** 多玩家登录、**Test 2** 复制链路（至少收到 `MT_ActorCreate`）、**Test 3** 断线重连与清理路径。
+- **前置条件**：端口 **8001–8005** 未被占用。若被占用，可先结束占用进程（例如 `fuser -k 8001/tcp` 等）再运行。
+- CI 中在 Linux GCC 构建后自动执行该脚本（见 `.github/workflows/cmake-multi-platform.yml`）。
 
 ## 🎯 核心功能
 

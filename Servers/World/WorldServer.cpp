@@ -245,6 +245,15 @@ void MWorldServer::Tick()
     
     // 处理消息
     ProcessMessages();
+
+    // 刷新后端连接发送缓冲，确保复制包等能发出（避免 EAGAIN 后滞留）
+    for (auto& [Id, Peer] : BackendConnections)
+    {
+        if (Peer.Connection)
+        {
+            Peer.Connection->FlushSendBuffer();
+        }
+    }
     
     // 游戏逻辑更新
     UpdateGameLogic(DEFAULT_TICK_RATE);
@@ -554,10 +563,16 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 Gatewa
             TArray PacketBytes;
             const uint8* ByteData = static_cast<const uint8*>(Data);
             PacketBytes.insert(PacketBytes.end(), ByteData, ByteData + Size);
-            return SendServerMessage(
+            const bool bOk = SendServerMessage(
                 GatewayConnectionId,
                 EServerMessageType::MT_PlayerClientSync,
                 SPlayerClientSyncMessage{PlayerId, PacketBytes});
+            if (!bOk)
+            {
+                LOG_WARN("Tunnel send to gateway conn %llu for player %llu failed",
+                         (unsigned long long)GatewayConnectionId, (unsigned long long)PlayerId);
+            }
+            return bOk;
         },
         [this, GatewayConnectionId]() -> bool
         {
