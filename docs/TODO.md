@@ -8,7 +8,6 @@
 - [x] CMake 构建通过
 - [x] `scripts/validate.py` 登录 / 移动 / 重连验证通过
 - [x] Router / Gateway / Login / World / Scene 最小链路已打通
-- [x] `GameServer` 已纳入 CMake 构建
 - [x] Core 类型补齐、时间抽象、基础线程安全项已完成
 
 当前缺口：
@@ -36,7 +35,6 @@
 - [ ] 为 `ServerMessages` / `MessageUtils` / 协议组包解包补单元测试
 - [ ] 把登录、进世界、断线清理整理成稳定的集成测试脚本
 - [ ] 补一条“多玩家进入世界后复制链路正常”的验证
-- [ ] 对齐 `GameServer` 与 `WorldServer` 的复制接入方式，避免两套行为长期分叉
 - [ ] 清理 `SceneServer` 和剩余服务上的网络循环样板，决定是否继续扩展 `MSocketPoller`
 
 ## Later
@@ -66,7 +64,6 @@
 - [x] `MLogger` 基础线程安全与文件输出
 - [x] `MTime` 统一时间抽象
 - [x] `INetConnection` 抽象统一
-- [x] `GameServer` 加入 CMake
 - [x] `MServerConnectionManager` 未接入原因已文档化
 - [x] `TResult<T, E>` 基础类型已提供
 - [x] 共享指针构造统一为项目级 `MakeShared`

@@ -350,7 +350,7 @@ To keep scope under control, phase 1 should **not** change:
 - current gameplay message structures
 - current router/login/world/scene service responsibilities
 
-This means `Gateway`, `Login`, `World`, `Router`, `Scene`, and `GameServer` can continue to:
+This means `Gateway`, `Login`, `World`, `Router`, and `Scene` can continue to:
 
 - own their listen socket
 - call `MSocket::CreateListenSocket()`

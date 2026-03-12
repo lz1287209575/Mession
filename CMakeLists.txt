@@ -116,18 +116,6 @@ add_executable(RouterServer
 )
 configure_mession_target(RouterServer)
 
-# 6. Game Server - 单机版游戏服务器（可选，端口7777）
-add_executable(GameServer
-    Game/GameServer.h
-    Main.cpp
-    NetDriver/NetObject.cpp
-    NetDriver/NetObject.h
-    NetDriver/Replicate.h
-    NetDriver/ReplicationDriver.cpp
-    NetDriver/ReplicationDriver.h
-)
-configure_mession_target(GameServer)
-
 # 安装目标
 install(TARGETS 
     GatewayServer 
@@ -135,7 +123,6 @@ install(TARGETS
     WorldServer 
     SceneServer 
     RouterServer
-    GameServer
     DESTINATION bin
 )
 
@@ -144,5 +131,5 @@ message(STATUS "  Mession - Distributed MMO Server")
 message(STATUS "=====================================")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
-message(STATUS "  Servers: Gateway, Login, World, Scene, Router, GameServer")
+message(STATUS "  Servers: Gateway, Login, World, Scene, Router")
 message(STATUS "=====================================")
