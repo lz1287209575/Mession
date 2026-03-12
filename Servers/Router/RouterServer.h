@@ -3,6 +3,7 @@
 #include "Core/NetCore.h"
 #include "Core/Socket.h"
 #include "Common/Logger.h"
+#include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"
 #include <thread>
@@ -36,16 +37,12 @@ struct SPlayerRouteBinding
     uint64 LeaseExpireTick = 0;
 };
 
-class MRouterServer
+class MRouterServer : public MNetServerBase
 {
 private:
-    MSocketHandle ListenSocket;
-    bool bRunning = false;
-    bool bShutdownDone = false;
     SRouterConfig Config;
     TMap<uint64, SRouterPeer> Peers;
     TMap<uint64, SPlayerRouteBinding> PlayerRouteBindings;
-    uint64 NextConnectionId = 1;
     uint64 TickCounter = 0;
 
 public:
@@ -54,14 +51,16 @@ public:
 
     bool LoadConfig(const FString& ConfigPath);
     bool Init(int InPort = 0);
-    void RequestShutdown();
-    void Shutdown();
     void Tick();
-    void Run();
+    void Run() override { MNetServerBase::Run(); }
+
+    uint16 GetListenPort() const override;
+    void OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
+    void TickBackends() override;
+    void ShutdownConnections() override;
+    void OnRunStarted() override;
 
 private:
-    void AcceptServers();
-    void ProcessMessages();
     void HandlePacket(uint64 ConnectionId, const TArray& Data);
     bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
     template<typename TMessage>

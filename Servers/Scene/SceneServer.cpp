@@ -1,7 +1,6 @@
 #include "SceneServer.h"
 #include "Common/Config.h"
 #include "Common/ServerMessages.h"
-#include "Core/Poll.h"
 
 namespace
 {
@@ -38,14 +37,6 @@ bool MSceneServer::Init(int InPort)
     {
         Config.ListenPort = static_cast<uint16>(InPort);
     }
-    // 创建监听socket
-    ListenSocket.Reset(MSocket::CreateListenSocket(Config.ListenPort));
-    if (!ListenSocket.IsValid())
-    {
-        LOG_ERROR("Failed to create listen socket on port %d", Config.ListenPort);
-        return false;
-    }
-
     // 创建默认场景
     CreateDefaultScenes();
 
@@ -53,30 +44,26 @@ bool MSceneServer::Init(int InPort)
 
     bRunning = true;
 
-    MLogger::LogStartupBanner("SceneServer", Config.ListenPort, static_cast<intptr_t>(ListenSocket.Get()));
+    MLogger::LogStartupBanner("SceneServer", Config.ListenPort, 0);
     
     return true;
 }
 
-void MSceneServer::RequestShutdown()
+uint16 MSceneServer::GetListenPort() const
 {
-    bRunning = false;
-    if (ListenSocket.IsValid())
+    return Config.ListenPort;
+}
+
+void MSceneServer::OnAccept(uint64, TSharedPtr<INetConnection> Conn)
+{
+    if (Conn)
     {
-        ListenSocket.Reset();
+        Conn->Close();
     }
 }
 
-void MSceneServer::Shutdown()
+void MSceneServer::ShutdownConnections()
 {
-    if (bShutdownDone)
-    {
-        return;
-    }
-    bShutdownDone = true;
-    bRunning = false;
-    
-    // 关闭世界服务器连接
     if (RouterServerConn)
     {
         RouterServerConn->Disconnect();
@@ -85,17 +72,13 @@ void MSceneServer::Shutdown()
     {
         WorldServerConn->Disconnect();
     }
-    
-    // 清理场景
     Scenes.clear();
-    
-    // 关闭监听socket
-    if (ListenSocket.IsValid())
-    {
-        ListenSocket.Reset();
-    }
-    
     LOG_INFO("Scene server shutdown complete");
+}
+
+void MSceneServer::OnRunStarted()
+{
+    LOG_INFO("Scene server running...");
 }
 
 void MSceneServer::Tick()
@@ -104,8 +87,11 @@ void MSceneServer::Tick()
     {
         return;
     }
-    
-    // 处理世界服务器消息
+    TickBackends();
+}
+
+void MSceneServer::TickBackends()
+{
     if (RouterServerConn)
     {
         RouterServerConn->Tick(0.016f);
@@ -128,7 +114,10 @@ void MSceneServer::Tick()
         SendLoadReport();
     }
 
-    ProcessWorldServerMessages();
+    if (WorldServerConn)
+    {
+        WorldServerConn->Tick(0.016f);
+    }
 
     for (auto& [SceneId, Scene] : Scenes)
     {
@@ -137,23 +126,6 @@ void MSceneServer::Tick()
         {
             Scene->Tick(0.016f);
         }
-    }
-}
-
-void MSceneServer::Run()
-{
-    if (!bRunning)
-    {
-        LOG_ERROR("Scene server not initialized!");
-        return;
-    }
-    
-    LOG_INFO("Scene server running...");
-    
-    while (bRunning)
-    {
-        Tick();
-        MTime::SleepMilliseconds(16);
     }
 }
 
@@ -318,16 +290,6 @@ void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const FString& ServerN
     NewConfig.ReconnectInterval = CurrentConfig.ReconnectInterval;
     WorldServerConn->SetConfig(NewConfig);
     ConnectToWorldServer();
-}
-
-void MSceneServer::ProcessWorldServerMessages()
-{
-    if (!WorldServerConn)
-    {
-        return;
-    }
-
-    WorldServerConn->Tick(0.016f);
 }
 
 void MSceneServer::HandleWorldPacket(uint8 Type, const TArray& Data)

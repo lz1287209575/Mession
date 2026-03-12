@@ -3,6 +3,7 @@
 #include "Core/NetCore.h"
 #include "Core/Socket.h"
 #include "Common/Logger.h"
+#include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include <thread>
 #include <chrono>
@@ -42,14 +43,9 @@ struct SPendingWorldLoginRoute
 };
 
 // 网关服务器
-class MGatewayServer
+class MGatewayServer : public MNetServerBase
 {
 private:
-    MSocketHandle ListenSocket;
-    bool bRunning = false;
-    bool bShutdownDone = false;
-    
-    // 配置
     SGatewayConfig Config;
     
     // 客户端连接管理
@@ -74,14 +70,16 @@ public:
     
     bool LoadConfig(const FString& ConfigPath);
     bool Init(int InPort = 0);
-    void RequestShutdown();
-    void Shutdown();
     void Tick();
-    void Run();
-    
+    void Run() override { MNetServerBase::Run(); }
+
+    uint16 GetListenPort() const override;
+    void OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
+    void TickBackends() override;
+    void ShutdownConnections() override;
+    void OnRunStarted() override;
+
 private:
-    void AcceptClients();
-    void ProcessClientMessages();
     void ConnectToLoginServer();
     void ConnectToWorldServer();
     void ConnectToRouterServer();

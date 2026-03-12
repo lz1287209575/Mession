@@ -2,7 +2,6 @@
 #include "Common/Config.h"
 #include "Common/ServerMessages.h"
 #include "Messages/NetMessages.h"
-#include "Core/Poll.h"
 
 namespace
 {
@@ -40,18 +39,9 @@ bool MGatewayServer::Init(int InPort)
     {
         Config.ListenPort = static_cast<uint16>(InPort);
     }
-    // 创建监听socket
-    ListenSocket.Reset(MSocket::CreateListenSocket(Config.ListenPort));
-
-    if (!ListenSocket.IsValid())
-    {
-        LOG_ERROR("Failed to create listen socket on port %d", Config.ListenPort);
-        return false;
-    }
-
     bRunning = true;
 
-    MLogger::LogStartupBanner("GatewayServer", Config.ListenPort, static_cast<intptr_t>(ListenSocket.Get()));
+    MLogger::LogStartupBanner("GatewayServer", Config.ListenPort, 0);
     
     // 设置本服务器信息
     MServerConnection::SetLocalInfo(1, EServerType::Gateway, "Gateway01");
@@ -110,25 +100,48 @@ bool MGatewayServer::Init(int InPort)
     return true;
 }
 
-void MGatewayServer::RequestShutdown()
+uint16 MGatewayServer::GetListenPort() const
 {
-    bRunning = false;
-    if (ListenSocket.IsValid())
-    {
-        ListenSocket.Reset();
-    }
+    return Config.ListenPort;
 }
 
-void MGatewayServer::Shutdown()
+void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 {
-    if (bShutdownDone)
-    {
-        return;
-    }
-    bShutdownDone = true;
-    bRunning = false;
-    
-    // 关闭所有客户端连接
+    Conn->SetNonBlocking(true);
+    auto Client = MakeShared<MClientConnection>(ConnId, Conn);
+    ClientConnections[ConnId] = Client;
+    LOG_INFO("New client connected (connection_id=%llu)", (unsigned long long)ConnId);
+    EventLoop.RegisterConnection(ConnId, Conn,
+        [this](uint64 Id, const TArray& Payload)
+        {
+            HandleClientPacket(Id, Payload);
+        },
+        [this](uint64 Id)
+        {
+            auto It = ClientConnections.find(Id);
+            if (It != ClientConnections.end())
+            {
+                TSharedPtr<MClientConnection>& Client = It->second;
+                if (Client && Client->bAuthenticated && Client->PlayerId != 0 &&
+                    WorldServerConn && WorldServerConn->IsConnected())
+                {
+                    SendTypedServerMessage(
+                        WorldServerConn,
+                        EServerMessageType::MT_PlayerLogout,
+                        SPlayerLogoutMessage{Client->PlayerId});
+                }
+                if (Client)
+                {
+                    ResetClientAuthState(Client);
+                }
+                LOG_INFO("Client disconnected: %llu", (unsigned long long)Id);
+                ClientConnections.erase(Id);
+            }
+        });
+}
+
+void MGatewayServer::ShutdownConnections()
+{
     for (auto& [Id, Conn] : ClientConnections)
     {
         if (Conn->Connection)
@@ -137,8 +150,6 @@ void MGatewayServer::Shutdown()
         }
     }
     ClientConnections.clear();
-    
-    // 关闭后端长连接
     if (RouterServerConn)
     {
         RouterServerConn->Disconnect();
@@ -151,14 +162,12 @@ void MGatewayServer::Shutdown()
     {
         WorldServerConn->Disconnect();
     }
-    
-    // 关闭监听socket
-    if (ListenSocket.IsValid())
-    {
-        ListenSocket.Reset();
-    }
-
     LOG_INFO("Gateway server shutdown complete");
+}
+
+void MGatewayServer::OnRunStarted()
+{
+    LOG_INFO("Gateway server running...");
 }
 
 void MGatewayServer::Tick()
@@ -167,11 +176,12 @@ void MGatewayServer::Tick()
     {
         return;
     }
+    TickBackends();
+}
 
+void MGatewayServer::TickBackends()
+{
     static constexpr float BackendTickInterval = 0.016f;
-    
-    // 接受新客户端
-    AcceptClients();
 
     if (RouterServerConn)
     {
@@ -191,7 +201,7 @@ void MGatewayServer::Tick()
             QueryRoute(EServerType::World);
         }
     }
-    
+
     if (LoginServerConn)
     {
         LoginServerConn->Tick(BackendTickInterval);
@@ -199,126 +209,6 @@ void MGatewayServer::Tick()
     if (WorldServerConn)
     {
         WorldServerConn->Tick(BackendTickInterval);
-    }
-
-    // 处理客户端消息
-    ProcessClientMessages();
-}
-
-void MGatewayServer::Run()
-{
-    if (!bRunning)
-    {
-        LOG_ERROR("Gateway server not initialized!");
-        return;
-    }
-    
-    LOG_INFO("Gateway server running...");
-    
-    while (bRunning)
-    {
-        Tick();
-        MTime::SleepMilliseconds(16);
-    }
-}
-
-void MGatewayServer::AcceptClients()
-{
-    SAcceptedSocket Accepted = MSocket::AcceptConnection(ListenSocket.Get());
-
-    while (Accepted.IsValid())
-    {
-        uint64 ConnectionId = NextConnectionId++;
-        TSharedPtr<INetConnection> Connection = MakeShared<MTcpConnection>(
-            std::move(Accepted.Socket),
-            Accepted.RemoteAddress,
-            Accepted.RemotePort);
-        Connection->SetNonBlocking(true);
-        
-        auto Client = MakeShared<MClientConnection>(ConnectionId, Connection);
-        ClientConnections[ConnectionId] = Client;
-        
-        LOG_INFO("New client connected: %s (connection_id=%llu)", 
-                 Accepted.RemoteAddress.c_str(), (unsigned long long)ConnectionId);
-        
-        Accepted = MSocket::AcceptConnection(ListenSocket.Get());
-    }
-}
-
-void MGatewayServer::ProcessClientMessages()
-{
-    TVector<uint64> DisconnectedClients;
-    TVector<SSocketPollItem> PollItems = MSocketPoller::BuildReadableItems(
-        ClientConnections,
-        [](const TSharedPtr<MClientConnection>& Client) -> INetConnection*
-        {
-            return Client && Client->Connection ? Client->Connection.get() : nullptr;
-        });
-
-    if (PollItems.empty())
-    {
-        return;
-    }
-
-    TVector<SSocketPollResult> PollResults;
-    int32 Ret = MSocketPoller::PollReadable(PollItems, PollResults, 10);
-    
-    if (Ret < 0)
-    {
-        return;
-    }
-
-    for (const SSocketPollResult& PollResult : PollResults)
-    {
-        auto ClientIt = ClientConnections.find(PollResult.ConnectionId);
-        if (ClientIt == ClientConnections.end())
-        {
-            continue;
-        }
-
-        TSharedPtr<MClientConnection>& Client = ClientIt->second;
-        if (MSocketPoller::IsReadable(PollResult))
-        {
-            TArray Packet;
-            while (Client->Connection->ReceivePacket(Packet))
-            {
-                HandleClientPacket(PollResult.ConnectionId, Packet);
-            }
-            
-            if (!Client->Connection->IsConnected())
-            {
-                DisconnectedClients.push_back(PollResult.ConnectionId);
-            }
-        }
-        else if (MSocketPoller::HasError(PollResult))
-        {
-            DisconnectedClients.push_back(PollResult.ConnectionId);
-        }
-    }
-    
-    // 处理断开连接
-    for (uint64 ConnId : DisconnectedClients)
-    {
-        auto ClientIt = ClientConnections.find(ConnId);
-        if (ClientIt != ClientConnections.end())
-        {
-            const TSharedPtr<MClientConnection>& Client = ClientIt->second;
-            if (Client && Client->bAuthenticated && Client->PlayerId != 0)
-            {
-                if (WorldServerConn && WorldServerConn->IsConnected())
-                {
-                    SendTypedServerMessage(
-                        WorldServerConn,
-                        EServerMessageType::MT_PlayerLogout,
-                        SPlayerLogoutMessage{Client->PlayerId});
-                }
-
-                ResetClientAuthState(Client);
-            }
-        }
-
-        LOG_INFO("Client disconnected: %llu", (unsigned long long)ConnId);
-        ClientConnections.erase(ConnId);
     }
 }
 

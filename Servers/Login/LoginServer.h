@@ -3,6 +3,7 @@
 #include "Core/NetCore.h"
 #include "Core/Socket.h"
 #include "Common/Logger.h"
+#include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"
 #include <random>
@@ -38,48 +39,36 @@ struct SGatewayPeer
 };
 
 // 登录服务器
-class MLoginServer
+class MLoginServer : public MNetServerBase
 {
 private:
-    MSocketHandle ListenSocket;
-    bool bRunning = false;
-    bool bShutdownDone = false;
-    
-    // 配置
     SLoginConfig Config;
-    
-    // 网关连接
     TMap<uint64, SGatewayPeer> GatewayConnections;
-    uint64 NextConnectionId = 1;
-
     TSharedPtr<MServerConnection> RouterServerConn;
-    
-    // 会话管理
-    TMap<uint32, SSession> Sessions;  // SessionKey -> Session
-    TMap<uint64, uint32> PlayerSessions;  // PlayerId -> SessionKey
-    
-    // 随机数生成器
+    TMap<uint32, SSession> Sessions;
+    TMap<uint64, uint32> PlayerSessions;
     std::mt19937 Rng;
-    
+
 public:
     MLoginServer();
     ~MLoginServer() { Shutdown(); }
-    
+
     bool LoadConfig(const FString& ConfigPath);
     bool Init(int InPort = 0);
-    void RequestShutdown();
-    void Shutdown();
     void Tick();
-    void Run();
-    
-    // 会话管理
+    void Run() override { MNetServerBase::Run(); }
+
+    uint16 GetListenPort() const override;
+    void OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
+    void TickBackends() override;
+    void ShutdownConnections() override;
+    void OnRunStarted() override;
+
     uint32 CreateSession(uint64 PlayerId, uint64 ConnectionId);
     bool ValidateSession(uint32 SessionKey, uint64& OutPlayerId);
     void RemoveSession(uint32 SessionKey);
-    
+
 private:
-    void AcceptGateways();
-    void ProcessGatewayMessages();
     void HandleGatewayPacket(uint64 ConnectionId, const TArray& Data);
     bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
     template<typename TMessage>

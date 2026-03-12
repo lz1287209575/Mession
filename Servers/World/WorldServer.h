@@ -3,6 +3,7 @@
 #include "Core/NetCore.h"
 #include "Core/Socket.h"
 #include "Common/Logger.h"
+#include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"
 #include "NetDriver/NetObject.h"
@@ -54,19 +55,11 @@ struct SPendingSessionValidation
 };
 
 // 世界服务器
-class MWorldServer
+class MWorldServer : public MNetServerBase
 {
 private:
-    MSocketHandle ListenSocket;
-    bool bRunning = false;
-    bool bShutdownDone = false;
-    
-    // 配置
     SWorldConfig Config;
-    
-    // 网关连接
     TMap<uint64, SBackendPeer> BackendConnections;
-    uint64 NextConnectionId = 1;
 
     TSharedPtr<MServerConnection> RouterServerConn;
     float LoginRouteQueryTimer = 0.0f;
@@ -88,14 +81,16 @@ public:
     
     bool LoadConfig(const FString& ConfigPath);
     bool Init(int InPort = 0);
-    void RequestShutdown();
-    void Shutdown();
     void Tick();
-    void Run();
-    
+    void Run() override { MNetServerBase::Run(); }
+
+    uint16 GetListenPort() const override;
+    void OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
+    void TickBackends() override;
+    void ShutdownConnections() override;
+    void OnRunStarted() override;
+
 private:
-    void AcceptConnections();
-    void ProcessMessages();
     void HandlePacket(uint64 ConnectionId, const TArray& Data);
     void HandleGameplayPacket(uint64 PlayerId, const TArray& Data);
     bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);

@@ -483,8 +483,41 @@ Recommended next steps:
 2. Decide whether `MSocketPoller` should remain a thin helper or evolve into a more explicit event-loop abstraction.
 3. Shift attention back to gameplay-facing gaps: state cleanup, distributed replication, and tests.
 
-### 网络循环样板与 MSocketPoller 决策（已收口）
+### 网络循环与 EventLoop 迁移（已收口）
 
-- **现状**：Gateway / World / Login / Router 各自在 `Run()` 中完成「Accept → BuildReadableItems → PollReadable → 按结果收包/断线」；SceneServer 仅连接 Router/World，无监听连接，故只有 `Tick() + Sleep` 循环。
-- **决策**：保持 `MSocketPoller` 为薄封装（仅 `BuildReadableItems` + `PollReadable` + `IsReadable`/`HasError`），**不**引入统一事件循环或高层 RunLoop 抽象；各服保留独立 accept + poll + 处理逻辑，便于按服定制断线与业务。
-- **理由**：当前各服断线后的清理逻辑差异较大（如 Gateway 要通知 World 登出、World 要删玩家并 BroadcastActorDestroy），抽成通用循环需大量回调，收益有限；若日后需要 epoll/kqueue 等再考虑在 MSocketPoller 层扩展后端，而不改各服调用方式。
+- **现状**：Gateway / Login / World / Router / Scene 均已改为使用 **`MNetEventLoop`** 驱动监听与连接：`Run()` 内 `RegisterListener(port, OnAccept)`，在 `OnAccept` 中 `RegisterConnection(connId, conn, OnRead, OnClose)`，主循环为 `while (bRunning) { EventLoop.RunOnce(16); TickBackends(); }`。后端长连接（`MServerConnection`）仍在 `TickBackends()` 中 `Tick()`，未纳入 EventLoop。
+- **决策**：采用自研单线程 `MNetEventLoop`（`Core/EventLoop.h/.cpp`）统一「监听 + 连接 poll + 可读时收包/断线」；各服通过回调实现断线与业务（如 Gateway 登出通知 World、World 删玩家并 BroadcastActorDestroy）。读包使用 `INetConnection::ReceivePacket`（先 recv 再解码），避免仅调 `ProcessRecvBuffer` 导致未读 socket 即解码。
+- **MSocketPoller**：仍保留为薄封装，可用于其他场景；各服主循环已不再使用，由 EventLoop 替代。
+
+---
+
+## 网络层设计进度
+
+> 一眼看清当前做到哪、决策是什么、后续可选做啥。
+
+### 已完成（Phase 1 收口）
+
+| 层级 | 内容 | 文件/说明 |
+|------|------|-----------|
+| 平台 | `MSocketPlatform`：初始化、建连/关连、选项、Send/Recv、错误与 WouldBlock | `Core/SocketPlatform.h/.cpp` |
+| 值类型 | `SSocketAddress`（Ip+Port）、`MSocketHandle`（fd RAII） | `Core/SocketAddress.h`、`Core/SocketHandle.h` |
+| 组包 | `MLengthPrefixedPacketCodec`：Length(4)+Payload(N)，单一实现 | `Core/PacketCodec.h` |
+| 传输 | `MTcpConnection`：统一 TCP（accept + 主动 ConnectTo）、收发缓冲、ProcessRecvBuffer、FlushSendBuffer | `Core/Socket.h/.cpp` |
+| 服务端协议 | `MServerConnection`：基于 `MTcpConnection`，握手/心跳/重连、Send(Type,Data)、OnMessage | `Common/ServerConnection.h/.cpp` |
+| 监听与轮询 | `MNetEventLoop`：RegisterListener / RegisterConnection、RunOnce（poll + 可读时 ReceivePacket + OnRead/OnClose）；各服 Run() 使用 EventLoop 驱动客户端/对端连接 | `Core/EventLoop.h/.cpp` |
+
+**验收**：构建通过、`scripts/validate.py` 主链路验证通过；Phase 1 目标（单一 TCP 传输、单一组包、监听 RAII）均已满足。
+
+### 已定决策（不再扩展）
+
+- **MNetEventLoop**：各服监听与客户端/对端连接均由 EventLoop 驱动；后端 `MServerConnection` 仍由各服 `TickBackends()` 中 `Tick()`，不纳入 EventLoop。
+- **SceneServer**：有监听端口（用于向 Router 注册），由 EventLoop 注册；当前无业务 accept，OnAccept 中直接关闭连接。
+- **Phase 2 事件循环**（epoll/kqueue/IOCP）：文档保留为后续可选，当前不推进。
+
+### 后续可选
+
+- **字节序**：协议当前为主机序；若需跨平台/跨端，按 `docs/protocol-byteorder.md` 在编解码层统一网络序。
+- **MServerConnectionManager**：是否重新接入见 Watchlist，暂无计划。
+- **IPv6 / 更复杂地址**：Phase 1 为 IPv4，需要时再在 `SSocketAddress`/平台层扩展。
+- **EventLoop / Asio 风格**：自研 EventLoop 或接入 Asio 的调研与分阶段计划见 **`docs/eventloop-asio-survey.md`**（方案对比、推荐路线、阶段 1/2/3 拆解）。
+- **服务器模板**：各服统一继承 **`MNetServerBase`**，主循环与关服由基类实现，子类只实现 GetListenPort / OnAccept / ShutdownConnections 等回调；详见 **`docs/server-template.md`**。

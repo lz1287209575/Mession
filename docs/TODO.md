@@ -1,7 +1,8 @@
 # Mession Sprint Board
 
 > 仓库统一 TODO，只维护这一份。  
-> 当前目标：先把主链路补完整并稳定回归，再推进 AOI、协议和架构整理。
+> 当前目标：先把主链路补完整并稳定回归，再推进 AOI、协议和架构整理。  
+> **下一步选什么**：见 **`docs/next-steps.md`**（优先级 P1～P5 与子任务拆解）。
 
 ## Snapshot
 
@@ -20,7 +21,7 @@
 
 ## Now
 
-- [ ] （无；当前项已收口）
+- [ ] （无；由「下一步方案」见 `docs/next-steps.md` 选一项推进）
 
 ### 验证方案（脚本，不引入 ctest）
 
@@ -74,6 +75,8 @@
 - [x] `scripts/validate.py` Test 2 复制链路改为硬断言；Test 3 清理路径已硬断言
 - [x] CI：脚本验证入口与前置条件文档化（README + docs/validation.md）；协议小验证 `scripts/verify_protocol.py` 全矩阵执行；主链路验证 Linux GCC 执行
 - [x] 网络循环样板与 MSocketPoller 决策：保持薄封装、各服独立循环，见 `docs/socket-layer-refactor.md`
+- [x] 各服改为 EventLoop 驱动：Gateway/Login/World/Router/Scene 监听与连接均由 `MNetEventLoop` 统一 poll，后端 `MServerConnection` 仍在 TickBackends 中 Tick；见 `docs/socket-layer-refactor.md` 网络循环与 EventLoop 迁移
+- [x] 服务器模板抽象：`MNetServerBase`（Common/NetServerBase），各服继承并实现 GetListenPort/OnAccept/ShutdownConnections、可选 TickBackends/OnRunStarted；文档见 `docs/server-template.md`
 - [x] 基础库补齐：Config 增加 GetInt/GetU32/GetU64/GetBool；Core 增加 MNonCopyable、TSpan/TSpanMutable（C++20）；World/Login 配置项从 Config 读取 max_players、server_name、session_key_min/max
 - [x] ParsePayload 返回 `TResult<void, FString>`，可选 Context 参数；所有调用处统一日志格式 "ParsePayload failed: %s"
 - [x] 协议收敛：SPlayerIdPayload / SClientLoginResponsePayload / SPlayerMovePayload；Gateway/Login/World 中登录与移动解析改为 ParsePayload/BuildPayload；docs/protocol-byteorder.md 约定当前主机序与后续可选网络序

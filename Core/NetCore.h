@@ -15,7 +15,11 @@
 #include <deque>
 #include <unordered_map>
 #include <unordered_set>
+#include <stack>
 #include <optional>
+#if __cplusplus >= 201703L
+#include <string_view>
+#endif
 #include <utility>
 #include <atomic>
 #include <mutex>
@@ -54,8 +58,20 @@ using TList = std::list<T>;
 template<typename T, typename Container = std::deque<T>>
 using TQueue = std::queue<T, Container>;
 
+template<typename T, typename Container = std::deque<T>>
+using TStack = std::stack<T, Container>;
+
+template<typename T>
+using TDeque = std::deque<T>;
+
 template<typename T, typename Compare = std::less<T>>
 using TSet = std::set<T, Compare>;
+
+template<typename T, typename Compare = std::less<T>>
+using TMultiSet = std::multiset<T, Compare>;
+
+template<typename K, typename V, typename Compare = std::less<K>>
+using TMultiMap = std::map<K, V, Compare>;
 
 template<typename T>
 using TSharedPtr = std::shared_ptr<T>;
@@ -83,6 +99,16 @@ using TUnorderedMap = std::unordered_map<K, V, Hash, KeyEqual>;
 
 template<typename T, typename Hash = std::hash<T>, typename KeyEqual = std::equal_to<T>>
 using TUnorderedSet = std::unordered_set<T, Hash, KeyEqual>;
+
+template<typename K, typename V, typename Hash = std::hash<K>, typename KeyEqual = std::equal_to<K>>
+using TUnorderedMultiMap = std::unordered_multimap<K, V, Hash, KeyEqual>;
+
+template<typename T, typename Hash = std::hash<T>, typename KeyEqual = std::equal_to<T>>
+using TUnorderedMultiSet = std::unordered_multiset<T, Hash, KeyEqual>;
+
+#if __cplusplus >= 201703L
+using TStringView = std::string_view;
+#endif
 
 template<typename T>
 using TOptional = std::optional<T>;

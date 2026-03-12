@@ -2,6 +2,9 @@
 
 #include "Core/NetCore.h"
 #include <string>
+#if __cplusplus >= 201703L
+#include <string_view>
+#endif
 
 // 项目内字符串工具：统一入口，避免散落 std::to_string / 手写 trim
 namespace MString
@@ -90,3 +93,43 @@ inline FString Join(const TVector<FString>& Parts, char Delim)
     return Out;
 }
 }
+
+#if __cplusplus >= 201703L
+// TStringView 工具：只读视图上的 Trim/转换/前后缀判断（不分配时用 View）
+namespace MStringView
+{
+inline TStringView TrimView(TStringView View)
+{
+    const char* Whitespace = " \t\r\n";
+    auto Start = View.find_first_not_of(Whitespace);
+    if (Start == TStringView::npos)
+    {
+        return TStringView();
+    }
+    auto End = View.find_last_not_of(Whitespace);
+    return View.substr(Start, End == TStringView::npos ? TStringView::npos : (End - Start + 1));
+}
+
+inline FString ToFString(TStringView View)
+{
+    return FString(View);
+}
+
+inline bool StartsWith(TStringView View, TStringView Prefix)
+{
+    return View.size() >= Prefix.size() &&
+           View.compare(0, Prefix.size(), Prefix) == 0;
+}
+
+inline bool EndsWith(TStringView View, TStringView Suffix)
+{
+    return View.size() >= Suffix.size() &&
+           View.compare(View.size() - Suffix.size(), Suffix.size(), Suffix) == 0;
+}
+
+inline bool Contains(TStringView View, TStringView Needle)
+{
+    return View.find(Needle) != TStringView::npos;
+}
+}
+#endif

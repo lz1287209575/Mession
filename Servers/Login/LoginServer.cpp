@@ -1,7 +1,6 @@
 #include "LoginServer.h"
 #include "Common/Config.h"
 #include "Messages/NetMessages.h"
-#include "Core/Poll.h"
 #include <time.h>
 
 namespace
@@ -43,17 +42,9 @@ bool MLoginServer::Init(int InPort)
     }
     MServerConnection::SetLocalInfo(2, EServerType::Login, "Login01");
 
-    // 创建监听socket
-    ListenSocket.Reset(MSocket::CreateListenSocket(Config.ListenPort));
-    if (!ListenSocket.IsValid())
-    {
-        LOG_ERROR("Failed to create listen socket on port %d", Config.ListenPort);
-        return false;
-    }
-
     bRunning = true;
 
-    MLogger::LogStartupBanner("LoginServer", Config.ListenPort, static_cast<intptr_t>(ListenSocket.Get()));
+    MLogger::LogStartupBanner("LoginServer", Config.ListenPort, 0);
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
@@ -69,25 +60,32 @@ bool MLoginServer::Init(int InPort)
     return true;
 }
 
-void MLoginServer::RequestShutdown()
+uint16 MLoginServer::GetListenPort() const
 {
-    bRunning = false;
-    if (ListenSocket.IsValid())
-    {
-        ListenSocket.Reset();
-    }
+    return Config.ListenPort;
 }
 
-void MLoginServer::Shutdown()
+void MLoginServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 {
-    if (bShutdownDone)
-    {
-        return;
-    }
-    bShutdownDone = true;
-    bRunning = false;
-    
-    // 关闭所有网关连接
+    Conn->SetNonBlocking(true);
+    SGatewayPeer Peer;
+    Peer.Connection = Conn;
+    GatewayConnections[ConnId] = Peer;
+    LOG_INFO("New gateway connected (connection_id=%llu)", (unsigned long long)ConnId);
+    EventLoop.RegisterConnection(ConnId, Conn,
+        [this](uint64 Id, const TArray& Payload)
+        {
+            HandleGatewayPacket(Id, Payload);
+        },
+        [this](uint64 Id)
+        {
+            LOG_INFO("Gateway disconnected: %llu", (unsigned long long)Id);
+            GatewayConnections.erase(Id);
+        });
+}
+
+void MLoginServer::ShutdownConnections()
+{
     for (auto& [Id, Peer] : GatewayConnections)
     {
         if (Peer.Connection)
@@ -96,22 +94,12 @@ void MLoginServer::Shutdown()
         }
     }
     GatewayConnections.clear();
-
     if (RouterServerConn)
     {
         RouterServerConn->Disconnect();
     }
-    
-    // 清理会话
     Sessions.clear();
     PlayerSessions.clear();
-    
-    // 关闭监听socket
-    if (ListenSocket.IsValid())
-    {
-        ListenSocket.Reset();
-    }
-    
     LOG_INFO("Login server shutdown complete");
 }
 
@@ -121,22 +109,18 @@ void MLoginServer::Tick()
     {
         return;
     }
-    
-    // 接受新网关连接
-    AcceptGateways();
-    
-    // 处理网关消息
-    ProcessGatewayMessages();
+    TickBackends();
+}
 
+void MLoginServer::TickBackends()
+{
     if (RouterServerConn)
     {
         RouterServerConn->Tick(0.016f);
     }
-    
-    // 清理过期会话
+
     const uint64 Now = static_cast<uint64>(time(nullptr));
     TVector<uint32> ExpiredSessions;
-    
     for (auto& [Key, Session] : Sessions)
     {
         if (Session.ExpireTime < Now)
@@ -144,110 +128,15 @@ void MLoginServer::Tick()
             ExpiredSessions.push_back(Key);
         }
     }
-    
     for (uint32 Key : ExpiredSessions)
     {
         RemoveSession(Key);
     }
 }
 
-void MLoginServer::Run()
+void MLoginServer::OnRunStarted()
 {
-    if (!bRunning)
-    {
-        LOG_ERROR("Login server not initialized!");
-        return;
-    }
-    
     LOG_INFO("Login server running...");
-    
-    while (bRunning)
-    {
-        Tick();
-        MTime::SleepMilliseconds(16);
-    }
-}
-
-void MLoginServer::AcceptGateways()
-{
-    SAcceptedSocket Accepted = MSocket::AcceptConnection(ListenSocket.Get());
-
-    while (Accepted.IsValid())
-    {
-        uint64 ConnectionId = NextConnectionId++;
-        TSharedPtr<INetConnection> Connection = MakeShared<MTcpConnection>(
-            std::move(Accepted.Socket),
-            Accepted.RemoteAddress,
-            Accepted.RemotePort);
-        Connection->SetNonBlocking(true);
-
-        SGatewayPeer Peer;
-        Peer.Connection = Connection;
-        GatewayConnections[ConnectionId] = Peer;
-        
-        LOG_INFO("New gateway connected: %s (connection_id=%llu)", 
-                 Accepted.RemoteAddress.c_str(), (unsigned long long)ConnectionId);
-        
-        Accepted = MSocket::AcceptConnection(ListenSocket.Get());
-    }
-}
-
-void MLoginServer::ProcessGatewayMessages()
-{
-    TVector<uint64> DisconnectedGateways;
-    TVector<SSocketPollItem> PollItems = MSocketPoller::BuildReadableItems(
-        GatewayConnections,
-        [](SGatewayPeer& Peer) -> INetConnection*
-        {
-            return Peer.Connection ? Peer.Connection.get() : nullptr;
-        });
-
-    if (PollItems.empty())
-    {
-        return;
-    }
-
-    TVector<SSocketPollResult> PollResults;
-    int32 Ret = MSocketPoller::PollReadable(PollItems, PollResults, 10);
-    
-    if (Ret < 0)
-    {
-        return;
-    }
-
-    for (const SSocketPollResult& PollResult : PollResults)
-    {
-        auto PeerIt = GatewayConnections.find(PollResult.ConnectionId);
-        if (PeerIt == GatewayConnections.end())
-        {
-            continue;
-        }
-
-        SGatewayPeer& Peer = PeerIt->second;
-        if (MSocketPoller::IsReadable(PollResult))
-        {
-            TArray Packet;
-            while (Peer.Connection->ReceivePacket(Packet))
-            {
-                HandleGatewayPacket(PollResult.ConnectionId, Packet);
-            }
-            
-            if (!Peer.Connection->IsConnected())
-            {
-                DisconnectedGateways.push_back(PollResult.ConnectionId);
-            }
-        }
-        else if (MSocketPoller::HasError(PollResult))
-        {
-            DisconnectedGateways.push_back(PollResult.ConnectionId);
-        }
-    }
-    
-    for (uint64 ConnId : DisconnectedGateways)
-    {
-        LOG_INFO("Gateway disconnected: %llu", (unsigned long long)ConnId);
-        GatewayConnections.erase(ConnId);
-    }
 }
 
 void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)

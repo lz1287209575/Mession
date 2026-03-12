@@ -2,7 +2,6 @@
 #include "Common/Config.h"
 #include "Common/StringUtils.h"
 #include "Messages/NetMessages.h"
-#include "Core/Poll.h"
 
 namespace
 {
@@ -114,17 +113,9 @@ bool MWorldServer::Init(int InPort)
     }
     MServerConnection::SetLocalInfo(3, EServerType::World, Config.ServerName);
 
-    // 创建监听socket
-    ListenSocket.Reset(MSocket::CreateListenSocket(Config.ListenPort));
-    if (!ListenSocket.IsValid())
-    {
-        LOG_ERROR("Failed to create listen socket on port %d", InPort);
-        return false;
-    }
-
     bRunning = true;
 
-    MLogger::LogStartupBanner("WorldServer", Config.ListenPort, static_cast<intptr_t>(ListenSocket.Get()));
+    MLogger::LogStartupBanner("WorldServer", Config.ListenPort, 0);
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
@@ -150,25 +141,44 @@ bool MWorldServer::Init(int InPort)
     return true;
 }
 
-void MWorldServer::RequestShutdown()
+uint16 MWorldServer::GetListenPort() const
 {
-    bRunning = false;
-    if (ListenSocket.IsValid())
-    {
-        ListenSocket.Reset();
-    }
+    return Config.ListenPort;
 }
 
-void MWorldServer::Shutdown()
+void MWorldServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 {
-    if (bShutdownDone)
-    {
-        return;
-    }
-    bShutdownDone = true;
-    bRunning = false;
-    
-    // 关闭所有连接
+    Conn->SetNonBlocking(true);
+    SBackendPeer Peer;
+    Peer.Connection = Conn;
+    BackendConnections[ConnId] = Peer;
+    LOG_INFO("New connection (connection_id=%llu)", (unsigned long long)ConnId);
+    EventLoop.RegisterConnection(ConnId, Conn,
+        [this](uint64 Id, const TArray& Payload)
+        {
+            HandlePacket(Id, Payload);
+        },
+        [this](uint64 Id)
+        {
+            TVector<uint64> PlayerIdsToRemove;
+            for (const auto& [PlayerId, Player] : Players)
+            {
+                if (Player.GatewayConnectionId == Id)
+                {
+                    PlayerIdsToRemove.push_back(PlayerId);
+                }
+            }
+            for (uint64 PlayerId : PlayerIdsToRemove)
+            {
+                RemovePlayer(PlayerId);
+            }
+            LOG_INFO("Connection disconnected: %llu", (unsigned long long)Id);
+            BackendConnections.erase(Id);
+        });
+}
+
+void MWorldServer::ShutdownConnections()
+{
     for (auto& [Id, Peer] : BackendConnections)
     {
         if (Peer.Connection)
@@ -177,7 +187,6 @@ void MWorldServer::Shutdown()
         }
     }
     BackendConnections.clear();
-
     if (RouterServerConn)
     {
         RouterServerConn->Disconnect();
@@ -187,21 +196,15 @@ void MWorldServer::Shutdown()
         LoginServerConn->Disconnect();
     }
     PendingSessionValidations.clear();
-    
-    // 清理玩家
     Players.clear();
-    
-    // 清理复制系统
     delete ReplicationDriver;
     ReplicationDriver = nullptr;
-    
-    // 关闭监听socket
-    if (ListenSocket.IsValid())
-    {
-        ListenSocket.Reset();
-    }
-    
     LOG_INFO("World server shutdown complete");
+}
+
+void MWorldServer::OnRunStarted()
+{
+    LOG_INFO("World server running...");
 }
 
 void MWorldServer::Tick()
@@ -210,10 +213,11 @@ void MWorldServer::Tick()
     {
         return;
     }
-    
-    // 接受新连接
-    AcceptConnections();
+    TickBackends();
+}
 
+void MWorldServer::TickBackends()
+{
     if (RouterServerConn)
     {
         RouterServerConn->Tick(DEFAULT_TICK_RATE);
@@ -240,11 +244,7 @@ void MWorldServer::Tick()
     {
         LoginServerConn->Tick(DEFAULT_TICK_RATE);
     }
-    
-    // 处理消息
-    ProcessMessages();
 
-    // 刷新后端连接发送缓冲，确保复制包等能发出（避免 EAGAIN 后滞留）
     for (auto& [Id, Peer] : BackendConnections)
     {
         if (Peer.Connection)
@@ -252,128 +252,12 @@ void MWorldServer::Tick()
             Peer.Connection->FlushSendBuffer();
         }
     }
-    
-    // 游戏逻辑更新
+
     UpdateGameLogic(DEFAULT_TICK_RATE);
-    
-    // 复制更新
+
     if (ReplicationDriver)
     {
         ReplicationDriver->Tick(DEFAULT_TICK_RATE);
-    }
-}
-
-void MWorldServer::Run()
-{
-    if (!bRunning)
-    {
-        LOG_ERROR("World server not initialized!");
-        return;
-    }
-    
-    LOG_INFO("World server running...");
-    
-    while (bRunning)
-    {
-        Tick();
-        MTime::SleepMilliseconds(16);
-    }
-}
-
-void MWorldServer::AcceptConnections()
-{
-    SAcceptedSocket Accepted = MSocket::AcceptConnection(ListenSocket.Get());
-
-    while (Accepted.IsValid())
-    {
-        uint64 ConnectionId = NextConnectionId++;
-        TSharedPtr<INetConnection> Connection = MakeShared<MTcpConnection>(
-            std::move(Accepted.Socket),
-            Accepted.RemoteAddress,
-            Accepted.RemotePort);
-        Connection->SetNonBlocking(true);
-
-        SBackendPeer Peer;
-        Peer.Connection = Connection;
-        BackendConnections[ConnectionId] = Peer;
-        
-        LOG_INFO("New connection: %s (connection_id=%llu)", 
-                 Accepted.RemoteAddress.c_str(), (unsigned long long)ConnectionId);
-        
-        Accepted = MSocket::AcceptConnection(ListenSocket.Get());
-    }
-}
-
-void MWorldServer::ProcessMessages()
-{
-    TVector<uint64> DisconnectedConnections;
-    TVector<SSocketPollItem> PollItems = MSocketPoller::BuildReadableItems(
-        BackendConnections,
-        [](SBackendPeer& Peer) -> INetConnection*
-        {
-            return Peer.Connection ? Peer.Connection.get() : nullptr;
-        });
-
-    if (PollItems.empty())
-    {
-        return;
-    }
-
-    TVector<SSocketPollResult> PollResults;
-    int32 Ret = MSocketPoller::PollReadable(PollItems, PollResults, 10);
-    
-    if (Ret < 0)
-    {
-        return;
-    }
-
-    for (const SSocketPollResult& PollResult : PollResults)
-    {
-        auto PeerIt = BackendConnections.find(PollResult.ConnectionId);
-        if (PeerIt == BackendConnections.end())
-        {
-            continue;
-        }
-
-        SBackendPeer& Peer = PeerIt->second;
-        if (MSocketPoller::IsReadable(PollResult))
-        {
-            TArray Packet;
-            while (Peer.Connection->ReceivePacket(Packet))
-            {
-                HandlePacket(PollResult.ConnectionId, Packet);
-            }
-            
-            if (!Peer.Connection->IsConnected())
-            {
-                DisconnectedConnections.push_back(PollResult.ConnectionId);
-            }
-        }
-        else if (MSocketPoller::HasError(PollResult))
-        {
-            DisconnectedConnections.push_back(PollResult.ConnectionId);
-        }
-    }
-    
-    // 处理断开的连接
-    for (uint64 ConnId : DisconnectedConnections)
-    {
-        TVector<uint64> PlayerIdsToRemove;
-        for (const auto& [PlayerId, Player] : Players)
-        {
-            if (Player.GatewayConnectionId == ConnId)
-            {
-                PlayerIdsToRemove.push_back(PlayerId);
-            }
-        }
-
-        for (uint64 PlayerId : PlayerIdsToRemove)
-        {
-            RemovePlayer(PlayerId);
-        }
-        
-        LOG_INFO("Connection disconnected: %llu", (unsigned long long)ConnId);
-        BackendConnections.erase(ConnId);
     }
 }
 

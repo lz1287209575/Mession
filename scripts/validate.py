@@ -12,13 +12,16 @@ Mession 脚本验证 - 启动所有服务器并验证登录、复制与清理路
   4. Test 2: 复制链路 - 登录后收包，断言至少收到 MT_ActorCreate
   5. 发送玩家移动
   6. Test 3: 清理路径 - 一端断线后重连同一 PlayerId，验证 Gateway/World 已回收状态
-  7. 清理并退出
+  7. Test 4: 并发 - 多线程同时连接登录，验证服务端可稳定处理并发
+  8. 可选 --stress：压力测试，大量并发连接 + 登录 + 多发收包
+  9. 清理并退出
 """
 
 import argparse
 import os
 import signal
 import socket
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
 import struct
 import subprocess
@@ -223,11 +226,58 @@ def collect_replication_packets(
     return found
 
 
+def run_stress(
+    num_clients: int,
+    moves_per_client: int,
+    recv_timeout: float,
+) -> tuple[int, int, float]:
+    """
+    压力测试：num_clients 个客户端并发连接，每人登录后发 moves_per_client 次移动并收包。
+    返回 (成功数, 失败数, 耗时秒)。
+    """
+    base_pid = 30000
+    ok_count = 0
+    fail_count = 0
+    start = time.perf_counter()
+
+    def one_stress_client(idx: int) -> bool:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(recv_timeout)
+            sock.connect(("127.0.0.1", GATEWAY_PORT))
+            ok, _, _ = send_login(sock, base_pid + idx)
+            if not ok:
+                sock.close()
+                return False
+            for _ in range(moves_per_client):
+                send_player_move(sock, 1.0, 0.0, 0.0)
+            for _ in range(moves_per_client):
+                pkt = recv_one_packet(sock, timeout=0.5)
+                if pkt is None:
+                    break
+            sock.close()
+            return True
+        except Exception:
+            return False
+
+    with ThreadPoolExecutor(max_workers=min(num_clients, 256)) as ex:
+        futures = [ex.submit(one_stress_client, i) for i in range(num_clients)]
+        for f in as_completed(futures):
+            if f.result():
+                ok_count += 1
+            else:
+                fail_count += 1
+    elapsed = time.perf_counter() - start
+    return ok_count, fail_count, elapsed
+
+
 def run_validation(
     build_dir: Path,
     timeout: float,
     zone_id: Optional[int] = None,
     debug_log_dir: Optional[Path] = None,
+    stress_clients: int = 0,
+    stress_moves: int = 5,
 ) -> bool:
     """执行完整验证流程"""
     project_root = build_dir.parent
@@ -331,7 +381,52 @@ def run_validation(
             return False
         log(f"  Reconnect OK: SessionKey={session_key2}")
 
-        # 8. 清理
+        # 8. 并发测试：多线程同时连接并登录
+        log("Test 4: Concurrency (parallel login)...")
+        concurrency = 20
+        base_pid = 20000
+
+        def one_login(idx: int) -> bool:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(10.0)
+                sock.connect(("127.0.0.1", GATEWAY_PORT))
+                ok, _, _ = send_login(sock, base_pid + idx)
+                sock.close()
+                return ok
+            except Exception:
+                return False
+
+        ok_count = 0
+        with ThreadPoolExecutor(max_workers=concurrency) as ex:
+            futures = [ex.submit(one_login, i) for i in range(concurrency)]
+            for f in as_completed(futures):
+                if f.result():
+                    ok_count += 1
+        if ok_count != concurrency:
+            log(f"  Concurrency test failed: {ok_count}/{concurrency} logins OK")
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        log(f"  {concurrency} parallel logins OK")
+
+        # 9. 压力测试（可选）
+        if stress_clients > 0:
+            log(f"Stress test: {stress_clients} clients, {stress_moves} moves each...")
+            ok_s, fail_s, elapsed = run_stress(stress_clients, stress_moves, recv_timeout=8.0)
+            rate = ok_s / elapsed if elapsed > 0 else 0
+            log(f"  Stress result: {ok_s} OK, {fail_s} fail, {elapsed:.2f}s ({rate:.0f} conn/s)")
+            if ok_s < stress_clients * 0.9:
+                log("  Stress test failed: success rate < 90%")
+                for s, _ in clients:
+                    if s:
+                        s.close()
+                sock2.close()
+                return False
+
+        # 10. 清理
         for sock, _ in clients:
             if sock:
                 sock.close()
@@ -374,6 +469,20 @@ def main() -> int:
         action="store_true",
         help="Write server stderr to build_dir/validate_logs/<Server>.log",
     )
+    parser.add_argument(
+        "--stress",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Run stress test with N concurrent clients (default 0 = disabled)",
+    )
+    parser.add_argument(
+        "--stress-moves",
+        type=int,
+        default=5,
+        metavar="M",
+        help="Moves per client during stress test (default 5)",
+    )
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parent.parent
@@ -395,7 +504,14 @@ def main() -> int:
         debug_log_dir.mkdir(parents=True, exist_ok=True)
         log(f"Debug logs: {debug_log_dir}")
 
-    ok = run_validation(build_dir, args.timeout, args.zone, debug_log_dir)
+    ok = run_validation(
+        build_dir,
+        args.timeout,
+        args.zone,
+        debug_log_dir,
+        stress_clients=args.stress,
+        stress_moves=args.stress_moves,
+    )
     if args.debug and debug_log_dir:
         gateway_log = debug_log_dir / "GatewayServer.log"
         if gateway_log.exists():

@@ -1,6 +1,6 @@
 #include "RouterServer.h"
 #include "Common/Config.h"
-#include "Core/Poll.h"
+#include "Core/Socket.h"
 
 namespace
 {
@@ -29,38 +29,45 @@ bool MRouterServer::Init(int InPort)
     {
         Config.ListenPort = static_cast<uint16>(InPort);
     }
-    ListenSocket.Reset(MSocket::CreateListenSocket(static_cast<uint16>(Config.ListenPort)));
-    if (!ListenSocket.IsValid())
-    {
-        LOG_ERROR("Failed to create router listen socket on port %d", Config.ListenPort);
-        return false;
-    }
-
     bRunning = true;
 
-    MLogger::LogStartupBanner("RouterServer", Config.ListenPort, static_cast<intptr_t>(ListenSocket.Get()));
+    MLogger::LogStartupBanner("RouterServer", Config.ListenPort, 0);
 
     return true;
 }
 
-void MRouterServer::RequestShutdown()
+uint16 MRouterServer::GetListenPort() const
 {
-    bRunning = false;
-    if (ListenSocket.IsValid())
-    {
-        ListenSocket.Reset();
-    }
+    return Config.ListenPort;
 }
 
-void MRouterServer::Shutdown()
+void MRouterServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 {
-    if (bShutdownDone)
-    {
-        return;
-    }
-    bShutdownDone = true;
-    bRunning = false;
+    Conn->SetNonBlocking(true);
+    SRouterPeer Peer;
+    Peer.Connection = Conn;
+    MTcpConnection* Tcp = dynamic_cast<MTcpConnection*>(Conn.get());
+    Peer.Address = Tcp ? Tcp->GetRemoteAddress() : "?";
+    Peers[ConnId] = Peer;
+    LOG_INFO("New router peer connected: %s (connection_id=%llu)", Peer.Address.c_str(), (unsigned long long)ConnId);
+    EventLoop.RegisterConnection(ConnId, Conn,
+        [this](uint64 Id, const TArray& Payload)
+        {
+            HandlePacket(Id, Payload);
+        },
+        [this](uint64 Id)
+        {
+            RemovePeer(Id);
+        });
+}
 
+void MRouterServer::TickBackends()
+{
+    ++TickCounter;
+}
+
+void MRouterServer::ShutdownConnections()
+{
     for (auto& [ConnectionId, Peer] : Peers)
     {
         if (Peer.Connection)
@@ -69,13 +76,12 @@ void MRouterServer::Shutdown()
         }
     }
     Peers.clear();
-
-    if (ListenSocket.IsValid())
-    {
-        ListenSocket.Reset();
-    }
-
     LOG_INFO("Router server shutdown complete");
+}
+
+void MRouterServer::OnRunStarted()
+{
+    LOG_INFO("Router server running...");
 }
 
 void MRouterServer::Tick()
@@ -84,107 +90,7 @@ void MRouterServer::Tick()
     {
         return;
     }
-
-    ++TickCounter;
-    AcceptServers();
-    ProcessMessages();
-}
-
-void MRouterServer::Run()
-{
-    if (!bRunning)
-    {
-        LOG_ERROR("Router server not initialized!");
-        return;
-    }
-
-    LOG_INFO("Router server running...");
-    while (bRunning)
-    {
-        Tick();
-        MTime::SleepMilliseconds(16);
-    }
-}
-
-void MRouterServer::AcceptServers()
-{
-    SAcceptedSocket Accepted = MSocket::AcceptConnection(ListenSocket.Get());
-
-    while (Accepted.IsValid())
-    {
-        const uint64 ConnectionId = NextConnectionId++;
-        TSharedPtr<INetConnection> Connection = MakeShared<MTcpConnection>(
-            std::move(Accepted.Socket),
-            Accepted.RemoteAddress,
-            Accepted.RemotePort);
-        Connection->SetNonBlocking(true);
-
-        SRouterPeer Peer;
-        Peer.Connection = Connection;
-        Peer.Address = Accepted.RemoteAddress;
-        Peers[ConnectionId] = Peer;
-
-        LOG_INFO("New router peer connected: %s:%d (connection_id=%llu)",
-                 Accepted.RemoteAddress.c_str(), Accepted.RemotePort, (unsigned long long)ConnectionId);
-
-        Accepted = MSocket::AcceptConnection(ListenSocket.Get());
-    }
-}
-
-void MRouterServer::ProcessMessages()
-{
-    TVector<uint64> DisconnectedConnections;
-    TVector<SSocketPollItem> PollItems = MSocketPoller::BuildReadableItems(
-        Peers,
-        [](SRouterPeer& Peer) -> INetConnection*
-        {
-            return Peer.Connection ? Peer.Connection.get() : nullptr;
-        });
-
-    if (PollItems.empty())
-    {
-        return;
-    }
-
-    TVector<SSocketPollResult> PollResults;
-    const int32 Ret = MSocketPoller::PollReadable(PollItems, PollResults, 10);
-    if (Ret < 0)
-    {
-        return;
-    }
-
-    for (const SSocketPollResult& PollResult : PollResults)
-    {
-        auto PeerIt = Peers.find(PollResult.ConnectionId);
-        if (PeerIt == Peers.end())
-        {
-            continue;
-        }
-
-        SRouterPeer& Peer = PeerIt->second;
-        if (MSocketPoller::IsReadable(PollResult))
-        {
-            TArray Packet;
-            while (Peer.Connection->ReceivePacket(Packet))
-            {
-                HandlePacket(PollResult.ConnectionId, Packet);
-            }
-
-            if (!Peer.Connection->IsConnected())
-            {
-                DisconnectedConnections.push_back(PollResult.ConnectionId);
-            }
-        }
-        else if (MSocketPoller::HasError(PollResult))
-        {
-            DisconnectedConnections.push_back(PollResult.ConnectionId);
-        }
-    }
-
-    for (uint64 ConnectionId : DisconnectedConnections)
-    {
-        RemovePeer(ConnectionId);
-    }
+    // 由 EventLoop.RunOnce 驱动，此处仅保留接口兼容
 }
 
 void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)

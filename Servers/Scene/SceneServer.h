@@ -3,6 +3,7 @@
 #include "Core/NetCore.h"
 #include "Core/Socket.h"
 #include "Common/Logger.h"
+#include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include <thread>
 #include <chrono>
@@ -58,37 +59,32 @@ public:
 };
 
 // 场景服务器
-class MSceneServer
+class MSceneServer : public MNetServerBase
 {
 private:
-    MSocketHandle ListenSocket;
-    bool bRunning = false;
-    bool bShutdownDone = false;
-    
-    // 配置
     SSceneConfig Config;
-    
-    // 世界服务器连接
     TSharedPtr<MServerConnection> RouterServerConn;
     float WorldRouteQueryTimer = 0.0f;
     float LoadReportTimer = 0.0f;
     uint64 NextRouteRequestId = 1;
     TSharedPtr<MServerConnection> WorldServerConn;
-    
-    // 场景管理
     TMap<uint16, TSharedPtr<MScene>> Scenes;
-    
+
 public:
     MSceneServer();
     ~MSceneServer() { Shutdown(); }
-    
+
     bool LoadConfig(const FString& ConfigPath);
     bool Init(int InPort = 0);
-    void RequestShutdown();
-    void Shutdown();
     void Tick();
-    void Run();
-    
+    void Run() override { MNetServerBase::Run(); }
+
+    uint16 GetListenPort() const override;
+    void OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
+    void TickBackends() override;
+    void ShutdownConnections() override;
+    void OnRunStarted() override;
+
 private:
     void ConnectToRouterServer();
     void ConnectToWorldServer();
@@ -97,10 +93,7 @@ private:
     void QueryWorldServerRoute();
     void SendLoadReport();
     void ApplyWorldServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
-    void ProcessWorldServerMessages();
     void HandleWorldPacket(uint8 Type, const TArray& Data);
-    
-    // 场景管理
     void CreateDefaultScenes();
     TSharedPtr<MScene> GetScene(uint16 SceneId);
 };

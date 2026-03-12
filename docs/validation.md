@@ -21,8 +21,10 @@
 | Test 1 | 登录 / 进世界 | 多玩家登录，校验 SessionKey/PlayerId 与登录响应 |
 | Test 2 | 进世界 | 复制链路：登录后从客户端收包，断言至少收到一条 `MT_ActorCreate` |
 | Test 3 | 断线清理 | 一端断线后重连同一 PlayerId，校验 Gateway/World 已回收状态 |
+| Test 4 | 并发 | 20 个线程同时连接并登录，校验服务端稳定处理并发 |
+| 压力测试 | 可选 | `--stress N`：N 个客户端并发登录 + 每人发多轮移动并收包，成功率 ≥90% 通过 |
 
-上述三项共同构成主链路集成测试，CI 在 Linux GCC 构建后自动执行。
+上述 Test 1～4 为主链路集成测试，CI 在 Linux GCC 构建后自动执行；压力测试需显式加 `--stress N`。
 
 ## 可选参数
 
@@ -30,6 +32,8 @@
 - `--timeout`：等待服务就绪超时（秒），默认 30。
 - `--no-build`：跳过编译，仅运行验证。
 - `--debug`：将各服 stdout/stderr 写入 `build/validate_logs/<Server>.log`，结束时根据 Gateway 日志提示复制是否到达。
+- `--stress N`：压力测试，N 个客户端并发（每人登录 + 多轮移动收包），默认不跑；例：`--stress 50 --stress-moves 3`。
+- `--stress-moves M`：压力测试时每人发送移动次数，默认 5。
 
 ## 与 ctest 的关系
 
