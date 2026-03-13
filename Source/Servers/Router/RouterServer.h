@@ -2,6 +2,7 @@
 
 #include "Core/Net/NetCore.h"
 #include "Core/Net/Socket.h"
+#include "Core/Net/HttpDebugServer.h"
 #include "Common/Logger.h"
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
@@ -13,6 +14,7 @@ struct SRouterConfig
 {
     uint16 ListenPort = 8005;
     uint32 RouteLeaseSeconds = 300;
+    uint16 DebugHttpPort = 0;      // 调试 HTTP 端口（0 = 关闭）
 };
 
 struct SRouterPeer
@@ -45,6 +47,9 @@ private:
     TMap<uint64, SPlayerRouteBinding> PlayerRouteBindings;
     uint64 TickCounter = 0;
 
+    // 调试 HTTP 服务器
+    TUniquePtr<MHttpDebugServer> DebugServer;
+
 public:
     MRouterServer() = default;
     ~MRouterServer() { Shutdown(); }
@@ -71,4 +76,5 @@ private:
     const SRouterPeer* SelectRouteTarget(EServerType RequestedType, uint64 PlayerId, uint16 ZoneId = 0);
     const SRouterPeer* FindRegisteredServerById(uint32 ServerId) const;
     void RemovePeer(uint64 ConnectionId);
+    FString BuildDebugStatusJson() const;
 };

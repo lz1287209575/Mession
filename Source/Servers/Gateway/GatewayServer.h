@@ -2,6 +2,7 @@
 
 #include "Core/Net/NetCore.h"
 #include "Core/Net/Socket.h"
+#include "Core/Net/HttpDebugServer.h"
 #include "Common/Logger.h"
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
@@ -19,6 +20,7 @@ struct SGatewayConfig
     FString WorldServerAddr = "127.0.0.1";
     uint16 WorldServerPort = 8003;
     uint16 ZoneId = 0;               // 0 = 任意区
+    uint16 DebugHttpPort = 0;        // 调试 HTTP 端口（0 = 关闭）
 };
 
 // 客户端连接（通过 INetConnection 抽象）
@@ -52,6 +54,12 @@ private:
     TMap<uint64, TSharedPtr<MClientConnection>> ClientConnections;
     uint64 NextConnectionId = 1;
     
+    // 后端服务器连接管理器（Router/Login/World 等）
+    MServerConnectionManager BackendConnectionManager;
+
+    // 调试 HTTP 服务器
+    TUniquePtr<MHttpDebugServer> DebugServer;
+
     // 与LoginServer的连接 (使用长连接抽象层)
     TSharedPtr<MServerConnection> LoginServerConn;
     
@@ -94,4 +102,5 @@ private:
     uint64 QueryRoute(EServerType ServerType, uint64 PlayerId = 0);
     void ApplyRoute(EServerType ServerType, uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
     void FlushPendingWorldLogins();
+    FString BuildDebugStatusJson() const;
 };

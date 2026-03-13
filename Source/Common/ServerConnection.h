@@ -99,11 +99,40 @@ struct SServerConnectionConfig
         : ServerId(Id), ServerType(Type), ServerName(Name), Address(Addr), Port(P) {}
 };
 
+// 消息通道抽象：屏蔽具体传输实现（TCP/UDP/WebSocket等）
+class MMessageChannel
+{
+public:
+    virtual ~MMessageChannel() = default;
+    virtual bool Send(const void* Data, uint32 Size) = 0;
+    virtual bool ReceivePacket(TArray& OutPacket) = 0;
+    virtual bool IsConnected() const = 0;
+    virtual void Close() = 0;
+};
+
+// TCP 消息通道实现（基于 MTcpConnection）
+class MTcpMessageChannel : public MMessageChannel
+{
+public:
+    explicit MTcpMessageChannel(TSharedPtr<MTcpConnection> InConnection)
+        : Connection(std::move(InConnection))
+    {
+    }
+
+    bool Send(const void* Data, uint32 Size) override;
+    bool ReceivePacket(TArray& OutPacket) override;
+    bool IsConnected() const override;
+    void Close() override;
+
+private:
+    TSharedPtr<MTcpConnection> Connection;
+};
+
 // 单个服务器连接
 class MServerConnection : public TEnableSharedFromThis<MServerConnection>
 {
 private:
-    TSharedPtr<MTcpConnection> Transport;
+    TSharedPtr<MMessageChannel> Transport;
     EConnectionState State = EConnectionState::Disconnected;
     SServerConnectionConfig Config;
     
@@ -119,6 +148,11 @@ private:
     // 重连
     float ReconnectTimer = 0.0f;
     float ReconnectInterval = 5.0f;
+    uint32 ReconnectAttempts = 0;
+
+    // 统计
+    uint64 BytesSent = 0;
+    uint64 BytesReceived = 0;
     
     // 回调
     TFunction<void(TSharedPtr<MServerConnection>)> OnConnectCallback;
@@ -167,6 +201,11 @@ public:
     bool IsConnected() const { return State == EConnectionState::Authenticated; }
     bool IsConnecting() const { return State == EConnectionState::Connecting || State == EConnectionState::Connected; }
     EConnectionState GetState() const { return State; }
+
+    // 统计查询
+    uint64 GetBytesSent() const { return BytesSent; }
+    uint64 GetBytesReceived() const { return BytesReceived; }
+    uint32 GetReconnectAttempts() const { return ReconnectAttempts; }
     
     // 发送消息
     bool Send(uint8 Type, const void* Data, uint32 Size);
@@ -202,6 +241,16 @@ private:
     void SendHandshakeAck();
     void SendHeartbeat();
     void SendHeartbeatAck();
+};
+
+// 服务器连接管理统计
+struct SConnectionManagerStats
+{
+    size_t Total = 0;
+    size_t Active = 0;
+    uint64 BytesSent = 0;
+    uint64 BytesReceived = 0;
+    uint32 ReconnectAttempts = 0;
 };
 
 // 服务器连接管理器
@@ -332,5 +381,27 @@ public:
             }
         }
         return Count;
+    }
+
+    SConnectionManagerStats GetStats() const
+    {
+        SConnectionManagerStats Stats;
+        Stats.Total = Connections.size();
+        for (const auto& [Id, Conn] : Connections)
+        {
+            (void)Id;
+            if (!Conn)
+            {
+                continue;
+            }
+            if (Conn->IsConnected())
+            {
+                ++Stats.Active;
+            }
+            Stats.BytesSent += Conn->GetBytesSent();
+            Stats.BytesReceived += Conn->GetBytesReceived();
+            Stats.ReconnectAttempts += Conn->GetReconnectAttempts();
+        }
+        return Stats;
     }
 };

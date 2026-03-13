@@ -1,6 +1,30 @@
 #include "ServerConnection.h"
 #include "Common/ServerMessages.h"
 
+// MTcpMessageChannel implementation
+bool MTcpMessageChannel::Send(const void* Data, uint32 Size)
+{
+    return Connection && Connection->Send(Data, Size);
+}
+
+bool MTcpMessageChannel::ReceivePacket(TArray& OutPacket)
+{
+    return Connection && Connection->ReceivePacket(OutPacket);
+}
+
+bool MTcpMessageChannel::IsConnected() const
+{
+    return Connection && Connection->IsConnected();
+}
+
+void MTcpMessageChannel::Close()
+{
+    if (Connection)
+    {
+        Connection->Close();
+    }
+}
+
 // 静态成员定义
 SServerInfo MServerConnection::LocalServerInfo;
 
@@ -41,14 +65,18 @@ bool MServerConnection::TryConnect()
         return false;
     }
 
-    Transport = MTcpConnection::ConnectTo(SSocketAddress(Config.Address, Config.Port), Config.ConnectTimeout);
-    if (!Transport || !Transport->IsConnected())
+    TSharedPtr<MTcpConnection> TcpConn = MTcpConnection::ConnectTo(SSocketAddress(Config.Address, Config.Port), Config.ConnectTimeout);
+    if (!TcpConn || !TcpConn->IsConnected())
     {
         LOG_ERROR("%s Connect failed", LogPrefix.c_str());
+        TcpConn.reset();
         Transport.reset();
         State = EConnectionState::Disconnected;
         return false;
     }
+
+    // 将底层 TCP 连接包装为消息通道
+    Transport = MakeShared<MTcpMessageChannel>(TcpConn);
 
     LOG_INFO("%s Connecting to %s:%d...", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
     State = EConnectionState::Connected;
@@ -108,7 +136,13 @@ bool MServerConnection::SendRaw(const TArray& Data)
         return false;
     }
 
-    return Transport->Send(Data.data(), static_cast<uint32>(Data.size()));
+    const uint32 Size = static_cast<uint32>(Data.size());
+    if (Transport->Send(Data.data(), Size))
+    {
+        BytesSent += Size;
+        return true;
+    }
+    return false;
 }
 
 void MServerConnection::Tick(float DeltaTime)
@@ -125,6 +159,7 @@ void MServerConnection::Tick(float DeltaTime)
         if (ReconnectTimer >= ReconnectInterval)
         {
             ReconnectTimer = 0.0f;
+            ++ReconnectAttempts;
             LOG_INFO("%s Attempting to reconnect...", LogPrefix.c_str());
             TryConnect();
         }
@@ -160,6 +195,7 @@ void MServerConnection::ProcessRecv()
     {
         if (!Packet.empty())
         {
+            BytesReceived += static_cast<uint64>(Packet.size());
             const uint8 Type = Packet[0];
             TArray Payload(Packet.begin() + 1, Packet.end());
             HandleMessage(Type, Payload);

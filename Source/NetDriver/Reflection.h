@@ -3,6 +3,7 @@
 #include "Core/Net/NetCore.h"
 #include <typeinfo>
 #include <typeindex>
+#include <cstring>
 // ============================================
 // 反射系统核心 - 仿UE风格
 // ============================================
@@ -145,22 +146,8 @@ protected:
     uint32 ClassFlags = 0;
     
 public:
-    MClass() 
-    {
-        ClassId = ++GlobalClassId;
-    }
-    
-    virtual ~MClass() 
-    {
-        for (auto* Prop : Properties)
-        {
-            delete Prop;
-        }
-        for (auto* Func : Functions)
-        {
-            delete Func;
-        }
-    }
+    MClass();
+    virtual ~MClass();
     
     // 获取类名
     const FString& GetName() const { return ClassName; }
@@ -191,86 +178,43 @@ public:
     // 检查类标志
     bool HasFlags(uint32 InFlags) const { return (ClassFlags & InFlags) != 0; }
     
-protected:
-    // 注册属性（子类调用）
+    // 构造函数注册
+    template<typename TObject>
+    void SetConstructor()
+    {
+        Constructor = [](void* InPlace) -> void*
+        {
+            if (InPlace)
+            {
+                return new (InPlace) TObject();
+            }
+            return new TObject();
+        };
+    }
+    
+    // 元信息设置接口（供宏使用）
+    void SetMeta(const FString& InName, const FString& InPath, MClass* InParent, uint32 InFlags)
+    {
+        ClassName = InName;
+        ClassPath = InPath;
+        ParentClass = InParent;
+        ClassFlags = InFlags;
+    }
+    
+    // 注册属性
     void RegisterProperty(MProperty* InProperty)
     {
         InProperty->PropertyId = ++GlobalPropertyId;
         Properties.push_back(InProperty);
     }
     
-    // 注册函数（子类调用）
+    // 注册函数
     void RegisterFunction(MFunction* InFunction)
     {
         InFunction->FunctionId = ++GlobalFunctionId;
         Functions.push_back(InFunction);
     }
 };
-
-// 查找实现
-inline MProperty* MClass::FindProperty(const FString& InName) const
-{
-    for (auto* Prop : Properties)
-    {
-        if (Prop->Name == InName)
-        {
-            return Prop;
-        }
-    }
-    if (ParentClass)
-    {
-        return ParentClass->FindProperty(InName);
-    }
-    return nullptr;
-}
-
-inline MProperty* MClass::FindPropertyById(uint16 InId) const
-{
-    for (auto* Prop : Properties)
-    {
-        if (Prop->PropertyId == InId)
-        {
-            return Prop;
-        }
-    }
-    if (ParentClass)
-    {
-        return ParentClass->FindPropertyById(InId);
-    }
-    return nullptr;
-}
-
-inline MFunction* MClass::FindFunction(const FString& InName) const
-{
-    for (auto* Func : Functions)
-    {
-        if (Func->Name == InName)
-        {
-            return Func;
-        }
-    }
-    if (ParentClass)
-    {
-        return ParentClass->FindFunction(InName);
-    }
-    return nullptr;
-}
-
-inline MFunction* MClass::FindFunctionById(uint16 InId) const
-{
-    for (auto* Func : Functions)
-    {
-        if (Func->FunctionId == InId)
-        {
-            return Func;
-        }
-    }
-    if (ParentClass)
-    {
-        return ParentClass->FindFunctionById(InId);
-    }
-    return nullptr;
-}
 
 // ============================================
 // 反射对象基类
@@ -302,7 +246,7 @@ public:
     virtual ~MReflectObject() = default;
     
     // 获取类和对象信息
-    MClass* GetClass() const { return Class; }
+    virtual MClass* GetClass() const { return Class; }
     uint64 GetId() const { return ObjectId; }
     const FString& GetName() const { return Name; }
     
@@ -369,6 +313,12 @@ public:
         GetClassIdMap()[InClass->GetId()] = InClass;
     }
     
+    // 供反射系统在创建实例时设置类信息
+    void SetClass(MClass* InClass)
+    {
+        Class = InClass;
+    }
+    
 private:
     inline static uint64 GlobalObjectId = 0;
 };
@@ -376,6 +326,10 @@ private:
 // ============================================
 // 宏定义 - 简化版
 // ============================================
+
+// UE 风格标记宏（目前仅作为标签使用）
+#define UPROPERTY(...)
+#define UFUNCTION(...)
 
 // 注册属性
 #define PROPERTY(Type, Name, Flags) \
@@ -394,38 +348,43 @@ private:
         } \
     };
 
-// 定义UCLASS
+// 声明类反射信息：放在类内部
+#define GENERATED_BODY(ClassName, ParentClass, Flags) \
+public: \
+    using ThisClass = ClassName; \
+    using Super = ParentClass; \
+    static MClass* StaticClass(); \
+    virtual MClass* GetClass() const override { return StaticClass(); } \
+private: \
+    static void RegisterAllProperties(MClass* InClass); \
+    static void RegisterAllFunctions(MClass* InClass);
+
+// 兼容 UE 命名：UCLASS 只是别名，放在类内部使用
 #define UCLASS(ClassName, ParentClass, Flags) \
-    class ClassName : public ParentClass { \
-    public: \
-        using ThisClass = ClassName; \
-        static MClass* StaticClass() { \
-            static MClass* Class = nullptr; \
-            if (!Class) { \
-                Class = new MClass(); \
-                Class->ClassName = #ClassName; \
-                Class->ClassPath = __FILE__; \
-                Class->ParentClass = ParentClass::StaticClass(); \
-                Class->ClassFlags = Flags; \
-                MReflectObject::RegisterClass(Class); \
-                RegisterAllProperties(Class); \
-                RegisterAllFunctions(Class); \
-            } \
-            return Class; \
-        } \
-    private: \
-        static void RegisterAllProperties(MClass* InClass); \
-        static void RegisterAllFunctions(MClass* InClass);
+    GENERATED_BODY(ClassName, ParentClass, Flags)
 
-// 结束类定义
-#define END_UCLASS() \
-    };
+// 在类外实现反射注册
+#define IMPLEMENT_CLASS(ClassName, ParentClass, Flags) \
+MClass* ClassName::StaticClass() \
+{ \
+    static MClass* Class = nullptr; \
+    if (!Class) \
+    { \
+        Class = new MClass(); \
+        Class->SetMeta(#ClassName, __FILE__, nullptr, Flags); \
+        Class->SetConstructor<ClassName>(); \
+        ClassName::RegisterAllProperties(Class); \
+        ClassName::RegisterAllFunctions(Class); \
+        MReflectObject::RegisterClass(Class); \
+    } \
+    return Class; \
+}
 
-// 注册属性宏
-#define REGISTER_PROPERTY(PropType, PropName, PropFlags) \
+// 注册属性宏：CppType 为底层 C++ 类型，PropEnum 为 EPropertyType 枚举值
+#define REGISTER_PROPERTY(CppType, PropEnum, PropName, PropFlags) \
     do { \
-        auto* Prop = new MProperty(#PropName, EPropertyType::PropType, offsetof(ThisClass, PropName), sizeof(PropType)); \
-        Prop->Flags = EPropertyFlags::PropFlags; \
+        auto* Prop = new MProperty(#PropName, EPropertyType::PropEnum, offsetof(ThisClass, PropName), sizeof(CppType)); \
+        Prop->Flags = PropFlags; \
         InClass->RegisterProperty(Prop); \
     } while(0)
 

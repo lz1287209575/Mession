@@ -2,6 +2,7 @@
 
 #include "Core/Net/NetCore.h"
 #include "Core/Net/Socket.h"
+#include "Core/Net/HttpDebugServer.h"
 #include "Common/Logger.h"
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
@@ -20,6 +21,7 @@ struct SSceneConfig
     FString WorldServerAddr = "127.0.0.1";
     uint16 WorldServerPort = 8003;
     SVector SceneSize = SVector(1000, 1000, 500);
+    uint16 DebugHttpPort = 0;      // 调试 HTTP 端口（0 = 关闭）
 };
 
 // 场景中的实体
@@ -63,12 +65,17 @@ class MSceneServer : public MNetServerBase
 {
 private:
     SSceneConfig Config;
+    // 后端服务器连接管理器（Router/World 等）
+    MServerConnectionManager BackendConnectionManager;
     TSharedPtr<MServerConnection> RouterServerConn;
     float WorldRouteQueryTimer = 0.0f;
     float LoadReportTimer = 0.0f;
     uint64 NextRouteRequestId = 1;
     TSharedPtr<MServerConnection> WorldServerConn;
     TMap<uint16, TSharedPtr<MScene>> Scenes;
+
+    // 调试 HTTP 服务器
+    TUniquePtr<MHttpDebugServer> DebugServer;
 
 public:
     MSceneServer();
@@ -96,4 +103,5 @@ private:
     void HandleWorldPacket(uint8 Type, const TArray& Data);
     void CreateDefaultScenes();
     TSharedPtr<MScene> GetScene(uint16 SceneId);
+    FString BuildDebugStatusJson() const;
 };

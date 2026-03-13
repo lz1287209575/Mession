@@ -2,6 +2,8 @@
 #include "Common/Config.h"
 #include "Common/ServerMessages.h"
 #include "Messages/NetMessages.h"
+#include "Core/Net/HttpDebugServer.h"
+#include "Core/Json.h"
 
 namespace
 {
@@ -10,6 +12,7 @@ const TMap<FString, const char*> GatewayEnvMap = {
     {"router_addr", "MESSION_ROUTER_ADDR"},
     {"router_port", "MESSION_ROUTER_PORT"},
     {"zone_id", "MESSION_ZONE_ID"},
+    {"debug_http_port", "MESSION_GATEWAY_DEBUG_HTTP_PORT"},
 };
 
 bool IsLoginRoutingMessage(EClientMessageType Type)
@@ -30,6 +33,7 @@ bool MGatewayServer::LoadConfig(const FString& ConfigPath)
     Config.RouterServerPort = MConfig::GetU16(Vars, "router_port", Config.RouterServerPort);
     Config.ListenPort = MConfig::GetU16(Vars, "port", Config.ListenPort);
     Config.ZoneId = MConfig::GetU16(Vars, "zone_id", Config.ZoneId);
+    Config.DebugHttpPort = MConfig::GetU16(Vars, "debug_http_port", Config.DebugHttpPort);
     return true;
 }
 
@@ -46,9 +50,9 @@ bool MGatewayServer::Init(int InPort)
     // 设置本服务器信息
     MServerConnection::SetLocalInfo(1, EServerType::Gateway, "Gateway01");
     
-    // 初始化控制面连接
+    // 初始化控制面连接（通过统一连接管理器）
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
-    RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
+    RouterServerConn = BackendConnectionManager.AddServer(RouterConfig);
 
     RouterServerConn->SetOnConnect([](auto) {
         LOG_INFO("Connected to Router Server!");
@@ -63,12 +67,12 @@ bool MGatewayServer::Init(int InPort)
         HandleRouterServerMessage(Type, Data);
     });
 
-    // 初始化后端长连接
+    // 初始化后端长连接（通过统一连接管理器）
     SServerConnectionConfig LoginConfig(2, EServerType::Login, "Login01", "", 0);
-    LoginServerConn = MakeShared<MServerConnection>(LoginConfig);
+    LoginServerConn = BackendConnectionManager.AddServer(LoginConfig);
     
     SServerConnectionConfig WorldConfig(3, EServerType::World, "World01", "", 0);
-    WorldServerConn = MakeShared<MServerConnection>(WorldConfig);
+    WorldServerConn = BackendConnectionManager.AddServer(WorldConfig);
     
     // 设置回调
     LoginServerConn->SetOnConnect([](auto) {
@@ -96,6 +100,15 @@ bool MGatewayServer::Init(int InPort)
     RouterServerConn->Connect();
     
     LOG_INFO("Backend connections initialized");
+
+    // 启动调试 HTTP 服务器（仅当配置端口 > 0 时）
+    if (Config.DebugHttpPort > 0)
+    {
+        DebugServer = TUniquePtr<MHttpDebugServer>(new MHttpDebugServer(
+            Config.DebugHttpPort,
+            [this]() { return BuildDebugStatusJson(); }));
+        DebugServer->Start();
+    }
     
     return true;
 }
@@ -150,18 +163,15 @@ void MGatewayServer::ShutdownConnections()
         }
     }
     ClientConnections.clear();
-    if (RouterServerConn)
+    BackendConnectionManager.DisconnectAll();
+    if (DebugServer)
     {
-        RouterServerConn->Disconnect();
+        DebugServer->Stop();
+        DebugServer.reset();
     }
-    if (LoginServerConn)
-    {
-        LoginServerConn->Disconnect();
-    }
-    if (WorldServerConn)
-    {
-        WorldServerConn->Disconnect();
-    }
+    RouterServerConn.reset();
+    LoginServerConn.reset();
+    WorldServerConn.reset();
     LOG_INFO("Gateway server shutdown complete");
 }
 
@@ -182,6 +192,9 @@ void MGatewayServer::Tick()
 void MGatewayServer::TickBackends()
 {
     static constexpr float BackendTickInterval = 0.016f;
+
+    // 统一驱动所有后端连接
+    BackendConnectionManager.Tick(BackendTickInterval);
 
     if (RouterServerConn)
     {
@@ -210,6 +223,22 @@ void MGatewayServer::TickBackends()
     {
         WorldServerConn->Tick(BackendTickInterval);
     }
+}
+
+FString MGatewayServer::BuildDebugStatusJson() const
+{
+    const size_t ClientCount = ClientConnections.size();
+    const SConnectionManagerStats Stats = BackendConnectionManager.GetStats();
+
+    MJsonWriter W = MJsonWriter::Object();
+    W.Key("server"); W.Value("Gateway");
+    W.Key("clients"); W.Value(static_cast<uint64>(ClientCount));
+    W.Key("backendTotal"); W.Value(static_cast<uint64>(Stats.Total));
+    W.Key("backendActive"); W.Value(static_cast<uint64>(Stats.Active));
+    W.Key("bytesSent"); W.Value(static_cast<uint64>(Stats.BytesSent));
+    W.Key("bytesReceived"); W.Value(static_cast<uint64>(Stats.BytesReceived));
+    W.Key("reconnectAttempts"); W.Value(static_cast<uint64>(Stats.ReconnectAttempts));
+    return W.ToString();
 }
 
 TSharedPtr<MClientConnection> MGatewayServer::FindClientByPlayerId(uint64 PlayerId)

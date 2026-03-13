@@ -2,6 +2,7 @@
 
 #include "Core/Net/NetCore.h"
 #include "Core/Net/Socket.h"
+#include "Core/Net/HttpDebugServer.h"
 #include "Common/Logger.h"
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
@@ -18,6 +19,7 @@ struct SLoginConfig
     uint16 RouterServerPort = 8005;
     uint32 SessionKeyMin = 100000;
     uint32 SessionKeyMax = 999999;
+    uint16 DebugHttpPort = 0;       // 调试 HTTP 端口（0 = 关闭）
 };
 
 // 在线会话
@@ -49,6 +51,9 @@ private:
     TMap<uint64, uint32> PlayerSessions;
     std::mt19937 Rng;
 
+    // 调试 HTTP 服务器
+    TUniquePtr<MHttpDebugServer> DebugServer;
+
 public:
     MLoginServer();
     ~MLoginServer() { Shutdown(); }
@@ -79,4 +84,5 @@ private:
     void HandleRouterServerMessage(uint8 Type, const TArray& Data);
     void SendRouterRegister();
     uint32 GenerateSessionKey();
+    FString BuildDebugStatusJson() const;
 };

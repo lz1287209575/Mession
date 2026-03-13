@@ -1,12 +1,15 @@
 #include "RouterServer.h"
 #include "Common/Config.h"
 #include "Core/Net/Socket.h"
+#include "Core/Net/HttpDebugServer.h"
+#include "Core/Json.h"
 
 namespace
 {
 const TMap<FString, const char*> RouterEnvMap = {
     {"port", "MESSION_ROUTER_PORT"},
     {"route_lease_seconds", "MESSION_ROUTE_LEASE_SECONDS"},
+    {"debug_http_port", "MESSION_ROUTER_DEBUG_HTTP_PORT"},
 };
 }
 
@@ -20,6 +23,7 @@ bool MRouterServer::LoadConfig(const FString& ConfigPath)
     MConfig::ApplyEnvOverrides(Vars, RouterEnvMap);
     Config.ListenPort = MConfig::GetU16(Vars, "port", Config.ListenPort);
     Config.RouteLeaseSeconds = MConfig::GetU16(Vars, "route_lease_seconds", Config.RouteLeaseSeconds);
+    Config.DebugHttpPort = MConfig::GetU16(Vars, "debug_http_port", Config.DebugHttpPort);
     return true;
 }
 
@@ -32,6 +36,15 @@ bool MRouterServer::Init(int InPort)
     bRunning = true;
 
     MLogger::LogStartupBanner("RouterServer", Config.ListenPort, 0);
+    
+    // 启动调试 HTTP 服务器（仅当配置端口 > 0 时）
+    if (Config.DebugHttpPort > 0)
+    {
+        DebugServer = TUniquePtr<MHttpDebugServer>(new MHttpDebugServer(
+            Config.DebugHttpPort,
+            [this]() { return BuildDebugStatusJson(); }));
+        DebugServer->Start();
+    }
 
     return true;
 }
@@ -76,6 +89,11 @@ void MRouterServer::ShutdownConnections()
         }
     }
     Peers.clear();
+    if (DebugServer)
+    {
+        DebugServer->Stop();
+        DebugServer.reset();
+    }
     LOG_INFO("Router server shutdown complete");
 }
 
@@ -91,6 +109,25 @@ void MRouterServer::Tick()
         return;
     }
     // 由 EventLoop.RunOnce 驱动，此处仅保留接口兼容
+}
+
+FString MRouterServer::BuildDebugStatusJson() const
+{
+    size_t RegisteredCount = 0;
+    for (const auto& [Id, Peer] : Peers)
+    {
+        (void)Id;
+        if (Peer.bRegistered)
+        {
+            ++RegisteredCount;
+        }
+    }
+
+    MJsonWriter W = MJsonWriter::Object();
+    W.Key("server"); W.Value("Router");
+    W.Key("peers"); W.Value(static_cast<uint64>(Peers.size()));
+    W.Key("registeredPeers"); W.Value(static_cast<uint64>(RegisteredCount));
+    return W.ToString();
 }
 
 void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)

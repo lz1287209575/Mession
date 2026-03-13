@@ -2,6 +2,7 @@
 
 #include "Core/Net/NetCore.h"
 #include "Core/Net/Socket.h"
+#include "Core/Net/HttpDebugServer.h"
 #include "Common/Logger.h"
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
@@ -23,6 +24,7 @@ struct SWorldConfig
     FString ServerName = "World01";
     uint32 MaxPlayers = 10000;
     uint16 ZoneId = 0;             // 0 = 默认区
+    uint16 DebugHttpPort = 0;      // 调试 HTTP 端口（0 = 关闭）
 };
 
 // 玩家数据
@@ -61,6 +63,9 @@ private:
     SWorldConfig Config;
     TMap<uint64, SBackendPeer> BackendConnections;
 
+    // 后端服务器连接管理器（Router/Login 等）
+    MServerConnectionManager BackendConnectionManager;
+
     TSharedPtr<MServerConnection> RouterServerConn;
     float LoginRouteQueryTimer = 0.0f;
     float LoadReportTimer = 0.0f;
@@ -74,6 +79,9 @@ private:
     
     // 复制系统
     MReplicationDriver* ReplicationDriver;
+
+    // 调试 HTTP 服务器
+    TUniquePtr<MHttpDebugServer> DebugServer;
     
 public:
     MWorldServer();
@@ -115,4 +123,5 @@ private:
     
     // 游戏逻辑
     void UpdateGameLogic(float DeltaTime);
+    FString BuildDebugStatusJson() const;
 };

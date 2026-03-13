@@ -44,6 +44,7 @@ set(MESSION_CORE_SOURCES
     Source/Core/Net/NetCore.cpp
     Source/Core/Net/SocketPlatform.cpp
     Source/Core/Net/Socket.cpp
+    Source/Core/Net/HttpDebugServer.cpp
     Source/Core/Event/EventLoop.cpp
     Source/Core/Event/MEventLoop.cpp
     Source/Core/Event/TaskEventLoop.cpp
@@ -92,6 +93,8 @@ configure_mession_compile_options(mession_common)
 set(MESSION_NETDRIVER_SOURCES
     Source/NetDriver/NetObject.cpp
     Source/NetDriver/ReplicationDriver.cpp
+    Source/NetDriver/Reflection.cpp
+    Source/NetDriver/ReflectionExample.cpp
 )
 
 add_library(mession_netdriver STATIC
@@ -166,6 +169,28 @@ add_executable(RouterServer
 )
 configure_mession_target(RouterServer)
 
+# NetBench - 简单网络压测工具
+add_executable(NetBench
+    Source/Tools/NetBench.cpp
+)
+target_link_libraries(NetBench
+    PRIVATE
+        mession_core
+)
+configure_mession_compile_options(NetBench)
+
+# 6. Mono Server - 单机测试服务器（用于反射等功能验证）
+add_executable(MonoServer
+    Source/Servers/Mono/MonoServer.h
+    Source/Servers/Mono/MonoServer.cpp
+    Source/Servers/Mono/MonoServerMain.cpp
+)
+target_link_libraries(MonoServer
+    PRIVATE
+        mession_netdriver
+)
+configure_mession_target(MonoServer)
+
 # 安装目标
 install(TARGETS 
     GatewayServer 
@@ -173,6 +198,7 @@ install(TARGETS
     WorldServer 
     SceneServer 
     RouterServer
+    MonoServer
     DESTINATION bin
 )
 

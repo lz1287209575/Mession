@@ -2,6 +2,7 @@
 #include "Common/Config.h"
 #include "Common/StringUtils.h"
 #include "Messages/NetMessages.h"
+#include "Core/Json.h"
 
 namespace
 {
@@ -102,6 +103,7 @@ bool MWorldServer::LoadConfig(const FString& ConfigPath)
     Config.ZoneId = MConfig::GetU16(Vars, "zone_id", Config.ZoneId);
     Config.MaxPlayers = MConfig::GetU32(Vars, "max_players", Config.MaxPlayers);
     Config.ServerName = MConfig::GetStr(Vars, "server_name", Config.ServerName);
+    Config.DebugHttpPort = MConfig::GetU16(Vars, "debug_http_port", Config.DebugHttpPort);
     return true;
 }
 
@@ -118,7 +120,7 @@ bool MWorldServer::Init(int InPort)
     MLogger::LogStartupBanner("WorldServer", Config.ListenPort, 0);
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
-    RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
+    RouterServerConn = BackendConnectionManager.AddServer(RouterConfig);
     RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
         LOG_INFO("Router server authenticated: %s", Info.ServerName.c_str());
         SendRouterRegister();
@@ -130,7 +132,16 @@ bool MWorldServer::Init(int InPort)
     RouterServerConn->Connect();
 
     SServerConnectionConfig LoginConfig(2, EServerType::Login, "Login01", "", 0);
-    LoginServerConn = MakeShared<MServerConnection>(LoginConfig);
+    LoginServerConn = BackendConnectionManager.AddServer(LoginConfig);
+
+    // 启动调试 HTTP 服务器（仅当配置端口 > 0 时）
+    if (Config.DebugHttpPort > 0)
+    {
+        DebugServer = TUniquePtr<MHttpDebugServer>(new MHttpDebugServer(
+            Config.DebugHttpPort,
+            [this]() { return BuildDebugStatusJson(); }));
+        DebugServer->Start();
+    }
     LoginServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Login server authenticated: %s", Info.ServerName.c_str());
     });
@@ -187,18 +198,18 @@ void MWorldServer::ShutdownConnections()
         }
     }
     BackendConnections.clear();
-    if (RouterServerConn)
-    {
-        RouterServerConn->Disconnect();
-    }
-    if (LoginServerConn)
-    {
-        LoginServerConn->Disconnect();
-    }
+    BackendConnectionManager.DisconnectAll();
+    RouterServerConn.reset();
+    LoginServerConn.reset();
     PendingSessionValidations.clear();
     Players.clear();
     delete ReplicationDriver;
     ReplicationDriver = nullptr;
+    if (DebugServer)
+    {
+        DebugServer->Stop();
+        DebugServer.reset();
+    }
     LOG_INFO("World server shutdown complete");
 }
 
@@ -218,6 +229,9 @@ void MWorldServer::Tick()
 
 void MWorldServer::TickBackends()
 {
+    // 统一驱动所有后端连接
+    BackendConnectionManager.Tick(DEFAULT_TICK_RATE);
+
     if (RouterServerConn)
     {
         RouterServerConn->Tick(DEFAULT_TICK_RATE);
@@ -259,6 +273,22 @@ void MWorldServer::TickBackends()
     {
         ReplicationDriver->Tick(DEFAULT_TICK_RATE);
     }
+}
+
+FString MWorldServer::BuildDebugStatusJson() const
+{
+    const SConnectionManagerStats Stats = BackendConnectionManager.GetStats();
+    const size_t PlayerCount = Players.size();
+
+    MJsonWriter W = MJsonWriter::Object();
+    W.Key("server"); W.Value("World");
+    W.Key("players"); W.Value(static_cast<uint64>(PlayerCount));
+    W.Key("backendTotal"); W.Value(static_cast<uint64>(Stats.Total));
+    W.Key("backendActive"); W.Value(static_cast<uint64>(Stats.Active));
+    W.Key("bytesSent"); W.Value(static_cast<uint64>(Stats.BytesSent));
+    W.Key("bytesReceived"); W.Value(static_cast<uint64>(Stats.BytesReceived));
+    W.Key("reconnectAttempts"); W.Value(static_cast<uint64>(Stats.ReconnectAttempts));
+    return W.ToString();
 }
 
 void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)

@@ -1,6 +1,7 @@
 #include "LoginServer.h"
 #include "Common/Config.h"
 #include "Messages/NetMessages.h"
+#include "Core/Json.h"
 #include <time.h>
 
 namespace
@@ -9,6 +10,7 @@ const TMap<FString, const char*> LoginEnvMap = {
     {"port", "MESSION_LOGIN_PORT"},
     {"router_addr", "MESSION_ROUTER_ADDR"},
     {"router_port", "MESSION_ROUTER_PORT"},
+    {"debug_http_port", "MESSION_LOGIN_DEBUG_HTTP_PORT"},
 };
 }
 
@@ -31,6 +33,7 @@ bool MLoginServer::LoadConfig(const FString& ConfigPath)
     Config.RouterServerPort = MConfig::GetU16(Vars, "router_port", Config.RouterServerPort);
     Config.SessionKeyMin = MConfig::GetU32(Vars, "session_key_min", Config.SessionKeyMin);
     Config.SessionKeyMax = MConfig::GetU32(Vars, "session_key_max", Config.SessionKeyMax);
+    Config.DebugHttpPort = MConfig::GetU16(Vars, "debug_http_port", Config.DebugHttpPort);
     return true;
 }
 
@@ -56,7 +59,16 @@ bool MLoginServer::Init(int InPort)
         HandleRouterServerMessage(Type, Data);
     });
     RouterServerConn->Connect();
-    
+
+    // 启动调试 HTTP 服务器（仅当配置端口 > 0 时）
+    if (Config.DebugHttpPort > 0)
+    {
+        DebugServer = TUniquePtr<MHttpDebugServer>(new MHttpDebugServer(
+            Config.DebugHttpPort,
+            [this]() { return BuildDebugStatusJson(); }));
+        DebugServer->Start();
+    }
+
     return true;
 }
 
@@ -100,6 +112,11 @@ void MLoginServer::ShutdownConnections()
     }
     Sessions.clear();
     PlayerSessions.clear();
+    if (DebugServer)
+    {
+        DebugServer->Stop();
+        DebugServer.reset();
+    }
     LOG_INFO("Login server shutdown complete");
 }
 
@@ -137,6 +154,18 @@ void MLoginServer::TickBackends()
 void MLoginServer::OnRunStarted()
 {
     LOG_INFO("Login server running...");
+}
+
+FString MLoginServer::BuildDebugStatusJson() const
+{
+    const size_t GatewayCount = GatewayConnections.size();
+    const size_t SessionCount = Sessions.size();
+
+    MJsonWriter W = MJsonWriter::Object();
+    W.Key("server"); W.Value("Login");
+    W.Key("gateways"); W.Value(static_cast<uint64>(GatewayCount));
+    W.Key("sessions"); W.Value(static_cast<uint64>(SessionCount));
+    return W.ToString();
 }
 
 void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)

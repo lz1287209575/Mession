@@ -1,6 +1,7 @@
 #include "SceneServer.h"
 #include "Common/Config.h"
 #include "Common/ServerMessages.h"
+#include "Core/Json.h"
 
 namespace
 {
@@ -9,6 +10,7 @@ const TMap<FString, const char*> SceneEnvMap = {
     {"router_addr", "MESSION_ROUTER_ADDR"},
     {"router_port", "MESSION_ROUTER_PORT"},
     {"zone_id", "MESSION_ZONE_ID"},
+    {"debug_http_port", "MESSION_SCENE_DEBUG_HTTP_PORT"},
 };
 }
 
@@ -28,6 +30,7 @@ bool MSceneServer::LoadConfig(const FString& ConfigPath)
     Config.RouterServerAddr = MConfig::GetStr(Vars, "router_addr", Config.RouterServerAddr);
     Config.RouterServerPort = MConfig::GetU16(Vars, "router_port", Config.RouterServerPort);
     Config.ZoneId = MConfig::GetU16(Vars, "zone_id", Config.ZoneId);
+    Config.DebugHttpPort = MConfig::GetU16(Vars, "debug_http_port", Config.DebugHttpPort);
     return true;
 }
 
@@ -45,7 +48,16 @@ bool MSceneServer::Init(int InPort)
     bRunning = true;
 
     MLogger::LogStartupBanner("SceneServer", Config.ListenPort, 0);
-    
+
+    // 启动调试 HTTP 服务器（仅当配置端口 > 0 时）
+    if (Config.DebugHttpPort > 0)
+    {
+        DebugServer = TUniquePtr<MHttpDebugServer>(new MHttpDebugServer(
+            Config.DebugHttpPort,
+            [this]() { return BuildDebugStatusJson(); }));
+        DebugServer->Start();
+    }
+
     return true;
 }
 
@@ -64,15 +76,15 @@ void MSceneServer::OnAccept(uint64, TSharedPtr<INetConnection> Conn)
 
 void MSceneServer::ShutdownConnections()
 {
-    if (RouterServerConn)
-    {
-        RouterServerConn->Disconnect();
-    }
-    if (WorldServerConn)
-    {
-        WorldServerConn->Disconnect();
-    }
+    BackendConnectionManager.DisconnectAll();
+    RouterServerConn.reset();
+    WorldServerConn.reset();
     Scenes.clear();
+    if (DebugServer)
+    {
+        DebugServer->Stop();
+        DebugServer.reset();
+    }
     LOG_INFO("Scene server shutdown complete");
 }
 
@@ -92,10 +104,8 @@ void MSceneServer::Tick()
 
 void MSceneServer::TickBackends()
 {
-    if (RouterServerConn)
-    {
-        RouterServerConn->Tick(0.016f);
-    }
+    // 统一驱动所有后端连接
+    BackendConnectionManager.Tick(0.016f);
 
     WorldRouteQueryTimer += 0.016f;
     if (RouterServerConn && RouterServerConn->IsConnected() && WorldRouteQueryTimer >= 1.0f)
@@ -129,12 +139,37 @@ void MSceneServer::TickBackends()
     }
 }
 
+FString MSceneServer::BuildDebugStatusJson() const
+{
+    const SConnectionManagerStats Stats = BackendConnectionManager.GetStats();
+    size_t EntityCount = 0;
+    for (const auto& [SceneId, Scene] : Scenes)
+    {
+        (void)SceneId;
+        if (Scene)
+        {
+            EntityCount += Scene->GetEntities().size();
+        }
+    }
+
+    MJsonWriter W = MJsonWriter::Object();
+    W.Key("server"); W.Value("Scene");
+    W.Key("scenes"); W.Value(static_cast<uint64>(Scenes.size()));
+    W.Key("entities"); W.Value(static_cast<uint64>(EntityCount));
+    W.Key("backendTotal"); W.Value(static_cast<uint64>(Stats.Total));
+    W.Key("backendActive"); W.Value(static_cast<uint64>(Stats.Active));
+    W.Key("bytesSent"); W.Value(static_cast<uint64>(Stats.BytesSent));
+    W.Key("bytesReceived"); W.Value(static_cast<uint64>(Stats.BytesReceived));
+    W.Key("reconnectAttempts"); W.Value(static_cast<uint64>(Stats.ReconnectAttempts));
+    return W.ToString();
+}
+
 void MSceneServer::ConnectToRouterServer()
 {
     MServerConnection::SetLocalInfo(Config.SceneId, EServerType::Scene, Config.SceneName);
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
-    RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
+    RouterServerConn = BackendConnectionManager.AddServer(RouterConfig);
     RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
         LOG_INFO("Connected to router server: %s", Info.ServerName.c_str());
         SendRouterRegister();
@@ -155,7 +190,7 @@ void MSceneServer::ConnectToWorldServer()
     if (!WorldServerConn)
     {
         SServerConnectionConfig WorldConfig(3, EServerType::World, "World01", Config.WorldServerAddr, Config.WorldServerPort);
-        WorldServerConn = MakeShared<MServerConnection>(WorldConfig);
+        WorldServerConn = BackendConnectionManager.AddServer(WorldConfig);
     }
     WorldServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Connected to world server: %s", Info.ServerName.c_str());
