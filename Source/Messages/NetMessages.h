@@ -13,6 +13,7 @@ enum class EClientMessageType : uint8
     MT_ActorCreate = 6,     // 创建Actor
     MT_ActorDestroy = 7,    // 销毁Actor
     MT_ActorUpdate = 8,     // Actor属性更新
+    MT_RPC = 9,             // 反射 RPC 调用（封装 MT_RPC 网络包）
     MT_Chat = 10,           // 聊天
     MT_Heartbeat = 11,      // 心跳
     MT_Error = 12,          // 错误

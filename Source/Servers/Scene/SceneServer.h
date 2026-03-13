@@ -6,6 +6,7 @@
 #include "Common/Logger.h"
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
+#include "Common/ServerMessages.h"
 #include <thread>
 #include <chrono>
 
@@ -77,6 +78,10 @@ private:
     // 调试 HTTP 服务器
     TUniquePtr<MHttpDebugServer> DebugServer;
 
+    // 服务器消息分发器
+    MServerMessageDispatcher RouterMessageDispatcher;
+    MServerMessageDispatcher WorldMessageDispatcher;
+
 public:
     MSceneServer();
     ~MSceneServer() { Shutdown(); }
@@ -104,4 +109,15 @@ private:
     void CreateDefaultScenes();
     TSharedPtr<MScene> GetScene(uint16 SceneId);
     FString BuildDebugStatusJson() const;
+
+    // 分发器注册与具体处理函数
+    void InitRouterMessageHandlers();
+    void InitWorldMessageHandlers();
+
+    void OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& Message);
+    void OnRouter_RouteResponse(const SRouteResponseMessage& Message);
+
+    void OnWorld_PlayerSwitchServer(const SPlayerSceneStateMessage& Message);
+    void OnWorld_PlayerLogout(const SPlayerSceneLeaveMessage& Message);
+    void OnWorld_PlayerDataSync(const SPlayerSceneStateMessage& Message);
 };

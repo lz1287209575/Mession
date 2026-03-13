@@ -3,6 +3,7 @@
 #include "Common/MessageUtils.h"
 #include "Common/ServerConnection.h"
 #include "Common/StringUtils.h"
+#include "Common/Logger.h"
 
 struct SEmptyServerMessage
 {
@@ -555,3 +556,58 @@ inline bool SendTypedServerMessage(const TSharedPtr<MServerConnection>& Connecti
 
     return SendTypedServerMessage(*Connection, Type, Message);
 }
+
+// ============================================
+// 通用服务器消息分发器（基于类型的“RPC”调用）
+// ============================================
+
+class MServerMessageDispatcher
+{
+public:
+    using FHandler = TFunction<void(const TArray&)>;
+
+private:
+    TMap<uint8, FHandler> Handlers;
+
+public:
+    MServerMessageDispatcher() = default;
+
+    template<typename TObject, typename TMessage>
+    void Register(EServerMessageType Type, TObject* Object, void (TObject::*MemberFunc)(const TMessage&), const char* Context)
+    {
+        if (!Object || !MemberFunc)
+        {
+            return;
+        }
+
+        const uint8 TypeValue = static_cast<uint8>(Type);
+
+        Handlers[TypeValue] = [Object, MemberFunc, Context, Type](const TArray& Data)
+        {
+            TMessage Message;
+            auto ParseResult = ParsePayload(Data, Message, Context);
+            if (!ParseResult.IsOk())
+            {
+                LOG_WARN("ServerMessageDispatcher ParsePayload failed for type %d: %s",
+                         static_cast<int>(Type),
+                         ParseResult.GetError().c_str());
+                return;
+            }
+
+            (Object->*MemberFunc)(Message);
+        };
+    }
+
+    void Dispatch(uint8 Type, const TArray& Data) const
+    {
+        auto It = Handlers.find(Type);
+        if (It == Handlers.end())
+        {
+            LOG_DEBUG("ServerMessageDispatcher has no handler for type %u",
+                      static_cast<unsigned>(Type));
+            return;
+        }
+
+        It->second(Data);
+    }
+};

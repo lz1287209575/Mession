@@ -4,6 +4,7 @@
 #include <typeinfo>
 #include <typeindex>
 #include <cstring>
+#include <type_traits>
 // ============================================
 // 反射系统核心 - 仿UE风格
 // ============================================
@@ -30,7 +31,8 @@ enum class EPropertyType : uint8
     Struct = 16,
     Object = 17,
     Class = 18,
-    Enum = 19
+    Enum = 19,
+    Array = 20      // 容器（如 TVector<T>）
 };
 
 // 属性标志
@@ -66,6 +68,19 @@ enum class EFunctionFlags : uint32
     WithValidation = 1 << 9,   // 带验证
 };
 
+// RPC 类型
+enum class ERpcType : uint8
+{
+    None = 0,
+    Server = 1,         // 客户端 -> 服务器
+    Client = 2,         // 服务器 -> 单个客户端
+    Multicast = 3,      // 服务器 -> 多个客户端
+    ServerToServer = 4  // 服务器 <-> 服务器
+};
+
+class MReflectArchive;
+class MReflectObject;
+
 // 属性基础类
 class MProperty
 {
@@ -76,20 +91,42 @@ public:
     size_t Offset = 0;
     size_t Size = 0;
     uint16 PropertyId = 0;
-    
+    std::type_index CppTypeIndex = typeid(void);
+
     MProperty() = default;
     MProperty(const FString& InName, EPropertyType InType, size_t InOffset, size_t InSize)
-        : Name(InName), Type(InType), Offset(InOffset), Size(InSize) {}
-    
+        : Name(InName)
+        , Type(InType)
+        , Offset(InOffset)
+        , Size(InSize)
+        , PropertyId(0)
+        , CppTypeIndex(typeid(void))
+    {
+    }
+
+    MProperty(const FString& InName, EPropertyType InType, size_t InOffset, size_t InSize, const std::type_index& InCppTypeIndex)
+        : Name(InName)
+        , Type(InType)
+        , Flags(EPropertyFlags::None)
+        , Offset(InOffset)
+        , Size(InSize)
+        , PropertyId(0)
+        , CppTypeIndex(InCppTypeIndex)
+    {
+    }
+
     virtual ~MProperty() = default;
-    
+
+    // 默认基于 Type 做序列化，容器等复杂类型可在子类中重写
+    virtual void SerializeValue(void* Object, MReflectArchive& Ar) const;
+
     // 获取属性值（模板化）
     template<typename T>
     T* GetValuePtr(void* Object) const
     {
         return reinterpret_cast<T*>(reinterpret_cast<uint8*>(Object) + Offset);
     }
-    
+
     template<typename T>
     const T* GetValuePtr(const void* Object) const
     {
@@ -109,6 +146,14 @@ public:
     // 函数指针类型
     using FunctionPtr = void(*)(void*);
     FunctionPtr NativeFunc = nullptr;
+
+    // RPC 元信息
+    ERpcType RpcType = ERpcType::None;
+    bool bReliable = true;
+
+    // RPC 执行入口：由网络层传入对象和参数归档
+    using RpcInvoker = void(*)(MReflectObject*, MReflectArchive&);
+    RpcInvoker RpcFunc = nullptr;
     
     // 参数列表
     TVector<MProperty*> Params;
@@ -327,14 +372,18 @@ private:
 // 宏定义 - 简化版
 // ============================================
 
-// UE 风格标记宏（目前仅作为标签使用）
-#define UPROPERTY(...)
-#define UFUNCTION(...)
+// 反射标记宏（标签，不做实际逻辑）
+#define MPROPERTY(...)
+#define MFUNCTION(...)
+
+// 兼容旧的 UE 风格宏，映射到 M 前缀
+#define UPROPERTY(...) MPROPERTY(__VA_ARGS__)
+#define UFUNCTION(...) MFUNCTION(__VA_ARGS__)
 
 // 注册属性
 #define PROPERTY(Type, Name, Flags) \
     struct SProperty_##Name : public MProperty { \
-        SProperty_##Name() : MProperty(#Name, EPropertyType::Type, offsetof(ThisClass, Name), sizeof(Type)) { \
+        SProperty_##Name() : MProperty(#Name, EPropertyType::Type, offsetof(ThisClass, Name), sizeof(Type), std::type_index(typeid(Type))) { \
             this->Flags = EPropertyFlags::Flags; \
         } \
     } Name##_Property;
@@ -359,9 +408,12 @@ private: \
     static void RegisterAllProperties(MClass* InClass); \
     static void RegisterAllFunctions(MClass* InClass);
 
-// 兼容 UE 命名：UCLASS 只是别名，放在类内部使用
-#define UCLASS(ClassName, ParentClass, Flags) \
+// MCLASS / UCLASS：类反射声明宏（别名）
+#define MCLASS(ClassName, ParentClass, Flags) \
     GENERATED_BODY(ClassName, ParentClass, Flags)
+
+#define UCLASS(ClassName, ParentClass, Flags) \
+    MCLASS(ClassName, ParentClass, Flags)
 
 // 在类外实现反射注册
 #define IMPLEMENT_CLASS(ClassName, ParentClass, Flags) \
@@ -383,10 +435,11 @@ MClass* ClassName::StaticClass() \
 // 注册属性宏：CppType 为底层 C++ 类型，PropEnum 为 EPropertyType 枚举值
 #define REGISTER_PROPERTY(CppType, PropEnum, PropName, PropFlags) \
     do { \
-        auto* Prop = new MProperty(#PropName, EPropertyType::PropEnum, offsetof(ThisClass, PropName), sizeof(CppType)); \
-        Prop->Flags = PropFlags; \
+        auto* Prop = new TProperty<CppType>(#PropName, EPropertyType::PropEnum, offsetof(ThisClass, PropName), sizeof(CppType), PropFlags); \
         InClass->RegisterProperty(Prop); \
     } while(0)
+
+// 向反射系统注册 TVector 容器属性（元素类型必须已被 MReflectArchive 支持）
 
 // 注册函数宏
 #define REGISTER_FUNCTION(FuncName, FuncFlags) \
@@ -433,6 +486,38 @@ public:
     MReflectArchive& operator<<(FString& Value) { return SerializeString(Value); }
     MReflectArchive& operator<<(SVector& Value) { return SerializePrimitive(Value); }
     MReflectArchive& operator<<(SRotator& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(bool& Value)
+    {
+        uint8 Temp = Value ? 1u : 0u;
+        *this << Temp;
+        if (bReading)
+        {
+            Value = (Temp != 0u);
+        }
+        return *this;
+    }
+
+    // 原始字节序列化，主要用于结构体等复杂类型的按字节拷贝
+    MReflectArchive& SerializeBytes(void* Buffer, size_t Size)
+    {
+        if (!Buffer || Size == 0)
+        {
+            return *this;
+        }
+
+        if (bWriting)
+        {
+            size_t OldSize = Data.size();
+            Data.resize(OldSize + Size);
+            memcpy(Data.data() + OldSize, Buffer, Size);
+        }
+        else if (bReading && ReadPos + Size <= Data.size())
+        {
+            memcpy(Buffer, Data.data() + ReadPos, Size);
+            ReadPos += Size;
+        }
+        return *this;
+    }
     
 private:
     template<typename T>
@@ -478,3 +563,224 @@ private:
         return *this;
     }
 };
+
+// ============================================
+// 属性模板：默认行为 + 容器特化
+// ============================================
+
+// 前向声明：用于属性模板特化
+template<typename T>
+struct TPropertySerializer;
+
+template<typename T>
+class TProperty : public MProperty
+{
+public:
+    TProperty(const FString& InName, EPropertyType InType, size_t InOffset, size_t InSize, EPropertyFlags InFlags)
+        : MProperty(InName, InType, InOffset, InSize, std::type_index(typeid(T)))
+    {
+        Flags = InFlags;
+    }
+
+    virtual void SerializeValue(void* Object, MReflectArchive& Ar) const override
+    {
+        TPropertySerializer<T>::Serialize(this, Object, Ar);
+    }
+};
+
+// 默认序列化：退回到 MProperty 的基础实现
+template<typename T>
+struct TPropertySerializer
+{
+    static void Serialize(const MProperty* Prop, void* Object, MReflectArchive& Ar)
+    {
+        if (!Prop)
+        {
+            return;
+        }
+        const_cast<MProperty*>(Prop)->MProperty::SerializeValue(Object, Ar);
+    }
+};
+
+// TVector 容器专用序列化
+template<typename TElement>
+struct TPropertySerializer<TVector<TElement>>
+{
+    static void Serialize(const MProperty* Prop, void* Object, MReflectArchive& Ar)
+    {
+        if (!Prop || !Object)
+        {
+            return;
+        }
+
+        auto* Vec = reinterpret_cast<TVector<TElement>*>(reinterpret_cast<uint8*>(Object) + Prop->Offset);
+        uint32 Count = 0;
+        if (Ar.bWriting)
+        {
+            Count = static_cast<uint32>(Vec->size());
+        }
+
+        Ar << Count;
+
+        if (Ar.bReading)
+        {
+            Vec->resize(Count);
+        }
+
+        if (Count == 0)
+        {
+            return;
+        }
+
+        if constexpr (std::is_trivially_copyable_v<TElement>)
+        {
+            // POD 元素：按字节批量序列化整个数组
+            Ar.SerializeBytes(Vec->data(), sizeof(TElement) * Count);
+        }
+        else
+        {
+            // 非 POD：逐个元素走各自的 operator<<
+            for (uint32 Index = 0; Index < Count; ++Index)
+            {
+                TElement& Element = (*Vec)[Index];
+                Ar << Element;
+            }
+        }
+    }
+};
+
+// TMap<K, V> 容器专用序列化
+template<typename K, typename V, typename Compare>
+struct TPropertySerializer<TMap<K, V, Compare>>
+{
+    static void Serialize(const MProperty* Prop, void* Object, MReflectArchive& Ar)
+    {
+        if (!Prop || !Object)
+        {
+            return;
+        }
+
+        auto* MapPtr = reinterpret_cast<TMap<K, V, Compare>*>(reinterpret_cast<uint8*>(Object) + Prop->Offset);
+        uint32 Count = 0;
+        if (Ar.bWriting)
+        {
+            Count = static_cast<uint32>(MapPtr->size());
+        }
+
+        Ar << Count;
+
+        if (Ar.bReading)
+        {
+            MapPtr->clear();
+            for (uint32 Index = 0; Index < Count; ++Index)
+            {
+                K Key{};
+                V Value{};
+                Ar << Key;
+                Ar << Value;
+                MapPtr->emplace(std::move(Key), std::move(Value));
+            }
+        }
+        else
+        {
+            for (auto& Pair : *MapPtr)
+            {
+                K KeyCopy = Pair.first;
+                V& Value = Pair.second;
+                Ar << KeyCopy;
+                Ar << Value;
+            }
+        }
+    }
+};
+
+// TSet<T> 容器专用序列化
+template<typename T, typename Compare>
+struct TPropertySerializer<TSet<T, Compare>>
+{
+    static void Serialize(const MProperty* Prop, void* Object, MReflectArchive& Ar)
+    {
+        if (!Prop || !Object)
+        {
+            return;
+        }
+
+        auto* SetPtr = reinterpret_cast<TSet<T, Compare>*>(reinterpret_cast<uint8*>(Object) + Prop->Offset);
+        uint32 Count = 0;
+        if (Ar.bWriting)
+        {
+            Count = static_cast<uint32>(SetPtr->size());
+        }
+
+        Ar << Count;
+
+        if (Ar.bReading)
+        {
+            SetPtr->clear();
+            for (uint32 Index = 0; Index < Count; ++Index)
+            {
+                T Value{};
+                Ar << Value;
+                SetPtr->insert(std::move(Value));
+            }
+        }
+        else
+        {
+            for (const T& Value : *SetPtr)
+            {
+                T Copy = Value;
+                Ar << Copy;
+            }
+        }
+    }
+};
+
+// 向反射系统注册 TVector 容器属性（元素类型必须已被 MReflectArchive 支持）
+template<typename TElement>
+class MVectorProperty : public MProperty
+{
+public:
+    MVectorProperty(const FString& InName, size_t InOffset, EPropertyFlags InFlags)
+        : MProperty(InName,
+                    EPropertyType::None,
+                    InOffset,
+                    sizeof(TVector<TElement>),
+                    std::type_index(typeid(TVector<TElement>)))
+    {
+        Flags = InFlags;
+    }
+
+    virtual void SerializeValue(void* Object, MReflectArchive& Ar) const override
+    {
+        if (!Object)
+        {
+            return;
+        }
+
+        auto* Vec = reinterpret_cast<TVector<TElement>*>(reinterpret_cast<uint8*>(Object) + Offset);
+        uint32 Count = 0;
+        if (Ar.bWriting)
+        {
+            Count = static_cast<uint32>(Vec->size());
+        }
+
+        Ar << Count;
+
+        if (Ar.bReading)
+        {
+            Vec->resize(Count);
+        }
+
+        for (uint32 Index = 0; Index < Count; ++Index)
+        {
+            TElement& Element = (*Vec)[Index];
+            Ar << Element;
+        }
+    }
+};
+
+#define REGISTER_TVECTOR_PROPERTY(ElementCppType, PropName, PropFlags) \
+    do { \
+        auto* Prop = new MVectorProperty<ElementCppType>(#PropName, offsetof(ThisClass, PropName), PropFlags); \
+        InClass->RegisterProperty(Prop); \
+    } while(0)

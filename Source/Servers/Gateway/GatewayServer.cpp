@@ -50,6 +50,11 @@ bool MGatewayServer::Init(int InPort)
     // 设置本服务器信息
     MServerConnection::SetLocalInfo(1, EServerType::Gateway, "Gateway01");
     
+    // 初始化消息分发器
+    InitLoginMessageHandlers();
+    InitWorldMessageHandlers();
+    InitRouterMessageHandlers();
+
     // 初始化控制面连接（通过统一连接管理器）
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = BackendConnectionManager.AddServer(RouterConfig);
@@ -357,19 +362,63 @@ void MGatewayServer::ForwardToBackend(uint64 ConnectionId, const TArray& Data)
 
 void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
 {
-    if (Type != (uint8)EServerMessageType::MT_PlayerLogin)
-    {
-        return;
-    }
+    (void)Type;
+    LoginMessageDispatcher.Dispatch(Type, Data);
+}
 
-    SPlayerLoginResponseMessage Message;
-    auto ParseResult = ParsePayload(Data, Message, "MT_PlayerLogin");
-    if (!ParseResult.IsOk())
-    {
-        LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-        return;
-    }
+void MGatewayServer::HandleWorldServerMessage(uint8 Type, const TArray& Data)
+{
+    (void)Type;
+    WorldMessageDispatcher.Dispatch(Type, Data);
+}
 
+void MGatewayServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
+{
+    (void)Type;
+    RouterMessageDispatcher.Dispatch(Type, Data);
+}
+
+void MGatewayServer::InitLoginMessageHandlers()
+{
+    LoginMessageDispatcher.Register<MGatewayServer, SPlayerLoginResponseMessage>(
+        EServerMessageType::MT_PlayerLogin,
+        this,
+        &MGatewayServer::OnLogin_PlayerLogin,
+        "MT_PlayerLogin");
+}
+
+void MGatewayServer::InitWorldMessageHandlers()
+{
+    WorldMessageDispatcher.Register<MGatewayServer, SPlayerLogoutMessage>(
+        EServerMessageType::MT_PlayerLogout,
+        this,
+        &MGatewayServer::OnWorld_PlayerLogout,
+        "MT_PlayerLogout");
+
+    WorldMessageDispatcher.Register<MGatewayServer, SPlayerClientSyncMessage>(
+        EServerMessageType::MT_PlayerClientSync,
+        this,
+        &MGatewayServer::OnWorld_PlayerClientSync,
+        "MT_PlayerClientSync");
+}
+
+void MGatewayServer::InitRouterMessageHandlers()
+{
+    RouterMessageDispatcher.Register<MGatewayServer, SServerRegisterAckMessage>(
+        EServerMessageType::MT_ServerRegisterAck,
+        this,
+        &MGatewayServer::OnRouter_ServerRegisterAck,
+        "MT_ServerRegisterAck");
+
+    RouterMessageDispatcher.Register<MGatewayServer, SRouteResponseMessage>(
+        EServerMessageType::MT_RouteResponse,
+        this,
+        &MGatewayServer::OnRouter_RouteResponse,
+        "MT_RouteResponse");
+}
+
+void MGatewayServer::OnLogin_PlayerLogin(const SPlayerLoginResponseMessage& Message)
+{
     auto ClientIt = ClientConnections.find(Message.ConnectionId);
     if (ClientIt == ClientConnections.end())
     {
@@ -400,100 +449,62 @@ void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
              (unsigned long long)Message.PlayerId);
 }
 
-void MGatewayServer::HandleWorldServerMessage(uint8 Type, const TArray& Data)
+void MGatewayServer::OnWorld_PlayerLogout(const SPlayerLogoutMessage& Message)
 {
-    if (Type == (uint8)EServerMessageType::MT_PlayerLogout)
+    TSharedPtr<MClientConnection> Client = FindClientByPlayerId(Message.PlayerId);
+    if (Client)
     {
-        SPlayerLogoutMessage Message;
-        auto ParseResult = ParsePayload(Data, Message, "MT_PlayerLogout");
-        if (!ParseResult.IsOk())
-        {
-            LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-            return;
-        }
-
-        TSharedPtr<MClientConnection> Client = FindClientByPlayerId(Message.PlayerId);
-        if (Client)
-        {
-            ResetClientAuthState(Client);
-        }
-
-        return;
-    }
-
-    if (Type == (uint8)EServerMessageType::MT_PlayerClientSync)
-    {
-        SPlayerClientSyncMessage Message;
-        auto ParseResult = ParsePayload(Data, Message, "MT_PlayerClientSync");
-        if (!ParseResult.IsOk())
-        {
-            LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-            return;
-        }
-
-        TSharedPtr<MClientConnection> Client = FindClientByPlayerId(Message.PlayerId);
-        if (!Client || !Client->Connection)
-        {
-            LOG_WARN("World sync for unknown player %llu", (unsigned long long)Message.PlayerId);
-            return;
-        }
-
-        if (!Client->Connection->Send(Message.Data.data(), Message.Data.size()))
-        {
-            LOG_WARN("Failed to forward world sync to player %llu", (unsigned long long)Message.PlayerId);
-        }
+        ResetClientAuthState(Client);
     }
 }
 
-void MGatewayServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
+void MGatewayServer::OnWorld_PlayerClientSync(const SPlayerClientSyncMessage& Message)
 {
-    switch ((EServerMessageType)Type)
+    TSharedPtr<MClientConnection> Client = FindClientByPlayerId(Message.PlayerId);
+    if (!Client || !Client->Connection)
     {
-        case EServerMessageType::MT_ServerRegisterAck:
-            LOG_INFO("Gateway registered to RouterServer");
-            break;
+        LOG_WARN("World sync for unknown player %llu", (unsigned long long)Message.PlayerId);
+        return;
+    }
 
-        case EServerMessageType::MT_RouteResponse:
+    if (!Client->Connection->Send(Message.Data.data(), Message.Data.size()))
+    {
+        LOG_WARN("Failed to forward world sync to player %llu", (unsigned long long)Message.PlayerId);
+    }
+}
+
+void MGatewayServer::OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& /*Message*/)
+{
+    LOG_INFO("Gateway registered to RouterServer");
+}
+
+void MGatewayServer::OnRouter_RouteResponse(const SRouteResponseMessage& Message)
+{
+    if (!Message.bFound)
+    {
+        LOG_WARN("No route available yet for server type %d (request=%llu)",
+                 (int)Message.RequestedType,
+                 (unsigned long long)Message.RequestId);
+        return;
+    }
+
+    ApplyRoute(
+        Message.ServerInfo.ServerType,
+        Message.ServerInfo.ServerId,
+        Message.ServerInfo.ServerName,
+        Message.ServerInfo.Address,
+        Message.ServerInfo.Port);
+    if (Message.ServerInfo.ServerType == EServerType::World)
+    {
+        auto PendingIt = PendingWorldLoginRoutes.find(Message.RequestId);
+        if (PendingIt != PendingWorldLoginRoutes.end())
         {
-            SRouteResponseMessage Message;
-            auto ParseResult = ParsePayload(Data, Message, "MT_RouteResponse");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-                return;
-            }
-
-            if (!Message.bFound)
-            {
-                LOG_WARN("No route available yet for server type %d (request=%llu)",
-                         (int)Message.RequestedType,
-                         (unsigned long long)Message.RequestId);
-                return;
-            }
-
-            ApplyRoute(
-                Message.ServerInfo.ServerType,
-                Message.ServerInfo.ServerId,
-                Message.ServerInfo.ServerName,
-                Message.ServerInfo.Address,
-                Message.ServerInfo.Port);
-            if (Message.ServerInfo.ServerType == EServerType::World)
-            {
-                auto PendingIt = PendingWorldLoginRoutes.find(Message.RequestId);
-                if (PendingIt != PendingWorldLoginRoutes.end())
-                {
-                    FlushPendingWorldLogins();
-                }
-                else if (Message.PlayerId == 0)
-                {
-                    FlushPendingWorldLogins();
-                }
-            }
-            break;
+            FlushPendingWorldLogins();
         }
-
-        default:
-            break;
+        else if (Message.PlayerId == 0)
+        {
+            FlushPendingWorldLogins();
+        }
     }
 }
 

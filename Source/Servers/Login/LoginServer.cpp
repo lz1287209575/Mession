@@ -49,6 +49,9 @@ bool MLoginServer::Init(int InPort)
 
     MLogger::LogStartupBanner("LoginServer", Config.ListenPort, 0);
 
+    // 初始化服务器消息分发器
+    InitRouterMessageHandlers();
+
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
     RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
@@ -285,10 +288,43 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
             uint64 ValidatedPlayerId = 0;
             const bool bValid = ValidateSession(Request.SessionKey, ValidatedPlayerId) && ValidatedPlayerId == Request.PlayerId;
 
-            SendServerMessage(
-                ConnectionId,
-                EServerMessageType::MT_SessionValidateResponse,
-                SSessionValidateResponseMessage{Request.ConnectionId, Request.PlayerId, bValid});
+            // 使用 MWorldService 的 RPC 进行跨服务器会话校验回调：
+            // Data 格式：
+            // [FunctionId(2)][PayloadSize(4)][Payload...]
+            // Payload 由 MReflectArchive 编码：
+            //   uint64 ConnectionId
+            //   uint64 PlayerId
+            //   bool   bValid
+
+            const uint16 FunctionId = GetWorldSessionValidateResponseFunctionId();
+            if (FunctionId == 0)
+            {
+                LOG_WARN("GetWorldSessionValidateResponseFunctionId returned 0, fallback to legacy MT_SessionValidateResponse");
+
+                SendServerMessage(
+                    ConnectionId,
+                    EServerMessageType::MT_SessionValidateResponse,
+                    SSessionValidateResponseMessage{Request.ConnectionId, Request.PlayerId, bValid});
+            }
+            else
+            {
+                MReflectArchive RpcAr;
+                uint64 ConnIdForWorld = Request.ConnectionId;
+                uint64 PlayerIdForWorld = Request.PlayerId;
+                bool bValidForWorld = bValid;
+
+                RpcAr << ConnIdForWorld;
+                RpcAr << PlayerIdForWorld;
+                RpcAr << bValidForWorld;
+
+                TArray RpcData;
+                BuildServerRpcPayload(FunctionId, RpcAr.Data, RpcData);
+
+                SendServerMessage(
+                    ConnectionId,
+                    static_cast<uint8>(EServerMessageType::MT_RPC),
+                    RpcData);
+            }
 
             LOG_INFO("Session validation for player %llu on connection %llu: %s",
                      (unsigned long long)Request.PlayerId,
@@ -369,12 +405,10 @@ uint32 MLoginServer::GenerateSessionKey()
     return Dist(Rng);
 }
 
-void MLoginServer::HandleRouterServerMessage(uint8 Type, const TArray& /*Data*/)
+void MLoginServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 {
-    if (Type == (uint8)EServerMessageType::MT_ServerRegisterAck)
-    {
-        LOG_INFO("Login server registered to RouterServer");
-    }
+    (void)Type;
+    RouterMessageDispatcher.Dispatch(Type, Data);
 }
 
 void MLoginServer::SendRouterRegister()
@@ -388,4 +422,18 @@ void MLoginServer::SendRouterRegister()
         RouterServerConn,
         EServerMessageType::MT_ServerRegister,
         SServerRegisterMessage{2, EServerType::Login, "Login01", "127.0.0.1", Config.ListenPort});
+}
+
+void MLoginServer::InitRouterMessageHandlers()
+{
+    RouterMessageDispatcher.Register<MLoginServer, SServerRegisterAckMessage>(
+        EServerMessageType::MT_ServerRegisterAck,
+        this,
+        &MLoginServer::OnRouter_ServerRegisterAck,
+        "MT_ServerRegisterAck");
+}
+
+void MLoginServer::OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& /*Message*/)
+{
+    LOG_INFO("Login server registered to RouterServer");
 }

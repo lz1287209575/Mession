@@ -1,4 +1,116 @@
 #include "NetDriver/Reflection.h"
+#include "Common/Logger.h"
+
+// MProperty 序列化实现（默认按基础类型 / 简单结构体处理）
+
+void MProperty::SerializeValue(void* Object, MReflectArchive& Ar) const
+{
+    if (!Object || Size == 0)
+    {
+        return;
+    }
+
+    uint8* FieldPtr = reinterpret_cast<uint8*>(Object) + Offset;
+
+    switch (Type)
+    {
+    case EPropertyType::Int8:
+    {
+        int8& Value = *reinterpret_cast<int8*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::Int16:
+    {
+        int16& Value = *reinterpret_cast<int16*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::Int32:
+    {
+        int32& Value = *reinterpret_cast<int32*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::Int64:
+    {
+        int64& Value = *reinterpret_cast<int64*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::UInt8:
+    {
+        uint8& Value = *reinterpret_cast<uint8*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::UInt16:
+    {
+        uint16& Value = *reinterpret_cast<uint16*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::UInt32:
+    {
+        uint32& Value = *reinterpret_cast<uint32*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::UInt64:
+    {
+        uint64& Value = *reinterpret_cast<uint64*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::Float:
+    {
+        float& Value = *reinterpret_cast<float*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::Double:
+    {
+        double& Value = *reinterpret_cast<double*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::Bool:
+    {
+        bool& Value = *reinterpret_cast<bool*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::String:
+    {
+        FString& Value = *reinterpret_cast<FString*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::Vector:
+    {
+        SVector& Value = *reinterpret_cast<SVector*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::Rotator:
+    {
+        SRotator& Value = *reinterpret_cast<SRotator*>(FieldPtr);
+        Ar << Value;
+        break;
+    }
+    case EPropertyType::Struct:
+    {
+        // 目前对 Struct 做按字节序列化，适合仅包含 POD 字段的简单结构体。
+        Ar.SerializeBytes(FieldPtr, Size);
+        break;
+    }
+    default:
+        // 复杂类型（Object / Class / Enum 等）暂未自动支持，需要自定义序列化。
+        LOG_WARN("Reflection Serialize: unsupported property type %d for '%s'",
+                 (int)Type, Name.c_str());
+        break;
+    }
+}
 
 // MClass 实现
 
@@ -128,14 +240,38 @@ MFunction* MClass::FindFunctionById(uint16 InId) const
 
 void MClass::Serialize(void* Object, MReflectArchive& Ar) const
 {
-    (void)Object;
-    (void)Ar;
+    if (!Object)
+    {
+        return;
+    }
+
+    for (MProperty* Prop : Properties)
+    {
+        if (!Prop)
+        {
+            continue;
+        }
+        Prop->SerializeValue(Object, Ar);
+    }
 }
 
 void MClass::Deserialize(void* Object, const TArray& Data) const
 {
-    (void)Object;
-    (void)Data;
+    if (!Object)
+    {
+        return;
+    }
+
+    MReflectArchive Ar(Data);
+
+    for (MProperty* Prop : Properties)
+    {
+        if (!Prop)
+        {
+            continue;
+        }
+        Prop->SerializeValue(Object, Ar);
+    }
 }
 
 void MClass::CopyProperties(void* Dest, const void* Src) const

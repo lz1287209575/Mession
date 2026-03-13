@@ -36,6 +36,7 @@ MT_PLAYER_MOVE = 5
 MT_ACTOR_CREATE = 6
 MT_ACTOR_DESTROY = 7
 MT_ACTOR_UPDATE = 8
+MT_RPC = 9
 
 # 端口
 ROUTER_PORT = 8005
@@ -186,6 +187,25 @@ def send_player_move(sock: socket.socket, x: float, y: float, z: float) -> bool:
     协议: Length(4) + MsgType(1) + X(4) + Y(4) + Z(4)
     """
     payload = struct.pack("<Bfff", MT_PLAYER_MOVE, x, y, z)
+    length = len(payload)
+    packet = struct.pack("<I", length) + payload
+    sock.sendall(packet)
+    return True
+
+
+def send_rpc_add_stats(sock: socket.socket, hero_object_id: int, func_id: int, level_delta: int, health_delta: float) -> bool:
+    """
+    发送一个简单的 RPC 调用:
+      MsgType = MT_RPC
+      Payload = [ObjectId(8)][FunctionId(2)][PayloadSize(4)][LevelDelta(4)][HealthDelta(4)]
+    这里假设 FunctionId 已经在服务端稳定，hero_object_id 来自服务端（或采用固定值）。
+    """
+    payload = struct.pack("<B", MT_RPC)
+    payload += struct.pack("<Q", hero_object_id)
+    payload += struct.pack("<H", func_id)
+    inner = struct.pack("<if", level_delta, health_delta)
+    payload += struct.pack("<I", len(inner))
+    payload += inner
     length = len(payload)
     packet = struct.pack("<I", length) + payload
     sock.sendall(packet)
@@ -391,8 +411,48 @@ def run_validation(
             return False
         log(f"  Reconnect OK: SessionKey={session_key2}")
 
-        # 8. 并发测试：多线程同时连接并登录
-        log("Test 4: Concurrency (parallel login)...")
+        # 8. RPC 测试：通过 Gateway->World 路径发送 MT_RPC，触发服务器端 MHero RPC + validate
+        log("Test 4: RPC (Server-side validate)...")
+        # 为简单起见，使用第一个仍在线的客户端执行 RPC 测试
+        rpc_sock = None
+        rpc_pid = 123456
+        try:
+            rpc_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            rpc_sock.settimeout(10.0)
+            rpc_sock.connect(("127.0.0.1", GATEWAY_PORT))
+            ok, _, _ = send_login(rpc_sock, rpc_pid)
+            if not ok:
+                log("  RPC login failed")
+                rpc_sock.close()
+                rpc_sock = None
+                # 不直接失败整个验证，但提示 RPC 未测试
+            else:
+                # 我们不知道服务器端 HeroObject 的实际 ObjectId / FunctionId，这里约定：
+                # - ObjectId 使用 0（WorldServer 内部会进行 ObjectId 校验并拒绝不匹配的包）
+                #   因此第一次调用应该被 validate/安全检查拒绝，不改变服务器状态。
+                # - 仅测试网络路径可达以及服务器不会崩溃。
+                # 如果后续我们在协议中回传 HeroObjectId/FunctionId，就可以在这里做更严格的断言。
+                send_rpc_add_stats(
+                    rpc_sock,
+                    hero_object_id=0,
+                    func_id=0,
+                    level_delta=10,
+                    health_delta=100.0,
+                )
+                # 等待一小段时间，确保服务器处理完 RPC 包（如有日志可人工检查）
+                time.sleep(0.5)
+                log("  MT_RPC packet sent (check WorldServer logs for validate/execute)")
+        except Exception as e:
+            log(f"  RPC test encountered exception: {e}")
+            if rpc_sock:
+                rpc_sock.close()
+            rpc_sock = None
+
+        if rpc_sock:
+            rpc_sock.close()
+
+        # 9. 并发测试：多线程同时连接并登录
+        log("Test 5: Concurrency (parallel login)...")
         concurrency = 20
         base_pid = 20000
 
@@ -422,7 +482,7 @@ def run_validation(
             return False
         log(f"  {concurrency} parallel logins OK")
 
-        # 9. 压力测试（可选）
+        # 10. 压力测试（可选）
         if stress_clients > 0:
             log(f"Stress test: {stress_clients} clients, {stress_moves} moves each...")
             ok_s, fail_s, elapsed = run_stress(stress_clients, stress_moves, recv_timeout=8.0)
@@ -436,7 +496,7 @@ def run_validation(
                 sock2.close()
                 return False
 
-        # 10. 清理
+        # 11. 清理
         for sock, _ in clients:
             if sock:
                 sock.close()

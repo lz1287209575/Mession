@@ -119,6 +119,16 @@ bool MWorldServer::Init(int InPort)
 
     MLogger::LogStartupBanner("WorldServer", Config.ListenPort, 0);
 
+    // 初始化服务器消息分发器
+    InitRouterMessageHandlers();
+    InitLoginMessageHandlers();
+
+    // 绑定 WorldService 的会话校验回调处理器
+    SetWorldSessionValidateResponseHandler([this](uint64 ConnectionId, uint64 PlayerId, bool bValid)
+    {
+        OnLogin_SessionValidateResponse(ConnectionId, PlayerId, bValid);
+    });
+
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = BackendConnectionManager.AddServer(RouterConfig);
     RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
@@ -442,6 +452,82 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
                      (unsigned long long)Player->PlayerId, NewPos.X, NewPos.Y, NewPos.Z);
             break;
         }
+        case EClientMessageType::MT_RPC:
+        {
+            // 客户端 RPC：Data 格式与 MonoServer 中的 MT_RPC 包保持一致：
+            // [MsgType(1)][ObjectId(8)][FunctionId(2)][PayloadSize(4)][Payload...]
+            if (Data.size() < 1 + sizeof(uint64) + sizeof(uint16) + sizeof(uint32))
+            {
+                LOG_WARN("MT_RPC packet too small from player %llu", (unsigned long long)PlayerId);
+                return;
+            }
+
+            SPlayer* Player = GetPlayerById(PlayerId);
+            if (!Player || !Player->HeroObject)
+            {
+                LOG_WARN("MT_RPC for unknown player %llu or missing HeroObject", (unsigned long long)PlayerId);
+                return;
+            }
+
+            size_t Offset = 1;
+            uint64 ObjectId = 0;
+            uint16 FunctionId = 0;
+            uint32 PayloadSize = 0;
+
+            std::memcpy(&ObjectId, Data.data() + Offset, sizeof(ObjectId));
+            Offset += sizeof(ObjectId);
+            std::memcpy(&FunctionId, Data.data() + Offset, sizeof(FunctionId));
+            Offset += sizeof(FunctionId);
+            std::memcpy(&PayloadSize, Data.data() + Offset, sizeof(PayloadSize));
+            Offset += sizeof(PayloadSize);
+
+            if (Offset + PayloadSize > Data.size())
+            {
+                LOG_WARN("MT_RPC payload out of range from player %llu", (unsigned long long)PlayerId);
+                return;
+            }
+
+            // 简单校验：ObjectId 必须匹配服务器端对象 ID
+            if (ObjectId != Player->HeroObject->GetId())
+            {
+                LOG_WARN("MT_RPC ObjectId mismatch: client=%llu server=%llu for player %llu",
+                         (unsigned long long)ObjectId,
+                         (unsigned long long)Player->HeroObject->GetId(),
+                         (unsigned long long)PlayerId);
+                return;
+            }
+
+            TArray Payload;
+            if (PayloadSize > 0)
+            {
+                Payload.resize(PayloadSize);
+                std::memcpy(Payload.data(), Data.data() + Offset, PayloadSize);
+            }
+
+            MClass* HeroClass = MHero::StaticClass();
+            if (!HeroClass)
+            {
+                LOG_ERROR("MHero::StaticClass returned nullptr in MT_RPC");
+                return;
+            }
+
+            MFunction* FuncMeta = HeroClass->FindFunctionById(FunctionId);
+            if (!FuncMeta || !FuncMeta->RpcFunc || FuncMeta->RpcType != ERpcType::Server)
+            {
+                LOG_WARN("MT_RPC unknown or invalid FunctionId=%u for player %llu",
+                         (unsigned)FunctionId,
+                         (unsigned long long)PlayerId);
+                return;
+            }
+
+            MReflectArchive Ar(Payload);
+            FuncMeta->RpcFunc(Player->HeroObject, Ar);
+
+            LOG_INFO("MT_RPC executed for player %llu: FuncId=%u", 
+                     (unsigned long long)PlayerId,
+                     (unsigned)FunctionId);
+            break;
+        }
         default:
             LOG_DEBUG("Unknown message type: %d", (int)MsgType);
             break;
@@ -470,6 +556,9 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 Gatewa
     Character->SetLocation(SVector(0, 0, 100));
     
     Player.Character = Character;
+
+    // 为该玩家创建一个用于 RPC 测试的反射对象
+    Player.HeroObject = static_cast<MHero*>(MHero::StaticClass()->CreateInstance());
     
     Players[PlayerId] = Player;
 
@@ -536,6 +625,12 @@ void MWorldServer::RemovePlayer(uint64 PlayerId)
     {
         ReplicationDriver->BroadcastActorDestroy(Player.Character->GetObjectId());
         delete Player.Character;
+        Player.Character = nullptr;
+    }
+    if (Player.HeroObject)
+    {
+        delete Player.HeroObject;
+        Player.HeroObject = nullptr;
     }
 
     BroadcastToScenes(
@@ -595,42 +690,19 @@ void MWorldServer::BroadcastToScenes(uint8 Type, const TArray& Payload)
 
 void MWorldServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
 {
-    if (Type != (uint8)EServerMessageType::MT_SessionValidateResponse)
+    // 新的服务器间 RPC：Type 为 MT_RPC，Data 格式：
+    // [FunctionId(2)][PayloadSize(4)][Payload...]
+    if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
+        if (!TryInvokeServerRpc(&WorldService, Data, ERpcType::ServerToServer))
+        {
+            LOG_WARN("WorldServer MT_RPC packet could not be handled via reflection");
+        }
         return;
     }
 
-    SSessionValidateResponseMessage Message;
-    auto ParseResult = ParsePayload(Data, Message, "MT_SessionValidateResponse");
-    if (!ParseResult.IsOk())
-    {
-        LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-        return;
-    }
-
-    auto PendingIt = PendingSessionValidations.find(Message.ConnectionId);
-    if (PendingIt == PendingSessionValidations.end())
-    {
-        return;
-    }
-
-    const SPendingSessionValidation Pending = PendingIt->second;
-    PendingSessionValidations.erase(PendingIt);
-
-    if (!Message.bValid || Pending.PlayerId != Message.PlayerId)
-    {
-        LOG_WARN("Session validation failed for player %llu on connection %llu",
-                 (unsigned long long)Pending.PlayerId,
-                 (unsigned long long)Message.ConnectionId);
-        return;
-    }
-
-    AddPlayer(Message.PlayerId, "Player" + MString::ToString(Message.PlayerId), Pending.GatewayConnectionId);
-    auto* Player = GetPlayerById(Message.PlayerId);
-    if (Player)
-    {
-        Player->SessionKey = Pending.SessionKey;
-    }
+    // 兼容旧的基于消息类型的处理（如有）
+    LoginMessageDispatcher.Dispatch(Type, Data);
 }
 
 void MWorldServer::RequestSessionValidation(uint64 GatewayConnectionId, uint64 PlayerId, uint32 SessionKey)
@@ -658,37 +730,73 @@ void MWorldServer::RequestSessionValidation(uint64 GatewayConnectionId, uint64 P
 
 void MWorldServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 {
-    switch ((EServerMessageType)Type)
+    (void)Type;
+    RouterMessageDispatcher.Dispatch(Type, Data);
+}
+
+void MWorldServer::InitRouterMessageHandlers()
+{
+    RouterMessageDispatcher.Register<MWorldServer, SServerRegisterAckMessage>(
+        EServerMessageType::MT_ServerRegisterAck,
+        this,
+        &MWorldServer::OnRouter_ServerRegisterAck,
+        "MT_ServerRegisterAck");
+
+    RouterMessageDispatcher.Register<MWorldServer, SRouteResponseMessage>(
+        EServerMessageType::MT_RouteResponse,
+        this,
+        &MWorldServer::OnRouter_RouteResponse,
+        "MT_RouteResponse");
+}
+
+void MWorldServer::InitLoginMessageHandlers()
+{
+    (void)LoginMessageDispatcher;
+}
+
+void MWorldServer::OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& /*Message*/)
+{
+    LOG_INFO("World server registered to RouterServer");
+}
+
+void MWorldServer::OnRouter_RouteResponse(const SRouteResponseMessage& Message)
+{
+    if (Message.PlayerId != 0 || Message.RequestedType != EServerType::Login || !Message.bFound)
     {
-        case EServerMessageType::MT_ServerRegisterAck:
-            LOG_INFO("World server registered to RouterServer");
-            break;
+        return;
+    }
 
-        case EServerMessageType::MT_RouteResponse:
-        {
-            SRouteResponseMessage Message;
-            auto ParseResult = ParsePayload(Data, Message, "MT_RouteResponse");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-                return;
-            }
+    ApplyLoginServerRoute(
+        Message.ServerInfo.ServerId,
+        Message.ServerInfo.ServerName,
+        Message.ServerInfo.Address,
+        Message.ServerInfo.Port);
+}
 
-            if (Message.PlayerId != 0 || Message.RequestedType != EServerType::Login || !Message.bFound)
-            {
-                return;
-            }
+void MWorldServer::OnLogin_SessionValidateResponse(uint64 ConnectionId, uint64 PlayerId, bool bValid)
+{
+    auto PendingIt = PendingSessionValidations.find(ConnectionId);
+    if (PendingIt == PendingSessionValidations.end())
+    {
+        return;
+    }
 
-            ApplyLoginServerRoute(
-                Message.ServerInfo.ServerId,
-                Message.ServerInfo.ServerName,
-                Message.ServerInfo.Address,
-                Message.ServerInfo.Port);
-            break;
-        }
+    const SPendingSessionValidation Pending = PendingIt->second;
+    PendingSessionValidations.erase(PendingIt);
 
-        default:
-            break;
+    if (!bValid || Pending.PlayerId != PlayerId)
+    {
+        LOG_WARN("Session validation failed for player %llu on connection %llu",
+                 (unsigned long long)Pending.PlayerId,
+                 (unsigned long long)ConnectionId);
+        return;
+    }
+
+    AddPlayer(PlayerId, "Player" + MString::ToString(PlayerId), Pending.GatewayConnectionId);
+    auto* Player = GetPlayerById(PlayerId);
+    if (Player)
+    {
+        Player->SessionKey = Pending.SessionKey;
     }
 }
 

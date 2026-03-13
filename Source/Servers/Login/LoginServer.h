@@ -7,6 +7,7 @@
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"
+#include "NetDriver/ServerRpcServices.h"
 #include <random>
 #include <thread>
 #include <chrono>
@@ -54,6 +55,9 @@ private:
     // 调试 HTTP 服务器
     TUniquePtr<MHttpDebugServer> DebugServer;
 
+    // 服务器消息分发器
+    MServerMessageDispatcher RouterMessageDispatcher;
+
 public:
     MLoginServer();
     ~MLoginServer() { Shutdown(); }
@@ -85,4 +89,8 @@ private:
     void SendRouterRegister();
     uint32 GenerateSessionKey();
     FString BuildDebugStatusJson() const;
+
+    // 分发器注册与具体处理函数
+    void InitRouterMessageHandlers();
+    void OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& Message);
 };

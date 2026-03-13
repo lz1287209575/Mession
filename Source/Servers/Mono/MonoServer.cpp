@@ -1,6 +1,7 @@
 #include "MonoServer.h"
 #include "NetDriver/ReflectionExample.h"
 #include "NetDriver/Reflection.h"
+#include "Messages/NetMessages.h"
 
 namespace
 {
@@ -87,7 +88,7 @@ bool RunReflectionTests()
                  *LevelCopy, *HealthCopy, *GoldCopy);
     }
     
-    // 测试 2：MPlayerData 自定义序列化（包含 FriendsList）
+    // 测试 2：MPlayerData 容器序列化（FriendsList / FriendLevels / BlackList）
     {
         MClass* PlayerDataClass = MPlayerData::StaticClass();
         if (!PlayerDataClass)
@@ -109,15 +110,29 @@ bool RunReflectionTests()
         SET_PROPERTY(Data, int32, VIPLevel, 3);
         SET_PROPERTY(Data, int64, LoginTime, 123456789);
         SET_PROPERTY(Data, FString, LastLoginIP, FString("127.0.0.1"));
+
+        // 直接操作容器字段（通过普通 C++ 访问）
+        Data->GetFriendsList() = {2001, 2002, 2003};
+        Data->GetFriendLevels().clear();
+        Data->GetFriendLevels()[2001] = 10;
+        Data->GetFriendLevels()[2002] = 20;
+        Data->GetFriendLevels()[2003] = 30;
+
+        Data->GetBlackList().clear();
+        Data->GetBlackList().insert(3001);
+        Data->GetBlackList().insert(3002);
         
         uint64* PlayerIdPtr = GET_PROPERTY(Data, uint64, PlayerId);
         FString* AccountNamePtr = GET_PROPERTY(Data, FString, AccountName);
         int32* VipLevelPtr = GET_PROPERTY(Data, int32, VIPLevel);
         
-        LOG_INFO("MPlayerData before serialize: PlayerId=%llu Account=%s VIP=%d",
+        LOG_INFO("MPlayerData before serialize: PlayerId=%llu Account=%s VIP=%d Friends=%zu FriendLevels=%zu BlackList=%zu",
                  PlayerIdPtr ? (unsigned long long)(*PlayerIdPtr) : 0ull,
                  AccountNamePtr ? AccountNamePtr->c_str() : "",
-                 VipLevelPtr ? *VipLevelPtr : -1);
+                 VipLevelPtr ? *VipLevelPtr : -1,
+                 (size_t)Data->GetFriendsList().size(),
+                 (size_t)Data->GetFriendLevels().size(),
+                 (size_t)Data->GetBlackList().size());
         
         TArray Buffer;
         {
@@ -138,10 +153,219 @@ bool RunReflectionTests()
         FString* AccountNameCopyPtr = GET_PROPERTY(DataCopy, FString, AccountName);
         int32* VipLevelCopyPtr = GET_PROPERTY(DataCopy, int32, VIPLevel);
         
-        LOG_INFO("MPlayerData after deserialize: PlayerId=%llu Account=%s VIP=%d",
+        LOG_INFO("MPlayerData after deserialize: PlayerId=%llu Account=%s VIP=%d Friends=%zu FriendLevels=%zu BlackList=%zu",
                  PlayerIdCopyPtr ? (unsigned long long)(*PlayerIdCopyPtr) : 0ull,
                  AccountNameCopyPtr ? AccountNameCopyPtr->c_str() : "",
-                 VipLevelCopyPtr ? *VipLevelCopyPtr : -1);
+                 VipLevelCopyPtr ? *VipLevelCopyPtr : -1,
+                 (size_t)DataCopy->GetFriendsList().size(),
+                 (size_t)DataCopy->GetFriendLevels().size(),
+                 (size_t)DataCopy->GetBlackList().size());
+    }
+
+    // 测试 3：MHero 嵌套结构体（Struct 类型）自动序列化
+    {
+        MClass* HeroClass = MHero::StaticClass();
+        if (!HeroClass)
+        {
+            LOG_ERROR("MHero::StaticClass returned nullptr");
+            return false;
+        }
+
+        auto* Hero = static_cast<MHero*>(HeroClass->CreateInstance());
+        if (!Hero)
+        {
+            LOG_ERROR("Failed to CreateInstance for MHero");
+            return false;
+        }
+
+        // 通过反射拿到嵌套结构体整体指针
+        SCombatStats* StatsPtr = GET_PROPERTY(Hero, SCombatStats, CombatStats);
+        if (!StatsPtr)
+        {
+            LOG_ERROR("Failed to get CombatStats property from MHero");
+            return false;
+        }
+
+        // 设置多层嵌套字段
+        StatsPtr->Base.Strength = 10;
+        StatsPtr->Base.Agility = 5;
+        StatsPtr->Base.Intelligence = 3;
+        StatsPtr->Bonus.Strength = 2;
+        StatsPtr->Bonus.Agility = 1;
+        StatsPtr->Bonus.Intelligence = 0;
+        StatsPtr->CritChance = 0.25f;
+        StatsPtr->CritMultiplier = 2.0f;
+
+        SET_PROPERTY(Hero, int32, Level, 15);
+        SET_PROPERTY(Hero, float, Health, 350.0f);
+
+        LOG_INFO("MHero before serialize: "
+                 "Base(STR=%d AGI=%d INT=%d) "
+                 "Bonus(STR=%d AGI=%d INT=%d) "
+                 "Crit=%.2f x%.2f Level=%d Health=%.2f",
+                 StatsPtr->Base.Strength,
+                 StatsPtr->Base.Agility,
+                 StatsPtr->Base.Intelligence,
+                 StatsPtr->Bonus.Strength,
+                 StatsPtr->Bonus.Agility,
+                 StatsPtr->Bonus.Intelligence,
+                 StatsPtr->CritChance,
+                 StatsPtr->CritMultiplier,
+                 Hero->GetLevel(),
+                 Hero->GetHealth());
+
+        // 通过 MClass 通用接口序列化 / 反序列化
+        MReflectArchive HeroArWrite;
+        HeroClass->Serialize(Hero, HeroArWrite);
+
+        auto* HeroCopy = static_cast<MHero*>(HeroClass->CreateInstance());
+        if (!HeroCopy)
+        {
+            LOG_ERROR("Failed to CreateInstance for MHero copy");
+            return false;
+        }
+        HeroClass->Deserialize(HeroCopy, HeroArWrite.Data);
+
+        SCombatStats* StatsCopyPtr = GET_PROPERTY(HeroCopy, SCombatStats, CombatStats);
+        if (!StatsCopyPtr)
+        {
+            LOG_ERROR("Failed to get CombatStats from MHero copy");
+            return false;
+        }
+
+        LOG_INFO("MHero after deserialize: "
+                 "Base(STR=%d AGI=%d INT=%d) "
+                 "Bonus(STR=%d AGI=%d INT=%d) "
+                 "Crit=%.2f x%.2f Level=%d Health=%.2f",
+                 StatsCopyPtr->Base.Strength,
+                 StatsCopyPtr->Base.Agility,
+                 StatsCopyPtr->Base.Intelligence,
+                 StatsCopyPtr->Bonus.Strength,
+                 StatsCopyPtr->Bonus.Agility,
+                 StatsCopyPtr->Bonus.Intelligence,
+                 StatsCopyPtr->CritChance,
+                 StatsCopyPtr->CritMultiplier,
+                 HeroCopy->GetLevel(),
+                 HeroCopy->GetHealth());
+    }
+
+    // 测试 4：RPC 元信息与网络包格式（本地自发自收模拟）
+    {
+        MClass* HeroClass = MHero::StaticClass();
+        auto* Hero = static_cast<MHero*>(HeroClass->CreateInstance());
+        if (!Hero)
+        {
+            LOG_ERROR("Failed to CreateInstance for MHero in RPC test");
+            return false;
+        }
+
+        // 查找 RPC 函数元信息
+        MFunction* RpcFuncMeta = HeroClass->FindFunction("ServerRpc_AddStats");
+        if (!RpcFuncMeta || !RpcFuncMeta->RpcFunc)
+        {
+            LOG_ERROR("RPC metadata for ServerRpc_AddStats not found or missing invoker");
+            return false;
+        }
+
+        const uint64 ObjectId = Hero->GetId();
+        const uint16 FunctionId = RpcFuncMeta->FunctionId;
+
+        // 构造 RPC 参数载荷
+        int32 LevelDelta = 2;
+        float HealthDelta = 50.0f;
+        MReflectArchive RpcPayloadAr;
+        RpcPayloadAr << LevelDelta;
+        RpcPayloadAr << HealthDelta;
+
+        const uint32 PayloadSize = static_cast<uint32>(RpcPayloadAr.Data.size());
+
+        // 按 ENetMessageType::MT_RPC 设计网络包格式：
+        // [MsgType(1)][ObjectId(8)][FunctionId(2)][PayloadSize(4)][Payload...]
+        TArray Packet;
+        Packet.reserve(1 + sizeof(ObjectId) + sizeof(FunctionId) + sizeof(PayloadSize) + PayloadSize);
+
+        uint8 MsgType = static_cast<uint8>(ENetMessageType::MT_RPC);
+        Packet.push_back(MsgType);
+
+        // ObjectId
+        const uint8* ObjIdPtr = reinterpret_cast<const uint8*>(&ObjectId);
+        Packet.insert(Packet.end(), ObjIdPtr, ObjIdPtr + sizeof(ObjectId));
+
+        // FunctionId
+        const uint8* FuncIdPtr = reinterpret_cast<const uint8*>(&FunctionId);
+        Packet.insert(Packet.end(), FuncIdPtr, FuncIdPtr + sizeof(FunctionId));
+
+        // PayloadSize
+        const uint8* SizePtr = reinterpret_cast<const uint8*>(&PayloadSize);
+        Packet.insert(Packet.end(), SizePtr, SizePtr + sizeof(PayloadSize));
+
+        // Payload 本体
+        if (PayloadSize > 0)
+        {
+            Packet.insert(Packet.end(), RpcPayloadAr.Data.begin(), RpcPayloadAr.Data.end());
+        }
+
+        LOG_INFO("RPC packet built: size=%zu bytes (payload=%u)", (size_t)Packet.size(), PayloadSize);
+
+        // 本地“接收端”解析同一份 Packet，并通过 RpcFunc 执行
+        size_t Offset = 0;
+        if (Packet.empty())
+        {
+            LOG_ERROR("RPC packet is empty");
+            return false;
+        }
+
+        uint8 RecvType = Packet[Offset++];
+        if (RecvType != static_cast<uint8>(ENetMessageType::MT_RPC))
+        {
+            LOG_ERROR("Unexpected RPC msg type: %u", (unsigned)RecvType);
+            return false;
+        }
+
+        if (Offset + sizeof(uint64) + sizeof(uint16) + sizeof(uint32) > Packet.size())
+        {
+            LOG_ERROR("RPC packet too small");
+            return false;
+        }
+
+        uint64 RecvObjectId = 0;
+        uint16 RecvFunctionId = 0;
+        uint32 RecvPayloadSize = 0;
+
+        std::memcpy(&RecvObjectId, Packet.data() + Offset, sizeof(RecvObjectId));
+        Offset += sizeof(RecvObjectId);
+
+        std::memcpy(&RecvFunctionId, Packet.data() + Offset, sizeof(RecvFunctionId));
+        Offset += sizeof(RecvFunctionId);
+
+        std::memcpy(&RecvPayloadSize, Packet.data() + Offset, sizeof(RecvPayloadSize));
+        Offset += sizeof(RecvPayloadSize);
+
+        if (Offset + RecvPayloadSize > Packet.size())
+        {
+            LOG_ERROR("RPC packet payload out of range");
+            return false;
+        }
+
+        TArray RecvPayload;
+        if (RecvPayloadSize > 0)
+        {
+            RecvPayload.resize(RecvPayloadSize);
+            std::memcpy(RecvPayload.data(), Packet.data() + Offset, RecvPayloadSize);
+        }
+
+        LOG_INFO("RPC packet parsed: ObjectId=%llu FunctionId=%u PayloadSize=%u",
+                 (unsigned long long)RecvObjectId,
+                 (unsigned)RecvFunctionId,
+                 (unsigned)RecvPayloadSize);
+
+        // 使用反射的 RpcInvoker 执行 RPC（此处直接用 Hero 实例模拟）
+        MReflectArchive RecvAr(RecvPayload);
+        RpcFuncMeta->RpcFunc(Hero, RecvAr);
+
+        LOG_INFO("MHero after RPC invoke: Level=%d Health=%.2f",
+                 Hero->GetLevel(),
+                 Hero->GetHealth());
     }
     
     LOG_INFO("=== MonoServer: Reflection tests finished ===");

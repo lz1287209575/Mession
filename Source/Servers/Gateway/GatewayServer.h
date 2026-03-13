@@ -6,6 +6,7 @@
 #include "Common/Logger.h"
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
+#include "Common/ServerMessages.h"
 #include <thread>
 #include <chrono>
 
@@ -71,6 +72,11 @@ private:
     float RouteQueryTimer = 0.0f;
     uint64 NextRouteRequestId = 1;
     TMap<uint64, SPendingWorldLoginRoute> PendingWorldLoginRoutes;
+
+    // 服务器消息分发器
+    MServerMessageDispatcher LoginMessageDispatcher;
+    MServerMessageDispatcher WorldMessageDispatcher;
+    MServerMessageDispatcher RouterMessageDispatcher;
     
 public:
     MGatewayServer() {}
@@ -98,6 +104,17 @@ private:
     void HandleLoginServerMessage(uint8 Type, const TArray& Data);
     void HandleWorldServerMessage(uint8 Type, const TArray& Data);
     void HandleRouterServerMessage(uint8 Type, const TArray& Data);
+
+    // 使用分发器注册 / 处理具体消息
+    void InitLoginMessageHandlers();
+    void InitWorldMessageHandlers();
+    void InitRouterMessageHandlers();
+
+    void OnLogin_PlayerLogin(const SPlayerLoginResponseMessage& Message);
+    void OnWorld_PlayerLogout(const SPlayerLogoutMessage& Message);
+    void OnWorld_PlayerClientSync(const SPlayerClientSyncMessage& Message);
+    void OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& Message);
+    void OnRouter_RouteResponse(const SRouteResponseMessage& Message);
     void SendRouterRegister();
     uint64 QueryRoute(EServerType ServerType, uint64 PlayerId = 0);
     void ApplyRoute(EServerType ServerType, uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);

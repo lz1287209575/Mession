@@ -9,6 +9,8 @@
 #include "Common/ServerMessages.h"
 #include "NetDriver/NetObject.h"
 #include "NetDriver/ReplicationDriver.h"
+#include "NetDriver/ReflectionExample.h"
+#include "NetDriver/ServerRpcServices.h"
 #include <thread>
 #include <chrono>
 
@@ -35,6 +37,8 @@ struct SPlayer
     uint64 GatewayConnectionId = 0;
     uint32 SessionKey;
     MActor* Character = nullptr;
+    // 仅用于 RPC 示例的反射对象
+    MHero* HeroObject = nullptr;
     uint32 CurrentSceneId = 0;
     bool bOnline = false;
 };
@@ -82,6 +86,13 @@ private:
 
     // 调试 HTTP 服务器
     TUniquePtr<MHttpDebugServer> DebugServer;
+
+    // World 级 RPC Service（处理跨服务器 RPC）
+    MWorldService WorldService;
+
+    // 服务器消息分发器
+    MServerMessageDispatcher RouterMessageDispatcher;
+    MServerMessageDispatcher LoginMessageDispatcher;
     
 public:
     MWorldServer();
@@ -124,4 +135,12 @@ private:
     // 游戏逻辑
     void UpdateGameLogic(float DeltaTime);
     FString BuildDebugStatusJson() const;
+
+    // 分发器注册与具体处理函数
+    void InitRouterMessageHandlers();
+    void InitLoginMessageHandlers();
+
+    void OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& Message);
+    void OnRouter_RouteResponse(const SRouteResponseMessage& Message);
+    void OnLogin_SessionValidateResponse(uint64 ConnectionId, uint64 PlayerId, bool bValid);
 };

@@ -95,6 +95,7 @@ set(MESSION_NETDRIVER_SOURCES
     Source/NetDriver/ReplicationDriver.cpp
     Source/NetDriver/Reflection.cpp
     Source/NetDriver/ReflectionExample.cpp
+    Source/NetDriver/ServerRpcServices.cpp
 )
 
 add_library(mession_netdriver STATIC
@@ -138,6 +139,10 @@ add_executable(LoginServer
     Source/Servers/Login/LoginServer.h
     Source/Servers/Login/LoginServer.cpp
     Source/Servers/Login/LoginServerMain.cpp
+)
+target_link_libraries(LoginServer
+    PRIVATE
+        mession_netdriver
 )
 configure_mession_target(LoginServer)
 

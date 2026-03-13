@@ -31,6 +31,7 @@ enum class EServerMessageType : uint8
     MT_SessionValidateRequest = 24, // Session 校验请求
     MT_SessionValidateResponse = 25, // Session 校验响应
     MT_PlayerClientSync = 26,     // 按 PlayerId 路由的客户端数据
+    MT_RPC = 27,                  // 服务器间 RPC 调用
     MT_ServerRegister = 50,       // 服务注册
     MT_ServerRegisterAck = 51,    // 服务注册响应
     MT_ServerUnregister = 52,     // 服务注销

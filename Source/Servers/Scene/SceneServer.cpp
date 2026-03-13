@@ -16,6 +16,8 @@ const TMap<FString, const char*> SceneEnvMap = {
 
 MSceneServer::MSceneServer()
 {
+    InitRouterMessageHandlers();
+    InitWorldMessageHandlers();
 }
 
 bool MSceneServer::LoadConfig(const FString& ConfigPath)
@@ -208,38 +210,8 @@ void MSceneServer::ConnectToWorldServer()
 
 void MSceneServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 {
-    switch ((EServerMessageType)Type)
-    {
-        case EServerMessageType::MT_ServerRegisterAck:
-            LOG_INFO("Scene server registered to RouterServer");
-            break;
-
-        case EServerMessageType::MT_RouteResponse:
-        {
-            SRouteResponseMessage Message;
-            auto ParseResult = ParsePayload(Data, Message, "MT_RouteResponse");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-                return;
-            }
-
-            if (Message.PlayerId != 0 || Message.RequestedType != EServerType::World || !Message.bFound)
-            {
-                return;
-            }
-
-            ApplyWorldServerRoute(
-                Message.ServerInfo.ServerId,
-                Message.ServerInfo.ServerName,
-                Message.ServerInfo.Address,
-                Message.ServerInfo.Port);
-            break;
-        }
-
-        default:
-            break;
-    }
+    (void)Type;
+    RouterMessageDispatcher.Dispatch(Type, Data);
 }
 
 void MSceneServer::SendRouterRegister()
@@ -329,78 +301,8 @@ void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const FString& ServerN
 
 void MSceneServer::HandleWorldPacket(uint8 Type, const TArray& Data)
 {
-    switch ((EServerMessageType)Type)
-    {
-        case EServerMessageType::MT_PlayerSwitchServer:
-        {
-            SPlayerSceneStateMessage Message;
-            auto ParseResult = ParsePayload(Data, Message, "MT_PlayerSwitchServer");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-                return;
-            }
-
-            auto Scene = GetScene(Message.SceneId);
-            if (Scene)
-            {
-                SSceneEntity Entity;
-                Entity.EntityId = Message.PlayerId;
-                Entity.Position = SVector(Message.X, Message.Y, Message.Z);
-                Scene->AddEntity(Entity);
-                
-                LOG_INFO("Player %llu entered scene %d at (%.2f, %.2f, %.2f)",
-                        (unsigned long long)Message.PlayerId,
-                        Message.SceneId,
-                        Message.X,
-                        Message.Y,
-                        Message.Z);
-            }
-            break;
-        }
-
-        case EServerMessageType::MT_PlayerLogout:
-        {
-            SPlayerSceneLeaveMessage Message;
-            auto ParseResult = ParsePayload(Data, Message, "MT_PlayerLogout");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-                return;
-            }
-
-            auto Scene = GetScene(Message.SceneId);
-            if (Scene)
-            {
-                Scene->RemoveEntity(Message.PlayerId);
-                
-                LOG_INFO("Player %llu left scene %d",
-                        (unsigned long long)Message.PlayerId, Message.SceneId);
-            }
-            break;
-        }
-
-        case EServerMessageType::MT_PlayerDataSync:
-        {
-            SPlayerSceneStateMessage Message;
-            auto ParseResult = ParsePayload(Data, Message, "MT_PlayerDataSync");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-                return;
-            }
-
-            auto Scene = GetScene(Message.SceneId);
-            if (Scene)
-            {
-                Scene->UpdateEntityPosition(Message.PlayerId, SVector(Message.X, Message.Y, Message.Z));
-            }
-            break;
-        }
-
-        default:
-            break;
-    }
+    (void)Type;
+    WorldMessageDispatcher.Dispatch(Type, Data);
 }
 
 void MSceneServer::CreateDefaultScenes()
@@ -416,6 +318,101 @@ TSharedPtr<MScene> MSceneServer::GetScene(uint16 SceneId)
 {
     auto It = Scenes.find(SceneId);
     return (It != Scenes.end()) ? It->second : nullptr;
+}
+
+void MSceneServer::InitRouterMessageHandlers()
+{
+    RouterMessageDispatcher.Register<MSceneServer, SServerRegisterAckMessage>(
+        EServerMessageType::MT_ServerRegisterAck,
+        this,
+        &MSceneServer::OnRouter_ServerRegisterAck,
+        "MT_ServerRegisterAck");
+
+    RouterMessageDispatcher.Register<MSceneServer, SRouteResponseMessage>(
+        EServerMessageType::MT_RouteResponse,
+        this,
+        &MSceneServer::OnRouter_RouteResponse,
+        "MT_RouteResponse");
+}
+
+void MSceneServer::InitWorldMessageHandlers()
+{
+    WorldMessageDispatcher.Register<MSceneServer, SPlayerSceneStateMessage>(
+        EServerMessageType::MT_PlayerSwitchServer,
+        this,
+        &MSceneServer::OnWorld_PlayerSwitchServer,
+        "MT_PlayerSwitchServer");
+
+    WorldMessageDispatcher.Register<MSceneServer, SPlayerSceneLeaveMessage>(
+        EServerMessageType::MT_PlayerLogout,
+        this,
+        &MSceneServer::OnWorld_PlayerLogout,
+        "MT_PlayerLogout");
+
+    WorldMessageDispatcher.Register<MSceneServer, SPlayerSceneStateMessage>(
+        EServerMessageType::MT_PlayerDataSync,
+        this,
+        &MSceneServer::OnWorld_PlayerDataSync,
+        "MT_PlayerDataSync");
+}
+
+void MSceneServer::OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& /*Message*/)
+{
+    LOG_INFO("Scene server registered to RouterServer");
+}
+
+void MSceneServer::OnRouter_RouteResponse(const SRouteResponseMessage& Message)
+{
+    if (Message.PlayerId != 0 || Message.RequestedType != EServerType::World || !Message.bFound)
+    {
+        return;
+    }
+
+    ApplyWorldServerRoute(
+        Message.ServerInfo.ServerId,
+        Message.ServerInfo.ServerName,
+        Message.ServerInfo.Address,
+        Message.ServerInfo.Port);
+}
+
+void MSceneServer::OnWorld_PlayerSwitchServer(const SPlayerSceneStateMessage& Message)
+{
+    auto Scene = GetScene(Message.SceneId);
+    if (Scene)
+    {
+        SSceneEntity Entity;
+        Entity.EntityId = Message.PlayerId;
+        Entity.Position = SVector(Message.X, Message.Y, Message.Z);
+        Scene->AddEntity(Entity);
+
+        LOG_INFO("Player %llu entered scene %d at (%.2f, %.2f, %.2f)",
+                 (unsigned long long)Message.PlayerId,
+                 Message.SceneId,
+                 Message.X,
+                 Message.Y,
+                 Message.Z);
+    }
+}
+
+void MSceneServer::OnWorld_PlayerLogout(const SPlayerSceneLeaveMessage& Message)
+{
+    auto Scene = GetScene(Message.SceneId);
+    if (Scene)
+    {
+        Scene->RemoveEntity(Message.PlayerId);
+
+        LOG_INFO("Player %llu left scene %d",
+                 (unsigned long long)Message.PlayerId, Message.SceneId);
+    }
+}
+
+void MSceneServer::OnWorld_PlayerDataSync(const SPlayerSceneStateMessage& Message)
+{
+    auto Scene = GetScene(Message.SceneId);
+    if (Scene)
+    {
+        Scene->UpdateEntityPosition(Message.PlayerId, SVector(Message.X, Message.Y, Message.Z));
+    }
 }
 
 // MScene implementation
