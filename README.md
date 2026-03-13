@@ -4,30 +4,36 @@
 
 ## 📚 文档导航
 
-- 模块化文档入口见 `readme/README.md`
-- Router 模块文档见 `readme/router.md`
-- 脚本验证见 `scripts/README.md`
+- 总览文档：当前文件 `README.md`
+- 分模块文档索引：`Readme/README.md`
+- Router 模块文档：`Readme/router.md`
+- 详细设计、架构演进：`Docs/` 目录
+- 脚本与使用说明：`Scripts/README.md`
 
-## 📁 项目结构
+## 📁 项目结构（重构后）
 
-```
+```text
 Mession/
-├── Core/                      # 核心库
-│   ├── NetCore.h            # 基础类型定义
-│   └── Socket.cpp/h         # 网络Socket封装
-├── Common/                   # 公共组件
-│   ├── Logger.h             # 日志系统
-│   └── ServerConnection.h   # 服务器长连接抽象层
-├── NetDriver/               # 网络驱动
-│   ├── NetObject.h         # MObject/MActor 运行时网络对象
-│   ├── Replicate.h        # 属性复制系统
-│   └── ReplicationDriver.h # 复制驱动
-├── Servers/                 # 服务器实现
-│   ├── Gateway/            # 网关服务器 (端口8001)
-│   ├── Login/              # 登录服务器 (端口8002)
-│   ├── World/              # 世界服务器 (端口8003)
-│   └── Scene/              # 场景服务器 (端口8004)
-└── CMakeLists.txt          # 构建配置
+├── Source/                    # 所有 C++ 源码
+│   ├── Core/                  # 核心库（再拆为 Event / Concurrency / Containers / Net）
+│   │   ├── Event/             # 事件循环：EventLoop, MEventLoop, TaskEventLoop, IEventLoopStep
+│   │   ├── Concurrency/       # 并发与任务：ThreadPool, TaskQueue, Async, Promise, ITaskRunner
+│   │   ├── Containers/        # 自定义容器：RingBuffer 等
+│   │   └── Net/               # 网络基础：NetCore, Socket, SocketPlatform, PacketCodec, Poll
+│   ├── Common/                # 公共组件：Logger, Config, MessageUtils, ServerConnection 等
+│   ├── NetDriver/             # 网络驱动：NetObject, Replicate, ReplicationDriver, Reflection*
+│   ├── Messages/              # 统一消息枚举：NetMessages
+│   └── Servers/               # 具体服务器实现
+│       ├── Gateway/           # 网关服务器 (端口 8001)
+│       ├── Login/             # 登录服务器 (端口 8002)
+│       ├── World/             # 世界服务器 (端口 8003)
+│       ├── Scene/             # 场景服务器 (端口 8004)
+│       └── Router/            # 控制面 Router 服务器 (端口 8005)
+├── Docs/                      # 架构设计、事件循环、协议、日志等文档
+├── Scripts/                   # 一键起服、验证、测试客户端等脚本
+├── Config/                    # 服务器配置文件
+├── Build/                     # CMake 构建输出目录（可 gitignore）
+└── CMakeLists.txt             # 构建配置
 ```
 
 ## 🏗️ 当前架构
@@ -253,30 +259,29 @@ flowchart TB
 
 ```bash
 cd Mession
-mkdir build && cd build
-cmake ..
-make -j4
+cmake -S . -B Build
+cmake --build Build -j4
 ```
 
 ### 运行
 
 ```bash
 # 启动各个服务器（分开终端，建议先起 Router 再起其余）
-./build/RouterServer   # 端口 8005
-./build/LoginServer    # 端口 8002
-./build/WorldServer    # 端口 8003
-./build/SceneServer    # 端口 8004
-./build/GatewayServer  # 端口 8001
+./Build/RouterServer   # 端口 8005
+./Build/LoginServer    # 端口 8002
+./Build/WorldServer    # 端口 8003
+./Build/SceneServer    # 端口 8004
+./Build/GatewayServer  # 端口 8001
 ```
 
 ### 一键起服 / 停服
 
 ```bash
 # 起服（按序启动五服并等待端口就绪）
-python3 scripts/servers.py start [--build-dir build]
+python3 Scripts/servers.py start [--build-dir Build]
 
 # 停服（按启动时记录的 PID 结束；Linux 下会再按端口 8001–8005 清理占用）
-python3 scripts/servers.py stop [--build-dir build]
+python3 Scripts/servers.py stop [--build-dir Build]
 ```
 
 起服顺序：Router(8005) → Login(8002) → World(8003) → Scene(8004) → Gateway(8001)。停服需与起服使用相同 `--build-dir`，否则可手动结束占用端口进程。
@@ -286,7 +291,7 @@ python3 scripts/servers.py stop [--build-dir build]
 在仓库根目录执行：
 
 ```bash
-python3 scripts/validate.py [--build-dir build] [--timeout 50] [--no-build]
+python3 Scripts/validate.py [--build-dir Build] [--timeout 50] [--no-build]
 ```
 
 - 会编译（除非 `--no-build`）、按序启动 Router → Login → World → Scene → Gateway，并执行：**Test 1** 多玩家登录、**Test 2** 复制链路（至少收到 `MT_ActorCreate`）、**Test 3** 断线重连与清理路径。
@@ -317,7 +322,7 @@ python3 scripts/validate.py [--build-dir build] [--timeout 50] [--no-build]
 - 当前更适合引入一个**控制面 RouterServer**，统一做服务注册、心跳、健康检查和路由查询，而不是把高频业务流量都中转过去。
 - `Gateway / Login / World / Scene` 仍然保持业务直连，`RouterServer` 只回答“该连谁”以及“谁还活着”。
 - 这样既能消掉硬编码地址，也不会把 `MT_PlayerClientSync`、`MT_PlayerDataSync`、复制消息和移动同步压到一个新的热点节点。
-- 详细设计与当前实现说明见 `readme/router.md`。
+- 详细设计与当前实现说明见 `Readme/router.md`。
 
 ### 关键消息职责
 

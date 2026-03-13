@@ -36,17 +36,17 @@ endfunction()
 
 # 公共源文件
 set(COMMON_SOURCES
-    Core/NetCore.cpp
-    Core/SocketPlatform.cpp
-    Core/Socket.cpp
-    Core/EventLoop.cpp
-    Core/MEventLoop.cpp
-    Core/TaskEventLoop.cpp
-    Core/TaskQueue.cpp
-    Core/ThreadPool.cpp
-    Common/Logger.cpp
-    Common/NetServerBase.cpp
-    Common/ServerConnection.cpp
+    Source/Core/Net/NetCore.cpp
+    Source/Core/Net/SocketPlatform.cpp
+    Source/Core/Net/Socket.cpp
+    Source/Core/Event/EventLoop.cpp
+    Source/Core/Event/MEventLoop.cpp
+    Source/Core/Event/TaskEventLoop.cpp
+    Source/Core/Concurrency/TaskQueue.cpp
+    Source/Core/Concurrency/ThreadPool.cpp
+    Source/Common/Logger.cpp
+    Source/Common/NetServerBase.cpp
+    Source/Common/ServerConnection.cpp
 )
 
 # 公共基础库
@@ -56,6 +56,7 @@ add_library(mession_common STATIC
 target_include_directories(mession_common
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
 )
 if(NOT WIN32)
     target_link_libraries(mession_common PUBLIC m)
@@ -70,6 +71,7 @@ function(configure_mession_target TargetName)
     target_include_directories(${TargetName}
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/Source
     )
     target_link_libraries(${TargetName}
         PRIVATE
@@ -80,46 +82,46 @@ endfunction()
 
 # 1. Gateway Server - 网关服务器
 add_executable(GatewayServer 
-    Servers/Gateway/GatewayServer.h
-    Servers/Gateway/GatewayServer.cpp
-    Servers/Gateway/GatewayServerMain.cpp
+    Source/Servers/Gateway/GatewayServer.h
+    Source/Servers/Gateway/GatewayServer.cpp
+    Source/Servers/Gateway/GatewayServerMain.cpp
 )
 configure_mession_target(GatewayServer)
 
 # 2. Login Server - 登录服务器
 add_executable(LoginServer 
-    Servers/Login/LoginServer.h
-    Servers/Login/LoginServer.cpp
-    Servers/Login/LoginServerMain.cpp
+    Source/Servers/Login/LoginServer.h
+    Source/Servers/Login/LoginServer.cpp
+    Source/Servers/Login/LoginServerMain.cpp
 )
 configure_mession_target(LoginServer)
 
 # 3. World Server - 世界服务器
 add_executable(WorldServer 
-    NetDriver/NetObject.cpp
-    NetDriver/NetObject.h
-    NetDriver/Replicate.h
-    NetDriver/ReplicationDriver.cpp
-    NetDriver/ReplicationDriver.h
-    Servers/World/WorldServer.h
-    Servers/World/WorldServer.cpp
-    Servers/World/WorldServerMain.cpp
+    Source/NetDriver/NetObject.cpp
+    Source/NetDriver/NetObject.h
+    Source/NetDriver/Replicate.h
+    Source/NetDriver/ReplicationDriver.cpp
+    Source/NetDriver/ReplicationDriver.h
+    Source/Servers/World/WorldServer.h
+    Source/Servers/World/WorldServer.cpp
+    Source/Servers/World/WorldServerMain.cpp
 )
 configure_mession_target(WorldServer)
 
 # 4. Scene Server - 场景服务器
 add_executable(SceneServer 
-    Servers/Scene/SceneServer.h
-    Servers/Scene/SceneServer.cpp
-    Servers/Scene/SceneServerMain.cpp
+    Source/Servers/Scene/SceneServer.h
+    Source/Servers/Scene/SceneServer.cpp
+    Source/Servers/Scene/SceneServerMain.cpp
 )
 configure_mession_target(SceneServer)
 
 # 5. Router Server - 控制面路由服务器
 add_executable(RouterServer
-    Servers/Router/RouterServer.h
-    Servers/Router/RouterServer.cpp
-    Servers/Router/RouterServerMain.cpp
+    Source/Servers/Router/RouterServer.h
+    Source/Servers/Router/RouterServer.cpp
+    Source/Servers/Router/RouterServerMain.cpp
 )
 configure_mession_target(RouterServer)
 
