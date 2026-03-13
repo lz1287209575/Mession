@@ -29,7 +29,7 @@ python3 Scripts/validate.py
 # 跳过编译，仅验证
 python3 Scripts/validate.py --no-build
 
-# 指定构建目录
+# 指定构建目录（CMake 构建目录，二进制输出在 Bin/）
 python3 Scripts/validate.py --build-dir Build --timeout 45
 ```
 
@@ -37,7 +37,7 @@ python3 Scripts/validate.py --build-dir Build --timeout 45
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--build-dir` | `Build` | 构建输出目录 |
+| `--build-dir` | `Build` | CMake 构建目录（可中间文件），可执行文件统一输出到仓库根下 `Bin/` |
 | `--no-build` | - | 跳过编译步骤 |
 | `--timeout` | 30 | 服务器启动超时（秒） |
 | `--zone` | - | 设置 `MESSION_ZONE_ID`，验证分区/分片路由 |

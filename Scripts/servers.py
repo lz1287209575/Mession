@@ -46,8 +46,18 @@ def get_project_root() -> Path:
 
 
 def get_executable_path(build_dir: Path, name: str) -> Optional[Path]:
+    """
+    获取可执行文件路径。
+
+    说明：
+    - CMake 使用 Build/ 作为构建目录；
+    - 实际可执行文件统一输出到仓库根目录下的 Bin/。
+    因此这里忽略 build_dir 的具体子目录结构，直接从项目根的 Bin/ 中查找。
+    """
+    project_root = get_project_root()
+    bin_dir = project_root / "Bin"
     for suffix in ("", ".exe"):
-        p = build_dir / (name + suffix)
+        p = bin_dir / (name + suffix)
         if p.exists():
             return p
     return None

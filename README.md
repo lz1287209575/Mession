@@ -32,7 +32,8 @@ Mession/
 ├── Docs/                      # 架构设计、事件循环、协议、日志等文档
 ├── Scripts/                   # 一键起服、验证、测试客户端等脚本
 ├── Config/                    # 服务器配置文件
-├── Build/                     # CMake 构建输出目录（可 gitignore）
+├── Build/                     # CMake 构建目录（中间文件，可 gitignore）
+├── Bin/                       # 编译生成的可执行文件与库
 └── CMakeLists.txt             # 构建配置
 ```
 
@@ -267,11 +268,11 @@ cmake --build Build -j4
 
 ```bash
 # 启动各个服务器（分开终端，建议先起 Router 再起其余）
-./Build/RouterServer   # 端口 8005
-./Build/LoginServer    # 端口 8002
-./Build/WorldServer    # 端口 8003
-./Build/SceneServer    # 端口 8004
-./Build/GatewayServer  # 端口 8001
+./Bin/RouterServer   # 端口 8005
+./Bin/LoginServer    # 端口 8002
+./Bin/WorldServer    # 端口 8003
+./Bin/SceneServer    # 端口 8004
+./Bin/GatewayServer  # 端口 8001
 ```
 
 ### 一键起服 / 停服

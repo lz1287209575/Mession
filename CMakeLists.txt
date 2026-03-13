@@ -6,6 +6,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 统一二进制/库输出目录（与构建目录 Build 分离）
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/Bin)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/Bin/Lib)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/Bin/Lib)
+
 # 统一编译选项
 function(configure_mession_compile_options TargetName)
     target_compile_definitions(${TargetName}
@@ -34,8 +39,8 @@ function(configure_mession_compile_options TargetName)
     endif()
 endfunction()
 
-# 公共源文件
-set(COMMON_SOURCES
+# Core 库（基础设施：Core/*）
+set(MESSION_CORE_SOURCES
     Source/Core/Net/NetCore.cpp
     Source/Core/Net/SocketPlatform.cpp
     Source/Core/Net/Socket.cpp
@@ -44,27 +49,64 @@ set(COMMON_SOURCES
     Source/Core/Event/TaskEventLoop.cpp
     Source/Core/Concurrency/TaskQueue.cpp
     Source/Core/Concurrency/ThreadPool.cpp
+)
+
+add_library(mession_core STATIC
+    ${MESSION_CORE_SOURCES}
+)
+target_include_directories(mession_core
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+)
+if(NOT WIN32)
+    target_link_libraries(mession_core PUBLIC m)
+endif()
+if(WIN32)
+    target_link_libraries(mession_core PUBLIC ws2_32)
+endif()
+configure_mession_compile_options(mession_core)
+
+# Common 库（公共组件：Common/*）
+set(MESSION_COMMON_SOURCES
     Source/Common/Logger.cpp
     Source/Common/NetServerBase.cpp
     Source/Common/ServerConnection.cpp
 )
 
-# 公共基础库
 add_library(mession_common STATIC
-    ${COMMON_SOURCES}
+    ${MESSION_COMMON_SOURCES}
 )
 target_include_directories(mession_common
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/Source
 )
-if(NOT WIN32)
-    target_link_libraries(mession_common PUBLIC m)
-endif()
-if(WIN32)
-    target_link_libraries(mession_common PUBLIC ws2_32)
-endif()
+target_link_libraries(mession_common
+    PUBLIC
+        mession_core
+)
 configure_mession_compile_options(mession_common)
+
+# NetDriver 库（复制与网络对象：NetDriver/*）
+set(MESSION_NETDRIVER_SOURCES
+    Source/NetDriver/NetObject.cpp
+    Source/NetDriver/ReplicationDriver.cpp
+)
+
+add_library(mession_netdriver STATIC
+    ${MESSION_NETDRIVER_SOURCES}
+)
+target_include_directories(mession_netdriver
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+)
+target_link_libraries(mession_netdriver
+    PUBLIC
+        mession_common
+)
+configure_mession_compile_options(mession_netdriver)
 
 # 统一配置每个目标的公共依赖
 function(configure_mession_target TargetName)
@@ -98,14 +140,13 @@ configure_mession_target(LoginServer)
 
 # 3. World Server - 世界服务器
 add_executable(WorldServer 
-    Source/NetDriver/NetObject.cpp
-    Source/NetDriver/NetObject.h
-    Source/NetDriver/Replicate.h
-    Source/NetDriver/ReplicationDriver.cpp
-    Source/NetDriver/ReplicationDriver.h
     Source/Servers/World/WorldServer.h
     Source/Servers/World/WorldServer.cpp
     Source/Servers/World/WorldServerMain.cpp
+)
+target_link_libraries(WorldServer
+    PRIVATE
+        mession_netdriver
 )
 configure_mession_target(WorldServer)
 
