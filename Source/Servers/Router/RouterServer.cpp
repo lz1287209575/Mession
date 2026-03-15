@@ -3,6 +3,7 @@
 #include "Core/Net/Socket.h"
 #include "Core/Net/HttpDebugServer.h"
 #include "Core/Json.h"
+#include "NetDriver/ServerRpcServices.h"
 
 namespace
 {
@@ -36,6 +37,7 @@ bool MRouterServer::Init(int InPort)
     bRunning = true;
 
     MLogger::LogStartupBanner("RouterServer", Config.ListenPort, 0);
+    InitPeerMessageHandlers();
     
     // 启动调试 HTTP 服务器（仅当配置端口 > 0 时）
     if (Config.DebugHttpPort > 0)
@@ -143,133 +145,175 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
         return;
     }
 
-    SRouterPeer& Peer = PeerIt->second;
     const uint8 MsgType = Data[0];
     const TArray Payload(Data.begin() + 1, Data.end());
+    PeerMessageDispatcher.Dispatch(ConnectionId, MsgType, Payload);
+}
 
-    switch ((EServerMessageType)MsgType)
+void MRouterServer::InitPeerMessageHandlers()
+{
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        PeerMessageDispatcher,
+        EServerMessageType::MT_ServerHandshake,
+        &MRouterServer::OnPeer_ServerHandshake,
+        "MT_ServerHandshake");
+
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        PeerMessageDispatcher,
+        EServerMessageType::MT_Heartbeat,
+        &MRouterServer::OnPeer_Heartbeat,
+        "MT_Heartbeat");
+
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        PeerMessageDispatcher,
+        EServerMessageType::MT_ServerRegister,
+        &MRouterServer::OnPeer_ServerRegister,
+        "MT_ServerRegister");
+
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        PeerMessageDispatcher,
+        EServerMessageType::MT_ServerLoadReport,
+        &MRouterServer::OnPeer_ServerLoadReport,
+        "MT_ServerLoadReport");
+
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        PeerMessageDispatcher,
+        EServerMessageType::MT_RouteQuery,
+        &MRouterServer::OnPeer_RouteQuery,
+        "MT_RouteQuery");
+}
+
+void MRouterServer::OnPeer_ServerHandshake(uint64 ConnectionId, const SServerHandshakeMessage& Message)
+{
+    auto PeerIt = Peers.find(ConnectionId);
+    if (PeerIt == Peers.end())
     {
-        case EServerMessageType::MT_ServerHandshake:
-        {
-            SServerHandshakeMessage Message;
-            auto ParseResult = ParsePayload(Payload, Message, "handshake");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
-                return;
-            }
-
-            Peer.ServerId = Message.ServerId;
-            Peer.ServerType = Message.ServerType;
-            Peer.ServerName = Message.ServerName;
-            Peer.bAuthenticated = true;
-
-            SendServerMessage(ConnectionId, EServerMessageType::MT_ServerHandshakeAck, SEmptyServerMessage{});
-            LOG_INFO("Router authenticated %s (id=%u type=%d)",
-                     Peer.ServerName.c_str(), Peer.ServerId, (int)Peer.ServerType);
-            break;
-        }
-
-        case EServerMessageType::MT_Heartbeat:
-        {
-            SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
-            break;
-        }
-
-        case EServerMessageType::MT_ServerRegister:
-        {
-            if (!Peer.bAuthenticated)
-            {
-                return;
-            }
-
-            SServerRegisterMessage Message;
-            auto ParseResult = ParsePayload(Payload, Message, "MT_ServerRegister");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
-                return;
-            }
-
-            Peer.ServerId = Message.ServerId;
-            Peer.ServerType = Message.ServerType;
-            Peer.ServerName = Message.ServerName;
-            Peer.Address = Message.Address;
-            Peer.Port = Message.Port;
-            Peer.ZoneId = Message.ZoneId;
-            Peer.bRegistered = true;
-
-            SendServerMessage(ConnectionId, EServerMessageType::MT_ServerRegisterAck, SServerRegisterAckMessage{1});
-
-            LOG_INFO("Registered server %s (id=%u type=%d addr=%s:%u)",
-                     Peer.ServerName.c_str(),
-                     Peer.ServerId,
-                     (int)Peer.ServerType,
-                     Peer.Address.c_str(),
-                     Peer.Port);
-            break;
-        }
-
-        case EServerMessageType::MT_ServerLoadReport:
-        {
-            if (!Peer.bAuthenticated)
-            {
-                return;
-            }
-
-            SServerLoadReportMessage Message;
-            auto ParseResult = ParsePayload(Payload, Message, "MT_ServerLoadReport");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
-                return;
-            }
-
-            Peer.CurrentLoad = Message.CurrentLoad;
-            Peer.Capacity = (Message.Capacity > 0) ? Message.Capacity : 1;
-            break;
-        }
-
-        case EServerMessageType::MT_RouteQuery:
-        {
-            if (!Peer.bAuthenticated)
-            {
-                return;
-            }
-
-            SRouteQueryMessage Query;
-            auto ParseResult = ParsePayload(Payload, Query, "MT_RouteQuery");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
-                return;
-            }
-
-            const SRouterPeer* Target = SelectRouteTarget(Query.RequestedType, Query.PlayerId, Query.ZoneId);
-
-            SRouteResponseMessage Response;
-            Response.RequestId = Query.RequestId;
-            Response.RequestedType = Query.RequestedType;
-            Response.PlayerId = Query.PlayerId;
-            Response.bFound = (Target != nullptr);
-            if (Target)
-            {
-                Response.ServerInfo = SServerInfo(Target->ServerId, Target->ServerType, Target->ServerName, Target->Address, Target->Port, Target->ZoneId);
-            }
-
-            SendServerMessage(ConnectionId, EServerMessageType::MT_RouteResponse, Response);
-
-            LOG_INFO("Route query from %s for type=%d player=%llu result=%s",
-                     Peer.ServerName.c_str(),
-                     (int)Query.RequestedType,
-                     (unsigned long long)Query.PlayerId,
-                     Target ? Target->ServerName.c_str() : "none");
-            break;
-        }
-
-        default:
-            break;
+        return;
     }
+
+    SRouterPeer& Peer = PeerIt->second;
+    Peer.ServerId = Message.ServerId;
+    Peer.ServerType = Message.ServerType;
+    Peer.ServerName = Message.ServerName;
+    Peer.bAuthenticated = true;
+
+    SendServerMessage(ConnectionId, EServerMessageType::MT_ServerHandshakeAck, SEmptyServerMessage{});
+    LOG_INFO("Router authenticated %s (id=%u type=%d)",
+             Peer.ServerName.c_str(), Peer.ServerId, (int)Peer.ServerType);
+}
+
+void MRouterServer::OnPeer_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& /*Message*/)
+{
+    SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
+}
+
+void MRouterServer::OnPeer_ServerRegister(uint64 ConnectionId, const SServerRegisterMessage& Message)
+{
+    auto PeerIt = Peers.find(ConnectionId);
+    if (PeerIt == Peers.end() || !PeerIt->second.bAuthenticated)
+    {
+        return;
+    }
+
+    SRouterPeer& Peer = PeerIt->second;
+    Peer.ServerId = Message.ServerId;
+    Peer.ServerType = Message.ServerType;
+    Peer.ServerName = Message.ServerName;
+    Peer.Address = Message.Address;
+    Peer.Port = Message.Port;
+    Peer.ZoneId = Message.ZoneId;
+    Peer.bRegistered = true;
+
+    bool bSentAckByRpc = false;
+    if (const SRpcEndpointBinding* Endpoint = FindRouterServerRegisterAckEndpoint(Peer.ServerType))
+    {
+        TArray RpcData;
+        if (BuildRpcPayloadForEndpoint(*Endpoint, BuildRpcArgsPayload(static_cast<uint8>(1)), RpcData))
+        {
+            bSentAckByRpc = SendServerMessage(ConnectionId, static_cast<uint8>(EServerMessageType::MT_RPC), RpcData);
+        }
+    }
+
+    if (!bSentAckByRpc)
+    {
+        SendServerMessage(ConnectionId, EServerMessageType::MT_ServerRegisterAck, SServerRegisterAckMessage{1});
+    }
+
+    LOG_INFO("Registered server %s (id=%u type=%d addr=%s:%u)",
+             Peer.ServerName.c_str(),
+             Peer.ServerId,
+             (int)Peer.ServerType,
+             Peer.Address.c_str(),
+             Peer.Port);
+}
+
+void MRouterServer::OnPeer_ServerLoadReport(uint64 ConnectionId, const SServerLoadReportMessage& Message)
+{
+    auto PeerIt = Peers.find(ConnectionId);
+    if (PeerIt == Peers.end() || !PeerIt->second.bAuthenticated)
+    {
+        return;
+    }
+
+    SRouterPeer& Peer = PeerIt->second;
+    Peer.CurrentLoad = Message.CurrentLoad;
+    Peer.Capacity = (Message.Capacity > 0) ? Message.Capacity : 1;
+}
+
+void MRouterServer::OnPeer_RouteQuery(uint64 ConnectionId, const SRouteQueryMessage& Query)
+{
+    auto PeerIt = Peers.find(ConnectionId);
+    if (PeerIt == Peers.end() || !PeerIt->second.bAuthenticated)
+    {
+        return;
+    }
+
+    const SRouterPeer& Peer = PeerIt->second;
+    const SRouterPeer* Target = SelectRouteTarget(Query.RequestedType, Query.PlayerId, Query.ZoneId);
+
+    SRouteResponseMessage Response;
+    Response.RequestId = Query.RequestId;
+    Response.RequestedType = Query.RequestedType;
+    Response.PlayerId = Query.PlayerId;
+    Response.bFound = (Target != nullptr);
+    if (Target)
+    {
+        Response.ServerInfo = SServerInfo(Target->ServerId, Target->ServerType, Target->ServerName, Target->Address, Target->Port, Target->ZoneId);
+    }
+
+    bool bSentResponseByRpc = false;
+    if (const SRpcEndpointBinding* Endpoint = FindRouterRouteResponseEndpoint(Peer.ServerType))
+    {
+        TArray RpcData;
+        if (BuildRpcPayloadForEndpoint(
+                *Endpoint,
+                BuildRpcArgsPayload(
+                    Response.RequestId,
+                    static_cast<uint8>(Response.RequestedType),
+                    Response.PlayerId,
+                    Response.bFound,
+                    Response.ServerInfo.ServerId,
+                    static_cast<uint8>(Response.ServerInfo.ServerType),
+                    Response.ServerInfo.ServerName,
+                    Response.ServerInfo.Address,
+                    Response.ServerInfo.Port,
+                    Response.ServerInfo.ZoneId),
+                RpcData))
+        {
+            bSentResponseByRpc = SendServerMessage(ConnectionId, static_cast<uint8>(EServerMessageType::MT_RPC), RpcData);
+        }
+    }
+
+    if (!bSentResponseByRpc)
+    {
+        SendServerMessage(ConnectionId, EServerMessageType::MT_RouteResponse, Response);
+    }
+
+    LOG_INFO("Route query from %s for type=%d player=%llu result=%s",
+             Peer.ServerName.c_str(),
+             (int)Query.RequestedType,
+             (unsigned long long)Query.PlayerId,
+             Target ? Target->ServerName.c_str() : "none");
 }
 
 bool MRouterServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload)

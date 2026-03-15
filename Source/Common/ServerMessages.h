@@ -244,16 +244,16 @@ struct SPlayerLoginResponseMessage
 
 inline void Serialize(MMessageWriter& Writer, const SPlayerLoginResponseMessage& Message)
 {
-    Writer.Write(Message.ConnectionId)
-        .Write(Message.PlayerId)
-        .Write(Message.SessionKey);
+    Writer.WriteBE(Message.ConnectionId)
+        .WriteBE(Message.PlayerId)
+        .WriteBE(Message.SessionKey);
 }
 
 inline bool Deserialize(MMessageReader& Reader, SPlayerLoginResponseMessage& OutMessage)
 {
-    return Reader.Read(OutMessage.ConnectionId) &&
-           Reader.Read(OutMessage.PlayerId) &&
-           Reader.Read(OutMessage.SessionKey);
+    return Reader.ReadBE(OutMessage.ConnectionId) &&
+           Reader.ReadBE(OutMessage.PlayerId) &&
+           Reader.ReadBE(OutMessage.SessionKey);
 }
 
 struct SSessionValidateRequestMessage
@@ -265,16 +265,16 @@ struct SSessionValidateRequestMessage
 
 inline void Serialize(MMessageWriter& Writer, const SSessionValidateRequestMessage& Message)
 {
-    Writer.Write(Message.ConnectionId)
-        .Write(Message.PlayerId)
-        .Write(Message.SessionKey);
+    Writer.WriteBE(Message.ConnectionId)
+        .WriteBE(Message.PlayerId)
+        .WriteBE(Message.SessionKey);
 }
 
 inline bool Deserialize(MMessageReader& Reader, SSessionValidateRequestMessage& OutMessage)
 {
-    return Reader.Read(OutMessage.ConnectionId) &&
-           Reader.Read(OutMessage.PlayerId) &&
-           Reader.Read(OutMessage.SessionKey);
+    return Reader.ReadBE(OutMessage.ConnectionId) &&
+           Reader.ReadBE(OutMessage.PlayerId) &&
+           Reader.ReadBE(OutMessage.SessionKey);
 }
 
 struct SSessionValidateResponseMessage
@@ -357,12 +357,12 @@ struct SPlayerLogoutMessage
 
 inline void Serialize(MMessageWriter& Writer, const SPlayerLogoutMessage& Message)
 {
-    Writer.Write(Message.PlayerId);
+    Writer.WriteBE(Message.PlayerId);
 }
 
 inline bool Deserialize(MMessageReader& Reader, SPlayerLogoutMessage& OutMessage)
 {
-    return Reader.Read(OutMessage.PlayerId);
+    return Reader.ReadBE(OutMessage.PlayerId);
 }
 
 struct SHeartbeatMessage
@@ -432,16 +432,16 @@ struct SPlayerClientSyncMessage
 
 inline void Serialize(MMessageWriter& Writer, const SPlayerClientSyncMessage& Message)
 {
-    Writer.Write(Message.PlayerId)
-        .Write(static_cast<uint32>(Message.Data.size()))
+    Writer.WriteBE(Message.PlayerId)
+        .WriteBE(static_cast<uint32>(Message.Data.size()))
         .WriteBytes(Message.Data);
 }
 
 inline bool Deserialize(MMessageReader& Reader, SPlayerClientSyncMessage& OutMessage)
 {
     uint32 DataSize = 0;
-    if (!Reader.Read(OutMessage.PlayerId) ||
-        !Reader.Read(DataSize) ||
+    if (!Reader.ReadBE(OutMessage.PlayerId) ||
+        !Reader.ReadBE(DataSize) ||
         !Reader.ReadBytes(DataSize, OutMessage.Data))
     {
         return false;
@@ -561,10 +561,13 @@ inline bool SendTypedServerMessage(const TSharedPtr<MServerConnection>& Connecti
 // 通用服务器消息分发器（基于类型的“RPC”调用）
 // ============================================
 
+template<auto MemberFunc>
+struct TServerMessageHandlerTraits;
+
 class MServerMessageDispatcher
 {
 public:
-    using FHandler = TFunction<void(const TArray&)>;
+    using FHandler = TFunction<void(uint64, const TArray&)>;
 
 private:
     TMap<uint8, FHandler> Handlers;
@@ -582,7 +585,7 @@ public:
 
         const uint8 TypeValue = static_cast<uint8>(Type);
 
-        Handlers[TypeValue] = [Object, MemberFunc, Context, Type](const TArray& Data)
+        Handlers[TypeValue] = [Object, MemberFunc, Context, Type](uint64 /*ConnectionId*/, const TArray& Data)
         {
             TMessage Message;
             auto ParseResult = ParsePayload(Data, Message, Context);
@@ -598,7 +601,49 @@ public:
         };
     }
 
+    template<auto MemberFunc, typename TObject>
+    void RegisterAuto(EServerMessageType Type, TObject* Object, const char* Context)
+    {
+        using Traits = TServerMessageHandlerTraits<MemberFunc>;
+        static_assert(std::is_same_v<typename Traits::ObjectType, TObject>,
+                      "RegisterAuto object type does not match member function owner");
+
+        if (!Object)
+        {
+            return;
+        }
+
+        const uint8 TypeValue = static_cast<uint8>(Type);
+        Handlers[TypeValue] = [Object, Context, Type](uint64 ConnectionId, const TArray& Data)
+        {
+            if constexpr (Traits::bUsesRawData)
+            {
+                Traits::Invoke(Object, ConnectionId, Data);
+            }
+            else
+            {
+                using TMessage = typename Traits::MessageType;
+                TMessage Message;
+                auto ParseResult = ParsePayload(Data, Message, Context);
+                if (!ParseResult.IsOk())
+                {
+                    LOG_WARN("ServerMessageDispatcher ParsePayload failed for type %d: %s",
+                             static_cast<int>(Type),
+                             ParseResult.GetError().c_str());
+                    return;
+                }
+
+                Traits::Invoke(Object, ConnectionId, Message);
+            }
+        };
+    }
+
     void Dispatch(uint8 Type, const TArray& Data) const
+    {
+        Dispatch(0, Type, Data);
+    }
+
+    void Dispatch(uint64 ConnectionId, uint8 Type, const TArray& Data) const
     {
         auto It = Handlers.find(Type);
         if (It == Handlers.end())
@@ -608,6 +653,35 @@ public:
             return;
         }
 
-        It->second(Data);
+        It->second(ConnectionId, Data);
     }
 };
+
+template<typename TObject, typename TMessage, void (TObject::*MemberFunc)(const TMessage&)>
+struct TServerMessageHandlerTraits<MemberFunc>
+{
+    using ObjectType = TObject;
+    using MessageType = TMessage;
+    static constexpr bool bUsesRawData = std::is_same_v<std::remove_cv_t<std::remove_reference_t<TMessage>>, TArray>;
+
+    static void Invoke(TObject* Object, uint64 /*ConnectionId*/, const TMessage& Message)
+    {
+        (Object->*MemberFunc)(Message);
+    }
+};
+
+template<typename TObject, typename TMessage, void (TObject::*MemberFunc)(uint64, const TMessage&)>
+struct TServerMessageHandlerTraits<MemberFunc>
+{
+    using ObjectType = TObject;
+    using MessageType = TMessage;
+    static constexpr bool bUsesRawData = std::is_same_v<std::remove_cv_t<std::remove_reference_t<TMessage>>, TArray>;
+
+    static void Invoke(TObject* Object, uint64 ConnectionId, const TMessage& Message)
+    {
+        (Object->*MemberFunc)(ConnectionId, Message);
+    }
+};
+
+#define MREGISTER_SERVER_MESSAGE_HANDLER(Dispatcher, Type, Method, Context) \
+    (Dispatcher).RegisterAuto<Method>(Type, this, Context)

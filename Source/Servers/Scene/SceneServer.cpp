@@ -210,7 +210,6 @@ void MSceneServer::ConnectToWorldServer()
 
 void MSceneServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 {
-    (void)Type;
     RouterMessageDispatcher.Dispatch(Type, Data);
 }
 
@@ -301,7 +300,6 @@ void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const FString& ServerN
 
 void MSceneServer::HandleWorldPacket(uint8 Type, const TArray& Data)
 {
-    (void)Type;
     WorldMessageDispatcher.Dispatch(Type, Data);
 }
 
@@ -322,36 +320,36 @@ TSharedPtr<MScene> MSceneServer::GetScene(uint16 SceneId)
 
 void MSceneServer::InitRouterMessageHandlers()
 {
-    RouterMessageDispatcher.Register<MSceneServer, SServerRegisterAckMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        RouterMessageDispatcher,
         EServerMessageType::MT_ServerRegisterAck,
-        this,
         &MSceneServer::OnRouter_ServerRegisterAck,
         "MT_ServerRegisterAck");
 
-    RouterMessageDispatcher.Register<MSceneServer, SRouteResponseMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        RouterMessageDispatcher,
         EServerMessageType::MT_RouteResponse,
-        this,
         &MSceneServer::OnRouter_RouteResponse,
         "MT_RouteResponse");
 }
 
 void MSceneServer::InitWorldMessageHandlers()
 {
-    WorldMessageDispatcher.Register<MSceneServer, SPlayerSceneStateMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        WorldMessageDispatcher,
         EServerMessageType::MT_PlayerSwitchServer,
-        this,
         &MSceneServer::OnWorld_PlayerSwitchServer,
         "MT_PlayerSwitchServer");
 
-    WorldMessageDispatcher.Register<MSceneServer, SPlayerSceneLeaveMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        WorldMessageDispatcher,
         EServerMessageType::MT_PlayerLogout,
-        this,
         &MSceneServer::OnWorld_PlayerLogout,
         "MT_PlayerLogout");
 
-    WorldMessageDispatcher.Register<MSceneServer, SPlayerSceneStateMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        WorldMessageDispatcher,
         EServerMessageType::MT_PlayerDataSync,
-        this,
         &MSceneServer::OnWorld_PlayerDataSync,
         "MT_PlayerDataSync");
 }

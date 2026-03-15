@@ -54,6 +54,10 @@ bool MGatewayServer::Init(int InPort)
     InitLoginMessageHandlers();
     InitWorldMessageHandlers();
     InitRouterMessageHandlers();
+    MGatewayService::SetHandler_Rpc_OnPlayerLoginResponse([this](uint64 ConnectionId, uint64 PlayerId, uint32 SessionKey)
+    {
+        OnLogin_PlayerLogin(SPlayerLoginResponseMessage{ConnectionId, PlayerId, SessionKey});
+    });
 
     // 初始化控制面连接（通过统一连接管理器）
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
@@ -333,10 +337,33 @@ void MGatewayServer::ForwardToBackend(uint64 ConnectionId, const TArray& Data)
             return;
         }
 
-        SendTypedServerMessage(
-            LoginServerConn,
-            EServerMessageType::MT_PlayerLogin,
-            SPlayerLoginRequestMessage{ConnectionId, IdPayload.PlayerId});
+        const uint16 FunctionId = MLoginService::GetFunctionId_Rpc_OnPlayerLoginRequest();
+        if (FunctionId == 0)
+        {
+            LOG_WARN("MLoginService::GetFunctionId_Rpc_OnPlayerLoginRequest returned 0, fallback to legacy MT_PlayerLogin");
+
+            SendTypedServerMessage(
+                LoginServerConn,
+                EServerMessageType::MT_PlayerLogin,
+                SPlayerLoginRequestMessage{ConnectionId, IdPayload.PlayerId});
+            LOG_DEBUG("Forwarded legacy login request for player %llu", (unsigned long long)IdPayload.PlayerId);
+            return;
+        }
+
+        TArray RpcData;
+        BuildServerRpcPayload(
+            FunctionId,
+            BuildRpcPayloadForCall<&MLoginService::Rpc_OnPlayerLoginRequest>(
+                ConnectionId,
+                IdPayload.PlayerId),
+            RpcData);
+
+        const uint8* RpcPayload = RpcData.empty() ? nullptr : RpcData.data();
+        LoginServerConn->Send(
+            static_cast<uint8>(EServerMessageType::MT_RPC),
+            RpcPayload,
+            static_cast<uint32>(RpcData.size()));
+
         LOG_DEBUG("Forwarded login request for player %llu", (unsigned long long)IdPayload.PlayerId);
         return;
     }
@@ -362,57 +389,73 @@ void MGatewayServer::ForwardToBackend(uint64 ConnectionId, const TArray& Data)
 
 void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
 {
-    (void)Type;
+    if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
+    {
+        if (!TryInvokeServerRpc(&GatewayService, Data, ERpcType::ServerToServer))
+        {
+            LOG_WARN("GatewayServer MT_RPC packet could not be handled via reflection");
+        }
+        return;
+    }
+
     LoginMessageDispatcher.Dispatch(Type, Data);
 }
 
 void MGatewayServer::HandleWorldServerMessage(uint8 Type, const TArray& Data)
 {
-    (void)Type;
     WorldMessageDispatcher.Dispatch(Type, Data);
 }
 
 void MGatewayServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 {
-    (void)Type;
+    if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
+    {
+        if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer) &&
+            !TryInvokeServerRpc(&GatewayService, Data, ERpcType::ServerToServer))
+        {
+            LOG_WARN("GatewayServer router MT_RPC packet could not be handled via reflection");
+        }
+        return;
+    }
+
     RouterMessageDispatcher.Dispatch(Type, Data);
 }
 
 void MGatewayServer::InitLoginMessageHandlers()
 {
-    LoginMessageDispatcher.Register<MGatewayServer, SPlayerLoginResponseMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        LoginMessageDispatcher,
         EServerMessageType::MT_PlayerLogin,
-        this,
         &MGatewayServer::OnLogin_PlayerLogin,
         "MT_PlayerLogin");
 }
 
 void MGatewayServer::InitWorldMessageHandlers()
 {
-    WorldMessageDispatcher.Register<MGatewayServer, SPlayerLogoutMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        WorldMessageDispatcher,
         EServerMessageType::MT_PlayerLogout,
-        this,
         &MGatewayServer::OnWorld_PlayerLogout,
         "MT_PlayerLogout");
 
-    WorldMessageDispatcher.Register<MGatewayServer, SPlayerClientSyncMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        WorldMessageDispatcher,
         EServerMessageType::MT_PlayerClientSync,
-        this,
         &MGatewayServer::OnWorld_PlayerClientSync,
         "MT_PlayerClientSync");
 }
 
 void MGatewayServer::InitRouterMessageHandlers()
 {
-    RouterMessageDispatcher.Register<MGatewayServer, SServerRegisterAckMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        RouterMessageDispatcher,
         EServerMessageType::MT_ServerRegisterAck,
-        this,
         &MGatewayServer::OnRouter_ServerRegisterAck,
         "MT_ServerRegisterAck");
 
-    RouterMessageDispatcher.Register<MGatewayServer, SRouteResponseMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        RouterMessageDispatcher,
         EServerMessageType::MT_RouteResponse,
-        this,
         &MGatewayServer::OnRouter_RouteResponse,
         "MT_RouteResponse");
 }
@@ -478,6 +521,11 @@ void MGatewayServer::OnRouter_ServerRegisterAck(const SServerRegisterAckMessage&
     LOG_INFO("Gateway registered to RouterServer");
 }
 
+void MGatewayServer::Rpc_OnRouterServerRegisterAck(uint8 Result)
+{
+    OnRouter_ServerRegisterAck(SServerRegisterAckMessage{Result});
+}
+
 void MGatewayServer::OnRouter_RouteResponse(const SRouteResponseMessage& Message)
 {
     if (!Message.bFound)
@@ -506,6 +554,37 @@ void MGatewayServer::OnRouter_RouteResponse(const SRouteResponseMessage& Message
             FlushPendingWorldLogins();
         }
     }
+}
+
+void MGatewayServer::Rpc_OnRouterRouteResponse(
+    uint64 RequestId,
+    uint8 RequestedTypeValue,
+    uint64 PlayerId,
+    bool bFound,
+    uint32 ServerId,
+    uint8 ServerTypeValue,
+    const FString& ServerName,
+    const FString& Address,
+    uint16 Port,
+    uint16 ZoneId)
+{
+    SRouteResponseMessage Message;
+    Message.RequestId = RequestId;
+    Message.RequestedType = static_cast<EServerType>(RequestedTypeValue);
+    Message.PlayerId = PlayerId;
+    Message.bFound = bFound;
+    if (bFound)
+    {
+        Message.ServerInfo = SServerInfo(
+            ServerId,
+            static_cast<EServerType>(ServerTypeValue),
+            ServerName,
+            Address,
+            Port,
+            ZoneId);
+    }
+
+    OnRouter_RouteResponse(Message);
 }
 
 void MGatewayServer::SendRouterRegister()
@@ -595,12 +674,34 @@ void MGatewayServer::FlushPendingWorldLogins()
     }
 
     TVector<uint64> CompletedRequests;
+    const uint16 FunctionId = MWorldService::GetFunctionId_Rpc_OnPlayerLoginRequest();
     for (const auto& [RequestId, Pending] : PendingWorldLoginRoutes)
     {
-        SendTypedServerMessage(
-            WorldServerConn,
-            EServerMessageType::MT_PlayerLogin,
-            SPlayerLoginResponseMessage{Pending.ConnectionId, Pending.PlayerId, Pending.SessionKey});
+        if (FunctionId == 0)
+        {
+            SendTypedServerMessage(
+                WorldServerConn,
+                EServerMessageType::MT_PlayerLogin,
+                SPlayerLoginResponseMessage{Pending.ConnectionId, Pending.PlayerId, Pending.SessionKey});
+        }
+        else
+        {
+            TArray RpcData;
+            BuildServerRpcPayload(
+                FunctionId,
+                BuildRpcPayloadForCall<&MWorldService::Rpc_OnPlayerLoginRequest>(
+                    Pending.ConnectionId,
+                    Pending.PlayerId,
+                    Pending.SessionKey),
+                RpcData);
+
+            const uint8* RpcPayload = RpcData.empty() ? nullptr : RpcData.data();
+            WorldServerConn->Send(
+                static_cast<uint8>(EServerMessageType::MT_RPC),
+                RpcPayload,
+                static_cast<uint32>(RpcData.size()));
+        }
+
         CompletedRequests.push_back(RequestId);
     }
 

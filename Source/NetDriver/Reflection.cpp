@@ -10,7 +10,11 @@ void MProperty::SerializeValue(void* Object, MReflectArchive& Ar) const
         return;
     }
 
-    uint8* FieldPtr = reinterpret_cast<uint8*>(Object) + Offset;
+    uint8* FieldPtr = static_cast<uint8*>(GetValueVoidPtr(Object));
+    if (!FieldPtr)
+    {
+        return;
+    }
 
     switch (Type)
     {
@@ -288,8 +292,12 @@ void MClass::CopyProperties(void* Dest, const void* Src) const
             continue;
         }
 
-        void* DestPtr = reinterpret_cast<uint8*>(Dest) + Prop->Offset;
-        const void* SrcPtr = reinterpret_cast<const uint8*>(Src) + Prop->Offset;
+        void* DestPtr = Prop->GetValueVoidPtr(Dest);
+        const void* SrcPtr = Prop->GetValueVoidPtr(Src);
+        if (!DestPtr || !SrcPtr)
+        {
+            continue;
+        }
         memcpy(DestPtr, SrcPtr, Prop->Size);
     }
 }
@@ -313,4 +321,3 @@ bool MReflectObject::CallFunction(const FString& InName)
     Func->NativeFunc(this);
     return true;
 }
-

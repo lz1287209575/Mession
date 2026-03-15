@@ -120,13 +120,27 @@ bool MWorldServer::Init(int InPort)
     MLogger::LogStartupBanner("WorldServer", Config.ListenPort, 0);
 
     // 初始化服务器消息分发器
+    InitBackendMessageHandlers();
     InitRouterMessageHandlers();
     InitLoginMessageHandlers();
 
     // 绑定 WorldService 的会话校验回调处理器
-    SetWorldSessionValidateResponseHandler([this](uint64 ConnectionId, uint64 PlayerId, bool bValid)
+    MWorldService::SetHandler_Rpc_OnSessionValidateResponse([this](uint64 ValidationRequestId, uint64 PlayerId, bool bValid)
     {
-        OnLogin_SessionValidateResponse(ConnectionId, PlayerId, bValid);
+        OnLogin_SessionValidateResponse(ValidationRequestId, PlayerId, bValid);
+    });
+    MWorldService::SetHandler_Rpc_OnPlayerLoginRequest([this](uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey)
+    {
+        const uint64 GatewayBackendConnectionId = FindAuthenticatedBackendConnectionId(EServerType::Gateway);
+        if (GatewayBackendConnectionId == 0)
+        {
+            LOG_WARN("No authenticated Gateway backend available for player login request (ClientConnId=%llu, PlayerId=%llu)",
+                     (unsigned long long)ClientConnectionId,
+                     (unsigned long long)PlayerId);
+            return;
+        }
+
+        RequestSessionValidation(GatewayBackendConnectionId, PlayerId, SessionKey);
     });
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
@@ -314,98 +328,19 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
         return;
     }
 
-    SBackendPeer& Peer = PeerIt->second;
     const uint8 MsgType = Data[0];
     const TArray Payload(Data.begin() + 1, Data.end());
 
-    switch ((EServerMessageType)MsgType)
+    if (MsgType == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
-        case EServerMessageType::MT_ServerHandshake:
+        if (!TryInvokeServerRpc(&WorldService, Payload, ERpcType::ServerToServer))
         {
-            SServerHandshakeMessage Message;
-            auto ParseResult = ParsePayload(Payload, Message, "handshake");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
-                return;
-            }
-
-            Peer.ServerId = Message.ServerId;
-            Peer.ServerType = Message.ServerType;
-            Peer.ServerName = Message.ServerName;
-            Peer.bAuthenticated = true;
-
-            SendServerMessage(ConnectionId, EServerMessageType::MT_ServerHandshakeAck, SEmptyServerMessage{});
-            LOG_INFO("%s authenticated as %d", Peer.ServerName.c_str(), (int)Peer.ServerType);
-            break;
+            LOG_WARN("WorldServer backend MT_RPC packet could not be handled via reflection");
         }
-
-        case EServerMessageType::MT_Heartbeat:
-        {
-            SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
-            break;
-        }
-
-        case EServerMessageType::MT_PlayerLogin:
-        {
-            if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Gateway)
-            {
-                return;
-            }
-
-            SPlayerLoginResponseMessage Message;
-            auto ParseResult = ParsePayload(Payload, Message, "MT_PlayerLogin");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-                return;
-            }
-
-            RequestSessionValidation(ConnectionId, Message.PlayerId, Message.SessionKey);
-            break;
-        }
-
-        case EServerMessageType::MT_PlayerLogout:
-        {
-            if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Gateway)
-            {
-                return;
-            }
-
-            SPlayerLogoutMessage Message;
-            auto ParseResult = ParsePayload(Payload, Message, "MT_PlayerLogout");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-                return;
-            }
-
-            RemovePlayer(Message.PlayerId);
-            break;
-        }
-
-        case EServerMessageType::MT_PlayerClientSync:
-        {
-            if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Gateway)
-            {
-                return;
-            }
-
-            SPlayerClientSyncMessage Message;
-            auto ParseResult = ParsePayload(Payload, Message, "MT_PlayerClientSync");
-            if (!ParseResult.IsOk())
-            {
-                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-                return;
-            }
-
-            HandleGameplayPacket(Message.PlayerId, Message.Data);
-            break;
-        }
-
-        default:
-            break;
+        return;
     }
+
+    BackendMessageDispatcher.Dispatch(ConnectionId, MsgType, Payload);
 }
 
 void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
@@ -675,6 +610,19 @@ bool MWorldServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArr
     return It->second.Connection->Send(Packet.data(), Packet.size());
 }
 
+uint64 MWorldServer::FindAuthenticatedBackendConnectionId(EServerType ServerType) const
+{
+    for (const auto& [ConnectionId, Peer] : BackendConnections)
+    {
+        if (Peer.bAuthenticated && Peer.ServerType == ServerType && Peer.Connection)
+        {
+            return ConnectionId;
+        }
+    }
+
+    return 0;
+}
+
 void MWorldServer::BroadcastToScenes(uint8 Type, const TArray& Payload)
 {
     for (auto& [ConnectionId, Peer] : BackendConnections)
@@ -722,41 +670,188 @@ void MWorldServer::RequestSessionValidation(uint64 GatewayConnectionId, uint64 P
 
     PendingSessionValidations[ValidationRequestId] = {ValidationRequestId, GatewayConnectionId, PlayerId, SessionKey};
 
-    SendTypedServerMessage(
-        LoginServerConn,
-        EServerMessageType::MT_SessionValidateRequest,
-        SSessionValidateRequestMessage{ValidationRequestId, PlayerId, SessionKey});
+    const uint16 FunctionId = MLoginService::GetFunctionId_Rpc_OnSessionValidateRequest();
+    if (FunctionId == 0)
+    {
+        LOG_WARN("MLoginService::GetFunctionId_Rpc_OnSessionValidateRequest returned 0, fallback to legacy MT_SessionValidateRequest");
+
+        SendTypedServerMessage(
+            LoginServerConn,
+            EServerMessageType::MT_SessionValidateRequest,
+            SSessionValidateRequestMessage{ValidationRequestId, PlayerId, SessionKey});
+        return;
+    }
+
+    TArray RpcData;
+    BuildServerRpcPayload(
+        FunctionId,
+        BuildRpcPayloadForCall<&MLoginService::Rpc_OnSessionValidateRequest>(
+            ValidationRequestId,
+            PlayerId,
+            SessionKey),
+        RpcData);
+
+    const uint8* RpcPayload = RpcData.empty() ? nullptr : RpcData.data();
+    LoginServerConn->Send(
+        static_cast<uint8>(EServerMessageType::MT_RPC),
+        RpcPayload,
+        static_cast<uint32>(RpcData.size()));
 }
 
 void MWorldServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
 {
-    (void)Type;
+    if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
+    {
+        if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer) &&
+            !TryInvokeServerRpc(&WorldService, Data, ERpcType::ServerToServer))
+        {
+            LOG_WARN("WorldServer router MT_RPC packet could not be handled via reflection");
+        }
+        return;
+    }
+
     RouterMessageDispatcher.Dispatch(Type, Data);
+}
+
+void MWorldServer::InitBackendMessageHandlers()
+{
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        BackendMessageDispatcher,
+        EServerMessageType::MT_ServerHandshake,
+        &MWorldServer::OnBackend_ServerHandshake,
+        "MT_ServerHandshake");
+
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        BackendMessageDispatcher,
+        EServerMessageType::MT_Heartbeat,
+        &MWorldServer::OnBackend_Heartbeat,
+        "MT_Heartbeat");
+
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        BackendMessageDispatcher,
+        EServerMessageType::MT_PlayerLogin,
+        &MWorldServer::OnBackend_PlayerLogin,
+        "MT_PlayerLogin");
+
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        BackendMessageDispatcher,
+        EServerMessageType::MT_PlayerLogout,
+        &MWorldServer::OnBackend_PlayerLogout,
+        "MT_PlayerLogout");
+
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        BackendMessageDispatcher,
+        EServerMessageType::MT_PlayerClientSync,
+        &MWorldServer::OnBackend_PlayerClientSync,
+        "MT_PlayerClientSync");
 }
 
 void MWorldServer::InitRouterMessageHandlers()
 {
-    RouterMessageDispatcher.Register<MWorldServer, SServerRegisterAckMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        RouterMessageDispatcher,
         EServerMessageType::MT_ServerRegisterAck,
-        this,
         &MWorldServer::OnRouter_ServerRegisterAck,
         "MT_ServerRegisterAck");
 
-    RouterMessageDispatcher.Register<MWorldServer, SRouteResponseMessage>(
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        RouterMessageDispatcher,
         EServerMessageType::MT_RouteResponse,
-        this,
         &MWorldServer::OnRouter_RouteResponse,
         "MT_RouteResponse");
 }
 
 void MWorldServer::InitLoginMessageHandlers()
 {
-    (void)LoginMessageDispatcher;
+    MREGISTER_SERVER_MESSAGE_HANDLER(
+        LoginMessageDispatcher,
+        EServerMessageType::MT_SessionValidateResponse,
+        &MWorldServer::OnLogin_SessionValidateResponseMessage,
+        "MT_SessionValidateResponse");
+}
+
+void MWorldServer::OnBackend_ServerHandshake(uint64 ConnectionId, const SServerHandshakeMessage& Message)
+{
+    auto PeerIt = BackendConnections.find(ConnectionId);
+    if (PeerIt == BackendConnections.end())
+    {
+        return;
+    }
+
+    SBackendPeer& Peer = PeerIt->second;
+    Peer.ServerId = Message.ServerId;
+    Peer.ServerType = Message.ServerType;
+    Peer.ServerName = Message.ServerName;
+    Peer.bAuthenticated = true;
+
+    SendServerMessage(ConnectionId, EServerMessageType::MT_ServerHandshakeAck, SEmptyServerMessage{});
+    LOG_INFO("%s authenticated as %d", Peer.ServerName.c_str(), (int)Peer.ServerType);
+}
+
+void MWorldServer::OnBackend_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& /*Message*/)
+{
+    SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
+}
+
+void MWorldServer::OnBackend_PlayerLogin(uint64 ConnectionId, const SPlayerLoginResponseMessage& Message)
+{
+    auto PeerIt = BackendConnections.find(ConnectionId);
+    if (PeerIt == BackendConnections.end())
+    {
+        return;
+    }
+
+    const SBackendPeer& Peer = PeerIt->second;
+    if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Gateway)
+    {
+        return;
+    }
+
+    RequestSessionValidation(ConnectionId, Message.PlayerId, Message.SessionKey);
+}
+
+void MWorldServer::OnBackend_PlayerLogout(uint64 ConnectionId, const SPlayerLogoutMessage& Message)
+{
+    auto PeerIt = BackendConnections.find(ConnectionId);
+    if (PeerIt == BackendConnections.end())
+    {
+        return;
+    }
+
+    const SBackendPeer& Peer = PeerIt->second;
+    if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Gateway)
+    {
+        return;
+    }
+
+    RemovePlayer(Message.PlayerId);
+}
+
+void MWorldServer::OnBackend_PlayerClientSync(uint64 ConnectionId, const SPlayerClientSyncMessage& Message)
+{
+    auto PeerIt = BackendConnections.find(ConnectionId);
+    if (PeerIt == BackendConnections.end())
+    {
+        return;
+    }
+
+    const SBackendPeer& Peer = PeerIt->second;
+    if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Gateway)
+    {
+        return;
+    }
+
+    HandleGameplayPacket(Message.PlayerId, Message.Data);
 }
 
 void MWorldServer::OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& /*Message*/)
 {
     LOG_INFO("World server registered to RouterServer");
+}
+
+void MWorldServer::Rpc_OnRouterServerRegisterAck(uint8 Result)
+{
+    OnRouter_ServerRegisterAck(SServerRegisterAckMessage{Result});
 }
 
 void MWorldServer::OnRouter_RouteResponse(const SRouteResponseMessage& Message)
@@ -771,6 +866,42 @@ void MWorldServer::OnRouter_RouteResponse(const SRouteResponseMessage& Message)
         Message.ServerInfo.ServerName,
         Message.ServerInfo.Address,
         Message.ServerInfo.Port);
+}
+
+void MWorldServer::Rpc_OnRouterRouteResponse(
+    uint64 RequestId,
+    uint8 RequestedTypeValue,
+    uint64 PlayerId,
+    bool bFound,
+    uint32 ServerId,
+    uint8 ServerTypeValue,
+    const FString& ServerName,
+    const FString& Address,
+    uint16 Port,
+    uint16 ZoneId)
+{
+    SRouteResponseMessage Message;
+    Message.RequestId = RequestId;
+    Message.RequestedType = static_cast<EServerType>(RequestedTypeValue);
+    Message.PlayerId = PlayerId;
+    Message.bFound = bFound;
+    if (bFound)
+    {
+        Message.ServerInfo = SServerInfo(
+            ServerId,
+            static_cast<EServerType>(ServerTypeValue),
+            ServerName,
+            Address,
+            Port,
+            ZoneId);
+    }
+
+    OnRouter_RouteResponse(Message);
+}
+
+void MWorldServer::OnLogin_SessionValidateResponseMessage(const SSessionValidateResponseMessage& Message)
+{
+    OnLogin_SessionValidateResponse(Message.ConnectionId, Message.PlayerId, Message.bValid);
 }
 
 void MWorldServer::OnLogin_SessionValidateResponse(uint64 ConnectionId, uint64 PlayerId, bool bValid)

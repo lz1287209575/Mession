@@ -7,6 +7,7 @@
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"
+#include "NetDriver/ServerRpcServices.h"
 #include <thread>
 #include <chrono>
 
@@ -46,8 +47,11 @@ struct SPendingWorldLoginRoute
 };
 
 // 网关服务器
-class MGatewayServer : public MNetServerBase
+class MGatewayServer : public MNetServerBase, public MReflectObject
 {
+public:
+    MGENERATED_BODY(MGatewayServer, MReflectObject, 0)
+
 private:
     SGatewayConfig Config;
     
@@ -73,6 +77,8 @@ private:
     uint64 NextRouteRequestId = 1;
     TMap<uint64, SPendingWorldLoginRoute> PendingWorldLoginRoutes;
 
+    MGatewayService GatewayService;
+
     // 服务器消息分发器
     MServerMessageDispatcher LoginMessageDispatcher;
     MServerMessageDispatcher WorldMessageDispatcher;
@@ -92,6 +98,9 @@ public:
     void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
+
+    MGATEWAY_SERVER_ROUTER_ACK_RPC_LIST(MDECLARE_SERVER_HOSTED_RPC_METHOD)
+    MGATEWAY_SERVER_ROUTER_ROUTE_RPC_LIST(MDECLARE_SERVER_HOSTED_RPC_METHOD)
 
 private:
     void ConnectToLoginServer();

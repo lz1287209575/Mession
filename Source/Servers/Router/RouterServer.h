@@ -50,6 +50,8 @@ private:
     // 调试 HTTP 服务器
     TUniquePtr<MHttpDebugServer> DebugServer;
 
+    MServerMessageDispatcher PeerMessageDispatcher;
+
 public:
     MRouterServer() = default;
     ~MRouterServer() { Shutdown(); }
@@ -77,4 +79,10 @@ private:
     const SRouterPeer* FindRegisteredServerById(uint32 ServerId) const;
     void RemovePeer(uint64 ConnectionId);
     FString BuildDebugStatusJson() const;
+    void InitPeerMessageHandlers();
+    void OnPeer_ServerHandshake(uint64 ConnectionId, const SServerHandshakeMessage& Message);
+    void OnPeer_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& Message);
+    void OnPeer_ServerRegister(uint64 ConnectionId, const SServerRegisterMessage& Message);
+    void OnPeer_ServerLoadReport(uint64 ConnectionId, const SServerLoadReportMessage& Message);
+    void OnPeer_RouteQuery(uint64 ConnectionId, const SRouteQueryMessage& Query);
 };

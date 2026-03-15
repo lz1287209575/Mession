@@ -21,7 +21,12 @@
 
 ## Now
 
-- [ ] （无；由「下一步方案」见 `docs/next-steps.md` 选一项推进）
+- [x] 协议：梳理 `MessageUtils` / `PacketCodec` 的字节序边界，首批将 `SPlayerLoginResponseMessage`、`SSessionValidateRequestMessage`、`SPlayerLogoutMessage`、`SPlayerClientSyncMessage` 的整数头字段切到网络序
+- [ ] 协议：为首批网络序消息补 round-trip / fixed-blob 验证，并跑通 `Scripts/verify_protocol.py` 与 `Scripts/validate.py`（已通过 `verify_protocol.py`；`validate.py` 当前被 Router readiness 现存问题阻塞）
+- [x] 文档：更新 `docs/protocol-byteorder.md`，明确“哪些消息已切网络序、哪些仍保持主机序”，避免混用
+- [ ] 反射：补齐 `MFUNCTION` 的原生函数自动注册，当前只覆盖 RPC 和零参数 native 方法，仍缺带参数 / `const` / 返回值 native 方法
+- [ ] 反射：补齐 `MENUM` 生成与注册落地，当前 `MHeaderTool` 仅识别枚举，尚未输出真正的 enum 反射 glue
+- [ ] 反射：为 `MCLASS/MSTRUCT/MENUM/MPROPERTY/MFUNCTION` 增加更明确的归属元数据，替代当前按头文件路径推断 `shared/gateway/login/world/...` 的 manifest 分组
 
 ### 验证方案（脚本，不引入 ctest）
 
@@ -46,8 +51,10 @@
 - [x] 统一协议解析失败时的日志格式：调用处统一为 `LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str())`，可选 Context 参数写入错误串前缀
 - [x] 继续收敛跨服/客户端载荷：新增 SPlayerIdPayload、SClientLoginResponsePayload、SPlayerMovePayload，Login/Gateway/World 中移除裸 memcpy，改用 ParsePayload/BuildPayload
 - [ ] 评估并逐步统一字节序策略，避免跨平台协议隐患（当前约定见 docs/protocol-byteorder.md）
+- [ ] 反射：将 `MHeaderTool` 从“生成 + CMake manifest”推进到更完整的一体化管线，减少 configure 阶段对已有 `Bin/MHeaderTool` 的前置依赖
 - [ ] 评估 `NetDriver/Reflection.h` 是正式接入主线，还是降级为示例 / 实验代码
 - [ ] 若继续保留 `Reflection`，明确它和复制系统、运行时对象系统的边界
+- [ ] 反射：收敛当前编译告警，处理 `MReflectObject::Tick(float DeltaTime)` 未使用参数与其余生成代码噪音，保证自动生成链路默认干净
 
 ## Watchlist
 
@@ -82,6 +89,9 @@
 - [x] 协议收敛：SPlayerIdPayload / SClientLoginResponsePayload / SPlayerMovePayload；Gateway/Login/World 中登录与移动解析改为 ParsePayload/BuildPayload；docs/protocol-byteorder.md 约定当前主机序与后续可选网络序
 - [x] 基础库建设：Core 增加 TUnorderedSet、Clamp/Lerp；Common 增加 StringUtils（MString::ToString、TrimInPlace/TrimCopy）；docs/base-library.md 说明 Core/Common 设施与使用建议；WorldServer 示例改用 MString::ToString
 - [x] 基础库按优先级补齐：统一 ToString（ServerMessages、SocketPlatform 改用 MString::ToString）；SVector 增加 Normalized()、Dot()、Distance(A,B)；MString::Split/Join；base-library.md 更新
+- [x] 反射：`MPROPERTY` 自动注册改为成员访问器路径，移除对非标准布局类型 `offsetof` 的直接依赖
+- [x] 反射：`RegisterAllProperties/RegisterAllFunctions/StaticClass` 从业务 `.cpp` 手写实现下放到 `.mgenerated.cpp`
+- [x] 反射：`MHeaderTool` 生成 `Build/Generated/MHeaderToolTargets.cmake`，CMake 改为消费 manifest 并按目标拆分生成对象
 
 ---
 

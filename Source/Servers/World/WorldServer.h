@@ -61,8 +61,11 @@ struct SPendingSessionValidation
 };
 
 // 世界服务器
-class MWorldServer : public MNetServerBase
+class MWorldServer : public MNetServerBase, public MReflectObject
 {
+public:
+    MGENERATED_BODY(MWorldServer, MReflectObject, 0)
+
 private:
     SWorldConfig Config;
     TMap<uint64, SBackendPeer> BackendConnections;
@@ -91,6 +94,7 @@ private:
     MWorldService WorldService;
 
     // 服务器消息分发器
+    MServerMessageDispatcher BackendMessageDispatcher;
     MServerMessageDispatcher RouterMessageDispatcher;
     MServerMessageDispatcher LoginMessageDispatcher;
     
@@ -109,6 +113,9 @@ public:
     void ShutdownConnections() override;
     void OnRunStarted() override;
 
+    MWORLD_SERVER_ROUTER_ACK_RPC_LIST(MDECLARE_SERVER_HOSTED_RPC_METHOD)
+    MWORLD_SERVER_ROUTER_ROUTE_RPC_LIST(MDECLARE_SERVER_HOSTED_RPC_METHOD)
+
 private:
     void HandlePacket(uint64 ConnectionId, const TArray& Data);
     void HandleGameplayPacket(uint64 PlayerId, const TArray& Data);
@@ -124,6 +131,7 @@ private:
     void QueryLoginServerRoute();
     void SendLoadReport();
     void ApplyLoginServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
+    uint64 FindAuthenticatedBackendConnectionId(EServerType ServerType) const;
     void HandleLoginServerMessage(uint8 Type, const TArray& Data);
     void RequestSessionValidation(uint64 GatewayConnectionId, uint64 PlayerId, uint32 SessionKey);
     
@@ -137,10 +145,17 @@ private:
     FString BuildDebugStatusJson() const;
 
     // 分发器注册与具体处理函数
+    void InitBackendMessageHandlers();
     void InitRouterMessageHandlers();
     void InitLoginMessageHandlers();
 
+    void OnBackend_ServerHandshake(uint64 ConnectionId, const SServerHandshakeMessage& Message);
+    void OnBackend_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& Message);
+    void OnBackend_PlayerLogin(uint64 ConnectionId, const SPlayerLoginResponseMessage& Message);
+    void OnBackend_PlayerLogout(uint64 ConnectionId, const SPlayerLogoutMessage& Message);
+    void OnBackend_PlayerClientSync(uint64 ConnectionId, const SPlayerClientSyncMessage& Message);
     void OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& Message);
     void OnRouter_RouteResponse(const SRouteResponseMessage& Message);
+    void OnLogin_SessionValidateResponseMessage(const SSessionValidateResponseMessage& Message);
     void OnLogin_SessionValidateResponse(uint64 ConnectionId, uint64 PlayerId, bool bValid);
 };

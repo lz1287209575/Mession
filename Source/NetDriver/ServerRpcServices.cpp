@@ -3,28 +3,82 @@
 
 namespace
 {
-FWorldSessionValidateResponseHandler GWorldSessionValidateResponseHandler;
-uint16 GWorldSessionValidateResponseFunctionId = 0;
+const SRpcEndpointBinding GRouterServerRegisterAckEndpoints[] = {
+    MGATEWAY_SERVER_ROUTER_ACK_RPC_LIST(MDECLARE_RPC_ENDPOINT_BINDING)
+    MLOGIN_SERVER_ROUTER_ACK_RPC_LIST(MDECLARE_RPC_ENDPOINT_BINDING)
+    MWORLD_SERVER_ROUTER_ACK_RPC_LIST(MDECLARE_RPC_ENDPOINT_BINDING)
+};
 
-void WorldService_SessionValidateResponse_Invoker(MReflectObject* Object, MReflectArchive& Ar)
+const SRpcEndpointBinding GRouterRouteResponseEndpoints[] = {
+    MGATEWAY_SERVER_ROUTER_ROUTE_RPC_LIST(MDECLARE_RPC_ENDPOINT_BINDING)
+    MWORLD_SERVER_ROUTER_ROUTE_RPC_LIST(MDECLARE_RPC_ENDPOINT_BINDING)
+};
+
+const SRpcEndpointBinding* FindEndpointByServerType(
+    const SRpcEndpointBinding* Bindings,
+    size_t Count,
+    EServerType ServerType)
 {
-    if (!Object)
+    for (size_t Index = 0; Index < Count; ++Index)
     {
-        return;
+        if (Bindings[Index].ServerType == ServerType)
+        {
+            return &Bindings[Index];
+        }
     }
 
-    auto* Service = static_cast<MWorldService*>(Object);
-    uint64 ConnectionId = 0;
-    uint64 PlayerId = 0;
-    bool bValid = false;
-
-    Ar << ConnectionId;
-    Ar << PlayerId;
-    Ar << bValid;
-
-    Service->Rpc_OnSessionValidateResponse(ConnectionId, PlayerId, bValid);
+    return nullptr;
 }
+
+#define MDEFINE_SERVICE_RPC_HANDLER_STORAGE(ServiceClass, MethodName) \
+    ServiceClass::FHandler_##MethodName G##ServiceClass##_##MethodName##Handler; \
+    uint16 G##ServiceClass##_##MethodName##FunctionId = 0;
+
+MDEFINE_SERVICE_RPC_HANDLER_STORAGE(MGatewayService, Rpc_OnPlayerLoginResponse)
+MDEFINE_SERVICE_RPC_HANDLER_STORAGE(MLoginService, Rpc_OnPlayerLoginRequest)
+MDEFINE_SERVICE_RPC_HANDLER_STORAGE(MLoginService, Rpc_OnSessionValidateRequest)
+MDEFINE_SERVICE_RPC_HANDLER_STORAGE(MWorldService, Rpc_OnPlayerLoginRequest)
+MDEFINE_SERVICE_RPC_HANDLER_STORAGE(MWorldService, Rpc_OnSessionValidateResponse)
+
+#undef MDEFINE_SERVICE_RPC_HANDLER_STORAGE
 } // namespace
+
+#define MFORWARD_SERVER_RPC_TO_HANDLER(HandlerVar, LogFormat, ...) \
+    do \
+    { \
+        if (HandlerVar) \
+        { \
+            HandlerVar(__VA_ARGS__); \
+        } \
+        else \
+        { \
+            LOG_WARN(LogFormat, __VA_ARGS__); \
+        } \
+    } while (0)
+
+#define MDEFINE_SERVICE_RPC_HANDLER_API(ServiceClass, MethodName) \
+    void ServiceClass::SetHandler_##MethodName(const FHandler_##MethodName& InHandler) \
+    { \
+        G##ServiceClass##_##MethodName##Handler = InHandler; \
+    } \
+    \
+    uint16 ServiceClass::GetFunctionId_##MethodName() \
+    { \
+        return MGET_CACHED_RPC_FUNCTION_ID( \
+            ServiceClass, \
+            MethodName, \
+            G##ServiceClass##_##MethodName##FunctionId); \
+    }
+
+#define MREGISTER_SERVICE_RPC(MethodName, FuncFlags, RpcKind, ReliableValue) \
+    MREGISTER_RPC_METHOD(MethodName, FuncFlags, RpcKind, ReliableValue)
+
+#define MDEFINE_SERVICE_RPC_METHOD(ServiceClass, MethodName, HandlerVar, LogFormat, ...) \
+    void ServiceClass::MethodName(__VA_ARGS__) \
+    { \
+        MFORWARD_SERVER_RPC_TO_HANDLER(HandlerVar, LogFormat, __VA_ARGS__); \
+    } \
+    MDEFINE_SERVICE_RPC_HANDLER_API(ServiceClass, MethodName)
 
 bool BuildServerRpcPayload(uint16 FunctionId, const TArray& InPayload, TArray& OutData)
 {
@@ -45,6 +99,38 @@ bool BuildServerRpcPayload(uint16 FunctionId, const TArray& InPayload, TArray& O
     }
 
     return true;
+}
+
+bool BuildRpcPayloadForEndpoint(const SRpcEndpointBinding& Binding, const TArray& InPayload, TArray& OutData)
+{
+    if (!Binding.ClassName || !Binding.FunctionName)
+    {
+        return false;
+    }
+
+    const uint16 FunctionId = MGET_STABLE_RPC_FUNCTION_ID(Binding.ClassName, Binding.FunctionName);
+    if (FunctionId == 0)
+    {
+        return false;
+    }
+
+    return BuildServerRpcPayload(FunctionId, InPayload, OutData);
+}
+
+const SRpcEndpointBinding* FindRouterServerRegisterAckEndpoint(EServerType ServerType)
+{
+    return FindEndpointByServerType(
+        GRouterServerRegisterAckEndpoints,
+        sizeof(GRouterServerRegisterAckEndpoints) / sizeof(GRouterServerRegisterAckEndpoints[0]),
+        ServerType);
+}
+
+const SRpcEndpointBinding* FindRouterRouteResponseEndpoint(EServerType ServerType)
+{
+    return FindEndpointByServerType(
+        GRouterRouteResponseEndpoints,
+        sizeof(GRouterRouteResponseEndpoints) / sizeof(GRouterRouteResponseEndpoints[0]),
+        ServerType);
 }
 
 bool TryInvokeServerRpc(MReflectObject* ServiceInstance, const TArray& Data, ERpcType ExpectedType)
@@ -115,68 +201,64 @@ bool TryInvokeServerRpc(MReflectObject* ServiceInstance, const TArray& Data, ERp
     return true;
 }
 
-void MWorldService::Rpc_OnSessionValidateResponse(uint64 ConnectionId, uint64 PlayerId, bool bValid)
+void MGatewayService::Rpc_OnPlayerLoginResponse(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey)
 {
-    if (GWorldSessionValidateResponseHandler)
-    {
-        GWorldSessionValidateResponseHandler(ConnectionId, PlayerId, bValid);
-    }
-    else
-    {
-        LOG_WARN("MWorldService Rpc_OnSessionValidateResponse with no handler bound (ConnId=%llu, PlayerId=%llu, bValid=%d)",
-                 (unsigned long long)ConnectionId,
-                 (unsigned long long)PlayerId,
-                 bValid ? 1 : 0);
-    }
+    MFORWARD_SERVER_RPC_TO_HANDLER(
+        GMGatewayService_Rpc_OnPlayerLoginResponseHandler,
+        "MGatewayService Rpc_OnPlayerLoginResponse with no handler bound (ClientConnId=%llu, PlayerId=%llu, SessionKey=%u)",
+        ClientConnectionId,
+        PlayerId,
+        SessionKey);
 }
 
-void MWorldService::RegisterAllProperties(MClass* InClass)
+MDEFINE_SERVICE_RPC_HANDLER_API(MGatewayService, Rpc_OnPlayerLoginResponse)
+
+void MLoginService::Rpc_OnSessionValidateRequest(uint64 ValidationRequestId, uint64 PlayerId, uint32 SessionKey)
 {
-    (void)InClass;
+    MFORWARD_SERVER_RPC_TO_HANDLER(
+        GMLoginService_Rpc_OnSessionValidateRequestHandler,
+        "MLoginService Rpc_OnSessionValidateRequest with no handler bound (ValidationRequestId=%llu, PlayerId=%llu, SessionKey=%u)",
+        ValidationRequestId,
+        PlayerId,
+        SessionKey);
 }
 
-void MWorldService::RegisterAllFunctions(MClass* InClass)
+void MLoginService::Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId)
 {
-    if (!InClass)
-    {
-        return;
-    }
-
-    MFunction* Func = new MFunction();
-    Func->Name = "Rpc_OnSessionValidateResponse";
-    Func->Flags = EFunctionFlags::NetServer;
-    Func->RpcType = ERpcType::ServerToServer;
-    Func->bReliable = true;
-    Func->RpcFunc = &WorldService_SessionValidateResponse_Invoker;
-    InClass->RegisterFunction(Func);
+    MFORWARD_SERVER_RPC_TO_HANDLER(
+        GMLoginService_Rpc_OnPlayerLoginRequestHandler,
+        "MLoginService Rpc_OnPlayerLoginRequest with no handler bound (ClientConnId=%llu, PlayerId=%llu)",
+        ClientConnectionId,
+        PlayerId);
 }
 
-IMPLEMENT_CLASS(MWorldService, MReflectObject, 0)
+MDEFINE_SERVICE_RPC_HANDLER_API(MLoginService, Rpc_OnPlayerLoginRequest)
+MDEFINE_SERVICE_RPC_HANDLER_API(MLoginService, Rpc_OnSessionValidateRequest)
 
-void SetWorldSessionValidateResponseHandler(const FWorldSessionValidateResponseHandler& InHandler)
+void MWorldService::Rpc_OnSessionValidateResponse(uint64 ValidationRequestId, uint64 PlayerId, bool bValid)
 {
-    GWorldSessionValidateResponseHandler = InHandler;
+    MFORWARD_SERVER_RPC_TO_HANDLER(
+        GMWorldService_Rpc_OnSessionValidateResponseHandler,
+        "MWorldService Rpc_OnSessionValidateResponse with no handler bound (ValidationRequestId=%llu, PlayerId=%llu, bValid=%d)",
+        ValidationRequestId,
+        PlayerId,
+        bValid);
 }
 
-uint16 GetWorldSessionValidateResponseFunctionId()
+void MWorldService::Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey)
 {
-    if (GWorldSessionValidateResponseFunctionId != 0)
-    {
-        return GWorldSessionValidateResponseFunctionId;
-    }
-
-    MClass* Class = MWorldService::StaticClass();
-    if (!Class)
-    {
-        return 0;
-    }
-
-    MFunction* Func = Class->FindFunction("Rpc_OnSessionValidateResponse");
-    if (!Func)
-    {
-        return 0;
-    }
-
-    GWorldSessionValidateResponseFunctionId = Func->FunctionId;
-    return GWorldSessionValidateResponseFunctionId;
+    MFORWARD_SERVER_RPC_TO_HANDLER(
+        GMWorldService_Rpc_OnPlayerLoginRequestHandler,
+        "MWorldService Rpc_OnPlayerLoginRequest with no handler bound (ClientConnId=%llu, PlayerId=%llu, SessionKey=%u)",
+        ClientConnectionId,
+        PlayerId,
+        SessionKey);
 }
+
+MDEFINE_SERVICE_RPC_HANDLER_API(MWorldService, Rpc_OnPlayerLoginRequest)
+MDEFINE_SERVICE_RPC_HANDLER_API(MWorldService, Rpc_OnSessionValidateResponse)
+
+#undef MDEFINE_SERVICE_RPC_HANDLER_API
+#undef MREGISTER_SERVICE_RPC
+#undef MDEFINE_SERVICE_RPC_METHOD
+#undef MFORWARD_SERVER_RPC_TO_HANDLER

@@ -11,51 +11,50 @@
 class MCharacter : public MReflectObject
 {
 public:
-    // UE 风格：在类内部声明反射信息
-    GENERATED_BODY(MCharacter, MReflectObject, 0)
+    MGENERATED_BODY(MCharacter, MReflectObject, 0)
     
     // 属性定义
-    UPROPERTY(Edit | SaveGame)
+    MPROPERTY(Edit | SaveGame)
     FString Name = "Player";
     
-    UPROPERTY(Edit)
+    MPROPERTY(Edit)
     int32 Level = 1;
     
-    UPROPERTY(Edit)
+    MPROPERTY(Edit)
     int64 Experience = 0;
     
-    UPROPERTY(RepNotify)
+    MPROPERTY(RepNotify)
     SVector Location = SVector::Zero();
     
-    UPROPERTY(RepNotify)
+    MPROPERTY(RepNotify)
     SRotator Rotation = SRotator();
     
-    UPROPERTY(RepNotify)
+    MPROPERTY(RepNotify)
     float Health = 100.0f;
     
-    UPROPERTY(Edit)
+    MPROPERTY(Edit)
     float MaxHealth = 100.0f;
     
-    UPROPERTY(Edit)
+    MPROPERTY(Edit)
     float MoveSpeed = 300.0f;
     
-    UPROPERTY(RepNotify)
+    MPROPERTY(RepNotify)
     bool bIsAlive = true;
     
-    UPROPERTY(Edit | SaveGame)
+    MPROPERTY(Edit | SaveGame)
     int32 Gold = 0;
     
     // 函数
-    UFUNCTION()
+    MFUNCTION()
     void TakeDamage(float Damage);
     
-    UFUNCTION()
+    MFUNCTION()
     void Heal(float Amount);
     
-    UFUNCTION()
+    MFUNCTION()
     void MoveTo(const SVector& NewLocation);
     
-    UFUNCTION()
+    MFUNCTION()
     void LevelUp();
     
     // 虚函数
@@ -83,20 +82,20 @@ struct SCombatStats
 class MHero : public MReflectObject
 {
 public:
-    GENERATED_BODY(MHero, MReflectObject, 0)
+    MGENERATED_BODY(MHero, MReflectObject, 0)
 
-    UPROPERTY(Edit)
+    MPROPERTY(Edit)
     FString Name = "Hero";
 
     // 复杂嵌套类型：结构体里再嵌套结构体 + 标量
-    UPROPERTY(Edit)
+    MPROPERTY(Edit)
     SCombatStats CombatStats;
 
     // 生命值等基础字段，验证与嵌套结构一起序列化
-    UPROPERTY(Edit)
+    MPROPERTY(Edit)
     int32 Level = 1;
 
-    UPROPERTY(Edit)
+    MPROPERTY(Edit)
     float Health = 100.0f;
 
 public:
@@ -104,6 +103,7 @@ public:
     float GetHealth() const { return Health; }
 
     // 示例：带参数的服务器 RPC
+    MFUNCTION(NetServer)
     void ServerRpc_AddStats(int32 LevelDelta, float HealthDelta);
     bool ServerRpc_AddStats_Validate(int32 LevelDelta, float HealthDelta) const;
 };
@@ -112,24 +112,24 @@ public:
 class MPlayerData : public MReflectObject
 {
 public:
-    GENERATED_BODY(MPlayerData, MReflectObject, 0)
+    MGENERATED_BODY(MPlayerData, MReflectObject, 0)
 
     using FriendLevelMap = TMap<uint64, int32>;
     using BlackListSet = TSet<uint64>;
     
-    UPROPERTY(Edit | SaveGame)
+    MPROPERTY(Edit | SaveGame)
     uint64 PlayerId = 0;
     
-    UPROPERTY(Edit)
+    MPROPERTY(Edit)
     FString AccountName;
     
-    UPROPERTY(Edit)
+    MPROPERTY(Edit)
     int32 VIPLevel = 0;
     
-    UPROPERTY(SaveGame)
+    MPROPERTY(SaveGame)
     int64 LoginTime = 0;
     
-    UPROPERTY(SaveGame)
+    MPROPERTY(SaveGame)
     FString LastLoginIP;
     
     // 示例：容器类型，通过反射注册为属性

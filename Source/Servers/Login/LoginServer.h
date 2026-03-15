@@ -42,8 +42,11 @@ struct SGatewayPeer
 };
 
 // 登录服务器
-class MLoginServer : public MNetServerBase
+class MLoginServer : public MNetServerBase, public MReflectObject
 {
+public:
+    MGENERATED_BODY(MLoginServer, MReflectObject, 0)
+
 private:
     SLoginConfig Config;
     TMap<uint64, SGatewayPeer> GatewayConnections;
@@ -55,7 +58,11 @@ private:
     // 调试 HTTP 服务器
     TUniquePtr<MHttpDebugServer> DebugServer;
 
+    // Login 级 RPC Service（处理跨服务器 RPC）
+    MLoginService LoginService;
+
     // 服务器消息分发器
+    MServerMessageDispatcher GatewayMessageDispatcher;
     MServerMessageDispatcher RouterMessageDispatcher;
 
 public:
@@ -77,6 +84,8 @@ public:
     bool ValidateSession(uint32 SessionKey, uint64& OutPlayerId);
     void RemoveSession(uint32 SessionKey);
 
+    MLOGIN_SERVER_ROUTER_ACK_RPC_LIST(MDECLARE_SERVER_HOSTED_RPC_METHOD)
+
 private:
     void HandleGatewayPacket(uint64 ConnectionId, const TArray& Data);
     bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
@@ -88,9 +97,15 @@ private:
     void HandleRouterServerMessage(uint8 Type, const TArray& Data);
     void SendRouterRegister();
     uint32 GenerateSessionKey();
+    uint64 FindAuthenticatedPeerConnectionId(EServerType ServerType) const;
     FString BuildDebugStatusJson() const;
 
     // 分发器注册与具体处理函数
+    void InitGatewayMessageHandlers();
     void InitRouterMessageHandlers();
+    void OnGateway_ServerHandshake(uint64 ConnectionId, const TArray& Payload);
+    void OnGateway_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& Message);
+    void OnGateway_PlayerLogin(uint64 ConnectionId, const SPlayerLoginRequestMessage& Request);
+    void OnGateway_SessionValidateRequest(uint64 ConnectionId, const SSessionValidateRequestMessage& Request);
     void OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& Message);
 };

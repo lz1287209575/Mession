@@ -1,10 +1,13 @@
 #pragma once
 
 #include "Core/Net/NetCore.h"
+#include "Common/Logger.h"
+#include "Common/ServerConnection.h"
 #include <typeinfo>
 #include <typeindex>
 #include <cstring>
 #include <type_traits>
+#include <tuple>
 // ============================================
 // 反射系统核心 - 仿UE风格
 // ============================================
@@ -81,10 +84,49 @@ enum class ERpcType : uint8
 class MReflectArchive;
 class MReflectObject;
 
+template<typename T>
+using TRpcArgStorage = std::remove_cv_t<std::remove_reference_t<T>>;
+
+inline uint16 ComputeStableReflectId(const char* ScopeName, const char* MemberName)
+{
+    // FNV-1a 32-bit, then fold to 16-bit. This makes IDs reproducible across processes/binaries.
+    constexpr uint32 OffsetBasis = 2166136261u;
+    constexpr uint32 Prime = 16777619u;
+
+    uint32 Hash = OffsetBasis;
+    auto MixString = [&Hash](const char* Text)
+    {
+        if (!Text)
+        {
+            return;
+        }
+
+        while (*Text)
+        {
+            Hash ^= static_cast<uint8>(*Text);
+            Hash *= Prime;
+            ++Text;
+        }
+    };
+
+    MixString(ScopeName);
+    Hash ^= static_cast<uint8>(':');
+    Hash *= Prime;
+    Hash ^= static_cast<uint8>(':');
+    Hash *= Prime;
+    MixString(MemberName);
+
+    uint16 Folded = static_cast<uint16>((Hash >> 16) ^ (Hash & 0xFFFFu));
+    return (Folded == 0) ? 1u : Folded;
+}
+
 // 属性基础类
 class MProperty
 {
 public:
+    using MutableAccessor = void*(*)(void*);
+    using ConstAccessor = const void*(*)(const void*);
+
     FString Name;
     EPropertyType Type = EPropertyType::None;
     EPropertyFlags Flags = EPropertyFlags::None;
@@ -92,6 +134,8 @@ public:
     size_t Size = 0;
     uint16 PropertyId = 0;
     std::type_index CppTypeIndex = typeid(void);
+    MutableAccessor MutableValueAccessor = nullptr;
+    ConstAccessor ConstValueAccessor = nullptr;
 
     MProperty() = default;
     MProperty(const FString& InName, EPropertyType InType, size_t InOffset, size_t InSize)
@@ -115,6 +159,26 @@ public:
     {
     }
 
+    MProperty(
+        const FString& InName,
+        EPropertyType InType,
+        size_t InOffset,
+        size_t InSize,
+        const std::type_index& InCppTypeIndex,
+        MutableAccessor InMutableAccessor,
+        ConstAccessor InConstAccessor)
+        : Name(InName)
+        , Type(InType)
+        , Flags(EPropertyFlags::None)
+        , Offset(InOffset)
+        , Size(InSize)
+        , PropertyId(0)
+        , CppTypeIndex(InCppTypeIndex)
+        , MutableValueAccessor(InMutableAccessor)
+        , ConstValueAccessor(InConstAccessor)
+    {
+    }
+
     virtual ~MProperty() = default;
 
     // 默认基于 Type 做序列化，容器等复杂类型可在子类中重写
@@ -124,13 +188,55 @@ public:
     template<typename T>
     T* GetValuePtr(void* Object) const
     {
+        if (!Object)
+        {
+            return nullptr;
+        }
+        if (MutableValueAccessor)
+        {
+            return static_cast<T*>(MutableValueAccessor(Object));
+        }
         return reinterpret_cast<T*>(reinterpret_cast<uint8*>(Object) + Offset);
     }
 
     template<typename T>
     const T* GetValuePtr(const void* Object) const
     {
+        if (!Object)
+        {
+            return nullptr;
+        }
+        if (ConstValueAccessor)
+        {
+            return static_cast<const T*>(ConstValueAccessor(Object));
+        }
         return reinterpret_cast<const T*>(reinterpret_cast<const uint8*>(Object) + Offset);
+    }
+
+    void* GetValueVoidPtr(void* Object) const
+    {
+        if (!Object)
+        {
+            return nullptr;
+        }
+        if (MutableValueAccessor)
+        {
+            return MutableValueAccessor(Object);
+        }
+        return reinterpret_cast<uint8*>(Object) + Offset;
+    }
+
+    const void* GetValueVoidPtr(const void* Object) const
+    {
+        if (!Object)
+        {
+            return nullptr;
+        }
+        if (ConstValueAccessor)
+        {
+            return ConstValueAccessor(Object);
+        }
+        return reinterpret_cast<const uint8*>(Object) + Offset;
     }
 };
 
@@ -142,6 +248,7 @@ public:
     EFunctionFlags Flags = EFunctionFlags::None;
     uint16 FunctionId = 0;
     size_t ParamSize = 0;
+    EServerType EndpointServerType = EServerType::Unknown;
     
     // 函数指针类型
     using FunctionPtr = void(*)(void*);
@@ -256,7 +363,18 @@ public:
     // 注册函数
     void RegisterFunction(MFunction* InFunction)
     {
-        InFunction->FunctionId = ++GlobalFunctionId;
+        const uint16 StableId = ComputeStableReflectId(ClassName.c_str(), InFunction ? InFunction->Name.c_str() : "");
+        if (InFunction)
+        {
+            if (FindFunctionById(StableId))
+            {
+                LOG_WARN("Reflection function id collision: class=%s function=%s id=%u",
+                         ClassName.c_str(),
+                         InFunction->Name.c_str(),
+                         static_cast<unsigned>(StableId));
+            }
+            InFunction->FunctionId = StableId;
+        }
         Functions.push_back(InFunction);
     }
 };
@@ -373,12 +491,10 @@ private:
 // ============================================
 
 // 反射标记宏（标签，不做实际逻辑）
+#define MSTRUCT(...)
+#define MENUM(...)
 #define MPROPERTY(...)
 #define MFUNCTION(...)
-
-// 兼容旧的 UE 风格宏，映射到 M 前缀
-#define UPROPERTY(...) MPROPERTY(__VA_ARGS__)
-#define UFUNCTION(...) MFUNCTION(__VA_ARGS__)
 
 // 注册属性
 #define PROPERTY(Type, Name, Flags) \
@@ -398,7 +514,7 @@ private:
     };
 
 // 声明类反射信息：放在类内部
-#define GENERATED_BODY(ClassName, ParentClass, Flags) \
+#define MGENERATED_BODY(ClassName, ParentClass, Flags) \
 public: \
     using ThisClass = ClassName; \
     using Super = ParentClass; \
@@ -408,15 +524,12 @@ private: \
     static void RegisterAllProperties(MClass* InClass); \
     static void RegisterAllFunctions(MClass* InClass);
 
-// MCLASS / UCLASS：类反射声明宏（别名）
+// MCLASS：类反射声明宏
 #define MCLASS(ClassName, ParentClass, Flags) \
-    GENERATED_BODY(ClassName, ParentClass, Flags)
-
-#define UCLASS(ClassName, ParentClass, Flags) \
-    MCLASS(ClassName, ParentClass, Flags)
+    MGENERATED_BODY(ClassName, ParentClass, Flags)
 
 // 在类外实现反射注册
-#define IMPLEMENT_CLASS(ClassName, ParentClass, Flags) \
+#define MIMPLEMENT_CLASS(ClassName, ParentClass, Flags) \
 MClass* ClassName::StaticClass() \
 { \
     static MClass* Class = nullptr; \
@@ -433,22 +546,94 @@ MClass* ClassName::StaticClass() \
 }
 
 // 注册属性宏：CppType 为底层 C++ 类型，PropEnum 为 EPropertyType 枚举值
-#define REGISTER_PROPERTY(CppType, PropEnum, PropName, PropFlags) \
+#define MREGISTER_PROPERTY(CppType, PropEnum, PropName, PropFlags) \
     do { \
-        auto* Prop = new TProperty<CppType>(#PropName, EPropertyType::PropEnum, offsetof(ThisClass, PropName), sizeof(CppType), PropFlags); \
+        auto* Prop = new TMemberProperty<ThisClass, CppType, &ThisClass::PropName>(#PropName, EPropertyType::PropEnum, PropFlags); \
         InClass->RegisterProperty(Prop); \
     } while(0)
 
 // 向反射系统注册 TVector 容器属性（元素类型必须已被 MReflectArchive 支持）
 
 // 注册函数宏
-#define REGISTER_FUNCTION(FuncName, FuncFlags) \
+#define MREGISTER_FUNCTION(FuncName, FuncFlags) \
     do { \
         auto* Func = new MFunction(); \
         Func->Name = #FuncName; \
         Func->Flags = EFunctionFlags::FuncFlags; \
         InClass->RegisterFunction(Func); \
     } while(0)
+
+#define MREGISTER_NATIVE_METHOD_0(MethodName, FuncFlags) \
+    do { \
+        auto* Func = new MFunction(); \
+        Func->Name = #MethodName; \
+        Func->Flags = EFunctionFlags::FuncFlags; \
+        Func->NativeFunc = [](void* Obj) \
+        { \
+            if (!Obj) \
+            { \
+                return; \
+            } \
+            static_cast<ThisClass*>(Obj)->MethodName(); \
+        }; \
+        InClass->RegisterFunction(Func); \
+    } while(0)
+
+#define MREGISTER_RPC_FUNCTION(MethodPtr, FuncNameLiteral, FuncFlags, RpcKind, ReliableValue) \
+    do { \
+        InClass->RegisterFunction( \
+            CreateRpcFunction<MethodPtr>(FuncNameLiteral, EFunctionFlags::FuncFlags, ERpcType::RpcKind, ReliableValue)); \
+    } while(0)
+
+#define MREGISTER_RPC_FUNCTION_WITH_VALIDATE(MethodPtr, ValidatePtr, FuncNameLiteral, FuncFlags, RpcKind, ReliableValue) \
+    do { \
+        InClass->RegisterFunction( \
+            CreateRpcFunction<MethodPtr, ValidatePtr>(FuncNameLiteral, EFunctionFlags::FuncFlags, ERpcType::RpcKind, ReliableValue)); \
+    } while(0)
+
+#define MREGISTER_RPC_FUNCTION_FOR_SERVER(MethodPtr, FuncNameLiteral, FuncFlags, RpcKind, ReliableValue, EndpointType) \
+    do { \
+        InClass->RegisterFunction( \
+            CreateRpcFunction<MethodPtr>( \
+                FuncNameLiteral, \
+                EFunctionFlags::FuncFlags, \
+                ERpcType::RpcKind, \
+                ReliableValue, \
+                EServerType::EndpointType)); \
+    } while(0)
+
+#define MREGISTER_RPC_METHOD(MethodName, FuncFlags, RpcKind, ReliableValue) \
+    MREGISTER_RPC_FUNCTION(&ThisClass::MethodName, #MethodName, FuncFlags, RpcKind, ReliableValue)
+
+#define MREGISTER_RPC_METHOD_FOR_SERVER(MethodName, FuncFlags, RpcKind, ReliableValue, EndpointType) \
+    MREGISTER_RPC_FUNCTION_FOR_SERVER(&ThisClass::MethodName, #MethodName, FuncFlags, RpcKind, ReliableValue, EndpointType)
+
+#define MREGISTER_RPC_METHOD_WITH_VALIDATE(MethodName, ValidateName, FuncFlags, RpcKind, ReliableValue) \
+    MREGISTER_RPC_FUNCTION_WITH_VALIDATE( \
+        &ThisClass::MethodName, \
+        &ThisClass::ValidateName, \
+        #MethodName, \
+        FuncFlags, \
+        RpcKind, \
+        ReliableValue)
+
+#define MDECLARE_RPC_METHOD(MethodName, Signature, FuncFlags, RpcKind, ReliableValue) \
+    MFUNCTION(FuncFlags) void MethodName Signature;
+
+#define MREGISTER_RPC_METHOD_ENTRY(MethodName, Signature, FuncFlags, RpcKind, ReliableValue) \
+    MREGISTER_RPC_METHOD(MethodName, FuncFlags, RpcKind, ReliableValue);
+
+#define MDECLARE_RPC_METHOD_WITH_HANDLER(MethodName, ApiName, Signature, FuncFlags, RpcKind, ReliableValue) \
+    MDECLARE_RPC_METHOD(MethodName, Signature, FuncFlags, RpcKind, ReliableValue)
+
+#define MREGISTER_RPC_METHOD_WITH_HANDLER_ENTRY(MethodName, ApiName, Signature, FuncFlags, RpcKind, ReliableValue) \
+    MREGISTER_RPC_METHOD_ENTRY(MethodName, Signature, FuncFlags, RpcKind, ReliableValue)
+
+#define MDECLARE_SERVER_HOSTED_RPC_METHOD(ClassNameLiteral, EndpointType, MethodName, Signature, FuncFlags, RpcKind, ReliableValue) \
+    MFUNCTION(FuncFlags, EndpointType) void MethodName Signature;
+
+#define MREGISTER_SERVER_HOSTED_RPC_METHOD_ENTRY(ClassNameLiteral, EndpointType, MethodName, Signature, FuncFlags, RpcKind, ReliableValue) \
+    MREGISTER_RPC_METHOD_FOR_SERVER(MethodName, FuncFlags, RpcKind, ReliableValue, EndpointType);
 
 // 属性访问器
 #define GET_PROPERTY(Object, Type, Name) \
@@ -564,6 +749,182 @@ private:
     }
 };
 
+template<typename... TArgs>
+inline void SerializeRpcArgs(MReflectArchive& Ar, TArgs&... Args)
+{
+    (void(Ar << Args), ...);
+}
+
+template<typename... TArgs>
+inline TArray BuildRpcArgsPayload(TArgs&&... Args)
+{
+    MReflectArchive Ar;
+    (void([&Ar](auto&& Value)
+    {
+        using TValue = std::remove_cv_t<std::remove_reference_t<decltype(Value)>>;
+        TValue Copy = static_cast<TValue>(Value);
+        Ar << Copy;
+    }(std::forward<TArgs>(Args))), ...);
+    return std::move(Ar.Data);
+}
+
+template<auto MethodPtr>
+struct TRpcMethodTraits;
+
+template<typename TObject, typename... TArgs, void (TObject::*MethodPtr)(TArgs...)>
+struct TRpcMethodTraits<MethodPtr>
+{
+    using ObjectType = TObject;
+    using ArgsTuple = std::tuple<TRpcArgStorage<TArgs>...>;
+};
+
+template<auto MethodPtr, auto ValidatePtr = nullptr>
+struct TRpcInvoker;
+
+template<typename TObject, typename... TArgs, void (TObject::*MethodPtr)(TArgs...), bool (TObject::*ValidatePtr)(TArgs...) const>
+struct TRpcInvoker<MethodPtr, ValidatePtr>
+{
+    using Traits = TRpcMethodTraits<MethodPtr>;
+    using ObjectType = typename Traits::ObjectType;
+    using ArgsTuple = typename Traits::ArgsTuple;
+
+    template<size_t... Indices>
+    static void InvokeImpl(ObjectType* Object, MReflectArchive& Ar, std::index_sequence<Indices...>)
+    {
+        ArgsTuple Args;
+        SerializeRpcArgs(Ar, std::get<Indices>(Args)...);
+
+        const bool bValid = std::apply(
+            [Object](auto&... UnpackedArgs)
+            {
+                return (Object->*ValidatePtr)(UnpackedArgs...);
+            },
+            Args);
+        if (!bValid)
+        {
+            LOG_WARN("RPC validation failed for function");
+            return;
+        }
+
+        std::apply(
+            [Object](auto&... UnpackedArgs)
+            {
+                (Object->*MethodPtr)(UnpackedArgs...);
+            },
+            Args);
+    }
+
+    static void Invoke(MReflectObject* Object, MReflectArchive& Ar)
+    {
+        if (!Object)
+        {
+            return;
+        }
+
+        auto* TypedObject = static_cast<ObjectType*>(Object);
+        InvokeImpl(TypedObject, Ar, std::index_sequence_for<TArgs...>{});
+    }
+};
+
+template<typename TObject, typename... TArgs, void (TObject::*MethodPtr)(TArgs...)>
+struct TRpcInvoker<MethodPtr, nullptr>
+{
+    using Traits = TRpcMethodTraits<MethodPtr>;
+    using ObjectType = typename Traits::ObjectType;
+    using ArgsTuple = typename Traits::ArgsTuple;
+
+    template<size_t... Indices>
+    static void InvokeImpl(ObjectType* Object, MReflectArchive& Ar, std::index_sequence<Indices...>)
+    {
+        ArgsTuple Args;
+        SerializeRpcArgs(Ar, std::get<Indices>(Args)...);
+
+        std::apply(
+            [Object](auto&... UnpackedArgs)
+            {
+                (Object->*MethodPtr)(UnpackedArgs...);
+            },
+            Args);
+    }
+
+    static void Invoke(MReflectObject* Object, MReflectArchive& Ar)
+    {
+        if (!Object)
+        {
+            return;
+        }
+
+        auto* TypedObject = static_cast<ObjectType*>(Object);
+        InvokeImpl(TypedObject, Ar, std::index_sequence_for<TArgs...>{});
+    }
+};
+
+template<auto MethodPtr, auto ValidatePtr = nullptr>
+inline MFunction* CreateRpcFunction(
+    const char* Name,
+    EFunctionFlags Flags,
+    ERpcType RpcType,
+    bool bReliable,
+    EServerType EndpointServerType = EServerType::Unknown)
+{
+    auto* Func = new MFunction();
+    Func->Name = Name;
+    Func->Flags = Flags;
+    Func->RpcType = RpcType;
+    Func->bReliable = bReliable;
+    Func->EndpointServerType = EndpointServerType;
+    Func->RpcFunc = &TRpcInvoker<MethodPtr, ValidatePtr>::Invoke;
+    return Func;
+}
+
+template<auto MethodPtr, typename... TArgs>
+inline TArray BuildRpcPayloadForCall(TArgs&&... Args)
+{
+    using Traits = TRpcMethodTraits<MethodPtr>;
+    using ObjectType = typename Traits::ObjectType;
+    (void)sizeof(ObjectType);
+    return BuildRpcArgsPayload(std::forward<TArgs>(Args)...);
+}
+
+template<typename TObject>
+inline uint16 GetRpcFunctionIdByName(const char* Name)
+{
+    MClass* Class = TObject::StaticClass();
+    if (!Class || !Name)
+    {
+        return 0;
+    }
+
+    MFunction* Func = Class->FindFunction(Name);
+    return Func ? Func->FunctionId : 0;
+}
+
+inline uint16 GetStableRpcFunctionIdByName(const char* ClassName, const char* FuncName)
+{
+    return ComputeStableReflectId(ClassName, FuncName);
+}
+
+template<typename TObject>
+inline uint16 GetCachedRpcFunctionId(uint16& CachedFunctionId, const char* Name)
+{
+    if (CachedFunctionId != 0)
+    {
+        return CachedFunctionId;
+    }
+
+    CachedFunctionId = GetRpcFunctionIdByName<TObject>(Name);
+    return CachedFunctionId;
+}
+
+#define MGET_RPC_FUNCTION_ID(ClassType, FuncName) \
+    GetRpcFunctionIdByName<ClassType>(#FuncName)
+
+#define MGET_CACHED_RPC_FUNCTION_ID(ClassType, FuncName, CacheVar) \
+    GetCachedRpcFunctionId<ClassType>(CacheVar, #FuncName)
+
+#define MGET_STABLE_RPC_FUNCTION_ID(ClassNameLiteral, FuncNameLiteral) \
+    GetStableRpcFunctionIdByName(ClassNameLiteral, FuncNameLiteral)
+
 // ============================================
 // 属性模板：默认行为 + 容器特化
 // ============================================
@@ -582,9 +943,50 @@ public:
         Flags = InFlags;
     }
 
+    TProperty(
+        const FString& InName,
+        EPropertyType InType,
+        size_t InOffset,
+        size_t InSize,
+        EPropertyFlags InFlags,
+        MutableAccessor InMutableAccessor,
+        ConstAccessor InConstAccessor)
+        : MProperty(InName, InType, InOffset, InSize, std::type_index(typeid(T)), InMutableAccessor, InConstAccessor)
+    {
+        Flags = InFlags;
+    }
+
     virtual void SerializeValue(void* Object, MReflectArchive& Ar) const override
     {
         TPropertySerializer<T>::Serialize(this, Object, Ar);
+    }
+};
+
+template<typename TObject, typename TValue, TValue TObject::* MemberPtr>
+class TMemberProperty : public TProperty<TValue>
+{
+public:
+    TMemberProperty(const FString& InName, EPropertyType InType, EPropertyFlags InFlags)
+        : TProperty<TValue>(
+            InName,
+            InType,
+            0,
+            sizeof(TValue),
+            InFlags,
+            &TMemberProperty::GetMutableValue,
+            &TMemberProperty::GetConstValue)
+    {
+    }
+
+private:
+    static void* GetMutableValue(void* Object)
+    {
+        return &(static_cast<TObject*>(Object)->*MemberPtr);
+    }
+
+    static const void* GetConstValue(const void* Object)
+    {
+        return &(static_cast<const TObject*>(Object)->*MemberPtr);
     }
 };
 
@@ -613,7 +1015,11 @@ struct TPropertySerializer<TVector<TElement>>
             return;
         }
 
-        auto* Vec = reinterpret_cast<TVector<TElement>*>(reinterpret_cast<uint8*>(Object) + Prop->Offset);
+        auto* Vec = Prop->GetValuePtr<TVector<TElement>>(Object);
+        if (!Vec)
+        {
+            return;
+        }
         uint32 Count = 0;
         if (Ar.bWriting)
         {
@@ -660,7 +1066,11 @@ struct TPropertySerializer<TMap<K, V, Compare>>
             return;
         }
 
-        auto* MapPtr = reinterpret_cast<TMap<K, V, Compare>*>(reinterpret_cast<uint8*>(Object) + Prop->Offset);
+        auto* MapPtr = Prop->GetValuePtr<TMap<K, V, Compare>>(Object);
+        if (!MapPtr)
+        {
+            return;
+        }
         uint32 Count = 0;
         if (Ar.bWriting)
         {
@@ -705,7 +1115,11 @@ struct TPropertySerializer<TSet<T, Compare>>
             return;
         }
 
-        auto* SetPtr = reinterpret_cast<TSet<T, Compare>*>(reinterpret_cast<uint8*>(Object) + Prop->Offset);
+        auto* SetPtr = Prop->GetValuePtr<TSet<T, Compare>>(Object);
+        if (!SetPtr)
+        {
+            return;
+        }
         uint32 Count = 0;
         if (Ar.bWriting)
         {
@@ -779,8 +1193,65 @@ public:
     }
 };
 
+template<typename TObject, typename TElement, TVector<TElement> TObject::* MemberPtr>
+class TMemberVectorProperty : public MProperty
+{
+public:
+    TMemberVectorProperty(const FString& InName, EPropertyFlags InFlags)
+        : MProperty(
+            InName,
+            EPropertyType::None,
+            0,
+            sizeof(TVector<TElement>),
+            std::type_index(typeid(TVector<TElement>)),
+            &TMemberVectorProperty::GetMutableValue,
+            &TMemberVectorProperty::GetConstValue)
+    {
+        Flags = InFlags;
+    }
+
+    virtual void SerializeValue(void* Object, MReflectArchive& Ar) const override
+    {
+        auto* Vec = GetValuePtr<TVector<TElement>>(Object);
+        if (!Vec)
+        {
+            return;
+        }
+
+        uint32 Count = 0;
+        if (Ar.bWriting)
+        {
+            Count = static_cast<uint32>(Vec->size());
+        }
+
+        Ar << Count;
+
+        if (Ar.bReading)
+        {
+            Vec->resize(Count);
+        }
+
+        for (uint32 Index = 0; Index < Count; ++Index)
+        {
+            TElement& Element = (*Vec)[Index];
+            Ar << Element;
+        }
+    }
+
+private:
+    static void* GetMutableValue(void* Object)
+    {
+        return &(static_cast<TObject*>(Object)->*MemberPtr);
+    }
+
+    static const void* GetConstValue(const void* Object)
+    {
+        return &(static_cast<const TObject*>(Object)->*MemberPtr);
+    }
+};
+
 #define REGISTER_TVECTOR_PROPERTY(ElementCppType, PropName, PropFlags) \
     do { \
-        auto* Prop = new MVectorProperty<ElementCppType>(#PropName, offsetof(ThisClass, PropName), PropFlags); \
+        auto* Prop = new TMemberVectorProperty<ThisClass, ElementCppType, &ThisClass::PropName>(#PropName, PropFlags); \
         InClass->RegisterProperty(Prop); \
     } while(0)

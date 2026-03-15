@@ -90,10 +90,37 @@ inline void AppendString(TArray& OutData, const FString& Value)
     memcpy(OutData.data() + WriteOffset, Value.data(), Length);
 }
 
+inline void AppendStringBE(TArray& OutData, const FString& Value)
+{
+    const uint16 Length = static_cast<uint16>(Value.size());
+    AppendValueBE(OutData, Length);
+    if (Length == 0)
+    {
+        return;
+    }
+
+    const size_t WriteOffset = OutData.size();
+    OutData.resize(WriteOffset + Length);
+    memcpy(OutData.data() + WriteOffset, Value.data(), Length);
+}
+
 inline bool ReadString(const TArray& Data, size_t& Offset, FString& OutValue)
 {
     uint16 Length = 0;
     if (!ReadValue(Data, Offset, Length) || Offset + Length > Data.size())
+    {
+        return false;
+    }
+
+    OutValue.assign(reinterpret_cast<const char*>(Data.data() + Offset), Length);
+    Offset += Length;
+    return true;
+}
+
+inline bool ReadStringBE(const TArray& Data, size_t& Offset, FString& OutValue)
+{
+    uint16 Length = 0;
+    if (!ReadValueBE(Data, Offset, Length) || Offset + Length > Data.size())
     {
         return false;
     }
@@ -120,9 +147,33 @@ public:
         return *this;
     }
 
+    MMessageWriter& WriteBE(uint16 Value)
+    {
+        AppendValueBE(Data, Value);
+        return *this;
+    }
+
+    MMessageWriter& WriteBE(uint32 Value)
+    {
+        AppendValueBE(Data, Value);
+        return *this;
+    }
+
+    MMessageWriter& WriteBE(uint64 Value)
+    {
+        AppendValueBE(Data, Value);
+        return *this;
+    }
+
     MMessageWriter& WriteString(const FString& Value)
     {
         AppendString(Data, Value);
+        return *this;
+    }
+
+    MMessageWriter& WriteStringBE(const FString& Value)
+    {
+        AppendStringBE(Data, Value);
         return *this;
     }
 
@@ -171,9 +222,37 @@ public:
         return bSuccess;
     }
 
+    bool ReadBE(uint16& OutValue)
+    {
+        const bool bSuccess = ReadValueBE(Data, Offset, OutValue);
+        bValid = bValid && bSuccess;
+        return bSuccess;
+    }
+
+    bool ReadBE(uint32& OutValue)
+    {
+        const bool bSuccess = ReadValueBE(Data, Offset, OutValue);
+        bValid = bValid && bSuccess;
+        return bSuccess;
+    }
+
+    bool ReadBE(uint64& OutValue)
+    {
+        const bool bSuccess = ReadValueBE(Data, Offset, OutValue);
+        bValid = bValid && bSuccess;
+        return bSuccess;
+    }
+
     bool ReadString(FString& OutValue)
     {
         const bool bSuccess = ::ReadString(Data, Offset, OutValue);
+        bValid = bValid && bSuccess;
+        return bSuccess;
+    }
+
+    bool ReadStringBE(FString& OutValue)
+    {
+        const bool bSuccess = ::ReadStringBE(Data, Offset, OutValue);
         bValid = bValid && bSuccess;
         return bSuccess;
     }
