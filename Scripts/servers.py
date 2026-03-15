@@ -136,7 +136,7 @@ def start_servers(build_dir: Path, wait_ready: bool = True) -> int:
 
     log("All servers started.")
     log(f"  PIDs: {pids}")
-    log("  Stop with: python3 scripts/servers.py stop [--build-dir <dir>]")
+    log("  Stop with: python3 Scripts/servers.py stop [--build-dir <dir>]")
     return 0
 
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 1 has been implemented and validated with the current build and `scripts/validate.py`.
+Phase 1 has been implemented and validated with the current build and `Scripts/validate.py`.
 
 Implemented pieces:
 
@@ -457,7 +457,7 @@ Phase 1 is complete when:
 - accepted and active TCP connections both use `MTcpConnection`
 - listener sockets use RAII ownership
 - existing build succeeds on current targets
-- `scripts/validate.py` still passes
+- `Scripts/validate.py` still passes
 
 ## Recommended Implementation Scope
 
@@ -508,7 +508,7 @@ Recommended next steps:
 | 任务子循环 | `MTaskEventLoop`：实现 `ITaskRunner`、`IEventLoopStep`，PostTask / RunOnce 仅执行任务队列 | `Core/ITaskRunner.h`、`Core/TaskEventLoop.h/.cpp` |
 | 网络子循环 | `MNetEventLoop`：实现 `IEventLoopStep`，RegisterListener / RegisterConnection、RunOnce（poll + 可读时 ReceivePacket + OnRead/OnClose） | `Core/EventLoop.h/.cpp` |
 
-**验收**：构建通过、`scripts/validate.py` 主链路验证通过；Phase 1 目标（单一 TCP 传输、单一组包、监听 RAII）均已满足。
+**验收**：构建通过、`Scripts/validate.py` 主链路验证通过；Phase 1 目标（单一 TCP 传输、单一组包、监听 RAII）均已满足。
 
 ### 已定决策（不再扩展）
 

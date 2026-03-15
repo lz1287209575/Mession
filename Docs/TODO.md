@@ -7,7 +7,7 @@
 ## Snapshot
 
 - [x] CMake 构建通过
-- [x] `scripts/validate.py` 登录 / 移动 / 重连验证通过
+- [x] `Scripts/validate.py` 登录 / 移动 / 重连验证通过
 - [x] Router / Gateway / Login / World / Scene 最小链路已打通
 - [x] Core 类型补齐、时间抽象、基础线程安全项已完成
 
@@ -25,14 +25,14 @@
 
 ### 验证方案（脚本，不引入 ctest）
 
-- **清理路径**：多玩家登录后，关闭其中一人的连接；等待后由另一玩家发移动；断线玩家重连并用同一 `PlayerId` 登录。已接入 `scripts/validate.py`（Test 3），失败则脚本不通过。
-- **复制链路**：玩家登录后，在约定时间内从客户端连接收包，断言至少收到一条 `MT_ActorCreate`。已接入 `scripts/validate.py`（Test 2）为**硬断言**。根因与修复：World 每 Tick 未刷新后端连接发送缓冲，复制包在 EAGAIN 时滞留；已改为每帧对 `BackendConnections` 调用 `FlushSendBuffer()`。跑验证前需保证端口 8001–8005 未被旧进程占用。
+- **清理路径**：多玩家登录后，关闭其中一人的连接；等待后由另一玩家发移动；断线玩家重连并用同一 `PlayerId` 登录。已接入 `Scripts/validate.py`（Test 3），失败则脚本不通过。
+- **复制链路**：玩家登录后，在约定时间内从客户端连接收包，断言至少收到一条 `MT_ActorCreate`。已接入 `Scripts/validate.py`（Test 2）为**硬断言**。根因与修复：World 每 Tick 未刷新后端连接发送缓冲，复制包在 EAGAIN 时滞留；已改为每帧对 `BackendConnections` 调用 `FlushSendBuffer()`。跑验证前需保证端口 8001–8005 未被旧进程占用。
 
 ## Next
 
 - [x] 整理 CI 下的脚本测试入口与文档（不引入 ctest）
-- [x] 为 `ServerMessages` / 协议组包解包补可脚本化或独立可执行的小验证（`scripts/verify_protocol.py`，CI 全矩阵执行）
-- [x] 把登录、进世界、断线清理整理成稳定的集成测试脚本并纳入 CI（`scripts/validate.py` Test 1/2/3，CI 中 Linux GCC 执行）
+- [x] 为 `ServerMessages` / 协议组包解包补可脚本化或独立可执行的小验证（`Scripts/verify_protocol.py`，CI 全矩阵执行）
+- [x] 把登录、进世界、断线清理整理成稳定的集成测试脚本并纳入 CI（`Scripts/validate.py` Test 1/2/3，CI 中 Linux GCC 执行）
 - [x] 清理 `SceneServer` 和剩余服务上的网络循环样板，决定是否继续扩展 `MSocketPoller`（决策：保持 MSocketPoller 薄封装，各服保留独立 accept+poll+处理 循环，见 `docs/socket-layer-refactor.md`）
 
 ## Later
@@ -72,8 +72,8 @@
 - [x] 会话校验请求改用 World 内全局 `ValidationRequestId`，避免多网关连接号冲突
 - [x] Gateway ↔ World 玩家数据路由统一为 `PlayerId`（`MT_PlayerClientSync` + `SPlayerClientSyncMessage`）
 - [x] World 每 Tick 刷新后端连接发送缓冲，复制包可稳定到达 Gateway → Client
-- [x] `scripts/validate.py` Test 2 复制链路改为硬断言；Test 3 清理路径已硬断言
-- [x] CI：脚本验证入口与前置条件文档化（README + docs/validation.md）；协议小验证 `scripts/verify_protocol.py` 全矩阵执行；主链路验证 Linux GCC 执行
+- [x] `Scripts/validate.py` Test 2 复制链路改为硬断言；Test 3 清理路径已硬断言
+- [x] CI：脚本验证入口与前置条件文档化（README + docs/validation.md）；协议小验证 `Scripts/verify_protocol.py` 全矩阵执行；主链路验证 Linux GCC 执行
 - [x] 网络循环样板与 MSocketPoller 决策：保持薄封装、各服独立循环，见 `docs/socket-layer-refactor.md`
 - [x] 各服改为 EventLoop 驱动：Gateway/Login/World/Router/Scene 监听与连接均由 `MNetEventLoop` 统一 poll，后端 `MServerConnection` 仍在 TickBackends 中 Tick；见 `docs/socket-layer-refactor.md` 网络循环与 EventLoop 迁移
 - [x] 服务器模板抽象：`MNetServerBase`（Common/NetServerBase），各服继承并实现 GetListenPort/OnAccept/ShutdownConnections、可选 TickBackends/OnRunStarted；文档见 `docs/server-template.md`
@@ -85,4 +85,4 @@
 
 ---
 
-*最后更新：基于仓库扫描、构建结果和 `scripts/validate.py` 验证结果整理*
+*最后更新：基于仓库扫描、构建结果和 `Scripts/validate.py` 验证结果整理*

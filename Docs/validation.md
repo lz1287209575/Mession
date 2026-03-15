@@ -5,7 +5,7 @@
 ## 入口
 
 - **本地**：在仓库根目录执行  
-  `python3 scripts/validate.py [--build-dir build] [--timeout 50] [--no-build]`
+  `python3 Scripts/validate.py [--build-dir Build] [--timeout 50] [--no-build]`
 - **CI**：`main` 分支 push/PR 时，在 Linux GCC 构建后自动执行上述脚本（见 `.github/workflows/cmake-multi-platform.yml`）。
 
 ## 前置条件
@@ -37,4 +37,4 @@
 
 ## 与 ctest 的关系
 
-当前 **不引入 ctest**：所有主链路验证由 `scripts/validate.py` 完成，CI 中直接调用该脚本。
+当前 **不引入 ctest**：所有主链路验证由 `Scripts/validate.py` 完成，CI 中直接调用该脚本。

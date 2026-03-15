@@ -74,7 +74,7 @@
 
 3. **迁移策略**：Gateway / World / Login / Router 中，先选一个服（如 Login）改为「创建 MNetEventLoop → RegisterListener + 在 OnAccept 里 RegisterConnection → Run()」，验证通过后再迁其他服；Scene 无 listen，可只迁「连接 Router/World」为 RegisterConnection 或保持现有 Tick。
 
-4. **验收**：现有 `scripts/validate.py` 全通过；各服行为与当前一致，仅实现从「手写 poll」改为「Loop + 回调」。
+4. **验收**：现有 `Scripts/validate.py` 全通过；各服行为与当前一致，仅实现从「手写 poll」改为「Loop + 回调」。
 
 ---
 

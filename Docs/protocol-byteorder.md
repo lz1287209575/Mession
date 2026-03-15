@@ -3,7 +3,7 @@
 ## 当前约定
 
 - **跨服消息（ServerMessages）**：`MMessageWriter` / `MMessageReader` 使用 `MessageUtils.h` 的 `AppendValue` / `ReadValue`，即**主机字节序**。当前部署多为同构环境（同机或同架构），暂未统一为网络字节序。
-- **客户端↔Gateway**：与脚本/验证客户端约定一致，当前也为**主机字节序**（小端）；`scripts/validate.py`、`scripts/verify_protocol.py` 按小端读写。
+- **客户端↔Gateway**：与脚本/验证客户端约定一致，当前也为**主机字节序**（小端）；`Scripts/validate.py`、`Scripts/verify_protocol.py` 按小端读写。
 
 ## 后续可选
 

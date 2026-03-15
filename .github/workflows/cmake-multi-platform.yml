@@ -69,18 +69,12 @@ jobs:
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
 
     - name: Protocol serialization check (script)
-      run: python3 scripts/verify_protocol.py
-
-    - name: Test
-      working-directory: ${{ steps.strings.outputs.build-output-dir }}
-      # Execute tests defined by the CMake configuration. Note that --build-config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
-      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
-      run: ctest --build-config ${{ matrix.build_type }}
+      run: python3 Scripts/verify_protocol.py
 
     - name: Script validation (Linux GCC only)
       if: matrix.os == 'ubuntu-latest' && matrix.c_compiler == 'gcc'
       run: |
-        python3 scripts/validate.py --build-dir ${{ steps.strings.outputs.build-output-dir }} --no-build --timeout 50
+        python3 Scripts/validate.py --build-dir ${{ steps.strings.outputs.build-output-dir }} --no-build --timeout 50
       env:
         # CI 环境端口隔离，无需预清理 8001–8005
         MESSION_ZONE_ID: 0
