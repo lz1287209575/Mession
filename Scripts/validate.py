@@ -15,7 +15,7 @@ Mession 脚本验证 - 启动所有服务器并验证登录、复制与清理路
   7. Test 5: 清理路径 - 一端断线后重连同一 PlayerId，验证 Gateway/World 已回收状态，并尽量观察 route cache 失效日志
   8. Test 6: Chat 路径可达
   9. Test 7: Heartbeat 本地处理可达
-  10. Test 8: RPC 路径可达
+  10. Test 8: 客户端 MT_RPC 兼容路径可达
   11. Test 9: 登录后立刻断开，验证重连恢复，并尽量观察 World 清理日志
   12. Test 10: 双端同时断线，验证双玩家重连恢复
   13. Test 11: 快速重连边界 - 同一 PlayerId 短时间内连续重连
@@ -753,8 +753,8 @@ def run_validation(
             f"lastSeq={int(gateway_status.get('lastClientHeartbeatSequence', 0))}"
         )
 
-        # 12. RPC 测试：通过 Gateway->World 路径发送 MT_RPC，触发服务器端 MHero RPC + validate
-        log("Test 8: RPC (Server-side validate)...")
+        # 12. RPC 兼容测试：确认客户端 MT_RPC 仍作为受控 legacy policy 可达
+        log("Test 8: Client MT_RPC legacy compatibility...")
         # 为简单起见，使用第一个仍在线的客户端执行 RPC 测试
         rpc_sock = None
         rpc_pid = 123456
@@ -787,7 +787,7 @@ def run_validation(
                     timeout=3.0,
                 )
                 if gateway_status is None:
-                    log("  MT_RPC path failed: Gateway legacyClientRpcCount did not increase")
+                    log("  Client MT_RPC compatibility path failed: Gateway legacyClientRpcCount did not increase")
                     rpc_sock.close()
                     for s, _ in clients:
                         if s:
@@ -795,7 +795,7 @@ def run_validation(
                     sock2.close()
                     return False
                 log(
-                    "  MT_RPC packet sent via explicit legacy policy: "
+                    "  Client MT_RPC observed via explicit legacy policy: "
                     f"legacyClientRpcCount={int(gateway_status.get('legacyClientRpcCount', 0))}"
                 )
         except Exception as e:

@@ -63,6 +63,7 @@ python3 Scripts/validate.py --build-dir Build --timeout 45
 说明：
 
 - 当前客户端上行入口中，`MT_RPC` 仍是唯一保留的 legacy 特例。
+- 它当前只被视为兼容通道，不再作为客户端长期正式协议能力。
 - `validate.py` 会额外断言 `legacyClientRpcCount` 增长且 `rejectedClientFallbackCount` 不增长。
 - 其余未接入声明式入口的客户端消息默认不会再通过 Gateway 通用 fallback 自动转发。
 

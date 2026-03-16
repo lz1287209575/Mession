@@ -22,7 +22,7 @@
 - [x] `HttpDebugServer` 已恢复可用，启动阶段会真实校验 bind/listen 成功。
 - [x] Gateway / Router / Login / World / Scene 的 debug JSON 已修正为合法输出。
 - [x] `Scripts/validate.py` 已覆盖：
-  Handshake 本地处理、登录、复制、`RouterResolved` 路由缓存、Chat、Heartbeat 本地处理、RPC、断线清理、登录后立刻断开、双端同时断线、同一 `PlayerId` 快速重连、并发登录。
+  Handshake 本地处理、登录、复制、`RouterResolved` 路由缓存、Chat、Heartbeat 本地处理、客户端 `MT_RPC` 兼容路径、断线清理、登录后立刻断开、双端同时断线、同一 `PlayerId` 快速重连、并发登录。
 
 当前核心判断：
 
@@ -38,6 +38,7 @@
 - Router 负责服务发现、路由决策、目标服务选择，是控制面核心。
 - OtherSvr 负责业务逻辑，不把业务判断重新回流到 Gateway。
 - 客户端协议保持 message-based ingress；Gateway 内部再转成统一路由/反射运行时。
+- `Server <-> Server` 的 `MT_RPC` 保留为内部 RPC 通道；`Client -> Gateway` 的 `MT_RPC` 不作为长期正式协议，只保留为受控兼容路径并以移除为目标。
 
 ## P0
 
@@ -107,7 +108,7 @@
 - [x] `MT_Heartbeat` -> `GatewayLocal`
   已落地为 Gateway 本地消费，用于连接保活和状态观测。
 - [ ] `MT_RPC` -> `Legacy / Deferred`
-  当前已从“通用 fallback 转发”收紧为“唯一显式 legacy policy”，且已接 debug/脚本观测；后续再决定是继续声明式化还是单独协议化。
+  结论已定：客户端 `MT_RPC` 不主线化；当前仅保留为唯一显式兼容策略，已接 debug/脚本观测，后续目标是被明确客户端消息替代后移除。
 - [ ] `MT_ActorCreate / MT_ActorDestroy / MT_ActorUpdate / MT_LoginResponse / MT_Error` -> `S2C only`
   这些当前更像服务端下行消息，不应进入客户端上行接入迁移范围。
 
@@ -224,7 +225,7 @@
 - [x] `Scripts/validate.py` Test 5: 断线清理与重连恢复
 - [x] `Scripts/validate.py` Test 6: Chat 路径可达
 - [x] `Scripts/validate.py` Test 7: Heartbeat 本地处理可达
-- [x] `Scripts/validate.py` Test 8: RPC 路径可达
+- [x] `Scripts/validate.py` Test 8: 客户端 `MT_RPC` 兼容路径可达
 - [x] `Scripts/validate.py` Test 9: 登录后立刻断开
 - [x] `Scripts/validate.py` Test 10: 双端同时断线
 - [x] `Scripts/validate.py` Test 11: 同一 `PlayerId` 快速重连

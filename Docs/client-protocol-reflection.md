@@ -4,6 +4,10 @@
 
 客户端协议不直接暴露内部 Server RPC。
 
+如果目的是直接交给 UE 侧或 Agent 快速打通当前 Gateway，请优先看：
+
+- [ue-gateway-quickstart.md](/workspaces/Mession/Docs/ue-gateway-quickstart.md)
+
 最终分层保持为：
 
 - Client <-> Gateway：`MessageType + PayloadStruct`
