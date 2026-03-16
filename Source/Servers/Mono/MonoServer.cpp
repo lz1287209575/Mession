@@ -1,5 +1,5 @@
 #include "MonoServer.h"
-#include "NetDriver/ReflectionExample.h"
+#include "Common/ReflectionExample.h"
 #include "NetDriver/Reflection.h"
 #include "Messages/NetMessages.h"
 
@@ -393,4 +393,3 @@ bool MMonoServer::Run()
     }
     return bOk;
 }
-

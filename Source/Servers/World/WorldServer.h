@@ -7,10 +7,11 @@
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"
+#include "Common/ReflectionExample.h"
 #include "NetDriver/NetObject.h"
 #include "NetDriver/ReplicationDriver.h"
-#include "NetDriver/ReflectionExample.h"
-#include "NetDriver/ServerRpcServices.h"
+#include "Servers/Login/LoginRpcService.h"
+#include "Servers/World/WorldRpcService.h"
 #include <thread>
 #include <chrono>
 
@@ -61,6 +62,7 @@ struct SPendingSessionValidation
 };
 
 // 世界服务器
+MCLASS()
 class MWorldServer : public MNetServerBase, public MReflectObject
 {
 public:
@@ -113,8 +115,8 @@ public:
     void ShutdownConnections() override;
     void OnRunStarted() override;
 
-    MWORLD_SERVER_ROUTER_ACK_RPC_LIST(MDECLARE_SERVER_HOSTED_RPC_METHOD)
-    MWORLD_SERVER_ROUTER_ROUTE_RPC_LIST(MDECLARE_SERVER_HOSTED_RPC_METHOD)
+    MDECLARE_SERVER_HOSTED_RPC_METHOD("MWorldServer", World, Rpc_OnRouterServerRegisterAck, (uint8 Result), NetServer, ServerToServer, true)
+    MDECLARE_SERVER_HOSTED_RPC_METHOD("MWorldServer", World, Rpc_OnRouterRouteResponse, (uint64 RequestId, uint8 RequestedTypeValue, uint64 PlayerId, bool bFound, uint32 ServerId, uint8 ServerTypeValue, const FString& ServerName, const FString& Address, uint16 Port, uint16 ZoneId), NetServer, ServerToServer, true)
 
 private:
     void HandlePacket(uint64 ConnectionId, const TArray& Data);

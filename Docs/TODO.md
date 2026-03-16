@@ -22,11 +22,12 @@
 ## Now
 
 - [x] 协议：梳理 `MessageUtils` / `PacketCodec` 的字节序边界，首批将 `SPlayerLoginResponseMessage`、`SSessionValidateRequestMessage`、`SPlayerLogoutMessage`、`SPlayerClientSyncMessage` 的整数头字段切到网络序
-- [ ] 协议：为首批网络序消息补 round-trip / fixed-blob 验证，并跑通 `Scripts/verify_protocol.py` 与 `Scripts/validate.py`（已通过 `verify_protocol.py`；`validate.py` 当前被 Router readiness 现存问题阻塞）
+- [x] 协议：为首批网络序消息补 round-trip / fixed-blob 验证，并跑通 `Scripts/verify_protocol.py` 与 `Scripts/validate.py`
 - [x] 文档：更新 `docs/protocol-byteorder.md`，明确“哪些消息已切网络序、哪些仍保持主机序”，避免混用
 - [ ] 反射：补齐 `MFUNCTION` 的原生函数自动注册，当前只覆盖 RPC 和零参数 native 方法，仍缺带参数 / `const` / 返回值 native 方法
 - [ ] 反射：补齐 `MENUM` 生成与注册落地，当前 `MHeaderTool` 仅识别枚举，尚未输出真正的 enum 反射 glue
-- [ ] 反射：为 `MCLASS/MSTRUCT/MENUM/MPROPERTY/MFUNCTION` 增加更明确的归属元数据，替代当前按头文件路径推断 `shared/gateway/login/world/...` 的 manifest 分组
+- [ ] 反射：继续完善 `MHeaderTool` 的路径归属规则与覆盖机制；当前已按 `Source/Servers/<Name>/...` / `Source/Common|Core|NetDriver/...` 自动分组，但插件/跨模块场景还缺更稳定的 override 方案
+- [ ] 架构：继续清理 `NetDriver` 边界，确保新增业务协议/RPC 不再回流到 `NetDriver`，统一沉到 `Servers/*`，通用运行时沉到 `Common/*`
 
 ### 验证方案（脚本，不引入 ctest）
 
@@ -52,7 +53,7 @@
 - [x] 继续收敛跨服/客户端载荷：新增 SPlayerIdPayload、SClientLoginResponsePayload、SPlayerMovePayload，Login/Gateway/World 中移除裸 memcpy，改用 ParsePayload/BuildPayload
 - [ ] 评估并逐步统一字节序策略，避免跨平台协议隐患（当前约定见 docs/protocol-byteorder.md）
 - [ ] 反射：将 `MHeaderTool` 从“生成 + CMake manifest”推进到更完整的一体化管线，减少 configure 阶段对已有 `Bin/MHeaderTool` 的前置依赖
-- [ ] 评估 `NetDriver/Reflection.h` 是正式接入主线，还是降级为示例 / 实验代码
+- [ ] 评估 `NetDriver/Reflection.h` 是正式接入主线，还是继续收敛到更薄的纯运行时反射内核
 - [ ] 若继续保留 `Reflection`，明确它和复制系统、运行时对象系统的边界
 - [ ] 反射：收敛当前编译告警，处理 `MReflectObject::Tick(float DeltaTime)` 未使用参数与其余生成代码噪音，保证自动生成链路默认干净
 
@@ -92,6 +93,10 @@
 - [x] 反射：`MPROPERTY` 自动注册改为成员访问器路径，移除对非标准布局类型 `offsetof` 的直接依赖
 - [x] 反射：`RegisterAllProperties/RegisterAllFunctions/StaticClass` 从业务 `.cpp` 手写实现下放到 `.mgenerated.cpp`
 - [x] 反射：`MHeaderTool` 生成 `Build/Generated/MHeaderToolTargets.cmake`，CMake 改为消费 manifest 并按目标拆分生成对象
+- [x] 架构：`ServerRpcServices.*` 从 `NetDriver` 拆分；业务 Service 回到 `Servers/Gateway|Login|World/*`，通用 RPC 运行时下沉到 `Common/ServerRpcRuntime.*`
+- [x] 架构：`ReflectionExample.*` 从 `NetDriver` 移到 `Common/*`，`NetDriver` 收敛为反射/复制基础设施
+- [x] 反射：`MHeaderTool` 改为按路径推导生成归属，`Source/Servers/<Name>/...` 自动归组到对应 server，`Common/Core/NetDriver` 默认归入 `shared`
+- [x] 验证：`cmake --build Build -j4` 与 `python3 Scripts/validate.py --build-dir Build --timeout 30 --debug` 通过；多玩家登录、复制、重连、RPC、并发登录链路均通过
 
 ---
 

@@ -491,6 +491,7 @@ private:
 // ============================================
 
 // 反射标记宏（标签，不做实际逻辑）
+#define MCLASS(...)
 #define MSTRUCT(...)
 #define MENUM(...)
 #define MPROPERTY(...)
@@ -523,10 +524,6 @@ public: \
 private: \
     static void RegisterAllProperties(MClass* InClass); \
     static void RegisterAllFunctions(MClass* InClass);
-
-// MCLASS：类反射声明宏
-#define MCLASS(ClassName, ParentClass, Flags) \
-    MGENERATED_BODY(ClassName, ParentClass, Flags)
 
 // 在类外实现反射注册
 #define MIMPLEMENT_CLASS(ClassName, ParentClass, Flags) \
@@ -630,7 +627,7 @@ MClass* ClassName::StaticClass() \
     MREGISTER_RPC_METHOD_ENTRY(MethodName, Signature, FuncFlags, RpcKind, ReliableValue)
 
 #define MDECLARE_SERVER_HOSTED_RPC_METHOD(ClassNameLiteral, EndpointType, MethodName, Signature, FuncFlags, RpcKind, ReliableValue) \
-    MFUNCTION(FuncFlags, EndpointType) void MethodName Signature;
+    MFUNCTION(FuncFlags) void MethodName Signature;
 
 #define MREGISTER_SERVER_HOSTED_RPC_METHOD_ENTRY(ClassNameLiteral, EndpointType, MethodName, Signature, FuncFlags, RpcKind, ReliableValue) \
     MREGISTER_RPC_METHOD_FOR_SERVER(MethodName, FuncFlags, RpcKind, ReliableValue, EndpointType);

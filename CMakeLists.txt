@@ -73,6 +73,8 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Logger.cpp
     Source/Common/NetServerBase.cpp
     Source/Common/ServerConnection.cpp
+    Source/Common/ServerRpcRuntime.cpp
+    Source/Common/ReflectionExample.cpp
 )
 
 add_library(mession_common STATIC
@@ -94,8 +96,6 @@ set(MESSION_NETDRIVER_SOURCES
     Source/NetDriver/NetObject.cpp
     Source/NetDriver/ReplicationDriver.cpp
     Source/NetDriver/Reflection.cpp
-    Source/NetDriver/ReflectionExample.cpp
-    Source/NetDriver/ServerRpcServices.cpp
 )
 
 add_library(mession_netdriver STATIC
@@ -111,6 +111,16 @@ target_link_libraries(mession_netdriver
         mession_common
 )
 configure_mession_compile_options(mession_netdriver)
+
+# MHeaderTool - 反射代码生成工具
+add_executable(MHeaderTool
+    Source/Tools/MHeaderTool.cpp
+)
+target_link_libraries(MHeaderTool
+    PRIVATE
+        mession_core
+)
+configure_mession_compile_options(MHeaderTool)
 
 set(MESSION_GENERATED_DIR "${CMAKE_SOURCE_DIR}/Build/Generated")
 set(MESSION_HEADERTOOL_MANIFEST "${MESSION_GENERATED_DIR}/MHeaderToolTargets.cmake")
@@ -132,91 +142,40 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/Bin/MHeaderTool")
     endif()
 endif()
 
-set(MESSION_GENERATED_SHARED_SOURCES)
-set(MESSION_GENERATED_GATEWAY_SOURCES)
-set(MESSION_GENERATED_LOGIN_SOURCES)
-set(MESSION_GENERATED_WORLD_SOURCES)
-set(MESSION_GENERATED_ROUTER_SOURCES)
-set(MESSION_GENERATED_SCENE_SOURCES)
-set(MESSION_GENERATED_MONO_SOURCES)
+set(MESSION_GENERATED_GROUPS)
 include("${MESSION_HEADERTOOL_MANIFEST}" OPTIONAL)
 
-add_library(mession_generated_shared OBJECT
-    Source/Tools/MGeneratedStub.cpp
-    ${MESSION_GENERATED_SHARED_SOURCES}
-)
-target_include_directories(mession_generated_shared
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-)
-configure_mession_compile_options(mession_generated_shared)
+if(NOT MESSION_GENERATED_GROUPS)
+    set(MESSION_GENERATED_GROUPS shared)
+endif()
 
-add_library(mession_generated_gateway OBJECT
-    Source/Tools/MGeneratedStub.cpp
-    ${MESSION_GENERATED_GATEWAY_SOURCES}
-)
-target_include_directories(mession_generated_gateway
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-)
-configure_mession_compile_options(mession_generated_gateway)
+function(mession_get_generated_group_target GroupName OutVar)
+    string(TOLOWER "${GroupName}" GroupNameLower)
+    string(REGEX REPLACE "[^a-z0-9_]" "_" GroupNameSafe "${GroupNameLower}")
+    set(${OutVar} "mession_generated_${GroupNameSafe}" PARENT_SCOPE)
+endfunction()
 
-add_library(mession_generated_login OBJECT
-    Source/Tools/MGeneratedStub.cpp
-    ${MESSION_GENERATED_LOGIN_SOURCES}
-)
-target_include_directories(mession_generated_login
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-)
-configure_mession_compile_options(mession_generated_login)
+function(mession_define_generated_group GroupName)
+    mession_get_generated_group_target("${GroupName}" TargetName)
+    string(TOUPPER "${GroupName}" GroupNameUpper)
+    string(REGEX REPLACE "[^A-Z0-9_]" "_" GroupVarSuffix "${GroupNameUpper}")
+    set(GroupSourcesVar "MESSION_GENERATED_${GroupVarSuffix}_SOURCES")
 
-add_library(mession_generated_world OBJECT
-    Source/Tools/MGeneratedStub.cpp
-    ${MESSION_GENERATED_WORLD_SOURCES}
-)
-target_include_directories(mession_generated_world
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-)
-configure_mession_compile_options(mession_generated_world)
+    add_library(${TargetName} OBJECT
+        Source/Tools/MGeneratedStub.cpp
+        ${${GroupSourcesVar}}
+    )
+    target_include_directories(${TargetName}
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/Source
+    )
+    configure_mession_compile_options(${TargetName})
+endfunction()
 
-add_library(mession_generated_router OBJECT
-    Source/Tools/MGeneratedStub.cpp
-    ${MESSION_GENERATED_ROUTER_SOURCES}
-)
-target_include_directories(mession_generated_router
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-)
-configure_mession_compile_options(mession_generated_router)
-
-add_library(mession_generated_scene OBJECT
-    Source/Tools/MGeneratedStub.cpp
-    ${MESSION_GENERATED_SCENE_SOURCES}
-)
-target_include_directories(mession_generated_scene
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-)
-configure_mession_compile_options(mession_generated_scene)
-
-add_library(mession_generated_mono OBJECT
-    Source/Tools/MGeneratedStub.cpp
-    ${MESSION_GENERATED_MONO_SOURCES}
-)
-target_include_directories(mession_generated_mono
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-)
-configure_mession_compile_options(mession_generated_mono)
+foreach(GroupName IN LISTS MESSION_GENERATED_GROUPS)
+    mession_define_generated_group("${GroupName}")
+endforeach()
 
 add_custom_target(mession_reflection_codegen
     COMMAND ${MESSION_HEADERTOOL_CMD}
@@ -225,13 +184,12 @@ add_custom_target(mession_reflection_codegen
     COMMENT "Generating reflection glue with MHeaderTool"
 )
 
-add_dependencies(mession_generated_shared mession_reflection_codegen)
-add_dependencies(mession_generated_gateway mession_reflection_codegen)
-add_dependencies(mession_generated_login mession_reflection_codegen)
-add_dependencies(mession_generated_world mession_reflection_codegen)
-add_dependencies(mession_generated_router mession_reflection_codegen)
-add_dependencies(mession_generated_scene mession_reflection_codegen)
-add_dependencies(mession_generated_mono mession_reflection_codegen)
+foreach(GroupName IN LISTS MESSION_GENERATED_GROUPS)
+    mession_get_generated_group_target("${GroupName}" GroupTarget)
+    if(TARGET ${GroupTarget})
+        add_dependencies(${GroupTarget} mession_reflection_codegen)
+    endif()
+endforeach()
 
 # 统一配置每个目标的公共依赖
 function(configure_mession_target TargetName)
@@ -247,6 +205,18 @@ function(configure_mession_target TargetName)
     configure_mession_compile_options(${TargetName})
 endfunction()
 
+function(mession_attach_generated_groups TargetName)
+    foreach(GroupName ${ARGN})
+        mession_get_generated_group_target("${GroupName}" GroupTarget)
+        if(TARGET ${GroupTarget})
+            target_sources(${TargetName}
+                PRIVATE
+                    $<TARGET_OBJECTS:${GroupTarget}>
+            )
+        endif()
+    endforeach()
+endfunction()
+
 # 1. Gateway Server - 网关服务器
 add_executable(GatewayServer 
     Source/Servers/Gateway/GatewayServer.h
@@ -257,12 +227,8 @@ target_link_libraries(GatewayServer
     PRIVATE
         mession_netdriver
 )
-target_sources(GatewayServer
-    PRIVATE
-        $<TARGET_OBJECTS:mession_generated_shared>
-        $<TARGET_OBJECTS:mession_generated_gateway>
-)
 configure_mession_target(GatewayServer)
+mession_attach_generated_groups(GatewayServer shared gateway)
 
 # 2. Login Server - 登录服务器
 add_executable(LoginServer 
@@ -274,12 +240,8 @@ target_link_libraries(LoginServer
     PRIVATE
         mession_netdriver
 )
-target_sources(LoginServer
-    PRIVATE
-        $<TARGET_OBJECTS:mession_generated_shared>
-        $<TARGET_OBJECTS:mession_generated_login>
-)
 configure_mession_target(LoginServer)
+mession_attach_generated_groups(LoginServer shared login)
 
 # 3. World Server - 世界服务器
 add_executable(WorldServer 
@@ -291,12 +253,8 @@ target_link_libraries(WorldServer
     PRIVATE
         mession_netdriver
 )
-target_sources(WorldServer
-    PRIVATE
-        $<TARGET_OBJECTS:mession_generated_shared>
-        $<TARGET_OBJECTS:mession_generated_world>
-)
 configure_mession_target(WorldServer)
+mession_attach_generated_groups(WorldServer shared world)
 
 # 4. Scene Server - 场景服务器
 add_executable(SceneServer 
@@ -305,10 +263,7 @@ add_executable(SceneServer
     Source/Servers/Scene/SceneServerMain.cpp
 )
 configure_mession_target(SceneServer)
-target_sources(SceneServer
-    PRIVATE
-        $<TARGET_OBJECTS:mession_generated_scene>
-)
+mession_attach_generated_groups(SceneServer scene)
 
 # 5. Router Server - 控制面路由服务器
 add_executable(RouterServer
@@ -320,12 +275,8 @@ target_link_libraries(RouterServer
     PRIVATE
         mession_netdriver
 )
-target_sources(RouterServer
-    PRIVATE
-        $<TARGET_OBJECTS:mession_generated_shared>
-        $<TARGET_OBJECTS:mession_generated_router>
-)
 configure_mession_target(RouterServer)
+mession_attach_generated_groups(RouterServer shared router)
 
 # NetBench - 简单网络压测工具
 add_executable(NetBench
@@ -337,16 +288,6 @@ target_link_libraries(NetBench
 )
 configure_mession_compile_options(NetBench)
 
-# MHeaderTool - 反射代码生成工具骨架
-add_executable(MHeaderTool
-    Source/Tools/MHeaderTool.cpp
-)
-target_link_libraries(MHeaderTool
-    PRIVATE
-        mession_core
-)
-configure_mession_compile_options(MHeaderTool)
-
 # 6. Mono Server - 单机测试服务器（用于反射等功能验证）
 add_executable(MonoServer
     Source/Servers/Mono/MonoServer.h
@@ -357,12 +298,8 @@ target_link_libraries(MonoServer
     PRIVATE
         mession_netdriver
 )
-target_sources(MonoServer
-    PRIVATE
-        $<TARGET_OBJECTS:mession_generated_shared>
-        $<TARGET_OBJECTS:mession_generated_mono>
-)
 configure_mession_target(MonoServer)
+mession_attach_generated_groups(MonoServer shared mono)
 
 # 安装目标
 install(TARGETS 

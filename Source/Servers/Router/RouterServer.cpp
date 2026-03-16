@@ -1,9 +1,9 @@
 #include "RouterServer.h"
 #include "Common/Config.h"
+#include "Common/ServerRpcRuntime.h"
 #include "Core/Net/Socket.h"
 #include "Core/Net/HttpDebugServer.h"
 #include "Core/Json.h"
-#include "NetDriver/ServerRpcServices.h"
 
 namespace
 {
@@ -11,6 +11,17 @@ const TMap<FString, const char*> RouterEnvMap = {
     {"port", "MESSION_ROUTER_PORT"},
     {"route_lease_seconds", "MESSION_ROUTE_LEASE_SECONDS"},
     {"debug_http_port", "MESSION_ROUTER_DEBUG_HTTP_PORT"},
+};
+
+const SRpcEndpointBinding GRouterServerRegisterAckEndpoints[] = {
+    {EServerType::Gateway, "MGatewayServer", "Rpc_OnRouterServerRegisterAck"},
+    {EServerType::Login, "MLoginServer", "Rpc_OnRouterServerRegisterAck"},
+    {EServerType::World, "MWorldServer", "Rpc_OnRouterServerRegisterAck"},
+};
+
+const SRpcEndpointBinding GRouterRouteResponseEndpoints[] = {
+    {EServerType::Gateway, "MGatewayServer", "Rpc_OnRouterRouteResponse"},
+    {EServerType::World, "MWorldServer", "Rpc_OnRouterRouteResponse"},
 };
 }
 
@@ -225,7 +236,10 @@ void MRouterServer::OnPeer_ServerRegister(uint64 ConnectionId, const SServerRegi
     Peer.bRegistered = true;
 
     bool bSentAckByRpc = false;
-    if (const SRpcEndpointBinding* Endpoint = FindRouterServerRegisterAckEndpoint(Peer.ServerType))
+    if (const SRpcEndpointBinding* Endpoint = FindRpcEndpointByServerType(
+            GRouterServerRegisterAckEndpoints,
+            sizeof(GRouterServerRegisterAckEndpoints) / sizeof(GRouterServerRegisterAckEndpoints[0]),
+            Peer.ServerType))
     {
         TArray RpcData;
         if (BuildRpcPayloadForEndpoint(*Endpoint, BuildRpcArgsPayload(static_cast<uint8>(1)), RpcData))
@@ -282,7 +296,10 @@ void MRouterServer::OnPeer_RouteQuery(uint64 ConnectionId, const SRouteQueryMess
     }
 
     bool bSentResponseByRpc = false;
-    if (const SRpcEndpointBinding* Endpoint = FindRouterRouteResponseEndpoint(Peer.ServerType))
+    if (const SRpcEndpointBinding* Endpoint = FindRpcEndpointByServerType(
+            GRouterRouteResponseEndpoints,
+            sizeof(GRouterRouteResponseEndpoints) / sizeof(GRouterRouteResponseEndpoints[0]),
+            Peer.ServerType))
     {
         TArray RpcData;
         if (BuildRpcPayloadForEndpoint(

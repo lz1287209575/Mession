@@ -7,7 +7,9 @@
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"
-#include "NetDriver/ServerRpcServices.h"
+#include "Servers/Gateway/GatewayRpcService.h"
+#include "Servers/Login/LoginRpcService.h"
+#include "Servers/World/WorldRpcService.h"
 #include <random>
 #include <thread>
 #include <chrono>
@@ -42,6 +44,7 @@ struct SGatewayPeer
 };
 
 // 登录服务器
+MCLASS()
 class MLoginServer : public MNetServerBase, public MReflectObject
 {
 public:
@@ -84,7 +87,7 @@ public:
     bool ValidateSession(uint32 SessionKey, uint64& OutPlayerId);
     void RemoveSession(uint32 SessionKey);
 
-    MLOGIN_SERVER_ROUTER_ACK_RPC_LIST(MDECLARE_SERVER_HOSTED_RPC_METHOD)
+    MDECLARE_SERVER_HOSTED_RPC_METHOD("MLoginServer", Login, Rpc_OnRouterServerRegisterAck, (uint8 Result), NetServer, ServerToServer, true)
 
 private:
     void HandleGatewayPacket(uint64 ConnectionId, const TArray& Data);

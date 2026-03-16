@@ -20,6 +20,7 @@ struct SParsedFunction
     std::string ReturnType;
     std::string Name;
     std::string Signature;
+    std::string Owner;
     bool bConst = false;
     bool bHasValidate = false;
     bool bIsRpc = false;
@@ -35,6 +36,7 @@ struct SParsedProperty
     std::string Name;
     std::string PropertyKind;
     std::string FlagsExpr;
+    std::string Owner;
 };
 
 enum class EParsedTypeKind : uint8_t
@@ -51,6 +53,7 @@ struct SParsedClass
     fs::path HeaderPath;
     std::string ParentClass = "MReflectObject";
     std::string ClassFlagsExpr = "0";
+    std::string Owner;
     std::vector<SParsedProperty> Properties;
     std::vector<SParsedFunction> Functions;
     std::vector<std::string> EnumValues;
@@ -75,6 +78,8 @@ struct SOptions
 using TRpcListMacroMap = std::map<std::string, std::vector<SParsedFunction>>;
 
 std::vector<std::string> SplitTopLevelArgs(const std::string& Text);
+std::optional<std::string> ExtractMacroValue(const std::string& MacroArgs, std::string_view Key);
+std::string DetermineOwnerFromHeaderPath(const fs::path& HeaderPath);
 
 bool StartsWith(std::string_view Text, std::string_view Prefix)
 {
@@ -408,11 +413,20 @@ std::optional<SParsedProperty> ParsePropertyDeclaration(
     Parsed.MacroArgs = Trim(MacroArgs);
     Parsed.Name = Left.substr(NameStart, NameEnd - NameStart);
     Parsed.Type = Trim(Left.substr(0, NameStart));
+    if (const auto Owner = ExtractMacroValue(Parsed.MacroArgs, "Owner"))
+    {
+        Parsed.Owner = *Owner;
+    }
     return Parsed;
 }
 
 void ApplyFunctionMetadataFromMacroArgs(SParsedFunction& Parsed)
 {
+    if (const auto Owner = ExtractMacroValue(Parsed.MacroArgs, "Owner"))
+    {
+        Parsed.Owner = *Owner;
+    }
+
     const std::vector<std::string> Parts = SplitTopLevelArgs(Parsed.MacroArgs);
     for (const std::string& Part : Parts)
     {
@@ -582,6 +596,10 @@ std::string BuildPropertyFlagsExpr(const std::string& MacroArgs)
         {
             continue;
         }
+        if (Token.find('=') != std::string::npos)
+        {
+            continue;
+        }
         Parts.push_back("static_cast<uint64>(EPropertyFlags::" + Token + ")");
     }
 
@@ -601,6 +619,29 @@ std::string BuildPropertyFlagsExpr(const std::string& MacroArgs)
     }
     Expr += ")";
     return Expr;
+}
+
+std::optional<std::string> ExtractMacroValue(const std::string& MacroArgs, std::string_view Key)
+{
+    const std::vector<std::string> Parts = SplitTopLevelArgs(MacroArgs);
+    for (const std::string& Part : Parts)
+    {
+        const size_t EqualsPos = Part.find('=');
+        if (EqualsPos == std::string::npos)
+        {
+            continue;
+        }
+
+        const std::string CandidateKey = Trim(Part.substr(0, EqualsPos));
+        if (CandidateKey != Key)
+        {
+            continue;
+        }
+
+        return Trim(Part.substr(EqualsPos + 1));
+    }
+
+    return std::nullopt;
 }
 
 std::string InferPropertyKind(const std::string& TypeName)
@@ -1012,6 +1053,32 @@ void ParseGeneratedBodyMetadata(const std::string& TypeBody, SParsedClass& Parse
     }
 }
 
+void ParseTypeMarkerMetadata(const std::string& Contents, const SClassRegion& Region, SParsedClass& Parsed)
+{
+    const char* Marker = (Parsed.Kind == EParsedTypeKind::Struct) ? "MSTRUCT(" : "MCLASS(";
+    const size_t SearchStart = (Region.BodyOpen > 512) ? (Region.BodyOpen - 512) : 0;
+    const size_t MarkerPos = Contents.rfind(Marker, Region.BodyOpen);
+    if (MarkerPos == std::string::npos || MarkerPos < SearchStart)
+    {
+        return;
+    }
+
+    const size_t MacroOpen = Contents.find('(', MarkerPos);
+    const size_t MacroClose = (MacroOpen == std::string::npos)
+        ? std::string::npos
+        : FindMatching(Contents, MacroOpen, '(', ')');
+    if (MacroOpen == std::string::npos || MacroClose == std::string::npos || MacroClose > Region.BodyOpen)
+    {
+        return;
+    }
+
+    const std::string MacroArgs = Contents.substr(MacroOpen + 1, MacroClose - MacroOpen - 1);
+    if (const auto Owner = ExtractMacroValue(MacroArgs, "Owner"))
+    {
+        Parsed.Owner = *Owner;
+    }
+}
+
 std::vector<SParsedClass> ParseReflectedEnumsInHeader(const fs::path& Header, const std::string& Contents)
 {
     std::vector<SParsedClass> Enums;
@@ -1056,6 +1123,17 @@ std::vector<SParsedClass> ParseReflectedEnumsInHeader(const fs::path& Header, co
         Parsed.Kind = EParsedTypeKind::Enum;
         Parsed.Name = *EnumName;
         Parsed.HeaderPath = Header;
+        Parsed.Owner = DetermineOwnerFromHeaderPath(Header);
+        const size_t MacroOpen = Masked.find('(', MarkerPos);
+        const size_t MacroClose = (MacroOpen == std::string::npos) ? std::string::npos : FindMatching(Masked, MacroOpen, '(', ')');
+        if (MacroOpen != std::string::npos && MacroClose != std::string::npos)
+        {
+            const std::string MacroArgs = Contents.substr(MacroOpen + 1, MacroClose - MacroOpen - 1);
+            if (const auto Owner = ExtractMacroValue(MacroArgs, "Owner"))
+            {
+                Parsed.Owner = *Owner;
+            }
+        }
 
         const std::string EnumBody = Contents.substr(BraceOpen + 1, BraceClose - BraceOpen - 1);
         for (const std::string& Entry : SplitTopLevelArgs(EnumBody))
@@ -1249,9 +1327,28 @@ std::vector<SParsedClass> ParseReflectedClassesInHeader(
         Parsed.Kind = (Region.Keyword == "struct") ? EParsedTypeKind::Struct : EParsedTypeKind::Class;
         Parsed.Name = Region.Name;
         Parsed.HeaderPath = Header;
+        ParseTypeMarkerMetadata(Contents, Region, Parsed);
+        if (Parsed.Owner.empty())
+        {
+            Parsed.Owner = DetermineOwnerFromHeaderPath(Header);
+        }
         ParseGeneratedBodyMetadata(ClassBody, Parsed);
         Parsed.Properties = ParsePropertiesInTypeBody(ClassBody);
         Parsed.Functions = ParseFunctionsInClassBody(ClassBody, RpcListMacros);
+        for (SParsedProperty& Property : Parsed.Properties)
+        {
+            if (Property.Owner.empty())
+            {
+                Property.Owner = Parsed.Owner;
+            }
+        }
+        for (SParsedFunction& Function : Parsed.Functions)
+        {
+            if (Function.Owner.empty())
+            {
+                Function.Owner = Parsed.Owner;
+            }
+        }
         Classes.push_back(std::move(Parsed));
     }
 
@@ -1415,34 +1512,79 @@ std::string EscapeCMakePath(const fs::path& Path)
     return ReplaceAll(Path.generic_string(), "\\", "/");
 }
 
+std::string DetermineOwnerFromHeaderPath(const fs::path& HeaderPath)
+{
+    fs::path RelativePath = HeaderPath;
+    if (RelativePath.is_absolute())
+    {
+        std::error_code Error;
+        RelativePath = fs::relative(RelativePath, fs::current_path(), Error);
+        if (Error)
+        {
+            RelativePath = HeaderPath;
+        }
+    }
+
+    std::vector<std::string> Parts;
+    for (const fs::path& Part : RelativePath)
+    {
+        Parts.push_back(Part.generic_string());
+    }
+
+    for (size_t Index = 0; Index < Parts.size(); ++Index)
+    {
+        if (Parts[Index] != "Source" || Index + 1 >= Parts.size())
+        {
+            continue;
+        }
+
+        if (Parts[Index + 1] == "Servers" && Index + 2 < Parts.size())
+        {
+            return Parts[Index + 2];
+        }
+
+        return "Shared";
+    }
+
+    return "Shared";
+}
+
+std::string NormalizeGeneratedGroupName(std::string Owner)
+{
+    Owner = Trim(Owner);
+    if (Owner.empty())
+    {
+        return "shared";
+    }
+
+    std::string Result;
+    Result.reserve(Owner.size());
+    for (char Ch : Owner)
+    {
+        if (std::isalnum(static_cast<unsigned char>(Ch)))
+        {
+            Result.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(Ch))));
+        }
+        else if (Ch == '_' || Ch == '-')
+        {
+            Result.push_back('_');
+        }
+    }
+
+    return Result.empty() ? "shared" : Result;
+}
+
 std::string DetermineGeneratedGroup(const SParsedClass& ParsedClass)
 {
-    const std::string Header = EscapeCMakePath(ParsedClass.HeaderPath);
-    if (Header.find("Servers/Gateway/") != std::string::npos)
-    {
-        return "gateway";
-    }
-    if (Header.find("Servers/Login/") != std::string::npos)
-    {
-        return "login";
-    }
-    if (Header.find("Servers/World/") != std::string::npos)
-    {
-        return "world";
-    }
-    if (Header.find("Servers/Router/") != std::string::npos)
-    {
-        return "router";
-    }
-    if (Header.find("Servers/Scene/") != std::string::npos)
-    {
-        return "scene";
-    }
-    if (Header.find("Servers/Mono/") != std::string::npos)
-    {
-        return "mono";
-    }
-    return "shared";
+    return NormalizeGeneratedGroupName(ParsedClass.Owner);
+}
+
+std::string EscapeCMakeListValue(std::string Value)
+{
+    Value = ReplaceAll(std::move(Value), "\\", "\\\\");
+    Value = ReplaceAll(std::move(Value), "\"", "\\\"");
+    Value = ReplaceAll(std::move(Value), ";", "\\;");
+    return Value;
 }
 
 void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
@@ -1635,8 +1777,14 @@ bool WriteCMakeManifest(const fs::path& ManifestPath, const fs::path& OutputDir,
     }
 
     Out << "# Generated by MHeaderTool. Do not edit manually.\n";
-    const std::vector<std::string> GroupNames = {"shared", "gateway", "login", "world", "router", "scene", "mono"};
-    for (const std::string& Group : GroupNames)
+    Out << "set(MESSION_GENERATED_GROUPS\n";
+    for (const auto& [Group, _] : GroupedSources)
+    {
+        Out << "    \"" << EscapeCMakeListValue(Group) << "\"\n";
+    }
+    Out << ")\n";
+
+    for (const auto& [Group, Sources] : GroupedSources)
     {
         const std::string UpperGroup = ReplaceAll(Group, "-", "_");
         std::string VarName = "MESSION_GENERATED_" + UpperGroup + "_SOURCES";
@@ -1646,16 +1794,75 @@ bool WriteCMakeManifest(const fs::path& ManifestPath, const fs::path& OutputDir,
         }
 
         Out << "set(" << VarName << "\n";
-        auto It = GroupedSources.find(Group);
-        if (It != GroupedSources.end())
+        for (const fs::path& SourcePath : Sources)
         {
-            for (const fs::path& SourcePath : It->second)
-            {
-                Out << "    \"" << EscapeCMakePath(SourcePath) << "\"\n";
-            }
+            Out << "    \"" << EscapeCMakePath(SourcePath) << "\"\n";
         }
         Out << ")\n";
     }
+
+    Out << "set(MESSION_REFLECTED_TYPE_MANIFEST\n";
+    for (const SParsedClass& ParsedClass : Classes)
+    {
+        Out << "    \""
+            << EscapeCMakeListValue(std::string(GetTypeKindName(ParsedClass.Kind))) << "|"
+            << EscapeCMakeListValue(ParsedClass.Name) << "|"
+            << EscapeCMakeListValue(ParsedClass.Owner) << "|"
+            << EscapeCMakeListValue(EscapeCMakePath(ParsedClass.HeaderPath))
+            << "\"\n";
+    }
+    Out << ")\n";
+
+    Out << "set(MESSION_REFLECTED_PROPERTY_MANIFEST\n";
+    for (const SParsedClass& ParsedClass : Classes)
+    {
+        for (const SParsedProperty& Property : ParsedClass.Properties)
+        {
+            Out << "    \""
+                << EscapeCMakeListValue(ParsedClass.Name) << "|"
+                << EscapeCMakeListValue(Property.Name) << "|"
+                << EscapeCMakeListValue(Property.Owner) << "|"
+                << EscapeCMakeListValue(Property.Type) << "|"
+                << EscapeCMakeListValue(Property.MacroArgs)
+                << "\"\n";
+        }
+    }
+    Out << ")\n";
+
+    Out << "set(MESSION_REFLECTED_FUNCTION_MANIFEST\n";
+    for (const SParsedClass& ParsedClass : Classes)
+    {
+        for (const SParsedFunction& Function : ParsedClass.Functions)
+        {
+            Out << "    \""
+                << EscapeCMakeListValue(ParsedClass.Name) << "|"
+                << EscapeCMakeListValue(Function.Name) << "|"
+                << EscapeCMakeListValue(Function.Owner) << "|"
+                << EscapeCMakeListValue(Function.Signature) << "|"
+                << EscapeCMakeListValue(Function.MacroArgs)
+                << "\"\n";
+        }
+    }
+    Out << ")\n";
+
+    Out << "set(MESSION_REFLECTED_ENUM_VALUE_MANIFEST\n";
+    for (const SParsedClass& ParsedClass : Classes)
+    {
+        if (ParsedClass.Kind != EParsedTypeKind::Enum)
+        {
+            continue;
+        }
+
+        for (const std::string& Value : ParsedClass.EnumValues)
+        {
+            Out << "    \""
+                << EscapeCMakeListValue(ParsedClass.Name) << "|"
+                << EscapeCMakeListValue(Value) << "|"
+                << EscapeCMakeListValue(ParsedClass.Owner)
+                << "\"\n";
+        }
+    }
+    Out << ")\n";
 
     return true;
 }

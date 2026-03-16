@@ -7,6 +7,7 @@
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"
+#include "NetDriver/Reflection.h"
 #include <thread>
 #include <chrono>
 
@@ -39,6 +40,7 @@ struct SPlayerRouteBinding
     uint64 LeaseExpireTick = 0;
 };
 
+MCLASS()
 class MRouterServer : public MNetServerBase
 {
 private:

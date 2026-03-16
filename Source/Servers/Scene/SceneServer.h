@@ -7,6 +7,7 @@
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"
+#include "NetDriver/Reflection.h"
 #include <thread>
 #include <chrono>
 
@@ -62,6 +63,7 @@ public:
 };
 
 // 场景服务器
+MCLASS()
 class MSceneServer : public MNetServerBase
 {
 private:
