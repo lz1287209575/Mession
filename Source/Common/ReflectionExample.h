@@ -3,6 +3,14 @@
 #include "NetDriver/Reflection.h"
 #include "Core/Net/NetCore.h"
 
+MENUM()
+enum class ECharacterArchetype : uint8
+{
+    Warrior = 1,
+    Mage = 2,
+    Rogue = 3
+};
+
 MCLASS()
 class MCharacter : public MReflectObject
 {
@@ -39,6 +47,9 @@ public:
     MPROPERTY(Edit | SaveGame)
     int32 Gold = 0;
 
+    MPROPERTY(Edit)
+    ECharacterArchetype Archetype = ECharacterArchetype::Warrior;
+
     MFUNCTION()
     void TakeDamage(float Damage);
 
@@ -51,22 +62,45 @@ public:
     MFUNCTION()
     void LevelUp();
 
+    MFUNCTION()
+    void Rename(const FString& NewName);
+
+    MFUNCTION()
+    int32 GetGoldAmount() const;
+
+    MFUNCTION()
+    bool IsAlive() const;
+
     virtual void Tick(float DeltaTime) override;
     virtual void BeginPlay() override;
 };
 
+MSTRUCT()
 struct SAttributeSet
 {
+    MPROPERTY(Edit)
     int32 Strength = 0;
+
+    MPROPERTY(Edit)
     int32 Agility = 0;
+
+    MPROPERTY(Edit)
     int32 Intelligence = 0;
 };
 
+MSTRUCT()
 struct SCombatStats
 {
+    MPROPERTY(Edit)
     SAttributeSet Base;
+
+    MPROPERTY(Edit)
     SAttributeSet Bonus;
+
+    MPROPERTY(Edit)
     float CritChance = 0.0f;
+
+    MPROPERTY(Edit)
     float CritMultiplier = 1.0f;
 };
 
@@ -121,11 +155,25 @@ public:
     MPROPERTY(SaveGame)
     FString LastLoginIP;
 
+    MPROPERTY(SaveGame)
     TVector<uint64> FriendsList;
+
+    MPROPERTY(SaveGame)
     FriendLevelMap FriendLevels;
+
+    MPROPERTY(SaveGame)
     BlackListSet BlackList;
 
 public:
+    MFUNCTION()
+    void AddFriend(uint64 FriendId);
+
+    MFUNCTION()
+    void RemoveFriend(uint64 FriendId);
+
+    MFUNCTION()
+    bool HasFriend(uint64 FriendId) const;
+
     TVector<uint64>& GetFriendsList() { return FriendsList; }
     FriendLevelMap& GetFriendLevels() { return FriendLevels; }
     BlackListSet& GetBlackList() { return BlackList; }
@@ -133,7 +181,4 @@ public:
     const FriendLevelMap& GetFriendLevels() const { return FriendLevels; }
     const BlackListSet& GetBlackList() const { return BlackList; }
 
-    void AddFriend(uint64 FriendId);
-    void RemoveFriend(uint64 FriendId);
-    bool HasFriend(uint64 FriendId) const;
 };

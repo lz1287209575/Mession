@@ -86,8 +86,10 @@ public:
     uint32 CreateSession(uint64 PlayerId, uint64 ConnectionId);
     bool ValidateSession(uint32 SessionKey, uint64& OutPlayerId);
     void RemoveSession(uint32 SessionKey);
-
-    MDECLARE_SERVER_HOSTED_RPC_METHOD("MLoginServer", Login, Rpc_OnRouterServerRegisterAck, (uint8 Result), NetServer, ServerToServer, true)
+    void Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId);
+    void Rpc_OnSessionValidateRequest(uint64 ValidationRequestId, uint64 PlayerId, uint32 SessionKey);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Login)
+    void Rpc_OnRouterServerRegisterAck(uint8 Result);
 
 private:
     void HandleGatewayPacket(uint64 ConnectionId, const TArray& Data);

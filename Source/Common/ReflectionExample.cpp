@@ -38,6 +38,21 @@ void MCharacter::LevelUp()
     Health = MaxHealth;
 }
 
+void MCharacter::Rename(const FString& NewName)
+{
+    Name = NewName;
+}
+
+int32 MCharacter::GetGoldAmount() const
+{
+    return Gold;
+}
+
+bool MCharacter::IsAlive() const
+{
+    return bIsAlive;
+}
+
 void MCharacter::Tick(float)
 {
 }

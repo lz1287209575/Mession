@@ -184,6 +184,8 @@ add_custom_target(mession_reflection_codegen
     COMMENT "Generating reflection glue with MHeaderTool"
 )
 
+add_dependencies(mession_common mession_reflection_codegen)
+
 foreach(GroupName IN LISTS MESSION_GENERATED_GROUPS)
     mession_get_generated_group_target("${GroupName}" GroupTarget)
     if(TARGET ${GroupTarget})

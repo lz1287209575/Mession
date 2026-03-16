@@ -1,4 +1,5 @@
 #include "WorldServer.h"
+#include "Build/Generated/MLoginService.mgenerated.h"
 #include "Common/Config.h"
 #include "Common/StringUtils.h"
 #include "Messages/NetMessages.h"
@@ -124,24 +125,7 @@ bool MWorldServer::Init(int InPort)
     InitRouterMessageHandlers();
     InitLoginMessageHandlers();
 
-    // 绑定 WorldService 的会话校验回调处理器
-    MWorldService::SetHandler_Rpc_OnSessionValidateResponse([this](uint64 ValidationRequestId, uint64 PlayerId, bool bValid)
-    {
-        OnLogin_SessionValidateResponse(ValidationRequestId, PlayerId, bValid);
-    });
-    MWorldService::SetHandler_Rpc_OnPlayerLoginRequest([this](uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey)
-    {
-        const uint64 GatewayBackendConnectionId = FindAuthenticatedBackendConnectionId(EServerType::Gateway);
-        if (GatewayBackendConnectionId == 0)
-        {
-            LOG_WARN("No authenticated Gateway backend available for player login request (ClientConnId=%llu, PlayerId=%llu)",
-                     (unsigned long long)ClientConnectionId,
-                     (unsigned long long)PlayerId);
-            return;
-        }
-
-        RequestSessionValidation(GatewayBackendConnectionId, PlayerId, SessionKey);
-    });
+    MWorldService::BindHandlers(this);
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = BackendConnectionManager.AddServer(RouterConfig);
@@ -164,7 +148,11 @@ bool MWorldServer::Init(int InPort)
         DebugServer = TUniquePtr<MHttpDebugServer>(new MHttpDebugServer(
             Config.DebugHttpPort,
             [this]() { return BuildDebugStatusJson(); }));
-        DebugServer->Start();
+        if (!DebugServer->Start())
+        {
+            LOG_ERROR("World debug HTTP failed to start on port %u", static_cast<unsigned>(Config.DebugHttpPort));
+            DebugServer.reset();
+        }
     }
     LoginServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Login server authenticated: %s", Info.ServerName.c_str());
@@ -312,6 +300,26 @@ FString MWorldServer::BuildDebugStatusJson() const
     W.Key("bytesSent"); W.Value(static_cast<uint64>(Stats.BytesSent));
     W.Key("bytesReceived"); W.Value(static_cast<uint64>(Stats.BytesReceived));
     W.Key("reconnectAttempts"); W.Value(static_cast<uint64>(Stats.ReconnectAttempts));
+    const TVector<FString> RpcFunctions = GetGeneratedRpcFunctionNames(EServerType::World);
+    W.Key("rpcManifestCount"); W.Value(static_cast<uint64>(RpcFunctions.size()));
+    W.Key("rpcFunctions");
+    W.BeginArray();
+    for (const FString& Name : RpcFunctions)
+    {
+        W.Value(Name);
+    }
+    W.EndArray();
+    W.Key("unsupportedRpc");
+    W.BeginArray();
+    for (const SGeneratedRpcUnsupportedStat& Stat : GetGeneratedRpcUnsupportedStats(EServerType::World))
+    {
+        W.BeginObject();
+        W.Key("function"); W.Value(Stat.FunctionName);
+        W.Key("count"); W.Value(Stat.Count);
+        W.EndObject();
+    }
+    W.EndArray();
+    W.EndObject();
     return W.ToString();
 }
 
@@ -387,6 +395,54 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
                      (unsigned long long)Player->PlayerId, NewPos.X, NewPos.Y, NewPos.Z);
             break;
         }
+        case EClientMessageType::MT_Chat:
+        {
+            TArray Payload(Data.begin() + 1, Data.end());
+            SClientChatPayload ChatPayload;
+            auto ParseResult = ParsePayload(Payload, ChatPayload, "MT_Chat");
+            if (!ParseResult.IsOk())
+            {
+                LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
+                return;
+            }
+
+            if (ChatPayload.Message.empty())
+            {
+                LOG_WARN("Ignoring empty MT_Chat from player %llu", (unsigned long long)PlayerId);
+                return;
+            }
+
+            const SChatMessage OutgoingChat{PlayerId, ChatPayload.Message};
+            const TArray ChatPayloadBytes = BuildPayload(OutgoingChat);
+            TArray ChatPacket;
+            ChatPacket.reserve(1 + ChatPayloadBytes.size());
+            ChatPacket.push_back(static_cast<uint8>(EClientMessageType::MT_Chat));
+            ChatPacket.insert(ChatPacket.end(), ChatPayloadBytes.begin(), ChatPayloadBytes.end());
+
+            uint32 DeliveredCount = 0;
+            for (const auto& [TargetPlayerId, TargetPlayer] : Players)
+            {
+                if (!TargetPlayer.bOnline || TargetPlayer.GatewayConnectionId == 0)
+                {
+                    continue;
+                }
+
+                const bool bSent = SendServerMessage(
+                    TargetPlayer.GatewayConnectionId,
+                    EServerMessageType::MT_PlayerClientSync,
+                    SPlayerClientSyncMessage{TargetPlayerId, ChatPacket});
+                if (bSent)
+                {
+                    ++DeliveredCount;
+                }
+            }
+
+            LOG_INFO("Player %llu chat broadcast delivered to %u player(s): %s",
+                     (unsigned long long)PlayerId,
+                     static_cast<unsigned>(DeliveredCount),
+                     ChatPayload.Message.c_str());
+            break;
+        }
         case EClientMessageType::MT_RPC:
         {
             // 客户端 RPC：Data 格式与 MonoServer 中的 MT_RPC 包保持一致：
@@ -447,7 +503,7 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
             }
 
             MFunction* FuncMeta = HeroClass->FindFunctionById(FunctionId);
-            if (!FuncMeta || !FuncMeta->RpcFunc || FuncMeta->RpcType != ERpcType::Server)
+            if (!FuncMeta || FuncMeta->RpcType != ERpcType::Server)
             {
                 LOG_WARN("MT_RPC unknown or invalid FunctionId=%u for player %llu",
                          (unsigned)FunctionId,
@@ -456,7 +512,13 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
             }
 
             MReflectArchive Ar(Payload);
-            FuncMeta->RpcFunc(Player->HeroObject, Ar);
+            if (!Player->HeroObject->InvokeSerializedFunction(FuncMeta, Ar))
+            {
+                LOG_WARN("MT_RPC invocation failed for player %llu: FuncId=%u",
+                         (unsigned long long)PlayerId,
+                         (unsigned)FunctionId);
+                return;
+            }
 
             LOG_INFO("MT_RPC executed for player %llu: FuncId=%u", 
                      (unsigned long long)PlayerId,
@@ -670,32 +732,18 @@ void MWorldServer::RequestSessionValidation(uint64 GatewayConnectionId, uint64 P
 
     PendingSessionValidations[ValidationRequestId] = {ValidationRequestId, GatewayConnectionId, PlayerId, SessionKey};
 
-    const uint16 FunctionId = MLoginService::GetFunctionId_Rpc_OnSessionValidateRequest();
-    if (FunctionId == 0)
-    {
-        LOG_WARN("MLoginService::GetFunctionId_Rpc_OnSessionValidateRequest returned 0, fallback to legacy MT_SessionValidateRequest");
-
-        SendTypedServerMessage(
-            LoginServerConn,
-            EServerMessageType::MT_SessionValidateRequest,
-            SSessionValidateRequestMessage{ValidationRequestId, PlayerId, SessionKey});
-        return;
-    }
-
-    TArray RpcData;
-    BuildServerRpcPayload(
-        FunctionId,
-        BuildRpcPayloadForCall<&MLoginService::Rpc_OnSessionValidateRequest>(
-            ValidationRequestId,
-            PlayerId,
-            SessionKey),
-        RpcData);
-
-    const uint8* RpcPayload = RpcData.empty() ? nullptr : RpcData.data();
-    LoginServerConn->Send(
-        static_cast<uint8>(EServerMessageType::MT_RPC),
-        RpcPayload,
-        static_cast<uint32>(RpcData.size()));
+    MRpc::TryRpcOrTypedLegacy(
+        [&]()
+        {
+            return MRpc::MLoginService::Rpc_OnSessionValidateRequest(
+                LoginServerConn,
+                ValidationRequestId,
+                PlayerId,
+                SessionKey);
+        },
+        LoginServerConn,
+        EServerMessageType::MT_SessionValidateRequest,
+        SSessionValidateRequestMessage{ValidationRequestId, PlayerId, SessionKey});
 }
 
 void MWorldServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
@@ -929,6 +977,25 @@ void MWorldServer::OnLogin_SessionValidateResponse(uint64 ConnectionId, uint64 P
     {
         Player->SessionKey = Pending.SessionKey;
     }
+}
+
+void MWorldServer::Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey)
+{
+    const uint64 GatewayBackendConnectionId = FindAuthenticatedBackendConnectionId(EServerType::Gateway);
+    if (GatewayBackendConnectionId == 0)
+    {
+        LOG_WARN("No authenticated Gateway backend available for player login request (ClientConnId=%llu, PlayerId=%llu)",
+                 (unsigned long long)ClientConnectionId,
+                 (unsigned long long)PlayerId);
+        return;
+    }
+
+    RequestSessionValidation(GatewayBackendConnectionId, PlayerId, SessionKey);
+}
+
+void MWorldServer::Rpc_OnSessionValidateResponse(uint64 ValidationRequestId, uint64 PlayerId, bool bValid)
+{
+    OnLogin_SessionValidateResponse(ValidationRequestId, PlayerId, bValid);
 }
 
 void MWorldServer::SendRouterRegister()

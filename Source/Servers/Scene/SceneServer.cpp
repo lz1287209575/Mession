@@ -57,7 +57,11 @@ bool MSceneServer::Init(int InPort)
         DebugServer = TUniquePtr<MHttpDebugServer>(new MHttpDebugServer(
             Config.DebugHttpPort,
             [this]() { return BuildDebugStatusJson(); }));
-        DebugServer->Start();
+        if (!DebugServer->Start())
+        {
+            LOG_ERROR("Scene debug HTTP failed to start on port %u", static_cast<unsigned>(Config.DebugHttpPort));
+            DebugServer.reset();
+        }
     }
 
     return true;
@@ -163,6 +167,7 @@ FString MSceneServer::BuildDebugStatusJson() const
     W.Key("bytesSent"); W.Value(static_cast<uint64>(Stats.BytesSent));
     W.Key("bytesReceived"); W.Value(static_cast<uint64>(Stats.BytesReceived));
     W.Key("reconnectAttempts"); W.Value(static_cast<uint64>(Stats.ReconnectAttempts));
+    W.EndObject();
     return W.ToString();
 }
 

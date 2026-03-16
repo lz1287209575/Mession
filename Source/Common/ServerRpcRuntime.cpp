@@ -1,6 +1,139 @@
 #include "Common/ServerRpcRuntime.h"
 
+#include "Build/Generated/MClientManifest.mgenerated.h"
+#include "Build/Generated/MRpcManifest.mgenerated.h"
+#include "Core/Json.h"
 #include "Common/Logger.h"
+
+#include <mutex>
+
+namespace
+{
+struct SGeneratedRpcUnsupportedKey
+{
+    EServerType ServerType = EServerType::Unknown;
+    FString FunctionName;
+
+    bool operator<(const SGeneratedRpcUnsupportedKey& Other) const
+    {
+        if (ServerType != Other.ServerType)
+        {
+            return static_cast<uint8>(ServerType) < static_cast<uint8>(Other.ServerType);
+        }
+
+        return FunctionName < Other.FunctionName;
+    }
+};
+
+std::mutex GGeneratedRpcUnsupportedMutex;
+TMap<SGeneratedRpcUnsupportedKey, uint64> GGeneratedRpcUnsupportedCounts;
+
+const char* GetClientMessageTypeName(EClientMessageType MessageType)
+{
+    switch (MessageType)
+    {
+    case EClientMessageType::MT_Login:
+        return "MT_Login";
+    case EClientMessageType::MT_LoginResponse:
+        return "MT_LoginResponse";
+    case EClientMessageType::MT_Handshake:
+        return "MT_Handshake";
+    case EClientMessageType::MT_PlayerMove:
+        return "MT_PlayerMove";
+    case EClientMessageType::MT_ActorCreate:
+        return "MT_ActorCreate";
+    case EClientMessageType::MT_ActorDestroy:
+        return "MT_ActorDestroy";
+    case EClientMessageType::MT_ActorUpdate:
+        return "MT_ActorUpdate";
+    case EClientMessageType::MT_RPC:
+        return "MT_RPC";
+    case EClientMessageType::MT_Chat:
+        return "MT_Chat";
+    case EClientMessageType::MT_Heartbeat:
+        return "MT_Heartbeat";
+    case EClientMessageType::MT_Error:
+        return "MT_Error";
+    default:
+        return "Unknown";
+    }
+}
+
+SGeneratedClientRouteRequest::ERouteKind ParseGeneratedClientRouteKind(const char* RouteName)
+{
+    if (!RouteName || RouteName[0] == '\0')
+    {
+        return SGeneratedClientRouteRequest::ERouteKind::None;
+    }
+
+    const FString Route(RouteName);
+    if (Route == "Login")
+    {
+        return SGeneratedClientRouteRequest::ERouteKind::Login;
+    }
+    if (Route == "World")
+    {
+        return SGeneratedClientRouteRequest::ERouteKind::World;
+    }
+    if (Route == "RouterResolved")
+    {
+        return SGeneratedClientRouteRequest::ERouteKind::RouterResolved;
+    }
+
+    return SGeneratedClientRouteRequest::ERouteKind::None;
+}
+
+EServerType ParseGeneratedClientTargetServerType(const char* TargetName)
+{
+    if (!TargetName || TargetName[0] == '\0')
+    {
+        return EServerType::Unknown;
+    }
+
+    const FString Target(TargetName);
+    if (Target == "Login")
+    {
+        return EServerType::Login;
+    }
+    if (Target == "World")
+    {
+        return EServerType::World;
+    }
+    if (Target == "Scene")
+    {
+        return EServerType::Scene;
+    }
+    if (Target == "Router")
+    {
+        return EServerType::Router;
+    }
+    if (Target == "Gateway")
+    {
+        return EServerType::Gateway;
+    }
+
+    return EServerType::Unknown;
+}
+}
+
+const char* GetServerTypeDisplayName(EServerType ServerType)
+{
+    switch (ServerType)
+    {
+    case EServerType::Gateway:
+        return "Gateway";
+    case EServerType::Login:
+        return "Login";
+    case EServerType::World:
+        return "World";
+    case EServerType::Scene:
+        return "Scene";
+    case EServerType::Router:
+        return "Router";
+    default:
+        return "Unknown";
+    }
+}
 
 bool BuildServerRpcPayload(uint16 FunctionId, const TArray& InPayload, TArray& OutData)
 {
@@ -23,6 +156,50 @@ bool BuildServerRpcPayload(uint16 FunctionId, const TArray& InPayload, TArray& O
     return true;
 }
 
+bool BuildServerRpcMessage(const TArray& RpcPayload, TArray& OutPacket)
+{
+    OutPacket.clear();
+    OutPacket.reserve(1 + RpcPayload.size());
+    OutPacket.push_back(static_cast<uint8>(EServerMessageType::MT_RPC));
+    OutPacket.insert(OutPacket.end(), RpcPayload.begin(), RpcPayload.end());
+    return true;
+}
+
+bool SendServerRpcMessage(MServerConnection& Connection, const TArray& RpcPayload)
+{
+    return Connection.Send(
+        static_cast<uint8>(EServerMessageType::MT_RPC),
+        RpcPayload.empty() ? nullptr : RpcPayload.data(),
+        static_cast<uint32>(RpcPayload.size()));
+}
+
+bool SendServerRpcMessage(const TSharedPtr<MServerConnection>& Connection, const TArray& RpcPayload)
+{
+    if (!Connection)
+    {
+        return false;
+    }
+
+    return SendServerRpcMessage(*Connection, RpcPayload);
+}
+
+bool SendServerRpcMessage(INetConnection& Connection, const TArray& RpcPayload)
+{
+    TArray Packet;
+    BuildServerRpcMessage(RpcPayload, Packet);
+    return Connection.Send(Packet.data(), static_cast<uint32>(Packet.size()));
+}
+
+bool SendServerRpcMessage(const TSharedPtr<INetConnection>& Connection, const TArray& RpcPayload)
+{
+    if (!Connection)
+    {
+        return false;
+    }
+
+    return SendServerRpcMessage(*Connection, RpcPayload);
+}
+
 bool BuildRpcPayloadForEndpoint(const SRpcEndpointBinding& Binding, const TArray& InPayload, TArray& OutData)
 {
     if (!Binding.ClassName || !Binding.FunctionName)
@@ -37,6 +214,161 @@ bool BuildRpcPayloadForEndpoint(const SRpcEndpointBinding& Binding, const TArray
     }
 
     return BuildServerRpcPayload(FunctionId, InPayload, OutData);
+}
+
+bool FindGeneratedRpcEndpoint(EServerType ServerType, const char* FunctionName, SRpcEndpointBinding& OutBinding)
+{
+    if (!FunctionName)
+    {
+        return false;
+    }
+
+    const MRpcManifest::SEntry* Entries = MRpcManifest::GetEntries();
+    for (size_t Index = 0; Index < MRpcManifest::GetEntryCount(); ++Index)
+    {
+        const MRpcManifest::SEntry& Entry = Entries[Index];
+        if (Entry.ServerType == ServerType && Entry.FunctionName && FString(Entry.FunctionName) == FunctionName)
+        {
+            OutBinding.ServerType = Entry.ServerType;
+            OutBinding.ClassName = Entry.ClassName;
+            OutBinding.FunctionName = Entry.FunctionName;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool ServerSupportsGeneratedRpc(EServerType ServerType, const char* FunctionName)
+{
+    SRpcEndpointBinding Binding;
+    return FindGeneratedRpcEndpoint(ServerType, FunctionName, Binding);
+}
+
+TVector<FString> GetGeneratedRpcFunctionNames(EServerType ServerType)
+{
+    TVector<FString> Result;
+    MRpcManifest::ForEachSupportedFunction(
+        ServerType,
+        [&Result](const MRpcManifest::SEntry& Entry)
+        {
+            Result.push_back(Entry.FunctionName ? FString(Entry.FunctionName) : FString());
+        });
+    return Result;
+}
+
+FString BuildGeneratedRpcManifestJson(EServerType ServerType)
+{
+    MJsonWriter W = MJsonWriter::Object();
+    W.Key("serverType");
+    W.Value(GetServerTypeDisplayName(ServerType));
+    W.Key("count");
+    W.Value(static_cast<uint64>(MRpcManifest::GetSupportedFunctionCount(ServerType)));
+    W.Key("functions");
+    W.BeginArray();
+    MRpcManifest::ForEachSupportedFunction(
+        ServerType,
+        [&W](const MRpcManifest::SEntry& Entry)
+        {
+            W.BeginObject();
+            W.Key("class");
+            W.Value(Entry.ClassName ? Entry.ClassName : "");
+            W.Key("function");
+            W.Value(Entry.FunctionName ? Entry.FunctionName : "");
+            W.EndObject();
+        });
+    W.EndArray();
+    W.Key("functionsFlat");
+    W.BeginArray();
+    for (const FString& Name : GetGeneratedRpcFunctionNames(ServerType))
+    {
+        W.Value(Name);
+    }
+    W.EndArray();
+    return W.ToString();
+}
+
+void ReportUnsupportedGeneratedRpcEndpoint(EServerType ServerType, const char* FunctionName)
+{
+    const FString Name = FunctionName ? FString(FunctionName) : FString();
+    if (Name.empty())
+    {
+        return;
+    }
+
+    uint64 Count = 0;
+    {
+        std::lock_guard<std::mutex> Lock(GGeneratedRpcUnsupportedMutex);
+        Count = ++GGeneratedRpcUnsupportedCounts[{ServerType, Name}];
+    }
+
+    if (Count == 1 || Count == 10 || Count == 100)
+    {
+        LOG_WARN("Generated RPC endpoint unsupported: target=%s function=%s count=%llu",
+                 GetServerTypeDisplayName(ServerType),
+                 Name.c_str(),
+                 static_cast<unsigned long long>(Count));
+    }
+}
+
+TVector<SGeneratedRpcUnsupportedStat> GetGeneratedRpcUnsupportedStats()
+{
+    TVector<SGeneratedRpcUnsupportedStat> Result;
+    std::lock_guard<std::mutex> Lock(GGeneratedRpcUnsupportedMutex);
+    Result.reserve(GGeneratedRpcUnsupportedCounts.size());
+    for (const auto& [Key, Count] : GGeneratedRpcUnsupportedCounts)
+    {
+        Result.push_back(SGeneratedRpcUnsupportedStat{Key.ServerType, Key.FunctionName, Count});
+    }
+    return Result;
+}
+
+TVector<SGeneratedRpcUnsupportedStat> GetGeneratedRpcUnsupportedStats(EServerType ServerType)
+{
+    TVector<SGeneratedRpcUnsupportedStat> Result;
+    std::lock_guard<std::mutex> Lock(GGeneratedRpcUnsupportedMutex);
+    for (const auto& [Key, Count] : GGeneratedRpcUnsupportedCounts)
+    {
+        if (Key.ServerType == ServerType)
+        {
+            Result.push_back(SGeneratedRpcUnsupportedStat{Key.ServerType, Key.FunctionName, Count});
+        }
+    }
+    return Result;
+}
+
+FString BuildGeneratedRpcUnsupportedStatsJson()
+{
+    MJsonWriter W = MJsonWriter::Array();
+    for (const SGeneratedRpcUnsupportedStat& Stat : GetGeneratedRpcUnsupportedStats())
+    {
+        W.BeginObject();
+        W.Key("serverType");
+        W.Value(GetServerTypeDisplayName(Stat.ServerType));
+        W.Key("function");
+        W.Value(Stat.FunctionName);
+        W.Key("count");
+        W.Value(Stat.Count);
+        W.EndObject();
+    }
+    return W.ToString();
+}
+
+FString BuildGeneratedRpcUnsupportedStatsJson(EServerType ServerType)
+{
+    MJsonWriter W = MJsonWriter::Array();
+    for (const SGeneratedRpcUnsupportedStat& Stat : GetGeneratedRpcUnsupportedStats(ServerType))
+    {
+        W.BeginObject();
+        W.Key("serverType");
+        W.Value(GetServerTypeDisplayName(Stat.ServerType));
+        W.Key("function");
+        W.Value(Stat.FunctionName);
+        W.Key("count");
+        W.Value(Stat.Count);
+        W.EndObject();
+    }
+    return W.ToString();
 }
 
 bool TryInvokeServerRpc(MReflectObject* ServiceInstance, const TArray& Data, ERpcType ExpectedType)
@@ -79,7 +411,7 @@ bool TryInvokeServerRpc(MReflectObject* ServiceInstance, const TArray& Data, ERp
     }
 
     MFunction* FuncMeta = ServiceClass->FindFunctionById(FunctionId);
-    if (!FuncMeta || !FuncMeta->RpcFunc)
+    if (!FuncMeta)
     {
         LOG_WARN("TryInvokeServerRpc: unknown FunctionId=%u",
                  static_cast<unsigned>(FunctionId));
@@ -103,6 +435,112 @@ bool TryInvokeServerRpc(MReflectObject* ServiceInstance, const TArray& Data, ERp
     }
 
     MReflectArchive Ar(Payload);
-    FuncMeta->RpcFunc(ServiceInstance, Ar);
-    return true;
+    return ServiceInstance->InvokeSerializedFunction(FuncMeta, Ar);
+}
+
+bool TryDispatchGeneratedClientMessage(
+    MReflectObject* TargetInstance,
+    uint64 ConnectionId,
+    EClientMessageType MessageType,
+    const TArray& Payload)
+{
+    if (!TargetInstance)
+    {
+        return false;
+    }
+
+    MClass* TargetClass = TargetInstance->GetClass();
+    if (!TargetClass)
+    {
+        return false;
+    }
+
+    const char* MessageName = GetClientMessageTypeName(MessageType);
+    const MClientManifest::SEntry* Entries = MClientManifest::GetEntries();
+    const size_t EntryCount = MClientManifest::GetEntryCount();
+
+    for (size_t Index = 0; Index < EntryCount; ++Index)
+    {
+        const MClientManifest::SEntry& Entry = Entries[Index];
+        if (!Entry.OwnerType || !Entry.FunctionName || !Entry.MessageName)
+        {
+            continue;
+        }
+
+        if (TargetClass->GetName() != Entry.OwnerType || FString(MessageName) != Entry.MessageName)
+        {
+            continue;
+        }
+
+        if (Entry.RouteName && Entry.RouteName[0] != '\0')
+        {
+            auto* RouteTarget = dynamic_cast<IGeneratedClientRouteTarget*>(TargetInstance);
+            if (!RouteTarget)
+            {
+                LOG_WARN("Generated client route target unsupported: class=%s function=%s route=%s",
+                         TargetClass->GetName().c_str(),
+                         Entry.FunctionName,
+                         Entry.RouteName);
+                return true;
+            }
+
+            SGeneratedClientRouteRequest Request;
+            Request.ConnectionId = ConnectionId;
+            Request.MessageType = MessageType;
+            Request.FunctionName = Entry.FunctionName;
+            Request.RouteKind = ParseGeneratedClientRouteKind(Entry.RouteName);
+            Request.RouteName = Entry.RouteName;
+            Request.TargetServerType = ParseGeneratedClientTargetServerType(Entry.TargetName);
+            Request.TargetName = Entry.TargetName;
+            Request.AuthMode = Entry.AuthMode;
+            Request.WrapMode = Entry.WrapMode;
+            Request.Payload = &Payload;
+            if (!RouteTarget->HandleGeneratedClientRoute(Request))
+            {
+                LOG_WARN("Generated client route dispatch failed: class=%s function=%s route=%s",
+                         TargetClass->GetName().c_str(),
+                         Entry.FunctionName,
+                         Entry.RouteName);
+            }
+            return true;
+        }
+
+        MFunction* Func = TargetClass->FindFunction(Entry.FunctionName);
+        if (!Func)
+        {
+            LOG_WARN("Generated client manifest entry missing function: class=%s function=%s",
+                     TargetClass->GetName().c_str(),
+                     Entry.FunctionName);
+            return true;
+        }
+
+        if (!Entry.BindParams)
+        {
+            LOG_WARN("Generated client manifest entry missing binder: class=%s function=%s",
+                     TargetClass->GetName().c_str(),
+                     Entry.FunctionName);
+            return true;
+        }
+
+        TArray ParamStorage;
+        if (!Entry.BindParams(ConnectionId, Payload, ParamStorage))
+        {
+            LOG_WARN("Generated client dispatch param binding failed: class=%s function=%s message=%s",
+                     TargetClass->GetName().c_str(),
+                     Entry.FunctionName,
+                     MessageName);
+            return true;
+        }
+
+        if (!TargetInstance->ProcessEvent(Func, ParamStorage.empty() ? nullptr : ParamStorage.data()))
+        {
+            LOG_WARN("Generated client dispatch failed: class=%s function=%s message=%s",
+                     TargetClass->GetName().c_str(),
+                     Entry.FunctionName,
+                     MessageName);
+        }
+        return true;
+    }
+
+    return false;
 }

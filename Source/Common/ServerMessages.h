@@ -501,6 +501,22 @@ inline bool Deserialize(MMessageReader& Reader, SPlayerMovePayload& OutMessage)
     return Reader.Read(OutMessage.X) && Reader.Read(OutMessage.Y) && Reader.Read(OutMessage.Z);
 }
 
+// 客户端聊天载荷：仅包含消息文本，发送者身份以服务端认证态为准
+struct SClientChatPayload
+{
+    FString Message;
+};
+
+inline void Serialize(MMessageWriter& Writer, const SClientChatPayload& Message)
+{
+    Writer.WriteString(Message.Message);
+}
+
+inline bool Deserialize(MMessageReader& Reader, SClientChatPayload& OutMessage)
+{
+    return Reader.ReadString(OutMessage.Message);
+}
+
 template<typename TMessage>
 inline TArray BuildPayload(const TMessage& Message)
 {
@@ -548,6 +564,28 @@ inline bool SendTypedServerMessage(MServerConnection& Connection, EServerMessage
 
 template<typename TMessage>
 inline bool SendTypedServerMessage(const TSharedPtr<MServerConnection>& Connection, EServerMessageType Type, const TMessage& Message)
+{
+    if (!Connection)
+    {
+        return false;
+    }
+
+    return SendTypedServerMessage(*Connection, Type, Message);
+}
+
+template<typename TMessage>
+inline bool SendTypedServerMessage(INetConnection& Connection, EServerMessageType Type, const TMessage& Message)
+{
+    TArray Payload = BuildPayload(Message);
+    TArray Packet;
+    Packet.reserve(1 + Payload.size());
+    Packet.push_back(static_cast<uint8>(Type));
+    Packet.insert(Packet.end(), Payload.begin(), Payload.end());
+    return Connection.Send(Packet.data(), static_cast<uint32>(Packet.size()));
+}
+
+template<typename TMessage>
+inline bool SendTypedServerMessage(const TSharedPtr<INetConnection>& Connection, EServerMessageType Type, const TMessage& Message)
 {
     if (!Connection)
     {

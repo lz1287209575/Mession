@@ -1,4 +1,5 @@
 #include "RouterServer.h"
+#include "Build/Generated/MRpcManifest.mgenerated.h"
 #include "Common/Config.h"
 #include "Common/ServerRpcRuntime.h"
 #include "Core/Net/Socket.h"
@@ -13,16 +14,6 @@ const TMap<FString, const char*> RouterEnvMap = {
     {"debug_http_port", "MESSION_ROUTER_DEBUG_HTTP_PORT"},
 };
 
-const SRpcEndpointBinding GRouterServerRegisterAckEndpoints[] = {
-    {EServerType::Gateway, "MGatewayServer", "Rpc_OnRouterServerRegisterAck"},
-    {EServerType::Login, "MLoginServer", "Rpc_OnRouterServerRegisterAck"},
-    {EServerType::World, "MWorldServer", "Rpc_OnRouterServerRegisterAck"},
-};
-
-const SRpcEndpointBinding GRouterRouteResponseEndpoints[] = {
-    {EServerType::Gateway, "MGatewayServer", "Rpc_OnRouterRouteResponse"},
-    {EServerType::World, "MWorldServer", "Rpc_OnRouterRouteResponse"},
-};
 }
 
 bool MRouterServer::LoadConfig(const FString& ConfigPath)
@@ -56,7 +47,11 @@ bool MRouterServer::Init(int InPort)
         DebugServer = TUniquePtr<MHttpDebugServer>(new MHttpDebugServer(
             Config.DebugHttpPort,
             [this]() { return BuildDebugStatusJson(); }));
-        DebugServer->Start();
+        if (!DebugServer->Start())
+        {
+            LOG_ERROR("Router debug HTTP failed to start on port %u", static_cast<unsigned>(Config.DebugHttpPort));
+            DebugServer.reset();
+        }
     }
 
     return true;
@@ -140,6 +135,32 @@ FString MRouterServer::BuildDebugStatusJson() const
     W.Key("server"); W.Value("Router");
     W.Key("peers"); W.Value(static_cast<uint64>(Peers.size()));
     W.Key("registeredPeers"); W.Value(static_cast<uint64>(RegisteredCount));
+    W.Key("rpcManifestEntries"); W.Value(static_cast<uint64>(MRpcManifest::GetEntryCount()));
+    W.Key("rpcSupport");
+    W.BeginObject();
+    for (EServerType ServerType : {EServerType::Gateway, EServerType::Login, EServerType::World})
+    {
+        W.Key(GetServerTypeDisplayName(ServerType));
+        W.BeginArray();
+        for (const FString& Name : GetGeneratedRpcFunctionNames(ServerType))
+        {
+            W.Value(Name);
+        }
+        W.EndArray();
+    }
+    W.EndObject();
+    W.Key("unsupportedRpc");
+    W.BeginArray();
+    for (const SGeneratedRpcUnsupportedStat& Stat : GetGeneratedRpcUnsupportedStats())
+    {
+        W.BeginObject();
+        W.Key("serverType"); W.Value(GetServerTypeDisplayName(Stat.ServerType));
+        W.Key("function"); W.Value(Stat.FunctionName);
+        W.Key("count"); W.Value(Stat.Count);
+        W.EndObject();
+    }
+    W.EndArray();
+    W.EndObject();
     return W.ToString();
 }
 
@@ -235,23 +256,17 @@ void MRouterServer::OnPeer_ServerRegister(uint64 ConnectionId, const SServerRegi
     Peer.ZoneId = Message.ZoneId;
     Peer.bRegistered = true;
 
-    bool bSentAckByRpc = false;
-    if (const SRpcEndpointBinding* Endpoint = FindRpcEndpointByServerType(
-            GRouterServerRegisterAckEndpoints,
-            sizeof(GRouterServerRegisterAckEndpoints) / sizeof(GRouterServerRegisterAckEndpoints[0]),
-            Peer.ServerType))
-    {
-        TArray RpcData;
-        if (BuildRpcPayloadForEndpoint(*Endpoint, BuildRpcArgsPayload(static_cast<uint8>(1)), RpcData))
+    MRpc::TryRpcOrTypedLegacy(
+        [&]()
         {
-            bSentAckByRpc = SendServerMessage(ConnectionId, static_cast<uint8>(EServerMessageType::MT_RPC), RpcData);
-        }
-    }
-
-    if (!bSentAckByRpc)
-    {
-        SendServerMessage(ConnectionId, EServerMessageType::MT_ServerRegisterAck, SServerRegisterAckMessage{1});
-    }
+            return MRpc::Call<MRpcManifest::EFunction::Rpc_OnRouterServerRegisterAck>(
+                Peer.Connection,
+                Peer.ServerType,
+                static_cast<uint8>(1));
+        },
+        Peer.Connection,
+        EServerMessageType::MT_ServerRegisterAck,
+        SServerRegisterAckMessage{1});
 
     LOG_INFO("Registered server %s (id=%u type=%d addr=%s:%u)",
              Peer.ServerName.c_str(),
@@ -295,36 +310,26 @@ void MRouterServer::OnPeer_RouteQuery(uint64 ConnectionId, const SRouteQueryMess
         Response.ServerInfo = SServerInfo(Target->ServerId, Target->ServerType, Target->ServerName, Target->Address, Target->Port, Target->ZoneId);
     }
 
-    bool bSentResponseByRpc = false;
-    if (const SRpcEndpointBinding* Endpoint = FindRpcEndpointByServerType(
-            GRouterRouteResponseEndpoints,
-            sizeof(GRouterRouteResponseEndpoints) / sizeof(GRouterRouteResponseEndpoints[0]),
-            Peer.ServerType))
-    {
-        TArray RpcData;
-        if (BuildRpcPayloadForEndpoint(
-                *Endpoint,
-                BuildRpcArgsPayload(
-                    Response.RequestId,
-                    static_cast<uint8>(Response.RequestedType),
-                    Response.PlayerId,
-                    Response.bFound,
-                    Response.ServerInfo.ServerId,
-                    static_cast<uint8>(Response.ServerInfo.ServerType),
-                    Response.ServerInfo.ServerName,
-                    Response.ServerInfo.Address,
-                    Response.ServerInfo.Port,
-                    Response.ServerInfo.ZoneId),
-                RpcData))
+    MRpc::TryRpcOrTypedLegacy(
+        [&]()
         {
-            bSentResponseByRpc = SendServerMessage(ConnectionId, static_cast<uint8>(EServerMessageType::MT_RPC), RpcData);
-        }
-    }
-
-    if (!bSentResponseByRpc)
-    {
-        SendServerMessage(ConnectionId, EServerMessageType::MT_RouteResponse, Response);
-    }
+            return MRpc::Call<MRpcManifest::EFunction::Rpc_OnRouterRouteResponse>(
+                Peer.Connection,
+                Peer.ServerType,
+                Response.RequestId,
+                static_cast<uint8>(Response.RequestedType),
+                Response.PlayerId,
+                Response.bFound,
+                Response.ServerInfo.ServerId,
+                static_cast<uint8>(Response.ServerInfo.ServerType),
+                Response.ServerInfo.ServerName,
+                Response.ServerInfo.Address,
+                Response.ServerInfo.Port,
+                Response.ServerInfo.ZoneId);
+        },
+        Peer.Connection,
+        EServerMessageType::MT_RouteResponse,
+        Response);
 
     LOG_INFO("Route query from %s for type=%d player=%llu result=%s",
              Peer.ServerName.c_str(),

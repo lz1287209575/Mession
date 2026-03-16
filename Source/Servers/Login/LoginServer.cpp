@@ -1,5 +1,8 @@
 #include "LoginServer.h"
+#include "Build/Generated/MGatewayService.mgenerated.h"
+#include "Build/Generated/MWorldService.mgenerated.h"
 #include "Common/Config.h"
+#include "Common/ServerRpcRuntime.h"
 #include "Messages/NetMessages.h"
 #include "Core/Json.h"
 #include <time.h>
@@ -53,19 +56,7 @@ bool MLoginServer::Init(int InPort)
     InitGatewayMessageHandlers();
     InitRouterMessageHandlers();
 
-    MLoginService::SetHandler_Rpc_OnPlayerLoginRequest([this](uint64 ClientConnectionId, uint64 PlayerId)
-    {
-        OnGateway_PlayerLogin(
-            ClientConnectionId,
-            SPlayerLoginRequestMessage{ClientConnectionId, PlayerId});
-    });
-
-    MLoginService::SetHandler_Rpc_OnSessionValidateRequest([this](uint64 ValidationRequestId, uint64 PlayerId, uint32 SessionKey)
-    {
-        OnGateway_SessionValidateRequest(
-            ValidationRequestId,
-            SSessionValidateRequestMessage{ValidationRequestId, PlayerId, SessionKey});
-    });
+    MLoginService::BindHandlers(this);
 
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
@@ -84,7 +75,11 @@ bool MLoginServer::Init(int InPort)
         DebugServer = TUniquePtr<MHttpDebugServer>(new MHttpDebugServer(
             Config.DebugHttpPort,
             [this]() { return BuildDebugStatusJson(); }));
-        DebugServer->Start();
+        if (!DebugServer->Start())
+        {
+            LOG_ERROR("Login debug HTTP failed to start on port %u", static_cast<unsigned>(Config.DebugHttpPort));
+            DebugServer.reset();
+        }
     }
 
     return true;
@@ -183,6 +178,26 @@ FString MLoginServer::BuildDebugStatusJson() const
     W.Key("server"); W.Value("Login");
     W.Key("gateways"); W.Value(static_cast<uint64>(GatewayCount));
     W.Key("sessions"); W.Value(static_cast<uint64>(SessionCount));
+    const TVector<FString> RpcFunctions = GetGeneratedRpcFunctionNames(EServerType::Login);
+    W.Key("rpcManifestCount"); W.Value(static_cast<uint64>(RpcFunctions.size()));
+    W.Key("rpcFunctions");
+    W.BeginArray();
+    for (const FString& Name : RpcFunctions)
+    {
+        W.Value(Name);
+    }
+    W.EndArray();
+    W.Key("unsupportedRpc");
+    W.BeginArray();
+    for (const SGeneratedRpcUnsupportedStat& Stat : GetGeneratedRpcUnsupportedStats(EServerType::Login))
+    {
+        W.BeginObject();
+        W.Key("function"); W.Value(Stat.FunctionName);
+        W.Key("count"); W.Value(Stat.Count);
+        W.EndObject();
+    }
+    W.EndArray();
+    W.EndObject();
     return W.ToString();
 }
 
@@ -425,7 +440,8 @@ void MLoginServer::OnGateway_PlayerLogin(uint64 ClientConnectionId, const SPlaye
     // Here ClientConnectionId is the gateway-side client connection id carried as business data,
     // not the LoginServer socket id of the backend peer.
     const uint64 GatewayPeerConnectionId = FindAuthenticatedPeerConnectionId(EServerType::Gateway);
-    if (GatewayPeerConnectionId == 0)
+    auto GatewayPeerIt = GatewayConnections.find(GatewayPeerConnectionId);
+    if (GatewayPeerConnectionId == 0 || GatewayPeerIt == GatewayConnections.end() || !GatewayPeerIt->second.Connection)
     {
         LOG_WARN("No authenticated Gateway peer available for player login response (ClientConnId=%llu, PlayerId=%llu)",
                  (unsigned long long)Request.ConnectionId,
@@ -434,34 +450,28 @@ void MLoginServer::OnGateway_PlayerLogin(uint64 ClientConnectionId, const SPlaye
     }
 
     const uint32 SessionKey = CreateSession(Request.PlayerId, ClientConnectionId);
-    const uint16 FunctionId = MGatewayService::GetFunctionId_Rpc_OnPlayerLoginResponse();
-    if (FunctionId == 0)
-    {
-        LOG_WARN("MGatewayService::GetFunctionId_Rpc_OnPlayerLoginResponse returned 0, fallback to legacy MT_PlayerLogin");
-        SendServerMessage(
-            GatewayPeerConnectionId,
-            EServerMessageType::MT_PlayerLogin,
-            SPlayerLoginResponseMessage{ClientConnectionId, Request.PlayerId, SessionKey});
-    }
-    else
-    {
-        TArray RpcData;
-        BuildServerRpcPayload(
-            FunctionId,
-            BuildRpcPayloadForCall<&MGatewayService::Rpc_OnPlayerLoginResponse>(
+    MRpc::TryRpcOrTypedLegacy(
+        [&]()
+        {
+            return MRpc::MGatewayService::Rpc_OnPlayerLoginResponse(
+                GatewayPeerIt->second.Connection,
                 ClientConnectionId,
                 Request.PlayerId,
-                SessionKey),
-            RpcData);
-
-        SendServerMessage(
-            GatewayPeerConnectionId,
-            static_cast<uint8>(EServerMessageType::MT_RPC),
-            RpcData);
-    }
+                SessionKey);
+        },
+        GatewayPeerIt->second.Connection,
+        EServerMessageType::MT_PlayerLogin,
+        SPlayerLoginResponseMessage{ClientConnectionId, Request.PlayerId, SessionKey});
 
     LOG_INFO("Player %llu logged in, session key: %u",
              (unsigned long long)Request.PlayerId, SessionKey);
+}
+
+void MLoginServer::Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId)
+{
+    OnGateway_PlayerLogin(
+        ClientConnectionId,
+        SPlayerLoginRequestMessage{ClientConnectionId, PlayerId});
 }
 
 void MLoginServer::OnGateway_SessionValidateRequest(uint64 ValidationRequestId, const SSessionValidateRequestMessage& Request)
@@ -469,7 +479,8 @@ void MLoginServer::OnGateway_SessionValidateRequest(uint64 ValidationRequestId, 
     // For the reflected service path, ValidationRequestId is the world-side request correlation id.
     // Authentication has already been enforced by the backend connection that delivered MT_RPC.
     const uint64 WorldPeerConnectionId = FindAuthenticatedPeerConnectionId(EServerType::World);
-    if (WorldPeerConnectionId == 0)
+    auto WorldPeerIt = GatewayConnections.find(WorldPeerConnectionId);
+    if (WorldPeerConnectionId == 0 || WorldPeerIt == GatewayConnections.end() || !WorldPeerIt->second.Connection)
     {
         LOG_WARN("No authenticated World peer available for session validation response (RequestId=%llu, PlayerId=%llu)",
                  (unsigned long long)Request.ConnectionId,
@@ -480,37 +491,30 @@ void MLoginServer::OnGateway_SessionValidateRequest(uint64 ValidationRequestId, 
     uint64 ValidatedPlayerId = 0;
     const bool bValid = ValidateSession(Request.SessionKey, ValidatedPlayerId) && ValidatedPlayerId == Request.PlayerId;
 
-    const uint16 FunctionId = MWorldService::GetFunctionId_Rpc_OnSessionValidateResponse();
-    if (FunctionId == 0)
-    {
-        LOG_WARN("MWorldService::GetFunctionId_Rpc_OnSessionValidateResponse returned 0, fallback to legacy MT_SessionValidateResponse");
-
-        SendServerMessage(
-            WorldPeerConnectionId,
-            EServerMessageType::MT_SessionValidateResponse,
-            SSessionValidateResponseMessage{ValidationRequestId, Request.PlayerId, bValid});
-    }
-    else
-    {
-        TArray RpcData;
-        BuildServerRpcPayload(
-            FunctionId,
-            BuildRpcPayloadForCall<&MWorldService::Rpc_OnSessionValidateResponse>(
+    MRpc::TryRpcOrTypedLegacy(
+        [&]()
+        {
+            return MRpc::MWorldService::Rpc_OnSessionValidateResponse(
+                WorldPeerIt->second.Connection,
                 ValidationRequestId,
                 Request.PlayerId,
-                bValid),
-            RpcData);
-
-        SendServerMessage(
-            WorldPeerConnectionId,
-            static_cast<uint8>(EServerMessageType::MT_RPC),
-            RpcData);
-    }
+                bValid);
+        },
+        WorldPeerIt->second.Connection,
+        EServerMessageType::MT_SessionValidateResponse,
+        SSessionValidateResponseMessage{ValidationRequestId, Request.PlayerId, bValid});
 
     LOG_INFO("Session validation for player %llu on connection %llu: %s",
              (unsigned long long)Request.PlayerId,
              (unsigned long long)ValidationRequestId,
              bValid ? "valid" : "invalid");
+}
+
+void MLoginServer::Rpc_OnSessionValidateRequest(uint64 ValidationRequestId, uint64 PlayerId, uint32 SessionKey)
+{
+    OnGateway_SessionValidateRequest(
+        ValidationRequestId,
+        SSessionValidateRequestMessage{ValidationRequestId, PlayerId, SessionKey});
 }
 
 void MLoginServer::OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& /*Message*/)

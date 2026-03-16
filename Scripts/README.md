@@ -46,12 +46,25 @@ python3 Scripts/validate.py --build-dir Build --timeout 45
 ### 验证流程摘要
 
 1. 按顺序启动 Router → Login → World → Scene → Gateway
-2. **多玩家登录**：多个客户端依次连接并登录，校验 `SessionKey/PlayerId`
-3. **复制链路**：登录后收包，断言至少收到 `MT_ActorCreate`
-4. **断线重连**：首个客户端断开后重连，并再次登录
-5. **并发验证**：多线程同时连接登录，验证服务端稳定性
-6. （可选）压力测试：大量并发连接 + 登录 + 多次收发包
-7. 清理并退出
+2. **Handshake 本地处理**：通过 `MT_Handshake` 验证 Gateway 本地声明式入口和 debug 观测
+3. **多玩家登录**：多个客户端依次连接并登录，校验 `SessionKey/PlayerId`
+4. **复制链路**：登录后收包，断言至少收到 `MT_ActorCreate`
+5. **RouterResolved 路由缓存**：通过客户端移动触发路由缓存建立，并观察 Gateway 路由日志
+6. **Chat 路径**：通过 `MT_Chat` 验证 Gateway -> World -> Client 的声明式转发
+7. **Heartbeat 本地处理**：通过 `MT_Heartbeat` 验证 Gateway 本地声明式入口和 debug 观测
+8. **断线重连**：首个客户端断开后重连，并再次登录
+9. **登录即断开**：登录后立刻断开，并验证可再次登录
+10. **双端同时断线**：两个已登录玩家同时断开，并验证都可恢复
+11. **快速重连边界**：同一 `PlayerId` 短时间内连续重连
+12. **并发验证**：多线程同时连接登录，验证服务端稳定性；若首轮出现单次抖动，会自动复核失败客户端后再判失败
+13. （可选）压力测试：大量并发连接 + 登录 + 多次收发包
+14. 清理并退出
+
+说明：
+
+- 当前客户端上行入口中，`MT_RPC` 仍是唯一保留的 legacy 特例。
+- `validate.py` 会额外断言 `legacyClientRpcCount` 增长且 `rejectedClientFallbackCount` 不增长。
+- 其余未接入声明式入口的客户端消息默认不会再通过 Gateway 通用 fallback 自动转发。
 
 ## test_client.py - 简易测试客户端
 

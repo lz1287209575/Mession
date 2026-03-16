@@ -3,6 +3,7 @@
 #include "Core/Net/NetCore.h"
 #include "Replicate.h"
 #include "Common/Logger.h"
+#include "Common/StringUtils.h"
 
 // 网络对象基类
 class MObject
@@ -51,6 +52,11 @@ public:
     
     // 序列化 - 子类重写
     virtual void Serialize(MArchive& /*Ar*/) {}
+    virtual FString ToString() const
+    {
+        return "MObject{ObjectId=" + MString::ToString(ObjectId) +
+               ", Replicated=" + FString(bReplicated ? "true" : "false") + "}";
+    }
     
     // 复制前检查
     virtual bool HasUnreplicatedChanges() const { return false; }

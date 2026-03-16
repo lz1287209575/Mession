@@ -5,6 +5,27 @@
 
 namespace
 {
+struct SRenameParams
+{
+    FString NewName;
+};
+
+struct SGetGoldAmountParams
+{
+    int32 ReturnValue = 0;
+};
+
+struct SIsAliveParams
+{
+    bool ReturnValue = false;
+};
+
+struct SHasFriendParams
+{
+    uint64 FriendId = 0;
+    bool ReturnValue = false;
+};
+
 bool RunReflectionTests()
 {
     LOG_INFO("=== MonoServer: Running reflection tests ===");
@@ -61,6 +82,97 @@ bool RunReflectionTests()
             return false;
         }
         LOG_INFO("MCharacter after CallFunction(LevelUp): Level=%d", *LevelAfterCall);
+
+        if (!Character->CallFunctionArgs("Rename", FString("ReflectedHero")))
+        {
+            LOG_ERROR("CallFunctionArgs(Rename) failed on MCharacter");
+            return false;
+        }
+
+        FString* NameAfterRename = GET_PROPERTY(Character, FString, Name);
+        if (!NameAfterRename || *NameAfterRename != "ReflectedHero")
+        {
+            LOG_ERROR("Rename via reflection did not update Name");
+            return false;
+        }
+
+        int32 GoldByReturn = 0;
+        if (!Character->CallFunctionWithReturn("GetGoldAmount", GoldByReturn))
+        {
+            LOG_ERROR("CallFunctionWithReturn(GetGoldAmount) failed on MCharacter");
+            return false;
+        }
+        if (GoldByReturn != 123)
+        {
+            LOG_ERROR("GetGoldAmount via reflection returned unexpected value: %d", GoldByReturn);
+            return false;
+        }
+
+        bool bIsAlive = false;
+        if (!Character->CallFunctionWithReturn("IsAlive", bIsAlive))
+        {
+            LOG_ERROR("CallFunctionWithReturn(IsAlive) failed on MCharacter");
+            return false;
+        }
+        if (!bIsAlive)
+        {
+            LOG_ERROR("IsAlive via reflection returned false unexpectedly");
+            return false;
+        }
+
+        SRenameParams RenameParams;
+        RenameParams.NewName = "ProcessEventHero";
+        if (!Character->ProcessEvent("Rename", &RenameParams))
+        {
+            LOG_ERROR("ProcessEvent(Rename) failed on MCharacter");
+            return false;
+        }
+
+        NameAfterRename = GET_PROPERTY(Character, FString, Name);
+        if (!NameAfterRename || *NameAfterRename != "ProcessEventHero")
+        {
+            LOG_ERROR("ProcessEvent(Rename) did not update Name");
+            return false;
+        }
+
+        SGetGoldAmountParams GoldParams;
+        if (!Character->ProcessEvent("GetGoldAmount", &GoldParams))
+        {
+            LOG_ERROR("ProcessEvent(GetGoldAmount) failed on MCharacter");
+            return false;
+        }
+        if (GoldParams.ReturnValue != 123)
+        {
+            LOG_ERROR("ProcessEvent(GetGoldAmount) returned unexpected value: %d", GoldParams.ReturnValue);
+            return false;
+        }
+
+        SIsAliveParams AliveParams;
+        if (!Character->ProcessEvent("IsAlive", &AliveParams))
+        {
+            LOG_ERROR("ProcessEvent(IsAlive) failed on MCharacter");
+            return false;
+        }
+        if (!AliveParams.ReturnValue)
+        {
+            LOG_ERROR("ProcessEvent(IsAlive) returned false unexpectedly");
+            return false;
+        }
+
+        MEnum* ArchetypeEnum = MReflectObject::FindEnum("ECharacterArchetype");
+        if (!ArchetypeEnum)
+        {
+            LOG_ERROR("ECharacterArchetype enum was not auto-registered");
+            return false;
+        }
+        const MEnumValue* MageValue = ArchetypeEnum->FindValue("Mage");
+        if (!MageValue || MageValue->Value != 2)
+        {
+            LOG_ERROR("ECharacterArchetype enum metadata is invalid");
+            return false;
+        }
+        LOG_INFO("Reflected enum ECharacterArchetype registered with %zu values",
+                 static_cast<size_t>(ArchetypeEnum->GetValues().size()));
         
         // 序列化
         MReflectArchive ArWrite;
@@ -121,6 +233,36 @@ bool RunReflectionTests()
         Data->GetBlackList().clear();
         Data->GetBlackList().insert(3001);
         Data->GetBlackList().insert(3002);
+
+        if (!Data->CallFunctionArgs("AddFriend", static_cast<uint64>(2004)))
+        {
+            LOG_ERROR("CallFunctionArgs(AddFriend) failed on MPlayerData");
+            return false;
+        }
+        bool bHasFriend = false;
+        if (!Data->CallFunctionWithReturn("HasFriend", bHasFriend, static_cast<uint64>(2004)))
+        {
+            LOG_ERROR("CallFunctionWithReturn(HasFriend) failed on MPlayerData");
+            return false;
+        }
+        if (!bHasFriend)
+        {
+            LOG_ERROR("HasFriend via reflection returned false unexpectedly");
+            return false;
+        }
+
+        SHasFriendParams HasFriendParams;
+        HasFriendParams.FriendId = 2004;
+        if (!Data->ProcessEvent("HasFriend", &HasFriendParams))
+        {
+            LOG_ERROR("ProcessEvent(HasFriend) failed on MPlayerData");
+            return false;
+        }
+        if (!HasFriendParams.ReturnValue)
+        {
+            LOG_ERROR("ProcessEvent(HasFriend) returned false unexpectedly");
+            return false;
+        }
         
         uint64* PlayerIdPtr = GET_PROPERTY(Data, uint64, PlayerId);
         FString* AccountNamePtr = GET_PROPERTY(Data, FString, AccountName);
@@ -160,6 +302,14 @@ bool RunReflectionTests()
                  (size_t)DataCopy->GetFriendsList().size(),
                  (size_t)DataCopy->GetFriendLevels().size(),
                  (size_t)DataCopy->GetBlackList().size());
+
+        if (DataCopy->GetFriendsList().size() != 4 ||
+            DataCopy->GetFriendLevels().size() != 3 ||
+            DataCopy->GetBlackList().size() != 2)
+        {
+            LOG_ERROR("MPlayerData container serialization mismatch after deserialize");
+            return false;
+        }
     }
 
     // 测试 3：MHero 嵌套结构体（Struct 类型）自动序列化
@@ -261,9 +411,9 @@ bool RunReflectionTests()
 
         // 查找 RPC 函数元信息
         MFunction* RpcFuncMeta = HeroClass->FindFunction("ServerRpc_AddStats");
-        if (!RpcFuncMeta || !RpcFuncMeta->RpcFunc)
+        if (!RpcFuncMeta)
         {
-            LOG_ERROR("RPC metadata for ServerRpc_AddStats not found or missing invoker");
+            LOG_ERROR("RPC metadata for ServerRpc_AddStats not found");
             return false;
         }
 
@@ -359,9 +509,13 @@ bool RunReflectionTests()
                  (unsigned)RecvFunctionId,
                  (unsigned)RecvPayloadSize);
 
-        // 使用反射的 RpcInvoker 执行 RPC（此处直接用 Hero 实例模拟）
+        // 使用统一反射入口执行序列化 RPC 调用（此处直接用 Hero 实例模拟）
         MReflectArchive RecvAr(RecvPayload);
-        RpcFuncMeta->RpcFunc(Hero, RecvAr);
+        if (!Hero->InvokeSerializedFunction(RpcFuncMeta, RecvAr))
+        {
+            LOG_ERROR("InvokeSerializedFunction failed for ServerRpc_AddStats");
+            return false;
+        }
 
         LOG_INFO("MHero after RPC invoke: Level=%d Health=%.2f",
                  Hero->GetLevel(),

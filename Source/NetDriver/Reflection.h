@@ -2,6 +2,7 @@
 
 #include "Core/Net/NetCore.h"
 #include "Common/Logger.h"
+#include "Common/StringUtils.h"
 #include "Common/ServerConnection.h"
 #include <typeinfo>
 #include <typeindex>
@@ -83,9 +84,13 @@ enum class ERpcType : uint8
 
 class MReflectArchive;
 class MReflectObject;
+bool BuildServerRpcPayload(uint16 FunctionId, const TArray& InPayload, TArray& OutData);
 
 template<typename T>
 using TRpcArgStorage = std::remove_cv_t<std::remove_reference_t<T>>;
+
+template<typename T>
+using TReflectStorage = std::remove_cv_t<std::remove_reference_t<T>>;
 
 inline uint16 ComputeStableReflectId(const char* ScopeName, const char* MemberName)
 {
@@ -183,6 +188,7 @@ public:
 
     // 默认基于 Type 做序列化，容器等复杂类型可在子类中重写
     virtual void SerializeValue(void* Object, MReflectArchive& Ar) const;
+    virtual FString ExportValueToString(const void* Object) const;
 
     // 获取属性值（模板化）
     template<typename T>
@@ -240,6 +246,68 @@ public:
     }
 };
 
+class MEnumValue
+{
+public:
+    FString Name;
+    int64 Value = 0;
+};
+
+class MEnum
+{
+private:
+    FString EnumName;
+    FString EnumPath;
+    uint16 EnumId = 0;
+    std::type_index CppTypeIndex = typeid(void);
+    TVector<MEnumValue> Values;
+
+public:
+    MEnum() = default;
+    MEnum(const FString& InName, const FString& InPath, const std::type_index& InCppTypeIndex = typeid(void))
+        : EnumName(InName)
+        , EnumPath(InPath)
+        , EnumId(ComputeStableReflectId("MEnum", InName.c_str()))
+        , CppTypeIndex(InCppTypeIndex)
+    {
+    }
+
+    const FString& GetName() const { return EnumName; }
+    const FString& GetPath() const { return EnumPath; }
+    uint16 GetId() const { return EnumId; }
+    const std::type_index& GetCppTypeIndex() const { return CppTypeIndex; }
+    const TVector<MEnumValue>& GetValues() const { return Values; }
+
+    void AddValue(const FString& InName, int64 InValue)
+    {
+        Values.push_back(MEnumValue{InName, InValue});
+    }
+
+    const MEnumValue* FindValue(const FString& InName) const
+    {
+        for (const MEnumValue& Value : Values)
+        {
+            if (Value.Name == InName)
+            {
+                return &Value;
+            }
+        }
+        return nullptr;
+    }
+
+    const MEnumValue* FindValueByIntegral(int64 InValue) const
+    {
+        for (const MEnumValue& Value : Values)
+        {
+            if (Value.Value == InValue)
+            {
+                return &Value;
+            }
+        }
+        return nullptr;
+    }
+};
+
 // 函数定义
 class MFunction
 {
@@ -253,21 +321,26 @@ public:
     // 函数指针类型
     using FunctionPtr = void(*)(void*);
     FunctionPtr NativeFunc = nullptr;
+    using NativeInvoker = bool(*)(MReflectObject*, MReflectArchive*, MReflectArchive*);
+    NativeInvoker NativeInvoke = nullptr;
 
     // RPC 元信息
     ERpcType RpcType = ERpcType::None;
     bool bReliable = true;
 
-    // RPC 执行入口：由网络层传入对象和参数归档
-    using RpcInvoker = void(*)(MReflectObject*, MReflectArchive&);
-    RpcInvoker RpcFunc = nullptr;
-    
     // 参数列表
     TVector<MProperty*> Params;
     MProperty* ReturnProperty = nullptr;
     
     MFunction() = default;
-    virtual ~MFunction() = default;
+    virtual ~MFunction()
+    {
+        for (MProperty* Param : Params)
+        {
+            delete Param;
+        }
+        delete ReturnProperty;
+    }
 };
 
 // 类元数据
@@ -282,6 +355,7 @@ protected:
     FString ClassName;
     FString ClassPath;
     uint16 ClassId = 0;
+    std::type_index CppTypeIndex = typeid(void);
     
     // 属性和函数
     TVector<MProperty*> Properties;
@@ -305,6 +379,7 @@ public:
     const FString& GetName() const { return ClassName; }
     const FString& GetPath() const { return ClassPath; }
     uint16 GetId() const { return ClassId; }
+    const std::type_index& GetCppTypeIndex() const { return CppTypeIndex; }
     
     // 获取属性
     const TVector<MProperty*>& GetProperties() const { return Properties; }
@@ -323,6 +398,7 @@ public:
     // 序列化
     virtual void Serialize(void* Object, class MReflectArchive& Ar) const;
     virtual void Deserialize(void* Object, const TArray& Data) const;
+    FString ExportObjectToString(const void* Object) const;
     
     // 复制属性
     void CopyProperties(void* Dest, const void* Src) const;
@@ -351,6 +427,11 @@ public:
         ClassPath = InPath;
         ParentClass = InParent;
         ClassFlags = InFlags;
+    }
+
+    void SetCppTypeIndex(const std::type_index& InCppTypeIndex)
+    {
+        CppTypeIndex = InCppTypeIndex;
     }
     
     // 注册属性
@@ -398,6 +479,42 @@ private:
         return Map;
     }
 
+    inline static TMap<FString, MEnum*>& GetEnumMap()
+    {
+        static TMap<FString, MEnum*> Map;
+        return Map;
+    }
+
+    inline static TMap<uint16, MEnum*>& GetEnumIdMap()
+    {
+        static TMap<uint16, MEnum*> Map;
+        return Map;
+    }
+
+    inline static TMap<std::type_index, MEnum*>& GetEnumTypeMap()
+    {
+        static TMap<std::type_index, MEnum*> Map;
+        return Map;
+    }
+
+    inline static TMap<FString, MClass*>& GetStructMap()
+    {
+        static TMap<FString, MClass*> Map;
+        return Map;
+    }
+
+    inline static TMap<uint16, MClass*>& GetStructIdMap()
+    {
+        static TMap<uint16, MClass*> Map;
+        return Map;
+    }
+
+    inline static TMap<std::type_index, MClass*>& GetStructTypeMap()
+    {
+        static TMap<std::type_index, MClass*> Map;
+        return Map;
+    }
+
 protected:
     MClass* Class = nullptr;
     uint64 ObjectFlags = 0;
@@ -417,6 +534,7 @@ public:
     virtual void BeginPlay() {}
     virtual void Tick(float DeltaTime) {}
     virtual void Destroy() {}
+    virtual FString ToString() const;
     
     // 反射方法
     template<typename T>
@@ -450,6 +568,16 @@ public:
     }
     
     bool CallFunction(const FString& InName);
+
+    template<typename... TArgs>
+    bool CallFunctionArgs(const FString& InName, TArgs&&... Args);
+
+    template<typename TReturn, typename... TArgs>
+    bool CallFunctionWithReturn(const FString& InName, TReturn& OutReturn, TArgs&&... Args);
+
+    bool ProcessEvent(const FString& InName, void* Params);
+    bool ProcessEvent(MFunction* Func, void* Params);
+    bool InvokeSerializedFunction(MFunction* Func, MReflectArchive& InAr);
     
     // 静态方法：类注册
     template<typename T>
@@ -475,6 +603,72 @@ public:
         GetClassMap()[InClass->GetName()] = InClass;
         GetClassIdMap()[InClass->GetId()] = InClass;
     }
+
+    static MEnum* FindEnum(const FString& InName)
+    {
+        auto It = GetEnumMap().find(InName);
+        return (It != GetEnumMap().end()) ? It->second : nullptr;
+    }
+
+    static MEnum* FindEnum(uint16 InId)
+    {
+        auto It = GetEnumIdMap().find(InId);
+        return (It != GetEnumIdMap().end()) ? It->second : nullptr;
+    }
+
+    static MEnum* FindEnum(const std::type_index& InCppTypeIndex)
+    {
+        auto It = GetEnumTypeMap().find(InCppTypeIndex);
+        return (It != GetEnumTypeMap().end()) ? It->second : nullptr;
+    }
+
+    static void RegisterEnum(MEnum* InEnum)
+    {
+        if (!InEnum)
+        {
+            return;
+        }
+
+        GetEnumMap()[InEnum->GetName()] = InEnum;
+        GetEnumIdMap()[InEnum->GetId()] = InEnum;
+        if (InEnum->GetCppTypeIndex() != std::type_index(typeid(void)))
+        {
+            GetEnumTypeMap()[InEnum->GetCppTypeIndex()] = InEnum;
+        }
+    }
+
+    static MClass* FindStruct(const FString& InName)
+    {
+        auto It = GetStructMap().find(InName);
+        return (It != GetStructMap().end()) ? It->second : nullptr;
+    }
+
+    static MClass* FindStruct(uint16 InId)
+    {
+        auto It = GetStructIdMap().find(InId);
+        return (It != GetStructIdMap().end()) ? It->second : nullptr;
+    }
+
+    static MClass* FindStruct(const std::type_index& InCppTypeIndex)
+    {
+        auto It = GetStructTypeMap().find(InCppTypeIndex);
+        return (It != GetStructTypeMap().end()) ? It->second : nullptr;
+    }
+
+    static void RegisterStruct(MClass* InStruct)
+    {
+        if (!InStruct)
+        {
+            return;
+        }
+
+        GetStructMap()[InStruct->GetName()] = InStruct;
+        GetStructIdMap()[InStruct->GetId()] = InStruct;
+        if (InStruct->GetCppTypeIndex() != std::type_index(typeid(void)))
+        {
+            GetStructTypeMap()[InStruct->GetCppTypeIndex()] = InStruct;
+        }
+    }
     
     // 供反射系统在创建实例时设置类信息
     void SetClass(MClass* InClass)
@@ -484,6 +678,11 @@ public:
     
 private:
     inline static uint64 GlobalObjectId = 0;
+
+    template<typename TReturn, typename... TArgs>
+    bool InvokeFunction(const FString& InName, TReturn* OutReturn, TArgs&&... Args);
+
+    bool InvokeFunction(MFunction* Func, MReflectArchive* InAr, MReflectArchive* OutAr);
 };
 
 // ============================================
@@ -561,19 +760,11 @@ MClass* ClassName::StaticClass() \
     } while(0)
 
 #define MREGISTER_NATIVE_METHOD_0(MethodName, FuncFlags) \
+    MREGISTER_NATIVE_METHOD(MethodName, FuncFlags)
+
+#define MREGISTER_NATIVE_METHOD(MethodName, FuncFlags) \
     do { \
-        auto* Func = new MFunction(); \
-        Func->Name = #MethodName; \
-        Func->Flags = EFunctionFlags::FuncFlags; \
-        Func->NativeFunc = [](void* Obj) \
-        { \
-            if (!Obj) \
-            { \
-                return; \
-            } \
-            static_cast<ThisClass*>(Obj)->MethodName(); \
-        }; \
-        InClass->RegisterFunction(Func); \
+        InClass->RegisterFunction(CreateNativeFunction<&ThisClass::MethodName>(#MethodName, FuncFlags)); \
     } while(0)
 
 #define MREGISTER_RPC_FUNCTION(MethodPtr, FuncNameLiteral, FuncFlags, RpcKind, ReliableValue) \
@@ -668,6 +859,15 @@ public:
     MReflectArchive& operator<<(FString& Value) { return SerializeString(Value); }
     MReflectArchive& operator<<(SVector& Value) { return SerializePrimitive(Value); }
     MReflectArchive& operator<<(SRotator& Value) { return SerializePrimitive(Value); }
+    template<typename T,
+             std::enable_if_t<
+                 std::is_trivially_copyable_v<T> &&
+                 !std::is_arithmetic_v<T> &&
+                 !std::is_enum_v<T> &&
+                 !std::is_same_v<T, FString> &&
+                 !std::is_same_v<T, SVector> &&
+                 !std::is_same_v<T, SRotator>, int> = 0>
+    MReflectArchive& operator<<(T& Value) { return SerializePrimitive(Value); }
     MReflectArchive& operator<<(bool& Value)
     {
         uint8 Temp = Value ? 1u : 0u;
@@ -675,6 +875,19 @@ public:
         if (bReading)
         {
             Value = (Temp != 0u);
+        }
+        return *this;
+    }
+
+    template<typename TEnum, std::enable_if_t<std::is_enum_v<TEnum>, int> = 0>
+    MReflectArchive& operator<<(TEnum& Value)
+    {
+        using TUnderlying = std::underlying_type_t<TEnum>;
+        TUnderlying RawValue = static_cast<TUnderlying>(Value);
+        *this << RawValue;
+        if (bReading)
+        {
+            Value = static_cast<TEnum>(RawValue);
         }
         return *this;
     }
@@ -765,6 +978,101 @@ inline TArray BuildRpcArgsPayload(TArgs&&... Args)
     return std::move(Ar.Data);
 }
 
+template<typename TArg>
+inline bool SerializeFunctionArgByMeta(MReflectArchive& Ar, const MProperty* Prop, TArg&& Arg)
+{
+    if (!Prop)
+    {
+        return false;
+    }
+
+    using TStorage = std::remove_cv_t<std::remove_reference_t<TArg>>;
+    if (Prop->CppTypeIndex != std::type_index(typeid(TStorage)))
+    {
+        return false;
+    }
+
+    TStorage Copy = static_cast<TStorage>(Arg);
+    Ar << Copy;
+    return true;
+}
+
+inline bool SerializeFunctionArgsByMeta(const MFunction* Func, MReflectArchive&)
+{
+    return Func && Func->Params.empty();
+}
+
+template<typename TArg, typename... TRest>
+inline bool SerializeFunctionArgsByMeta(const MFunction* Func, MReflectArchive& Ar, TArg&& Arg, TRest&&... Rest)
+{
+    if (!Func)
+    {
+        return false;
+    }
+
+    constexpr size_t ArgCount = 1 + sizeof...(TRest);
+    if (Func->Params.size() != ArgCount)
+    {
+        return false;
+    }
+
+    size_t Index = 0;
+    bool bOk = true;
+    auto SerializeOne = [&](auto&& Value)
+    {
+        if (!bOk || Index >= Func->Params.size())
+        {
+            bOk = false;
+            return;
+        }
+
+        bOk = SerializeFunctionArgByMeta(Ar, Func->Params[Index], std::forward<decltype(Value)>(Value));
+        ++Index;
+    };
+
+    SerializeOne(std::forward<TArg>(Arg));
+    (SerializeOne(std::forward<TRest>(Rest)), ...);
+    return bOk;
+}
+
+inline bool BuildRpcPayloadForFunction(const MFunction* Func, const TArray& InPayload, TArray& OutData)
+{
+    if (!Func)
+    {
+        return false;
+    }
+    return BuildServerRpcPayload(Func->FunctionId, InPayload, OutData);
+}
+
+template<typename... TArgs>
+inline bool BuildRpcPayloadForFunctionCall(const MFunction* Func, TArray& OutData, TArgs&&... Args)
+{
+    if (!Func)
+    {
+        return false;
+    }
+
+    MReflectArchive Ar;
+    if (!SerializeFunctionArgsByMeta(Func, Ar, std::forward<TArgs>(Args)...))
+    {
+        return false;
+    }
+
+    return BuildRpcPayloadForFunction(Func, Ar.Data, OutData);
+}
+
+template<typename TObject, typename... TArgs>
+inline bool BuildRpcPayloadForFunctionCall(const char* FunctionName, TArray& OutData, TArgs&&... Args)
+{
+    MClass* Class = TObject::StaticClass();
+    if (!Class || !FunctionName)
+    {
+        return false;
+    }
+
+    return BuildRpcPayloadForFunctionCall(Class->FindFunction(FunctionName), OutData, std::forward<TArgs>(Args)...);
+}
+
 template<auto MethodPtr>
 struct TRpcMethodTraits;
 
@@ -776,20 +1084,25 @@ struct TRpcMethodTraits<MethodPtr>
 };
 
 template<auto MethodPtr, auto ValidatePtr = nullptr>
-struct TRpcInvoker;
+struct TRpcMethodInvoker;
 
 template<typename TObject, typename... TArgs, void (TObject::*MethodPtr)(TArgs...), bool (TObject::*ValidatePtr)(TArgs...) const>
-struct TRpcInvoker<MethodPtr, ValidatePtr>
+struct TRpcMethodInvoker<MethodPtr, ValidatePtr>
 {
     using Traits = TRpcMethodTraits<MethodPtr>;
     using ObjectType = typename Traits::ObjectType;
     using ArgsTuple = typename Traits::ArgsTuple;
 
     template<size_t... Indices>
-    static void InvokeImpl(ObjectType* Object, MReflectArchive& Ar, std::index_sequence<Indices...>)
+    static bool InvokeImpl(ObjectType* Object, MReflectArchive* InAr, std::index_sequence<Indices...>)
     {
-        ArgsTuple Args;
-        SerializeRpcArgs(Ar, std::get<Indices>(Args)...);
+        if (!Object || !InAr)
+        {
+            return false;
+        }
+
+        ArgsTuple Args{};
+        SerializeRpcArgs(*InAr, std::get<Indices>(Args)...);
 
         const bool bValid = std::apply(
             [Object](auto&... UnpackedArgs)
@@ -800,7 +1113,7 @@ struct TRpcInvoker<MethodPtr, ValidatePtr>
         if (!bValid)
         {
             LOG_WARN("RPC validation failed for function");
-            return;
+            return false;
         }
 
         std::apply(
@@ -809,32 +1122,38 @@ struct TRpcInvoker<MethodPtr, ValidatePtr>
                 (Object->*MethodPtr)(UnpackedArgs...);
             },
             Args);
+        return true;
     }
 
-    static void Invoke(MReflectObject* Object, MReflectArchive& Ar)
+    static bool Invoke(MReflectObject* Object, MReflectArchive* InAr, MReflectArchive*)
     {
         if (!Object)
         {
-            return;
+            return false;
         }
 
         auto* TypedObject = static_cast<ObjectType*>(Object);
-        InvokeImpl(TypedObject, Ar, std::index_sequence_for<TArgs...>{});
+        return InvokeImpl(TypedObject, InAr, std::index_sequence_for<TArgs...>{});
     }
 };
 
 template<typename TObject, typename... TArgs, void (TObject::*MethodPtr)(TArgs...)>
-struct TRpcInvoker<MethodPtr, nullptr>
+struct TRpcMethodInvoker<MethodPtr, nullptr>
 {
     using Traits = TRpcMethodTraits<MethodPtr>;
     using ObjectType = typename Traits::ObjectType;
     using ArgsTuple = typename Traits::ArgsTuple;
 
     template<size_t... Indices>
-    static void InvokeImpl(ObjectType* Object, MReflectArchive& Ar, std::index_sequence<Indices...>)
+    static bool InvokeImpl(ObjectType* Object, MReflectArchive* InAr, std::index_sequence<Indices...>)
     {
-        ArgsTuple Args;
-        SerializeRpcArgs(Ar, std::get<Indices>(Args)...);
+        if (!Object || !InAr)
+        {
+            return false;
+        }
+
+        ArgsTuple Args{};
+        SerializeRpcArgs(*InAr, std::get<Indices>(Args)...);
 
         std::apply(
             [Object](auto&... UnpackedArgs)
@@ -842,17 +1161,18 @@ struct TRpcInvoker<MethodPtr, nullptr>
                 (Object->*MethodPtr)(UnpackedArgs...);
             },
             Args);
+        return true;
     }
 
-    static void Invoke(MReflectObject* Object, MReflectArchive& Ar)
+    static bool Invoke(MReflectObject* Object, MReflectArchive* InAr, MReflectArchive*)
     {
         if (!Object)
         {
-            return;
+            return false;
         }
 
         auto* TypedObject = static_cast<ObjectType*>(Object);
-        InvokeImpl(TypedObject, Ar, std::index_sequence_for<TArgs...>{});
+        return InvokeImpl(TypedObject, InAr, std::index_sequence_for<TArgs...>{});
     }
 };
 
@@ -870,16 +1190,268 @@ inline MFunction* CreateRpcFunction(
     Func->RpcType = RpcType;
     Func->bReliable = bReliable;
     Func->EndpointServerType = EndpointServerType;
-    Func->RpcFunc = &TRpcInvoker<MethodPtr, ValidatePtr>::Invoke;
+    Func->NativeInvoke = &TRpcMethodInvoker<MethodPtr, ValidatePtr>::Invoke;
     return Func;
+}
+
+template<typename TValue>
+inline void SerializeNativeReturnValue(MReflectArchive& Ar, TValue& Value)
+{
+    Ar << Value;
+}
+
+template<auto MethodPtr>
+struct TNativeMethodInvoker;
+
+template<typename TObject, typename TReturn, typename... TArgs, TReturn (TObject::*MethodPtr)(TArgs...)>
+struct TNativeMethodInvoker<MethodPtr>
+{
+    using ObjectType = TObject;
+    using ArgsTuple = std::tuple<TRpcArgStorage<TArgs>...>;
+
+    template<size_t... Indices>
+    static bool InvokeImpl(ObjectType* Object, MReflectArchive* InAr, MReflectArchive* OutAr, std::index_sequence<Indices...>)
+    {
+        if (!Object)
+        {
+            return false;
+        }
+
+        ArgsTuple Args;
+        if (InAr)
+        {
+            SerializeRpcArgs(*InAr, std::get<Indices>(Args)...);
+        }
+        if constexpr (std::is_void_v<TReturn>)
+        {
+            std::apply(
+                [Object](auto&... UnpackedArgs)
+                {
+                    (Object->*MethodPtr)(UnpackedArgs...);
+                },
+                Args);
+        }
+        else
+        {
+            if (!OutAr)
+            {
+                return false;
+            }
+            TReturn ReturnValue = std::apply(
+                [Object](auto&... UnpackedArgs)
+                {
+                    return (Object->*MethodPtr)(UnpackedArgs...);
+                },
+                Args);
+            SerializeNativeReturnValue(*OutAr, ReturnValue);
+        }
+        return true;
+    }
+
+    static bool Invoke(MReflectObject* Object, MReflectArchive* InAr, MReflectArchive* OutAr)
+    {
+        return InvokeImpl(static_cast<ObjectType*>(Object), InAr, OutAr, std::index_sequence_for<TArgs...>{});
+    }
+};
+
+template<typename TObject, typename TReturn, typename... TArgs, TReturn (TObject::*MethodPtr)(TArgs...) const>
+struct TNativeMethodInvoker<MethodPtr>
+{
+    using ObjectType = TObject;
+    using ArgsTuple = std::tuple<TRpcArgStorage<TArgs>...>;
+
+    template<size_t... Indices>
+    static bool InvokeImpl(const ObjectType* Object, MReflectArchive* InAr, MReflectArchive* OutAr, std::index_sequence<Indices...>)
+    {
+        if (!Object)
+        {
+            return false;
+        }
+
+        ArgsTuple Args;
+        if (InAr)
+        {
+            SerializeRpcArgs(*InAr, std::get<Indices>(Args)...);
+        }
+        if constexpr (std::is_void_v<TReturn>)
+        {
+            std::apply(
+                [Object](auto&... UnpackedArgs)
+                {
+                    (Object->*MethodPtr)(UnpackedArgs...);
+                },
+                Args);
+        }
+        else
+        {
+            if (!OutAr)
+            {
+                return false;
+            }
+            TReturn ReturnValue = std::apply(
+                [Object](auto&... UnpackedArgs)
+                {
+                    return (Object->*MethodPtr)(UnpackedArgs...);
+                },
+                Args);
+            SerializeNativeReturnValue(*OutAr, ReturnValue);
+        }
+        return true;
+    }
+
+    static bool Invoke(MReflectObject* Object, MReflectArchive* InAr, MReflectArchive* OutAr)
+    {
+        return InvokeImpl(static_cast<const ObjectType*>(Object), InAr, OutAr, std::index_sequence_for<TArgs...>{});
+    }
+};
+
+template<auto MethodPtr>
+inline MFunction* CreateNativeFunction(const char* Name, EFunctionFlags Flags)
+{
+    auto* Func = new MFunction();
+    Func->Name = Name;
+    Func->Flags = Flags;
+    Func->NativeInvoke = &TNativeMethodInvoker<MethodPtr>::Invoke;
+    return Func;
+}
+
+inline bool MReflectObject::InvokeFunction(MFunction* Func, MReflectArchive* InAr, MReflectArchive* OutAr)
+{
+    if (!Func)
+    {
+        return false;
+    }
+
+    if (Func->NativeInvoke)
+    {
+        return Func->NativeInvoke(this, InAr, OutAr);
+    }
+
+    if (Func->NativeFunc && (!InAr || InAr->Data.empty()) && !OutAr)
+    {
+        Func->NativeFunc(this);
+        return true;
+    }
+
+    return false;
+}
+
+template<typename TReturn, typename... TArgs>
+inline bool MReflectObject::InvokeFunction(const FString& InName, TReturn* OutReturn, TArgs&&... Args)
+{
+    MClass* LocalClass = GetClass();
+    if (!LocalClass)
+    {
+        return false;
+    }
+
+    MFunction* Func = LocalClass->FindFunction(InName);
+    if (!Func)
+    {
+        return false;
+    }
+
+    MReflectArchive InWriteAr;
+    (void([&InWriteAr](auto&& Value)
+    {
+        using TValue = std::remove_cv_t<std::remove_reference_t<decltype(Value)>>;
+        TValue Copy = static_cast<TValue>(Value);
+        InWriteAr << Copy;
+    }(std::forward<TArgs>(Args))), ...);
+    MReflectArchive InReadAr(InWriteAr.Data);
+
+    MReflectArchive OutAr;
+    MReflectArchive* OutArPtr = nullptr;
+    if constexpr (!std::is_void_v<TReturn>)
+    {
+        OutArPtr = &OutAr;
+    }
+
+    if (!InvokeFunction(Func, &InReadAr, OutArPtr))
+    {
+        return false;
+    }
+
+    if constexpr (!std::is_void_v<TReturn>)
+    {
+        if (!OutReturn)
+        {
+            return false;
+        }
+        MReflectArchive OutReadAr(OutAr.Data);
+        TReturn ReturnValue{};
+        OutReadAr << ReturnValue;
+        *OutReturn = ReturnValue;
+    }
+
+    return true;
+}
+
+template<typename... TArgs>
+inline bool MReflectObject::CallFunctionArgs(const FString& InName, TArgs&&... Args)
+{
+    return InvokeFunction<void>(InName, nullptr, std::forward<TArgs>(Args)...);
+}
+
+template<typename TReturn, typename... TArgs>
+inline bool MReflectObject::CallFunctionWithReturn(const FString& InName, TReturn& OutReturn, TArgs&&... Args)
+{
+    return InvokeFunction<TReturn>(InName, &OutReturn, std::forward<TArgs>(Args)...);
+}
+
+inline bool MReflectObject::ProcessEvent(const FString& InName, void* Params)
+{
+    MClass* LocalClass = GetClass();
+    if (!LocalClass)
+    {
+        return false;
+    }
+
+    return ProcessEvent(LocalClass->FindFunction(InName), Params);
+}
+
+inline bool MReflectObject::ProcessEvent(MFunction* Func, void* Params)
+{
+    if (!Func)
+    {
+        return false;
+    }
+
+    MReflectArchive InWriteAr;
+    for (MProperty* Param : Func->Params)
+    {
+        if (!Param)
+        {
+            continue;
+        }
+        Param->SerializeValue(Params, InWriteAr);
+    }
+
+    MReflectArchive InReadAr(InWriteAr.Data);
+    MReflectArchive OutAr;
+    MReflectArchive* OutArPtr = Func->ReturnProperty ? &OutAr : nullptr;
+    if (!InvokeFunction(Func, &InReadAr, OutArPtr))
+    {
+        return false;
+    }
+
+    if (Func->ReturnProperty && Params)
+    {
+        MReflectArchive OutReadAr(OutAr.Data);
+        Func->ReturnProperty->SerializeValue(Params, OutReadAr);
+    }
+
+    return true;
+}
+
+inline bool MReflectObject::InvokeSerializedFunction(MFunction* Func, MReflectArchive& InAr)
+{
+    return InvokeFunction(Func, &InAr, nullptr);
 }
 
 template<auto MethodPtr, typename... TArgs>
 inline TArray BuildRpcPayloadForCall(TArgs&&... Args)
 {
-    using Traits = TRpcMethodTraits<MethodPtr>;
-    using ObjectType = typename Traits::ObjectType;
-    (void)sizeof(ObjectType);
     return BuildRpcArgsPayload(std::forward<TArgs>(Args)...);
 }
 
@@ -931,6 +1503,12 @@ template<typename T>
 struct TPropertySerializer;
 
 template<typename T>
+struct TPropertyStringExporter;
+
+template<typename TValue>
+inline FString ReflectValueToString(const TValue& Value);
+
+template<typename T>
 class TProperty : public MProperty
 {
 public:
@@ -956,6 +1534,11 @@ public:
     virtual void SerializeValue(void* Object, MReflectArchive& Ar) const override
     {
         TPropertySerializer<T>::Serialize(this, Object, Ar);
+    }
+
+    virtual FString ExportValueToString(const void* Object) const override
+    {
+        return TPropertyStringExporter<T>::Export(this, Object);
     }
 };
 
@@ -987,6 +1570,22 @@ private:
     }
 };
 
+template<typename TValue>
+class TOffsetProperty : public TProperty<TValue>
+{
+public:
+    TOffsetProperty(const FString& InName, EPropertyType InType, size_t InOffset, EPropertyFlags InFlags)
+        : TProperty<TValue>(InName, InType, InOffset, sizeof(TValue), InFlags)
+    {
+    }
+};
+
+template<typename TValue>
+inline MProperty* CreateOffsetProperty(const FString& InName, EPropertyType InType, size_t InOffset, EPropertyFlags InFlags = EPropertyFlags::None)
+{
+    return new TOffsetProperty<TValue>(InName, InType, InOffset, InFlags);
+}
+
 // 默认序列化：退回到 MProperty 的基础实现
 template<typename T>
 struct TPropertySerializer
@@ -1000,6 +1599,96 @@ struct TPropertySerializer
         const_cast<MProperty*>(Prop)->MProperty::SerializeValue(Object, Ar);
     }
 };
+
+template<typename T>
+struct TPropertyStringExporter
+{
+    static FString Export(const MProperty* Prop, const void* Object)
+    {
+        if (!Prop)
+        {
+            return "<null-prop>";
+        }
+        return Prop->MProperty::ExportValueToString(Object);
+    }
+};
+
+template<typename TValue>
+inline FString ReflectValueToString(const TValue& Value)
+{
+    using TDecayed = std::remove_cv_t<std::remove_reference_t<TValue>>;
+    if constexpr (std::is_same_v<TDecayed, FString>)
+    {
+        return "\"" + Value + "\"";
+    }
+    else if constexpr (std::is_same_v<TDecayed, bool>)
+    {
+        return Value ? "true" : "false";
+    }
+    else if constexpr (std::is_same_v<TDecayed, SVector>)
+    {
+        return "{X=" + MString::ToString(Value.X) +
+               ", Y=" + MString::ToString(Value.Y) +
+               ", Z=" + MString::ToString(Value.Z) + "}";
+    }
+    else if constexpr (std::is_same_v<TDecayed, SRotator>)
+    {
+        return "{Pitch=" + MString::ToString(Value.Pitch) +
+               ", Yaw=" + MString::ToString(Value.Yaw) +
+               ", Roll=" + MString::ToString(Value.Roll) + "}";
+    }
+    else if constexpr (std::is_base_of_v<MReflectObject, TDecayed>)
+    {
+        return Value.ToString();
+    }
+    else if constexpr (std::is_enum_v<TDecayed>)
+    {
+        using TUnderlying = std::underlying_type_t<TDecayed>;
+        if (const MEnum* EnumMeta = MReflectObject::FindEnum(std::type_index(typeid(TDecayed))))
+        {
+            const int64 EnumValue = static_cast<int64>(static_cast<TUnderlying>(Value));
+            if (const MEnumValue* ValueMeta = EnumMeta->FindValueByIntegral(EnumValue))
+            {
+                return EnumMeta->GetName() + "::" + ValueMeta->Name;
+            }
+            return EnumMeta->GetName() + "::" + MString::ToString(EnumValue);
+        }
+        return MString::ToString(static_cast<TUnderlying>(Value));
+    }
+    else if constexpr (std::is_integral_v<TDecayed>)
+    {
+        if constexpr (std::is_signed_v<TDecayed>)
+        {
+            return MString::ToString(static_cast<int64>(Value));
+        }
+        else
+        {
+            return MString::ToString(static_cast<uint64>(Value));
+        }
+    }
+    else if constexpr (std::is_floating_point_v<TDecayed>)
+    {
+        return MString::ToString(static_cast<double>(Value));
+    }
+    else if constexpr (std::is_trivially_copyable_v<TDecayed>)
+    {
+        const uint8* Bytes = reinterpret_cast<const uint8*>(&Value);
+        FString Result = "<struct hex=";
+        static const char* HexDigits = "0123456789ABCDEF";
+        for (size_t Index = 0; Index < sizeof(TDecayed); ++Index)
+        {
+            const uint8 Byte = Bytes[Index];
+            Result.push_back(HexDigits[(Byte >> 4) & 0x0F]);
+            Result.push_back(HexDigits[Byte & 0x0F]);
+        }
+        Result += ">";
+        return Result;
+    }
+    else
+    {
+        return "<unsupported>";
+    }
+}
 
 // TVector 容器专用序列化
 template<typename TElement>
@@ -1052,6 +1741,36 @@ struct TPropertySerializer<TVector<TElement>>
     }
 };
 
+template<typename TElement>
+struct TPropertyStringExporter<TVector<TElement>>
+{
+    static FString Export(const MProperty* Prop, const void* Object)
+    {
+        if (!Prop || !Object)
+        {
+            return "<null-array>";
+        }
+
+        const auto* Vec = Prop->GetValuePtr<TVector<TElement>>(Object);
+        if (!Vec)
+        {
+            return "<null-array>";
+        }
+
+        FString Result = "[";
+        for (size_t Index = 0; Index < Vec->size(); ++Index)
+        {
+            if (Index > 0)
+            {
+                Result += ", ";
+            }
+            Result += ReflectValueToString((*Vec)[Index]);
+        }
+        Result += "]";
+        return Result;
+    }
+};
+
 // TMap<K, V> 容器专用序列化
 template<typename K, typename V, typename Compare>
 struct TPropertySerializer<TMap<K, V, Compare>>
@@ -1101,6 +1820,40 @@ struct TPropertySerializer<TMap<K, V, Compare>>
     }
 };
 
+template<typename K, typename V, typename Compare>
+struct TPropertyStringExporter<TMap<K, V, Compare>>
+{
+    static FString Export(const MProperty* Prop, const void* Object)
+    {
+        if (!Prop || !Object)
+        {
+            return "<null-map>";
+        }
+
+        const auto* MapPtr = Prop->GetValuePtr<TMap<K, V, Compare>>(Object);
+        if (!MapPtr)
+        {
+            return "<null-map>";
+        }
+
+        FString Result = "{";
+        bool bFirst = true;
+        for (const auto& Pair : *MapPtr)
+        {
+            if (!bFirst)
+            {
+                Result += ", ";
+            }
+            Result += ReflectValueToString(Pair.first);
+            Result += ": ";
+            Result += ReflectValueToString(Pair.second);
+            bFirst = false;
+        }
+        Result += "}";
+        return Result;
+    }
+};
+
 // TSet<T> 容器专用序列化
 template<typename T, typename Compare>
 struct TPropertySerializer<TSet<T, Compare>>
@@ -1146,6 +1899,38 @@ struct TPropertySerializer<TSet<T, Compare>>
     }
 };
 
+template<typename T, typename Compare>
+struct TPropertyStringExporter<TSet<T, Compare>>
+{
+    static FString Export(const MProperty* Prop, const void* Object)
+    {
+        if (!Prop || !Object)
+        {
+            return "<null-set>";
+        }
+
+        const auto* SetPtr = Prop->GetValuePtr<TSet<T, Compare>>(Object);
+        if (!SetPtr)
+        {
+            return "<null-set>";
+        }
+
+        FString Result = "{";
+        bool bFirst = true;
+        for (const T& Value : *SetPtr)
+        {
+            if (!bFirst)
+            {
+                Result += ", ";
+            }
+            Result += ReflectValueToString(Value);
+            bFirst = false;
+        }
+        Result += "}";
+        return Result;
+    }
+};
+
 // 向反射系统注册 TVector 容器属性（元素类型必须已被 MReflectArchive 支持）
 template<typename TElement>
 class MVectorProperty : public MProperty
@@ -1187,6 +1972,32 @@ public:
             TElement& Element = (*Vec)[Index];
             Ar << Element;
         }
+    }
+
+    virtual FString ExportValueToString(const void* Object) const override
+    {
+        if (!Object)
+        {
+            return "<null-array>";
+        }
+
+        const auto* Vec = reinterpret_cast<const TVector<TElement>*>(reinterpret_cast<const uint8*>(Object) + Offset);
+        if (!Vec)
+        {
+            return "<null-array>";
+        }
+
+        FString Result = "[";
+        for (size_t Index = 0; Index < Vec->size(); ++Index)
+        {
+            if (Index > 0)
+            {
+                Result += ", ";
+            }
+            Result += ReflectValueToString((*Vec)[Index]);
+        }
+        Result += "]";
+        return Result;
     }
 };
 
@@ -1233,6 +2044,27 @@ public:
             TElement& Element = (*Vec)[Index];
             Ar << Element;
         }
+    }
+
+    virtual FString ExportValueToString(const void* Object) const override
+    {
+        const auto* Vec = GetValuePtr<TVector<TElement>>(Object);
+        if (!Vec)
+        {
+            return "<null-array>";
+        }
+
+        FString Result = "[";
+        for (size_t Index = 0; Index < Vec->size(); ++Index)
+        {
+            if (Index > 0)
+            {
+                Result += ", ";
+            }
+            Result += ReflectValueToString((*Vec)[Index]);
+        }
+        Result += "]";
+        return Result;
     }
 
 private:

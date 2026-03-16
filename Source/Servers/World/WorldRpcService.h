@@ -21,8 +21,8 @@ public:
 
     static void SetHandler_Rpc_OnPlayerLoginRequest(const FHandler_Rpc_OnPlayerLoginRequest& InHandler);
     static void SetHandler_Rpc_OnSessionValidateResponse(const FHandler_Rpc_OnSessionValidateResponse& InHandler);
-    static uint16 GetFunctionId_Rpc_OnPlayerLoginRequest();
-    static uint16 GetFunctionId_Rpc_OnSessionValidateResponse();
+    template<typename TServer>
+    static void BindHandlers(TServer* Server);
 
 private:
     inline static FHandler_Rpc_OnPlayerLoginRequest Handler_Rpc_OnPlayerLoginRequest;
@@ -67,12 +67,17 @@ inline void MWorldService::SetHandler_Rpc_OnSessionValidateResponse(const FHandl
     Handler_Rpc_OnSessionValidateResponse = InHandler;
 }
 
-inline uint16 MWorldService::GetFunctionId_Rpc_OnPlayerLoginRequest()
+template<typename TServer>
+inline void MWorldService::BindHandlers(TServer* Server)
 {
-    return MGET_STABLE_RPC_FUNCTION_ID("MWorldService", "Rpc_OnPlayerLoginRequest");
-}
-
-inline uint16 MWorldService::GetFunctionId_Rpc_OnSessionValidateResponse()
-{
-    return MGET_STABLE_RPC_FUNCTION_ID("MWorldService", "Rpc_OnSessionValidateResponse");
+    SetHandler_Rpc_OnPlayerLoginRequest(
+        [Server](uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey)
+        {
+            Server->Rpc_OnPlayerLoginRequest(ClientConnectionId, PlayerId, SessionKey);
+        });
+    SetHandler_Rpc_OnSessionValidateResponse(
+        [Server](uint64 ValidationRequestId, uint64 PlayerId, bool bValid)
+        {
+            Server->Rpc_OnSessionValidateResponse(ValidationRequestId, PlayerId, bValid);
+        });
 }

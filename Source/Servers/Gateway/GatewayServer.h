@@ -7,6 +7,7 @@
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"
+#include "Messages/NetMessages.h"
 #include "Servers/Gateway/GatewayRpcService.h"
 #include "Servers/Login/LoginRpcService.h"
 #include "Servers/World/WorldRpcService.h"
@@ -36,6 +37,10 @@ public:
     uint64 PlayerId = 0;
     bool bAuthenticated = false;
     uint32 SessionToken = 0;
+    uint64 HandshakeCount = 0;
+    uint64 LastHandshakePlayerId = 0;
+    uint64 HeartbeatCount = 0;
+    uint32 LastHeartbeatSequence = 0;
 
     MClientConnection(uint64 Id, TSharedPtr<INetConnection> Conn)
         : ConnectionId(Id), Connection(Conn) {}
@@ -48,9 +53,19 @@ struct SPendingWorldLoginRoute
     uint32 SessionKey = 0;
 };
 
+struct SPendingResolvedClientRoute
+{
+    uint64 RequestId = 0;
+    uint64 ConnectionId = 0;
+    uint64 PlayerId = 0;
+    EServerType TargetServerType = EServerType::Unknown;
+    FString WrapMode;
+    TArray Packet;
+};
+
 // 网关服务器
 MCLASS()
-class MGatewayServer : public MNetServerBase, public MReflectObject
+class MGatewayServer : public MNetServerBase, public MReflectObject, public IGeneratedClientRouteTarget
 {
 public:
     MGENERATED_BODY(MGatewayServer, MReflectObject, 0)
@@ -79,6 +94,11 @@ private:
     float RouteQueryTimer = 0.0f;
     uint64 NextRouteRequestId = 1;
     TMap<uint64, SPendingWorldLoginRoute> PendingWorldLoginRoutes;
+    TMap<uint64, TVector<SPendingResolvedClientRoute>> PendingResolvedClientRoutes;
+    TMap<FString, uint64> InFlightResolvedRouteRequests;
+    TMap<FString, SServerInfo> ResolvedRouteCache;
+    uint64 LegacyClientRpcCount = 0;
+    uint64 RejectedClientFallbackCount = 0;
 
     MGatewayService GatewayService;
 
@@ -101,9 +121,21 @@ public:
     void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
-
-    MDECLARE_SERVER_HOSTED_RPC_METHOD("MGatewayServer", Gateway, Rpc_OnRouterServerRegisterAck, (uint8 Result), NetServer, ServerToServer, true)
-    MDECLARE_SERVER_HOSTED_RPC_METHOD("MGatewayServer", Gateway, Rpc_OnRouterRouteResponse, (uint64 RequestId, uint8 RequestedTypeValue, uint64 PlayerId, bool bFound, uint32 ServerId, uint8 ServerTypeValue, const FString& ServerName, const FString& Address, uint16 Port, uint16 ZoneId), NetServer, ServerToServer, true)
+    MFUNCTION(Client, Message=MT_Handshake, Reliable=true)
+    void Client_Handshake(uint64 ClientConnectionId, const SPlayerIdPayload& Request);
+    MFUNCTION(Client, Message=MT_Login, Reliable=true, Route=Login, Auth=None, Wrap=LoginRpcOrLegacy)
+    void Client_Login(uint64 ClientConnectionId, const SPlayerIdPayload& Request);
+    MFUNCTION(Client, Message=MT_PlayerMove, Reliable=false, Route=RouterResolved, Target=World, Auth=Required, Wrap=PlayerClientSync)
+    void Client_PlayerMove(uint64 ClientConnectionId, const SPlayerMovePayload& MovePayload);
+    MFUNCTION(Client, Message=MT_Chat, Reliable=true, Route=RouterResolved, Target=World, Auth=Required, Wrap=PlayerClientSync)
+    void Client_Chat(uint64 ClientConnectionId, const SClientChatPayload& ChatPayload);
+    MFUNCTION(Client, Message=MT_Heartbeat, Reliable=false)
+    void Client_Heartbeat(uint64 ClientConnectionId, const SHeartbeatMessage& Heartbeat);
+    void Rpc_OnPlayerLoginResponse(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Gateway)
+    void Rpc_OnRouterServerRegisterAck(uint8 Result);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Gateway)
+    void Rpc_OnRouterRouteResponse(uint64 RequestId, uint8 RequestedTypeValue, uint64 PlayerId, bool bFound, uint32 ServerId, uint8 ServerTypeValue, const FString& ServerName, const FString& Address, uint16 Port, uint16 ZoneId);
 
 private:
     void ConnectToLoginServer();
@@ -111,8 +143,25 @@ private:
     void ConnectToRouterServer();
     TSharedPtr<MClientConnection> FindClientByPlayerId(uint64 PlayerId);
     void ResetClientAuthState(const TSharedPtr<MClientConnection>& Client);
+    bool IsGeneratedRouteAuthorized(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request) const;
+    TArray BuildGeneratedRoutePacket(const SGeneratedClientRouteRequest& Request) const;
+    TSharedPtr<MServerConnection> ResolveGeneratedRouteConnection(SGeneratedClientRouteRequest::ERouteKind RouteKind) const;
+    TSharedPtr<MServerConnection> ResolveGeneratedRouteConnection(EServerType TargetServerType) const;
+    bool EnsureGeneratedRouteResolved(const SGeneratedClientRouteRequest& Request, const TSharedPtr<MClientConnection>& Client);
+    bool ExecuteGeneratedRouteRawToConnection(const TSharedPtr<MServerConnection>& Connection, SGeneratedClientRouteRequest::ERouteKind RouteKind, const TArray& Packet);
+    bool ExecuteGeneratedRouteRaw(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
+    bool ExecuteGeneratedRoutePlayerClientSync(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
+    bool ExecuteGeneratedRouteLoginRpcOrLegacy(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
+    bool ExecuteGeneratedRouteByPolicy(
+        const TSharedPtr<MClientConnection>& Client,
+        const FString& RouteKey,
+        const FString& WrapMode,
+        const SGeneratedClientRouteRequest* Request,
+        const TArray& Packet);
+    bool HandleGeneratedClientRoute(const SGeneratedClientRouteRequest& Request) override;
+    bool IsExplicitLegacyClientMessage(EClientMessageType MsgType) const;
     void HandleClientPacket(uint64 ConnectionId, const TArray& Data);
-    void ForwardToBackend(uint64 ConnectionId, const TArray& Data);
+    bool HandleLegacyClientRpc(uint64 ConnectionId, const TArray& Data);
     void HandleLoginServerMessage(uint8 Type, const TArray& Data);
     void HandleWorldServerMessage(uint8 Type, const TArray& Data);
     void HandleRouterServerMessage(uint8 Type, const TArray& Data);
@@ -130,6 +179,10 @@ private:
     void SendRouterRegister();
     uint64 QueryRoute(EServerType ServerType, uint64 PlayerId = 0);
     void ApplyRoute(EServerType ServerType, uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
+    void InvalidateResolvedRoute(EServerType ServerType, uint64 PlayerId);
+    void InvalidateResolvedRoutesForPlayer(uint64 PlayerId);
+    void RemovePendingResolvedClientRoutesForPlayer(uint64 PlayerId);
     void FlushPendingWorldLogins();
+    void FlushPendingResolvedClientRoutes(EServerType ServerType);
     FString BuildDebugStatusJson() const;
 };

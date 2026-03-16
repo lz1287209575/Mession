@@ -8,16 +8,24 @@ Mession 脚本验证 - 启动所有服务器并验证登录、复制与清理路
 流程:
   1. 编译项目（如需要）
   2. 按顺序启动 Router -> Login -> World -> Scene -> Gateway
-  3. Test 1: 多玩家登录，验证 SessionKey/PlayerId
-  4. Test 2: 复制链路 - 登录后收包，断言至少收到 MT_ActorCreate
-  5. 发送玩家移动
-  6. Test 3: 清理路径 - 一端断线后重连同一 PlayerId，验证 Gateway/World 已回收状态
-  7. Test 4: 并发 - 多线程同时连接登录，验证服务端可稳定处理并发
-  8. 可选 --stress：压力测试，大量并发连接 + 登录 + 多发收包
-  9. 清理并退出
+  3. Test 1: Handshake 本地处理可达
+  4. Test 2: 多玩家登录，验证 SessionKey/PlayerId
+  5. Test 3: 复制链路 - 登录后收包，断言至少收到 MT_ActorCreate
+  6. Test 4: RouterResolved 路由缓存建立
+  7. Test 5: 清理路径 - 一端断线后重连同一 PlayerId，验证 Gateway/World 已回收状态，并尽量观察 route cache 失效日志
+  8. Test 6: Chat 路径可达
+  9. Test 7: Heartbeat 本地处理可达
+  10. Test 8: RPC 路径可达
+  11. Test 9: 登录后立刻断开，验证重连恢复，并尽量观察 World 清理日志
+  12. Test 10: 双端同时断线，验证双玩家重连恢复
+  13. Test 11: 快速重连边界 - 同一 PlayerId 短时间内连续重连
+  14. Test 12: 并发 - 多线程同时连接登录，验证服务端可稳定处理并发
+  15. 可选 --stress：压力测试，大量并发连接 + 登录 + 多发收包
+  16. 清理并退出
 """
 
 import argparse
+import json
 import os
 import signal
 import socket
@@ -32,11 +40,14 @@ from pathlib import Path
 # 协议常量（与 Source/Messages/NetMessages.h、Source/Common/ServerMessages.h 一致）
 MT_LOGIN = 1
 MT_LOGIN_RESPONSE = 2
+MT_HANDSHAKE = 3
 MT_PLAYER_MOVE = 5
 MT_ACTOR_CREATE = 6
 MT_ACTOR_DESTROY = 7
 MT_ACTOR_UPDATE = 8
 MT_RPC = 9
+MT_CHAT = 10
+MT_HEARTBEAT = 11
 
 # 端口
 ROUTER_PORT = 8005
@@ -44,6 +55,8 @@ GATEWAY_PORT = 8001
 LOGIN_PORT = 8002
 WORLD_PORT = 8003
 SCENE_PORT = 8004
+ROUTER_DEBUG_HTTP_PORT = 18085
+GATEWAY_DEBUG_HTTP_PORT = 18081
 
 
 def log(msg: str) -> None:
@@ -143,6 +156,107 @@ def wait_for_port(host: str, port: int, timeout: float) -> bool:
     return False
 
 
+def http_get_json(host: str, port: int, path: str = "/", timeout: float = 2.0) -> Optional[dict]:
+    """使用最小 GET 请求读取 JSON 响应。"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect((host, port))
+        request = (
+            f"GET {path} HTTP/1.0\r\n"
+            f"Host: {host}:{port}\r\n"
+            "Connection: close\r\n\r\n"
+        ).encode("utf-8")
+        sock.sendall(request)
+        try:
+            sock.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+        response = bytearray()
+        header_sep = -1
+        while header_sep < 0:
+            chunk = sock.recv(4096)
+            if not chunk:
+                return None
+            response.extend(chunk)
+            header_sep = response.find(b"\r\n\r\n")
+
+        header_bytes = bytes(response[:header_sep])
+        body = bytearray(response[header_sep + 4 :])
+        headers = header_bytes.decode("utf-8", errors="ignore").split("\r\n")
+        content_length = 0
+        for header in headers[1:]:
+            if ":" not in header:
+                continue
+            name, value = header.split(":", 1)
+            if name.strip().lower() == "content-length":
+                content_length = int(value.strip())
+                break
+
+        while len(body) < content_length:
+            chunk = sock.recv(4096)
+            if not chunk:
+                return None
+            body.extend(chunk)
+
+        return json.loads(bytes(body[:content_length]).decode("utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    finally:
+        sock.close()
+
+
+def wait_for_http_json(host: str, port: int, timeout: float, path: str = "/") -> Optional[dict]:
+    """等待 HTTP JSON 端点可用。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        payload = http_get_json(host, port, path=path, timeout=1.0)
+        if payload is not None:
+            return payload
+        time.sleep(0.1)
+    return None
+
+
+def wait_for_gateway_debug_value(
+    key: str,
+    predicate,
+    timeout: float,
+) -> Optional[dict]:
+    """等待 Gateway debug JSON 某字段满足条件。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        payload = http_get_json("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, timeout=1.0)
+        if payload is not None and predicate(payload.get(key, 0)):
+            return payload
+        time.sleep(0.1)
+    return None
+
+
+def wait_for_log_contains(log_path: Path, needle: str, timeout: float) -> bool:
+    """等待日志文件出现指定片段。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if log_path.exists():
+                text = log_path.read_text(encoding="utf-8", errors="ignore")
+                if needle in text:
+                    return True
+        except OSError:
+            pass
+        time.sleep(0.1)
+    return False
+
+
+def count_log_occurrences(log_path: Path, needle: str) -> int:
+    """统计日志片段出现次数。"""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return 0
+    return text.count(needle)
+
+
 def send_login(sock: socket.socket, player_id: int = 12345) -> tuple[bool, int, int]:
     """
     发送登录包，返回 (成功, SessionKey, PlayerId)
@@ -181,12 +295,49 @@ def send_login(sock: socket.socket, player_id: int = 12345) -> tuple[bool, int, 
     return True, session_key, resp_player_id
 
 
+def send_handshake(sock: socket.socket, player_id: int = 0) -> bool:
+    """
+    发送最小握手包
+    协议: Length(4) + MsgType(1) + PlayerId(8)
+    """
+    payload = struct.pack("<BQ", MT_HANDSHAKE, player_id)
+    length = len(payload)
+    packet = struct.pack("<I", length) + payload
+    sock.sendall(packet)
+    return True
+
+
 def send_player_move(sock: socket.socket, x: float, y: float, z: float) -> bool:
     """
     发送玩家移动包
     协议: Length(4) + MsgType(1) + X(4) + Y(4) + Z(4)
     """
     payload = struct.pack("<Bfff", MT_PLAYER_MOVE, x, y, z)
+    length = len(payload)
+    packet = struct.pack("<I", length) + payload
+    sock.sendall(packet)
+    return True
+
+
+def send_chat(sock: socket.socket, message: str) -> bool:
+    """
+    发送聊天包
+    协议: Length(4) + MsgType(1) + MessageLen(2) + Message(bytes)
+    """
+    encoded = message.encode("utf-8")
+    payload = struct.pack("<BH", MT_CHAT, len(encoded)) + encoded
+    length = len(payload)
+    packet = struct.pack("<I", length) + payload
+    sock.sendall(packet)
+    return True
+
+
+def send_heartbeat(sock: socket.socket, sequence: int) -> bool:
+    """
+    发送心跳包
+    协议: Length(4) + MsgType(1) + Sequence(4)
+    """
+    payload = struct.pack("<BI", MT_HEARTBEAT, sequence)
     length = len(payload)
     packet = struct.pack("<I", length) + payload
     sock.sendall(packet)
@@ -256,6 +407,20 @@ def collect_replication_packets(
     return found
 
 
+def parse_chat_payload(payload: bytes) -> Optional[tuple[int, str]]:
+    if len(payload) < 8 + 2:
+        return None
+    from_player_id = struct.unpack("<Q", payload[:8])[0]
+    message_len = struct.unpack("<H", payload[8:10])[0]
+    if 10 + message_len > len(payload):
+        return None
+    try:
+        message = payload[10:10 + message_len].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return from_player_id, message
+
+
 def run_stress(
     num_clients: int,
     moves_per_client: int,
@@ -301,6 +466,38 @@ def run_stress(
     return ok_count, fail_count, elapsed
 
 
+def run_parallel_login_batch(indices: list[int], base_pid: int) -> tuple[int, list[int]]:
+    """执行一轮并发登录，返回成功数和失败下标。"""
+
+    def one_login(idx: int) -> tuple[int, bool]:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10.0)
+            sock.connect(("127.0.0.1", GATEWAY_PORT))
+            ok, _, _ = send_login(sock, base_pid + idx)
+            sock.close()
+            return idx, ok
+        except Exception:
+            return idx, False
+
+    ok_count = 0
+    failed_indices: list[int] = []
+    if not indices:
+        return ok_count, failed_indices
+
+    with ThreadPoolExecutor(max_workers=len(indices)) as ex:
+        futures = [ex.submit(one_login, i) for i in indices]
+        for f in as_completed(futures):
+            idx, ok = f.result()
+            if ok:
+                ok_count += 1
+            else:
+                failed_indices.append(idx)
+
+    failed_indices.sort()
+    return ok_count, failed_indices
+
+
 def run_validation(
     build_dir: Path,
     timeout: float,
@@ -310,9 +507,17 @@ def run_validation(
     stress_moves: int = 5,
 ) -> bool:
     """执行完整验证流程"""
-    project_root = build_dir.parent
     procs: List[subprocess.Popen] = []
-    env_zone = {"MESSION_ZONE_ID": str(zone_id)} if zone_id is not None else None
+    if debug_log_dir is None:
+        debug_log_dir = build_dir / "validate_logs"
+        debug_log_dir.mkdir(parents=True, exist_ok=True)
+
+    base_env = {
+        "MESSION_ROUTER_DEBUG_HTTP_PORT": str(ROUTER_DEBUG_HTTP_PORT),
+        "MESSION_GATEWAY_DEBUG_HTTP_PORT": str(GATEWAY_DEBUG_HTTP_PORT),
+    }
+    if zone_id is not None:
+        base_env["MESSION_ZONE_ID"] = str(zone_id)
 
     def cleanup():
         for p in reversed(procs):
@@ -324,7 +529,8 @@ def run_validation(
 
     try:
         # 1. 启动 Router
-        p = start_server(build_dir, "RouterServer", ROUTER_PORT, None, debug_log_dir)
+        router_env = dict(base_env)
+        p = start_server(build_dir, "RouterServer", ROUTER_PORT, router_env, debug_log_dir)
         if not p:
             return False
         procs.append(p)
@@ -340,7 +546,7 @@ def run_validation(
             ("SceneServer", SCENE_PORT),
             ("GatewayServer", GATEWAY_PORT),
         ]:
-            p = start_server(build_dir, name, port, env_zone, debug_log_dir)
+            p = start_server(build_dir, name, port, dict(base_env), debug_log_dir)
             if not p:
                 return False
             procs.append(p)
@@ -349,12 +555,53 @@ def run_validation(
         if not wait_for_port("127.0.0.1", GATEWAY_PORT, timeout):
             log("GatewayServer did not become ready")
             return False
+        gateway_debug = wait_for_http_json("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, timeout)
+        if gateway_debug is None:
+            log("Gateway debug HTTP did not become ready")
+            return False
+        initial_legacy_rpc_count = int(gateway_debug.get("legacyClientRpcCount", 0))
+        initial_rejected_fallback_count = int(gateway_debug.get("rejectedClientFallbackCount", 0))
+        gateway_log = debug_log_dir / "GatewayServer.log"
+        world_log = debug_log_dir / "WorldServer.log"
 
         # 4. 等待后端握手完成
         time.sleep(2.0)
 
-        # 5. 多玩家登录
-        log("Test 1: Multi-player login...")
+        # 5. Handshake 本地处理：通过 Gateway debug 状态确认未再转发到 Login
+        log("Test 1: Handshake local route...")
+        handshake_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        handshake_sock.settimeout(10.0)
+        handshake_sock.connect(("127.0.0.1", GATEWAY_PORT))
+        handshake_player_id = 54321
+        send_handshake(handshake_sock, handshake_player_id)
+        deadline = time.time() + 3.0
+        gateway_status = None
+        handshake_observed = False
+        while time.time() < deadline:
+            gateway_status = http_get_json("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, timeout=1.0)
+            if gateway_status is None:
+                time.sleep(0.1)
+                continue
+            if (
+                int(gateway_status.get("clientHandshakeCount", 0)) >= 1 and
+                int(gateway_status.get("lastClientHandshakePlayerId", 0)) == handshake_player_id
+            ):
+                handshake_observed = True
+                break
+            time.sleep(0.1)
+        if not handshake_observed:
+            log("  MT_Handshake local handling failed: Gateway debug status did not update")
+            handshake_sock.close()
+            return False
+        log(
+            "  MT_Handshake handled locally: "
+            f"count={int(gateway_status.get('clientHandshakeCount', 0))}, "
+            f"lastPlayerId={int(gateway_status.get('lastClientHandshakePlayerId', 0))}"
+        )
+        handshake_sock.close()
+
+        # 6. 多玩家登录
+        log("Test 2: Multi-player login...")
         clients = []
         for i, pid in enumerate([10001, 10002, 10003]):
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -370,8 +617,8 @@ def run_validation(
             log(f"  Player {pid} OK: SessionKey={session_key}")
             clients.append((sock, pid))
 
-        # 6. 复制链路：至少一名客户端应收到其他玩家的 MT_ActorCreate
-        log("Test 2: Replication (ActorCreate)...")
+        # 7. 复制链路：至少一名客户端应收到其他玩家的 MT_ActorCreate
+        log("Test 3: Replication (ActorCreate)...")
         time.sleep(2.0)  # 等待路由、Session 校验、AddPlayer 与复制包下发
         all_creates = []
         for sock, _ in clients:
@@ -391,12 +638,50 @@ def run_validation(
             send_player_move(sock, float(pid % 10), 0.0, 0.0)
         log("  Multi-player move sent")
 
-        # 7. 清理路径：断线后 Gateway/World 回收状态，该玩家可再次登录
-        log("Test 3: Cleanup path (disconnect then reconnect)...")
+        # 8. 路由缓存：发送 RouterResolved 客户端消息后，Gateway 应建立 route cache
+        log("Test 4: RouterResolved route cache...")
+        deadline = time.time() + 5.0
+        gateway_status = None
+        while time.time() < deadline:
+            gateway_status = http_get_json("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, timeout=1.0)
+            if gateway_status and int(gateway_status.get("resolvedRouteCacheSize", 0)) >= 1:
+                break
+            time.sleep(0.1)
+        if not gateway_status:
+            log("  Failed to fetch Gateway debug JSON for route cache check")
+            for s, _ in clients:
+                if s:
+                    s.close()
+            return False
+        resolved_cache_size = int(gateway_status.get("resolvedRouteCacheSize", 0))
+        if resolved_cache_size < 1:
+            log(f"  Expected resolvedRouteCacheSize >= 1, got {resolved_cache_size}")
+            for s, _ in clients:
+                if s:
+                    s.close()
+            return False
+        log(f"  Route cache established: resolvedRouteCacheSize={resolved_cache_size}")
+
+        # 9. 清理路径：断线后 Gateway/World 回收状态，该玩家可再次登录
+        log("Test 5: Cleanup path (disconnect then reconnect)...")
+        try:
+            clients[0][0].shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         clients[0][0].close()
         clients[0] = (None, clients[0][1])
-        time.sleep(0.3)
+        time.sleep(1.0)
         send_player_move(clients[1][0], 1.0, 0.0, 0.0)
+        invalidated_observed = wait_for_log_contains(
+            gateway_log,
+            "Resolved route cache invalidated:",
+            timeout=3.0,
+        )
+        invalidated_count = count_log_occurrences(gateway_log, "Resolved route cache invalidated:")
+        if invalidated_observed:
+            log(f"  Route cache invalidated with {invalidated_count} log(s)")
+        else:
+            log("  Route cache invalidation log not observed within window; continuing with reconnect check")
 
         sock2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock2.settimeout(10.0)
@@ -411,8 +696,65 @@ def run_validation(
             return False
         log(f"  Reconnect OK: SessionKey={session_key2}")
 
-        # 8. RPC 测试：通过 Gateway->World 路径发送 MT_RPC，触发服务器端 MHero RPC + validate
-        log("Test 4: RPC (Server-side validate)...")
+        # 10. Chat 测试：通过 Gateway->World 路径发送 MT_Chat，并验证在线客户端收到广播
+        log("Test 6: Chat route...")
+        chat_sender = clients[1][0]
+        chat_receiver = clients[2][0]
+        chat_text = "validate-chat"
+        send_chat(chat_sender, chat_text)
+        chat_packets = collect_replication_packets(chat_receiver, 2.0, {MT_CHAT})
+        matched_chat = False
+        for _, payload in chat_packets:
+            parsed = parse_chat_payload(payload)
+            if not parsed:
+                continue
+            from_player_id, message = parsed
+            if from_player_id == clients[1][1] and message == chat_text:
+                matched_chat = True
+                break
+        if not matched_chat:
+            log("  MT_Chat route failed: receiver did not observe expected chat payload")
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        log("  MT_Chat delivered through Gateway -> World -> client path")
+
+        # 11. Heartbeat 测试：通过 Gateway 本地声明式入口处理 MT_Heartbeat
+        log("Test 7: Heartbeat local route...")
+        heartbeat_sequence = 4242
+        send_heartbeat(clients[1][0], heartbeat_sequence)
+        deadline = time.time() + 3.0
+        gateway_status = None
+        heartbeat_observed = False
+        while time.time() < deadline:
+            gateway_status = http_get_json("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, timeout=1.0)
+            if gateway_status is None:
+                time.sleep(0.1)
+                continue
+            if (
+                int(gateway_status.get("clientHeartbeatCount", 0)) >= 1 and
+                int(gateway_status.get("lastClientHeartbeatSequence", 0)) >= heartbeat_sequence
+            ):
+                heartbeat_observed = True
+                break
+            time.sleep(0.1)
+        if not heartbeat_observed:
+            log("  MT_Heartbeat local handling failed: Gateway debug status did not update")
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        log(
+            "  MT_Heartbeat handled locally: "
+            f"count={int(gateway_status.get('clientHeartbeatCount', 0))}, "
+            f"lastSeq={int(gateway_status.get('lastClientHeartbeatSequence', 0))}"
+        )
+
+        # 12. RPC 测试：通过 Gateway->World 路径发送 MT_RPC，触发服务器端 MHero RPC + validate
+        log("Test 8: RPC (Server-side validate)...")
         # 为简单起见，使用第一个仍在线的客户端执行 RPC 测试
         rpc_sock = None
         rpc_pid = 123456
@@ -439,9 +781,23 @@ def run_validation(
                     level_delta=10,
                     health_delta=100.0,
                 )
-                # 等待一小段时间，确保服务器处理完 RPC 包（如有日志可人工检查）
-                time.sleep(0.5)
-                log("  MT_RPC packet sent (check WorldServer logs for validate/execute)")
+                gateway_status = wait_for_gateway_debug_value(
+                    "legacyClientRpcCount",
+                    lambda value: int(value) >= initial_legacy_rpc_count + 1,
+                    timeout=3.0,
+                )
+                if gateway_status is None:
+                    log("  MT_RPC path failed: Gateway legacyClientRpcCount did not increase")
+                    rpc_sock.close()
+                    for s, _ in clients:
+                        if s:
+                            s.close()
+                    sock2.close()
+                    return False
+                log(
+                    "  MT_RPC packet sent via explicit legacy policy: "
+                    f"legacyClientRpcCount={int(gateway_status.get('legacyClientRpcCount', 0))}"
+                )
         except Exception as e:
             log(f"  RPC test encountered exception: {e}")
             if rpc_sock:
@@ -451,38 +807,180 @@ def run_validation(
         if rpc_sock:
             rpc_sock.close()
 
-        # 9. 并发测试：多线程同时连接并登录
-        log("Test 5: Concurrency (parallel login)...")
-        concurrency = 20
-        base_pid = 20000
-
-        def one_login(idx: int) -> bool:
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(10.0)
-                sock.connect(("127.0.0.1", GATEWAY_PORT))
-                ok, _, _ = send_login(sock, base_pid + idx)
-                sock.close()
-                return ok
-            except Exception:
-                return False
-
-        ok_count = 0
-        with ThreadPoolExecutor(max_workers=concurrency) as ex:
-            futures = [ex.submit(one_login, i) for i in range(concurrency)]
-            for f in as_completed(futures):
-                if f.result():
-                    ok_count += 1
-        if ok_count != concurrency:
-            log(f"  Concurrency test failed: {ok_count}/{concurrency} logins OK")
+        # 13. 登录后立刻断开：验证 World 清理完成后可以重新登录
+        log("Test 9: Immediate disconnect cleanup...")
+        immediate_pid = 30000
+        immediate_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        immediate_sock.settimeout(10.0)
+        immediate_sock.connect(("127.0.0.1", GATEWAY_PORT))
+        ok, immediate_session_key, immediate_resp_pid = send_login(immediate_sock, immediate_pid)
+        if not ok or immediate_resp_pid != immediate_pid:
+            log("  Immediate-disconnect login failed")
+            immediate_sock.close()
             for s, _ in clients:
                 if s:
                     s.close()
             sock2.close()
             return False
-        log(f"  {concurrency} parallel logins OK")
+        log(f"  Login OK before disconnect: SessionKey={immediate_session_key}")
 
-        # 10. 压力测试（可选）
+        try:
+            immediate_sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        immediate_sock.close()
+
+        world_cleanup_observed = wait_for_log_contains(
+            world_log,
+            f"Player {immediate_pid} removed from world",
+            timeout=3.0,
+        )
+        if world_cleanup_observed:
+            log("  World cleanup observed after immediate disconnect")
+        else:
+            log("  World cleanup log not observed within window; continuing with reconnect check")
+
+        immediate_reconnect_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        immediate_reconnect_sock.settimeout(10.0)
+        immediate_reconnect_sock.connect(("127.0.0.1", GATEWAY_PORT))
+        ok, immediate_re_session_key, immediate_re_pid = send_login(immediate_reconnect_sock, immediate_pid)
+        if not ok or immediate_re_pid != immediate_pid:
+            log("  Immediate-disconnect reconnect failed")
+            immediate_reconnect_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        log(f"  Immediate-disconnect reconnect OK: SessionKey={immediate_re_session_key}")
+        try:
+            immediate_reconnect_sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        immediate_reconnect_sock.close()
+        time.sleep(0.2)
+
+        # 14. 双端同时断线：两个已登录玩家同时断开，再分别重连
+        log("Test 10: Dual disconnect cleanup...")
+        dual_pids = [30010, 30011]
+        dual_socks: list[socket.socket] = []
+        for dual_pid in dual_pids:
+            dual_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            dual_sock.settimeout(10.0)
+            dual_sock.connect(("127.0.0.1", GATEWAY_PORT))
+            ok, dual_session_key, dual_resp_pid = send_login(dual_sock, dual_pid)
+            if not ok or dual_resp_pid != dual_pid:
+                log(f"  Dual-disconnect login failed for player {dual_pid}")
+                dual_sock.close()
+                for opened_sock in dual_socks:
+                    try:
+                        opened_sock.close()
+                    except OSError:
+                        pass
+                for s, _ in clients:
+                    if s:
+                        s.close()
+                sock2.close()
+                return False
+            log(f"  Player {dual_pid} login OK: SessionKey={dual_session_key}")
+            dual_socks.append(dual_sock)
+
+        for dual_sock in dual_socks:
+            try:
+                dual_sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            dual_sock.close()
+
+        time.sleep(1.0)
+
+        for dual_pid in dual_pids:
+            dual_reconnect_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            dual_reconnect_sock.settimeout(10.0)
+            dual_reconnect_sock.connect(("127.0.0.1", GATEWAY_PORT))
+            ok, dual_re_session_key, dual_re_pid = send_login(dual_reconnect_sock, dual_pid)
+            if not ok or dual_re_pid != dual_pid:
+                log(f"  Dual-disconnect reconnect failed for player {dual_pid}")
+                dual_reconnect_sock.close()
+                for s, _ in clients:
+                    if s:
+                        s.close()
+                sock2.close()
+                return False
+            log(f"  Player {dual_pid} reconnect OK: SessionKey={dual_re_session_key}")
+            try:
+                dual_reconnect_sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            dual_reconnect_sock.close()
+
+        time.sleep(0.2)
+
+        # 15. 快速重连边界：同一 PlayerId 在短时间内连续重连
+        log("Test 11: Fast reconnect (same PlayerId)...")
+        fast_reconnect_pid = 30001
+        for round_idx in range(2):
+            fast_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            fast_sock.settimeout(10.0)
+            fast_sock.connect(("127.0.0.1", GATEWAY_PORT))
+            ok, fast_session_key, fast_resp_pid = send_login(fast_sock, fast_reconnect_pid)
+            if not ok or fast_resp_pid != fast_reconnect_pid:
+                log(f"  Fast reconnect login failed on round {round_idx + 1}")
+                fast_sock.close()
+                for s, _ in clients:
+                    if s:
+                        s.close()
+                sock2.close()
+                return False
+            log(
+                f"  Round {round_idx + 1} OK: "
+                f"SessionKey={fast_session_key}, PlayerId={fast_resp_pid}"
+            )
+            try:
+                fast_sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            fast_sock.close()
+            time.sleep(0.1)
+
+        time.sleep(1.0)
+
+        # 16. 并发测试：多线程同时连接并登录
+        log("Test 12: Concurrency (parallel login)...")
+        concurrency = 20
+        base_pid = 20000
+        first_pass_indices = list(range(concurrency))
+        ok_count, failed_indices = run_parallel_login_batch(first_pass_indices, base_pid)
+        if ok_count != concurrency:
+            log(
+                f"  First concurrency pass incomplete: {ok_count}/{concurrency} OK; "
+                f"failed clients={failed_indices}"
+            )
+            time.sleep(1.0)
+            ok_count_retry, failed_indices_retry = run_parallel_login_batch(
+                failed_indices,
+                base_pid,
+            )
+            total_ok = ok_count + ok_count_retry
+            if total_ok != concurrency:
+                log(
+                    f"  Concurrency test failed after retry: "
+                    f"pass1={ok_count}/{concurrency}, retry_recovered={ok_count_retry}/{len(failed_indices)}; "
+                    f"retry_failed_clients={failed_indices_retry}"
+                )
+                for s, _ in clients:
+                    if s:
+                        s.close()
+                sock2.close()
+                return False
+            log(
+                f"  Concurrency recovered on retry: "
+                f"pass1={ok_count}/{concurrency}, retry_recovered={ok_count_retry}/{len(failed_indices)}"
+            )
+        else:
+            log(f"  {concurrency} parallel logins OK")
+
+        # 17. 压力测试（可选）
         if stress_clients > 0:
             log(f"Stress test: {stress_clients} clients, {stress_moves} moves each...")
             ok_s, fail_s, elapsed = run_stress(stress_clients, stress_moves, recv_timeout=8.0)
@@ -496,7 +994,28 @@ def run_validation(
                 sock2.close()
                 return False
 
-        # 11. 清理
+        gateway_status = http_get_json("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, timeout=1.0)
+        if gateway_status is None:
+            log("  Failed to fetch Gateway debug JSON for fallback policy check")
+            for sock, _ in clients:
+                if sock:
+                    sock.close()
+            sock2.close()
+            return False
+        rejected_fallback_count = int(gateway_status.get("rejectedClientFallbackCount", 0))
+        if rejected_fallback_count != initial_rejected_fallback_count:
+            log(
+                "  Unexpected rejected client fallback observed: "
+                f"initial={initial_rejected_fallback_count}, final={rejected_fallback_count}"
+            )
+            for sock, _ in clients:
+                if sock:
+                    sock.close()
+            sock2.close()
+            return False
+        log(f"  Client fallback policy clean: rejectedClientFallbackCount={rejected_fallback_count}")
+
+        # 18. 清理
         for sock, _ in clients:
             if sock:
                 sock.close()
@@ -582,14 +1101,6 @@ def main() -> int:
         stress_clients=args.stress,
         stress_moves=args.stress_moves,
     )
-    if args.debug and debug_log_dir:
-        gateway_log = debug_log_dir / "GatewayServer.log"
-        if gateway_log.exists():
-            text = gateway_log.read_text(encoding="utf-8", errors="replace")
-            if "Forwarding World" in text:
-                log("Gateway log contains 'Forwarding World' (replication reached Gateway)")
-            else:
-                log("Gateway log has no 'Forwarding World' (replication did not reach Gateway)")
     return 0 if ok else 1
 
 

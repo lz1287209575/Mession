@@ -16,7 +16,8 @@ public:
     void Rpc_OnPlayerLoginResponse(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey);
 
     static void SetHandler_Rpc_OnPlayerLoginResponse(const FHandler_Rpc_OnPlayerLoginResponse& InHandler);
-    static uint16 GetFunctionId_Rpc_OnPlayerLoginResponse();
+    template<typename TServer>
+    static void BindHandlers(TServer* Server);
 
 private:
     inline static FHandler_Rpc_OnPlayerLoginResponse Handler_Rpc_OnPlayerLoginResponse;
@@ -41,7 +42,12 @@ inline void MGatewayService::SetHandler_Rpc_OnPlayerLoginResponse(const FHandler
     Handler_Rpc_OnPlayerLoginResponse = InHandler;
 }
 
-inline uint16 MGatewayService::GetFunctionId_Rpc_OnPlayerLoginResponse()
+template<typename TServer>
+inline void MGatewayService::BindHandlers(TServer* Server)
 {
-    return MGET_STABLE_RPC_FUNCTION_ID("MGatewayService", "Rpc_OnPlayerLoginResponse");
+    SetHandler_Rpc_OnPlayerLoginResponse(
+        [Server](uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey)
+        {
+            Server->Rpc_OnPlayerLoginResponse(ClientConnectionId, PlayerId, SessionKey);
+        });
 }

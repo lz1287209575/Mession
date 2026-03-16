@@ -1,6 +1,8 @@
 #include "HttpDebugServer.h"
 #include "SocketPlatform.h"
+#include "Common/Logger.h"
 #include <cstring>
+#include <chrono>
 
 MHttpDebugServer::MHttpDebugServer(uint16 InPort, TStatusHandler InHandler)
     : Port(InPort)
@@ -17,11 +19,42 @@ bool MHttpDebugServer::Start()
 {
     if (bRunning.load())
     {
-        return true;
+        return ListenFd.load() >= 0;
     }
 
+    {
+        std::lock_guard<std::mutex> Lock(StartMutex);
+        bStartPending = true;
+        bStartSucceeded = false;
+    }
     bRunning.store(true);
     WorkerThread = std::thread(&MHttpDebugServer::RunLoop, this);
+
+    std::unique_lock<std::mutex> Lock(StartMutex);
+    StartCv.wait_for(
+        Lock,
+        std::chrono::milliseconds(1000),
+        [this]()
+        {
+            return !bStartPending;
+        });
+
+    if (bStartPending)
+    {
+        LOG_ERROR("HttpDebugServer start timed out on 127.0.0.1:%u", static_cast<unsigned>(Port));
+        Lock.unlock();
+        Stop();
+        return false;
+    }
+
+    if (!bStartSucceeded)
+    {
+        Lock.unlock();
+        Stop();
+        return false;
+    }
+
+    LOG_INFO("HttpDebugServer listening on http://127.0.0.1:%u/", static_cast<unsigned>(Port));
     return true;
 }
 
@@ -42,18 +75,36 @@ void MHttpDebugServer::Stop()
     {
         WorkerThread.join();
     }
+
+    std::lock_guard<std::mutex> Lock(StartMutex);
+    bStartPending = false;
+    bStartSucceeded = false;
+}
+
+void MHttpDebugServer::SignalStartResult(bool bSucceeded)
+{
+    {
+        std::lock_guard<std::mutex> Lock(StartMutex);
+        bStartPending = false;
+        bStartSucceeded = bSucceeded;
+    }
+    StartCv.notify_all();
 }
 
 void MHttpDebugServer::RunLoop()
 {
     if (!MSocketPlatform::EnsureInit())
     {
+        LOG_ERROR("HttpDebugServer failed to initialize socket platform");
+        SignalStartResult(false);
         return;
     }
 
     int ServerFd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (ServerFd < 0)
     {
+        LOG_ERROR("HttpDebugServer failed to create socket on port %u", static_cast<unsigned>(Port));
+        SignalStartResult(false);
         return;
     }
 
@@ -68,17 +119,22 @@ void MHttpDebugServer::RunLoop()
 
     if (::bind(ServerFd, (sockaddr*)&Addr, sizeof(Addr)) != 0)
     {
+        LOG_ERROR("HttpDebugServer bind failed on 127.0.0.1:%u", static_cast<unsigned>(Port));
         MSocketPlatform::CloseSocket(ServerFd);
+        SignalStartResult(false);
         return;
     }
 
     if (::listen(ServerFd, 8) != 0)
     {
+        LOG_ERROR("HttpDebugServer listen failed on 127.0.0.1:%u", static_cast<unsigned>(Port));
         MSocketPlatform::CloseSocket(ServerFd);
+        SignalStartResult(false);
         return;
     }
 
     ListenFd.store(ServerFd);
+    SignalStartResult(true);
 
     while (bRunning.load())
     {
@@ -91,6 +147,7 @@ void MHttpDebugServer::RunLoop()
             {
                 break;
             }
+            LOG_WARN("HttpDebugServer accept failed on 127.0.0.1:%u", static_cast<unsigned>(Port));
             continue;
         }
 
@@ -163,4 +220,3 @@ void MHttpDebugServer::HandleClient(int ClientFd)
         Remaining -= static_cast<size_t>(Sent);
     }
 }
-

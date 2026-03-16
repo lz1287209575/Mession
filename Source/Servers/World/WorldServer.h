@@ -114,9 +114,12 @@ public:
     void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
-
-    MDECLARE_SERVER_HOSTED_RPC_METHOD("MWorldServer", World, Rpc_OnRouterServerRegisterAck, (uint8 Result), NetServer, ServerToServer, true)
-    MDECLARE_SERVER_HOSTED_RPC_METHOD("MWorldServer", World, Rpc_OnRouterRouteResponse, (uint64 RequestId, uint8 RequestedTypeValue, uint64 PlayerId, bool bFound, uint32 ServerId, uint8 ServerTypeValue, const FString& ServerName, const FString& Address, uint16 Port, uint16 ZoneId), NetServer, ServerToServer, true)
+    void Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey);
+    void Rpc_OnSessionValidateResponse(uint64 ValidationRequestId, uint64 PlayerId, bool bValid);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=World)
+    void Rpc_OnRouterServerRegisterAck(uint8 Result);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=World)
+    void Rpc_OnRouterRouteResponse(uint64 RequestId, uint8 RequestedTypeValue, uint64 PlayerId, bool bFound, uint32 ServerId, uint8 ServerTypeValue, const FString& ServerName, const FString& Address, uint16 Port, uint16 ZoneId);
 
 private:
     void HandlePacket(uint64 ConnectionId, const TArray& Data);
