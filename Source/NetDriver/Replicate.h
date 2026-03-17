@@ -91,7 +91,7 @@ public:
     }
     
     // 获取数据（保存时）
-    TArray GetData() const { return Data; }
+    const TArray& GetData() const { return Data; }
     
     void Clear()
     {

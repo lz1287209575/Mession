@@ -54,6 +54,8 @@ const char* GetClientMessageTypeName(EClientMessageType MessageType)
         return "MT_Heartbeat";
     case EClientMessageType::MT_Error:
         return "MT_Error";
+    case EClientMessageType::MT_FunctionCall:
+        return "MT_FunctionCall";
     default:
         return "Unknown";
     }
@@ -81,6 +83,61 @@ SGeneratedClientRouteRequest::ERouteKind ParseGeneratedClientRouteKind(const cha
     }
 
     return SGeneratedClientRouteRequest::ERouteKind::None;
+}
+
+EClientMessageType ParseGeneratedClientMessageType(const char* MessageName)
+{
+    if (!MessageName || MessageName[0] == '\0')
+    {
+        return EClientMessageType::MT_Error;
+    }
+
+    const FString Message(MessageName);
+    if (Message == "MT_Login")
+    {
+        return EClientMessageType::MT_Login;
+    }
+    if (Message == "MT_LoginResponse")
+    {
+        return EClientMessageType::MT_LoginResponse;
+    }
+    if (Message == "MT_Handshake")
+    {
+        return EClientMessageType::MT_Handshake;
+    }
+    if (Message == "MT_PlayerMove")
+    {
+        return EClientMessageType::MT_PlayerMove;
+    }
+    if (Message == "MT_ActorCreate")
+    {
+        return EClientMessageType::MT_ActorCreate;
+    }
+    if (Message == "MT_ActorDestroy")
+    {
+        return EClientMessageType::MT_ActorDestroy;
+    }
+    if (Message == "MT_ActorUpdate")
+    {
+        return EClientMessageType::MT_ActorUpdate;
+    }
+    if (Message == "MT_RPC")
+    {
+        return EClientMessageType::MT_RPC;
+    }
+    if (Message == "MT_Chat")
+    {
+        return EClientMessageType::MT_Chat;
+    }
+    if (Message == "MT_Heartbeat")
+    {
+        return EClientMessageType::MT_Heartbeat;
+    }
+    if (Message == "MT_FunctionCall")
+    {
+        return EClientMessageType::MT_FunctionCall;
+    }
+    return EClientMessageType::MT_Error;
 }
 
 EServerType ParseGeneratedClientTargetServerType(const char* TargetName)
@@ -113,6 +170,140 @@ EServerType ParseGeneratedClientTargetServerType(const char* TargetName)
     }
 
     return EServerType::Unknown;
+}
+
+const MClientManifest::SEntry* FindGeneratedClientEntryByMessage(
+    const MClass* TargetClass,
+    EClientMessageType MessageType)
+{
+    if (!TargetClass)
+    {
+        return nullptr;
+    }
+
+    const char* MessageName = GetClientMessageTypeName(MessageType);
+    return MClientManifest::FindByMessageName(TargetClass->GetName().c_str(), MessageName);
+}
+
+const MClientManifest::SEntry* FindGeneratedClientEntryByFunctionId(
+    const MClass* TargetClass,
+    uint16 FunctionId)
+{
+    if (!TargetClass || FunctionId == 0)
+    {
+        return nullptr;
+    }
+
+    const MClientManifest::SEntry* Entry = MClientManifest::FindByFunctionId(FunctionId);
+    if (!Entry || !Entry->OwnerType || TargetClass->GetName() != Entry->OwnerType)
+    {
+        return nullptr;
+    }
+    return Entry;
+}
+
+SGeneratedClientDispatchOutcome DispatchGeneratedClientEntry(
+    MReflectObject* TargetInstance,
+    uint64 ConnectionId,
+    const MClientManifest::SEntry* Entry,
+    EClientMessageType MessageType,
+    const TArray& Payload)
+{
+    SGeneratedClientDispatchOutcome Outcome;
+    if (!TargetInstance || !Entry)
+    {
+        return Outcome;
+    }
+
+    Outcome.OwnerType = Entry->OwnerType;
+    Outcome.FunctionName = Entry->FunctionName;
+
+    MClass* TargetClass = TargetInstance->GetClass();
+    if (!TargetClass)
+    {
+        return Outcome;
+    }
+
+    if (Entry->RouteName && Entry->RouteName[0] != '\0')
+    {
+        auto* RouteTarget = dynamic_cast<IGeneratedClientRouteTarget*>(TargetInstance);
+        if (!RouteTarget)
+        {
+            LOG_WARN("Generated client route target unsupported: class=%s function=%s route=%s",
+                     TargetClass->GetName().c_str(),
+                     Entry->FunctionName,
+                     Entry->RouteName);
+            Outcome.Result = EGeneratedClientDispatchResult::RouteTargetUnsupported;
+            return Outcome;
+        }
+
+        SGeneratedClientRouteRequest Request;
+        Request.ConnectionId = ConnectionId;
+        Request.MessageType = ParseGeneratedClientMessageType(Entry->MessageName);
+        Request.FunctionName = Entry->FunctionName;
+        Request.RouteKind = ParseGeneratedClientRouteKind(Entry->RouteName);
+        Request.RouteName = Entry->RouteName;
+        Request.TargetServerType = ParseGeneratedClientTargetServerType(Entry->TargetName);
+        Request.TargetName = Entry->TargetName;
+        Request.AuthMode = Entry->AuthMode;
+        Request.WrapMode = Entry->WrapMode;
+        Request.Payload = &Payload;
+        if (!RouteTarget->HandleGeneratedClientRoute(Request))
+        {
+            LOG_WARN("Generated client route dispatch failed: class=%s function=%s route=%s",
+                     TargetClass->GetName().c_str(),
+                     Entry->FunctionName,
+                     Entry->RouteName);
+            Outcome.Result = EGeneratedClientDispatchResult::InvokeFailed;
+            return Outcome;
+        }
+
+        Outcome.Result = EGeneratedClientDispatchResult::Routed;
+        return Outcome;
+    }
+
+    MFunction* Func = TargetClass->FindFunction(Entry->FunctionName);
+    if (!Func)
+    {
+        LOG_WARN("Generated client manifest entry missing function: class=%s function=%s",
+                 TargetClass->GetName().c_str(),
+                 Entry->FunctionName);
+        Outcome.Result = EGeneratedClientDispatchResult::MissingFunction;
+        return Outcome;
+    }
+
+    if (!Entry->BindParams)
+    {
+        LOG_WARN("Generated client manifest entry missing binder: class=%s function=%s",
+                 TargetClass->GetName().c_str(),
+                 Entry->FunctionName);
+        Outcome.Result = EGeneratedClientDispatchResult::MissingBinder;
+        return Outcome;
+    }
+
+    TArray ParamStorage;
+    if (!Entry->BindParams(ConnectionId, Payload, ParamStorage))
+    {
+        LOG_WARN("Generated client dispatch param binding failed: class=%s function=%s message=%s",
+                 TargetClass->GetName().c_str(),
+                 Entry->FunctionName,
+                 GetClientMessageTypeName(MessageType));
+        Outcome.Result = EGeneratedClientDispatchResult::ParamBindingFailed;
+        return Outcome;
+    }
+
+    if (!TargetInstance->ProcessEvent(Func, ParamStorage.empty() ? nullptr : ParamStorage.data()))
+    {
+        LOG_WARN("Generated client dispatch failed: class=%s function=%s message=%s",
+                 TargetClass->GetName().c_str(),
+                 Entry->FunctionName,
+                 GetClientMessageTypeName(MessageType));
+        Outcome.Result = EGeneratedClientDispatchResult::InvokeFailed;
+        return Outcome;
+    }
+
+    Outcome.Result = EGeneratedClientDispatchResult::Handled;
+    return Outcome;
 }
 }
 
@@ -444,103 +635,53 @@ bool TryDispatchGeneratedClientMessage(
     EClientMessageType MessageType,
     const TArray& Payload)
 {
+    return DispatchGeneratedClientMessage(TargetInstance, ConnectionId, MessageType, Payload).Result !=
+           EGeneratedClientDispatchResult::NotFound;
+}
+
+SGeneratedClientDispatchOutcome DispatchGeneratedClientMessage(
+    MReflectObject* TargetInstance,
+    uint64 ConnectionId,
+    EClientMessageType MessageType,
+    const TArray& Payload)
+{
+    SGeneratedClientDispatchOutcome Outcome;
     if (!TargetInstance)
     {
-        return false;
+        return Outcome;
     }
 
-    MClass* TargetClass = TargetInstance->GetClass();
-    if (!TargetClass)
+    const MClientManifest::SEntry* Entry = FindGeneratedClientEntryByMessage(TargetInstance->GetClass(), MessageType);
+    if (!Entry)
     {
-        return false;
+        return Outcome;
     }
 
-    const char* MessageName = GetClientMessageTypeName(MessageType);
-    const MClientManifest::SEntry* Entries = MClientManifest::GetEntries();
-    const size_t EntryCount = MClientManifest::GetEntryCount();
+    return DispatchGeneratedClientEntry(TargetInstance, ConnectionId, Entry, MessageType, Payload);
+}
 
-    for (size_t Index = 0; Index < EntryCount; ++Index)
+SGeneratedClientDispatchOutcome DispatchGeneratedClientFunction(
+    MReflectObject* TargetInstance,
+    uint64 ConnectionId,
+    uint16 FunctionId,
+    const TArray& Payload)
+{
+    SGeneratedClientDispatchOutcome Outcome;
+    if (!TargetInstance)
     {
-        const MClientManifest::SEntry& Entry = Entries[Index];
-        if (!Entry.OwnerType || !Entry.FunctionName || !Entry.MessageName)
-        {
-            continue;
-        }
-
-        if (TargetClass->GetName() != Entry.OwnerType || FString(MessageName) != Entry.MessageName)
-        {
-            continue;
-        }
-
-        if (Entry.RouteName && Entry.RouteName[0] != '\0')
-        {
-            auto* RouteTarget = dynamic_cast<IGeneratedClientRouteTarget*>(TargetInstance);
-            if (!RouteTarget)
-            {
-                LOG_WARN("Generated client route target unsupported: class=%s function=%s route=%s",
-                         TargetClass->GetName().c_str(),
-                         Entry.FunctionName,
-                         Entry.RouteName);
-                return true;
-            }
-
-            SGeneratedClientRouteRequest Request;
-            Request.ConnectionId = ConnectionId;
-            Request.MessageType = MessageType;
-            Request.FunctionName = Entry.FunctionName;
-            Request.RouteKind = ParseGeneratedClientRouteKind(Entry.RouteName);
-            Request.RouteName = Entry.RouteName;
-            Request.TargetServerType = ParseGeneratedClientTargetServerType(Entry.TargetName);
-            Request.TargetName = Entry.TargetName;
-            Request.AuthMode = Entry.AuthMode;
-            Request.WrapMode = Entry.WrapMode;
-            Request.Payload = &Payload;
-            if (!RouteTarget->HandleGeneratedClientRoute(Request))
-            {
-                LOG_WARN("Generated client route dispatch failed: class=%s function=%s route=%s",
-                         TargetClass->GetName().c_str(),
-                         Entry.FunctionName,
-                         Entry.RouteName);
-            }
-            return true;
-        }
-
-        MFunction* Func = TargetClass->FindFunction(Entry.FunctionName);
-        if (!Func)
-        {
-            LOG_WARN("Generated client manifest entry missing function: class=%s function=%s",
-                     TargetClass->GetName().c_str(),
-                     Entry.FunctionName);
-            return true;
-        }
-
-        if (!Entry.BindParams)
-        {
-            LOG_WARN("Generated client manifest entry missing binder: class=%s function=%s",
-                     TargetClass->GetName().c_str(),
-                     Entry.FunctionName);
-            return true;
-        }
-
-        TArray ParamStorage;
-        if (!Entry.BindParams(ConnectionId, Payload, ParamStorage))
-        {
-            LOG_WARN("Generated client dispatch param binding failed: class=%s function=%s message=%s",
-                     TargetClass->GetName().c_str(),
-                     Entry.FunctionName,
-                     MessageName);
-            return true;
-        }
-
-        if (!TargetInstance->ProcessEvent(Func, ParamStorage.empty() ? nullptr : ParamStorage.data()))
-        {
-            LOG_WARN("Generated client dispatch failed: class=%s function=%s message=%s",
-                     TargetClass->GetName().c_str(),
-                     Entry.FunctionName,
-                     MessageName);
-        }
-        return true;
+        return Outcome;
     }
 
-    return false;
+    const MClientManifest::SEntry* Entry = FindGeneratedClientEntryByFunctionId(TargetInstance->GetClass(), FunctionId);
+    if (!Entry)
+    {
+        return Outcome;
+    }
+
+    return DispatchGeneratedClientEntry(
+        TargetInstance,
+        ConnectionId,
+        Entry,
+        EClientMessageType::MT_FunctionCall,
+        Payload);
 }

@@ -29,6 +29,7 @@ import json
 import os
 import signal
 import socket
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
 import struct
@@ -48,6 +49,7 @@ MT_ACTOR_UPDATE = 8
 MT_RPC = 9
 MT_CHAT = 10
 MT_HEARTBEAT = 11
+MT_FUNCTION_CALL = 13
 
 # 端口
 ROUTER_PORT = 8005
@@ -61,6 +63,34 @@ GATEWAY_DEBUG_HTTP_PORT = 18081
 
 def log(msg: str) -> None:
     print(f"[validate] {msg}", flush=True)
+
+
+def stop_lingering_servers() -> None:
+    """尽量清理上一次残留的服务器进程，避免端口占用导致本轮验证误失败。"""
+    server_names = ["GatewayServer", "LoginServer", "WorldServer", "SceneServer", "RouterServer"]
+
+    pkill = shutil.which("pkill")
+    if pkill:
+        for name in server_names:
+            try:
+                subprocess.run([pkill, "-f", f"/{name}"], check=False, capture_output=True, timeout=3)
+            except subprocess.SubprocessError:
+                pass
+
+    fuser = shutil.which("fuser")
+    if fuser and sys.platform != "win32":
+        for port in [GATEWAY_PORT, LOGIN_PORT, WORLD_PORT, SCENE_PORT, ROUTER_PORT]:
+            try:
+                subprocess.run(
+                    [fuser, "-k", f"{port}/tcp"],
+                    check=False,
+                    capture_output=True,
+                    timeout=3,
+                )
+            except subprocess.SubprocessError:
+                pass
+
+    time.sleep(0.5)
 
 
 def build_project(build_dir: Path, project_root: Path) -> bool:
@@ -257,18 +287,8 @@ def count_log_occurrences(log_path: Path, needle: str) -> int:
     return text.count(needle)
 
 
-def send_login(sock: socket.socket, player_id: int = 12345) -> tuple[bool, int, int]:
-    """
-    发送登录包，返回 (成功, SessionKey, PlayerId)
-    协议: Length(4) + MsgType(1) + PlayerId(8)
-    """
-    payload = struct.pack("<BQ", MT_LOGIN, player_id)  # little endian
-    length = len(payload)
-    packet = struct.pack("<I", length) + payload
-
-    sock.sendall(packet)
-
-    # 接收响应: Length(4) + MsgType(1) + SessionKey(4) + PlayerId(8)
+def recv_login_response(sock: socket.socket) -> tuple[bool, int, int]:
+    """接收登录响应: Length(4) + MsgType(1) + SessionKey(4) + PlayerId(8)"""
     sock.settimeout(5.0)
     header = sock.recv(4)
     if len(header) < 4:
@@ -293,6 +313,75 @@ def send_login(sock: socket.socket, player_id: int = 12345) -> tuple[bool, int, 
     session_key = struct.unpack("<I", body[1:5])[0]
     resp_player_id = struct.unpack("<Q", body[5:13])[0]
     return True, session_key, resp_player_id
+
+
+def compute_stable_function_id(class_name: str, function_name: str) -> int:
+    """与服务端 ComputeStableReflectId 保持一致。"""
+    offset_basis = 2166136261
+    prime = 16777619
+    h = offset_basis
+
+    def mix(text: str) -> None:
+        nonlocal h
+        for ch in text.encode("utf-8"):
+            h ^= ch
+            h = (h * prime) & 0xFFFFFFFF
+
+    mix(class_name)
+    h ^= ord(":")
+    h = (h * prime) & 0xFFFFFFFF
+    h ^= ord(":")
+    h = (h * prime) & 0xFFFFFFFF
+    mix(function_name)
+
+    folded = ((h >> 16) ^ (h & 0xFFFF)) & 0xFFFF
+    return folded if folded != 0 else 1
+
+
+def send_function_call(sock: socket.socket, class_name: str, function_name: str, payload: bytes) -> bool:
+    function_id = compute_stable_function_id(class_name, function_name)
+    body = struct.pack("<BH", MT_FUNCTION_CALL, function_id)
+    body += struct.pack("<I", len(payload))
+    body += payload
+    packet = struct.pack("<I", len(body)) + body
+    sock.sendall(packet)
+    return True
+
+
+def send_function_handshake(sock: socket.socket, player_id: int = 0) -> bool:
+    return send_function_call(sock, "MGatewayServer", "Client_Handshake", struct.pack("<Q", player_id))
+
+
+def send_function_login(sock: socket.socket, player_id: int = 12345) -> tuple[bool, int, int]:
+    send_function_call(sock, "MGatewayServer", "Client_Login", struct.pack("<Q", player_id))
+    return recv_login_response(sock)
+
+
+def send_function_chat(sock: socket.socket, message: str) -> bool:
+    encoded = message.encode("utf-8")
+    payload = struct.pack("<H", len(encoded)) + encoded
+    return send_function_call(sock, "MGatewayServer", "Client_Chat", payload)
+
+
+def send_function_player_move(sock: socket.socket, x: float, y: float, z: float) -> bool:
+    return send_function_call(sock, "MGatewayServer", "Client_PlayerMove", struct.pack("<fff", x, y, z))
+
+
+def send_function_heartbeat(sock: socket.socket, sequence: int) -> bool:
+    return send_function_call(sock, "MGatewayServer", "Client_Heartbeat", struct.pack("<I", sequence))
+
+
+def send_login(sock: socket.socket, player_id: int = 12345) -> tuple[bool, int, int]:
+    """
+    发送登录包，返回 (成功, SessionKey, PlayerId)
+    协议: Length(4) + MsgType(1) + PlayerId(8)
+    """
+    payload = struct.pack("<BQ", MT_LOGIN, player_id)  # little endian
+    length = len(payload)
+    packet = struct.pack("<I", length) + payload
+
+    sock.sendall(packet)
+    return recv_login_response(sock)
 
 
 def send_handshake(sock: socket.socket, player_id: int = 0) -> bool:
@@ -508,6 +597,7 @@ def run_validation(
 ) -> bool:
     """执行完整验证流程"""
     procs: List[subprocess.Popen] = []
+    stop_lingering_servers()
     if debug_log_dir is None:
         debug_log_dir = build_dir / "validate_logs"
         debug_log_dir.mkdir(parents=True, exist_ok=True)
@@ -561,6 +651,7 @@ def run_validation(
             return False
         initial_legacy_rpc_count = int(gateway_debug.get("legacyClientRpcCount", 0))
         initial_rejected_fallback_count = int(gateway_debug.get("rejectedClientFallbackCount", 0))
+        initial_function_call_count = int(gateway_debug.get("clientFunctionCallCount", 0))
         gateway_log = debug_log_dir / "GatewayServer.log"
         world_log = debug_log_dir / "WorldServer.log"
 
@@ -753,8 +844,128 @@ def run_validation(
             f"lastSeq={int(gateway_status.get('lastClientHeartbeatSequence', 0))}"
         )
 
-        # 12. RPC 兼容测试：确认客户端 MT_RPC 仍作为受控 legacy policy 可达
-        log("Test 8: Client MT_RPC legacy compatibility...")
+        # 12. 统一函数调用测试：覆盖 Handshake / Login / Chat 三条首批垂直切片
+        log("Test 8: Unified client function call...")
+        function_handshake_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        function_handshake_sock.settimeout(10.0)
+        function_handshake_sock.connect(("127.0.0.1", GATEWAY_PORT))
+        function_handshake_pid = 65432
+        send_function_handshake(function_handshake_sock, function_handshake_pid)
+        deadline = time.time() + 3.0
+        function_handshake_observed = False
+        gateway_status = None
+        while time.time() < deadline:
+            gateway_status = http_get_json("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, timeout=1.0)
+            if gateway_status is None:
+                time.sleep(0.1)
+                continue
+            if (
+                int(gateway_status.get("clientFunctionCallCount", 0)) >= initial_function_call_count + 1 and
+                gateway_status.get("lastClientFunctionName", "") == "Client_Handshake" and
+                int(gateway_status.get("lastClientHandshakePlayerId", 0)) == function_handshake_pid
+            ):
+                function_handshake_observed = True
+                break
+            time.sleep(0.1)
+        if not function_handshake_observed:
+            log("  Unified Client_Handshake failed: Gateway debug status did not update")
+            function_handshake_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        function_handshake_sock.close()
+
+        function_login_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        function_login_sock.settimeout(10.0)
+        function_login_sock.connect(("127.0.0.1", GATEWAY_PORT))
+        function_login_pid = 20001
+        ok, function_session_key, function_resp_pid = send_function_login(function_login_sock, function_login_pid)
+        if not ok or function_resp_pid != function_login_pid:
+            log("  Unified Client_Login failed")
+            function_login_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        log(f"  Unified Client_Login OK: SessionKey={function_session_key}")
+
+        unified_chat_text = "validate-function-chat"
+        send_function_chat(clients[1][0], unified_chat_text)
+        chat_packets = collect_replication_packets(clients[2][0], 2.0, {MT_CHAT})
+        matched_function_chat = False
+        for _, payload in chat_packets:
+            parsed = parse_chat_payload(payload)
+            if not parsed:
+                continue
+            from_player_id, message = parsed
+            if from_player_id == clients[1][1] and message == unified_chat_text:
+                matched_function_chat = True
+                break
+        if not matched_function_chat:
+            log("  Unified Client_Chat failed: receiver did not observe expected chat payload")
+            function_login_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        heartbeat_sequence = 5252
+        send_function_heartbeat(clients[1][0], heartbeat_sequence)
+        deadline = time.time() + 3.0
+        function_heartbeat_observed = False
+        while time.time() < deadline:
+            gateway_status = http_get_json("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, timeout=1.0)
+            if gateway_status is None:
+                time.sleep(0.1)
+                continue
+            if (
+                gateway_status.get("lastClientFunctionName", "") == "Client_Heartbeat" and
+                int(gateway_status.get("lastClientHeartbeatSequence", 0)) >= heartbeat_sequence
+            ):
+                function_heartbeat_observed = True
+                break
+            time.sleep(0.1)
+        if not function_heartbeat_observed:
+            log("  Unified Client_Heartbeat failed: Gateway debug status did not update")
+            function_login_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+
+        send_function_player_move(clients[1][0], 7.0, 0.0, 0.0)
+        deadline = time.time() + 3.0
+        move_function_observed = False
+        while time.time() < deadline:
+            gateway_status = http_get_json("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, timeout=1.0)
+            if gateway_status is None:
+                time.sleep(0.1)
+                continue
+            if gateway_status.get("lastClientFunctionName", "") == "Client_PlayerMove":
+                move_function_observed = True
+                break
+            time.sleep(0.1)
+        if not move_function_observed:
+            log("  Unified Client_PlayerMove failed: Gateway debug status did not update")
+            function_login_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        log("  Unified function call path reached GatewayLocal / Login / RouterResolved successfully")
+        try:
+            function_login_sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        function_login_sock.close()
+
+        # 13. RPC 兼容测试：确认客户端 MT_RPC 仍作为受控 legacy policy 可达
+        log("Test 9: Client MT_RPC legacy compatibility...")
         # 为简单起见，使用第一个仍在线的客户端执行 RPC 测试
         rpc_sock = None
         rpc_pid = 123456
@@ -807,8 +1018,8 @@ def run_validation(
         if rpc_sock:
             rpc_sock.close()
 
-        # 13. 登录后立刻断开：验证 World 清理完成后可以重新登录
-        log("Test 9: Immediate disconnect cleanup...")
+        # 14. 登录后立刻断开：验证 World 清理完成后可以重新登录
+        log("Test 10: Immediate disconnect cleanup...")
         immediate_pid = 30000
         immediate_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         immediate_sock.settimeout(10.0)

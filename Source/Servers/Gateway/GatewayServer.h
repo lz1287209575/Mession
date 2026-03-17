@@ -99,6 +99,13 @@ private:
     TMap<FString, SServerInfo> ResolvedRouteCache;
     uint64 LegacyClientRpcCount = 0;
     uint64 RejectedClientFallbackCount = 0;
+    uint64 ClientFunctionCallCount = 0;
+    uint64 ClientFunctionCallRejectedCount = 0;
+    uint64 UnknownClientFunctionCount = 0;
+    uint64 ClientFunctionDecodeFailureCount = 0;
+    uint16 LastClientFunctionId = 0;
+    FString LastClientFunctionName;
+    FString LastClientFunctionError;
 
     MGatewayService GatewayService;
 
@@ -161,6 +168,7 @@ private:
     bool HandleGeneratedClientRoute(const SGeneratedClientRouteRequest& Request) override;
     bool IsExplicitLegacyClientMessage(EClientMessageType MsgType) const;
     void HandleClientPacket(uint64 ConnectionId, const TArray& Data);
+    bool HandleClientFunctionCall(uint64 ConnectionId, const TArray& Data);
     bool HandleLegacyClientRpc(uint64 ConnectionId, const TArray& Data);
     void HandleLoginServerMessage(uint8 Type, const TArray& Data);
     void HandleWorldServerMessage(uint8 Type, const TArray& Data);

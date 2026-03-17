@@ -99,6 +99,33 @@ const char* GetClientPacketLogName(const TArray& Packet)
         return "MT_Heartbeat";
     case EClientMessageType::MT_Error:
         return "MT_Error";
+    case EClientMessageType::MT_FunctionCall:
+        return "MT_FunctionCall";
+    default:
+        return "Unknown";
+    }
+}
+
+const char* GetGeneratedClientDispatchResultName(EGeneratedClientDispatchResult Result)
+{
+    switch (Result)
+    {
+    case EGeneratedClientDispatchResult::NotFound:
+        return "NotFound";
+    case EGeneratedClientDispatchResult::Routed:
+        return "Routed";
+    case EGeneratedClientDispatchResult::Handled:
+        return "Handled";
+    case EGeneratedClientDispatchResult::RouteTargetUnsupported:
+        return "RouteTargetUnsupported";
+    case EGeneratedClientDispatchResult::MissingFunction:
+        return "MissingFunction";
+    case EGeneratedClientDispatchResult::MissingBinder:
+        return "MissingBinder";
+    case EGeneratedClientDispatchResult::ParamBindingFailed:
+        return "ParamBindingFailed";
+    case EGeneratedClientDispatchResult::InvokeFailed:
+        return "InvokeFailed";
     default:
         return "Unknown";
     }
@@ -380,6 +407,13 @@ FString MGatewayServer::BuildDebugStatusJson() const
     W.Key("pendingResolvedRouteBuckets"); W.Value(static_cast<uint64>(PendingResolvedClientRoutes.size()));
     W.Key("legacyClientRpcCount"); W.Value(LegacyClientRpcCount);
     W.Key("rejectedClientFallbackCount"); W.Value(RejectedClientFallbackCount);
+    W.Key("clientFunctionCallCount"); W.Value(ClientFunctionCallCount);
+    W.Key("clientFunctionCallRejectedCount"); W.Value(ClientFunctionCallRejectedCount);
+    W.Key("unknownClientFunctionCount"); W.Value(UnknownClientFunctionCount);
+    W.Key("clientFunctionDecodeFailureCount"); W.Value(ClientFunctionDecodeFailureCount);
+    W.Key("lastClientFunctionId"); W.Value(static_cast<uint64>(LastClientFunctionId));
+    W.Key("lastClientFunctionName"); W.Value(LastClientFunctionName);
+    W.Key("lastClientFunctionError"); W.Value(LastClientFunctionError);
     W.Key("clientHandshakeCount"); W.Value(HandshakeCount);
     W.Key("lastClientHandshakePlayerId"); W.Value(LastHandshakePlayerId);
     W.Key("clientHeartbeatCount"); W.Value(HeartbeatCount);
@@ -856,6 +890,83 @@ bool MGatewayServer::IsExplicitLegacyClientMessage(EClientMessageType MsgType) c
     return MsgType == EClientMessageType::MT_RPC;
 }
 
+bool MGatewayServer::HandleClientFunctionCall(uint64 ConnectionId, const TArray& Data)
+{
+    LastClientFunctionError.clear();
+
+    if (Data.size() < 1 + sizeof(uint16) + sizeof(uint32))
+    {
+        ++ClientFunctionDecodeFailureCount;
+        ++ClientFunctionCallRejectedCount;
+        LastClientFunctionError = "PacketTooSmall";
+        LOG_WARN("Unified client function packet too small: connection=%llu size=%zu",
+                 static_cast<unsigned long long>(ConnectionId),
+                 Data.size());
+        return true;
+    }
+
+    size_t Offset = 1;
+    uint16 FunctionId = 0;
+    uint32 PayloadSize = 0;
+    std::memcpy(&FunctionId, Data.data() + Offset, sizeof(FunctionId));
+    Offset += sizeof(FunctionId);
+    std::memcpy(&PayloadSize, Data.data() + Offset, sizeof(PayloadSize));
+    Offset += sizeof(PayloadSize);
+
+    LastClientFunctionId = FunctionId;
+    if (Offset + PayloadSize > Data.size())
+    {
+        ++ClientFunctionDecodeFailureCount;
+        ++ClientFunctionCallRejectedCount;
+        LastClientFunctionError = "PayloadOutOfRange";
+        LOG_WARN("Unified client function payload out of range: connection=%llu function_id=%u size=%zu payload=%u",
+                 static_cast<unsigned long long>(ConnectionId),
+                 static_cast<unsigned>(FunctionId),
+                 Data.size(),
+                 static_cast<unsigned>(PayloadSize));
+        return true;
+    }
+
+    TArray Payload;
+    if (PayloadSize > 0)
+    {
+        Payload.resize(PayloadSize);
+        std::memcpy(Payload.data(), Data.data() + Offset, PayloadSize);
+    }
+
+    const SGeneratedClientDispatchOutcome Outcome =
+        DispatchGeneratedClientFunction(this, ConnectionId, FunctionId, Payload);
+    if (Outcome.FunctionName)
+    {
+        LastClientFunctionName = Outcome.FunctionName;
+    }
+    else
+    {
+        LastClientFunctionName.clear();
+    }
+
+    if (Outcome.Result == EGeneratedClientDispatchResult::NotFound)
+    {
+        ++UnknownClientFunctionCount;
+        ++ClientFunctionCallRejectedCount;
+        LastClientFunctionError = "UnknownFunctionId";
+        LOG_WARN("Unknown unified client function: connection=%llu function_id=%u",
+                 static_cast<unsigned long long>(ConnectionId),
+                 static_cast<unsigned>(FunctionId));
+        return true;
+    }
+
+    ++ClientFunctionCallCount;
+    if (Outcome.Result != EGeneratedClientDispatchResult::Handled &&
+        Outcome.Result != EGeneratedClientDispatchResult::Routed)
+    {
+        ++ClientFunctionCallRejectedCount;
+        LastClientFunctionError = GetGeneratedClientDispatchResultName(Outcome.Result);
+    }
+
+    return true;
+}
+
 void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TArray& Data)
 {
     if (Data.empty())
@@ -865,6 +976,12 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TArray& Data)
 
     const EClientMessageType MsgType = (EClientMessageType)Data[0];
     const TArray Payload(Data.begin() + 1, Data.end());
+    if (MsgType == EClientMessageType::MT_FunctionCall)
+    {
+        HandleClientFunctionCall(ConnectionId, Data);
+        return;
+    }
+
     if (TryDispatchGeneratedClientMessage(this, ConnectionId, MsgType, Payload))
     {
         return;

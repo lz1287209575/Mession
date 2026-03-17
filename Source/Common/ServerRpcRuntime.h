@@ -52,6 +52,25 @@ struct SGeneratedClientRouteRequest
     const TArray* Payload = nullptr;
 };
 
+enum class EGeneratedClientDispatchResult : uint8
+{
+    NotFound = 0,
+    Routed = 1,
+    Handled = 2,
+    RouteTargetUnsupported = 3,
+    MissingFunction = 4,
+    MissingBinder = 5,
+    ParamBindingFailed = 6,
+    InvokeFailed = 7,
+};
+
+struct SGeneratedClientDispatchOutcome
+{
+    EGeneratedClientDispatchResult Result = EGeneratedClientDispatchResult::NotFound;
+    const char* OwnerType = nullptr;
+    const char* FunctionName = nullptr;
+};
+
 class IGeneratedClientRouteTarget
 {
 public:
@@ -81,6 +100,16 @@ bool TryDispatchGeneratedClientMessage(
     MReflectObject* TargetInstance,
     uint64 ConnectionId,
     EClientMessageType MessageType,
+    const TArray& Payload);
+SGeneratedClientDispatchOutcome DispatchGeneratedClientMessage(
+    MReflectObject* TargetInstance,
+    uint64 ConnectionId,
+    EClientMessageType MessageType,
+    const TArray& Payload);
+SGeneratedClientDispatchOutcome DispatchGeneratedClientFunction(
+    MReflectObject* TargetInstance,
+    uint64 ConnectionId,
+    uint16 FunctionId,
     const TArray& Payload);
 const char* GetServerTypeDisplayName(EServerType ServerType);
 bool FindGeneratedRpcEndpoint(EServerType ServerType, const char* FunctionName, SRpcEndpointBinding& OutBinding);

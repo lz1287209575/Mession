@@ -17,6 +17,7 @@ enum class EClientMessageType : uint8
     MT_Chat = 10,           // 聊天
     MT_Heartbeat = 11,      // 心跳
     MT_Error = 12,          // 错误
+    MT_FunctionCall = 13,   // 统一函数调用入口
 };
 
 // 网络消息类型
