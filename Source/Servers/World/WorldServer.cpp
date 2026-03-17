@@ -550,7 +550,7 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 Gatewa
     Character->SetReplicated(true);
     Character->SetActorReplicates(true);
     Character->SetActorActive(true);
-    Character->SetLocation(SVector(0, 0, 100));
+    Character->SetLocation(SVector(-1040, 0, 90));
     
     Player.Character = Character;
 
@@ -591,7 +591,9 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 Gatewa
     ReplicationDriver->RegisterActor(Character);
     ReplicationDriver->AddConnection(PlayerId, ReplicationConnection);
     ReplicationDriver->AddRelevantActor(PlayerId, Character->GetObjectId());
-    ReplicationDriver->BroadcastActorCreate(Character, PlayerId);
+    // Also send the initial actor create to the owning player so a single UE client
+    // can verify the world-sync path without requiring a second connected client.
+    ReplicationDriver->BroadcastActorCreate(Character);
 
     const SPlayerSceneStateMessage Message{
         Player.PlayerId,

@@ -84,8 +84,17 @@ TSharedPtr<MTcpConnection> MTcpConnection::ConnectTo(const SSocketAddress& Addre
 
 bool MTcpConnection::Send(const void* Data, uint32 Size)
 {
-    if (!bConnected || Size == 0)
+    if (!bConnected)
     {
+        LOG_WARN("Attempted to send on disconnected connection (player=%llu, fd=%zd)",
+                 (unsigned long long)PlayerId, (intptr_t)Socket.Get());
+        return false;
+    }
+
+    if (Size == 0)
+    {
+        LOG_WARN("Attempted to send empty packet (player=%llu, fd=%zd)",
+                 (unsigned long long)PlayerId, (intptr_t)Socket.Get());
         return false;
     }
 
@@ -108,7 +117,11 @@ bool MTcpConnection::Send(const void* Data, uint32 Size)
 
     if (SendBuffer.size() + EncodedPacket.size() > SEND_BUFFER_SIZE)
     {
-        LOG_ERROR("Send buffer overflow on fd=%zd", (intptr_t)Socket.Get());
+        LOG_ERROR("Send buffer overflow on fd=%zd (player=%llu, queued=%zu, incoming=%zu)",
+                  (intptr_t)Socket.Get(),
+                  (unsigned long long)PlayerId,
+                  SendBuffer.size(),
+                  EncodedPacket.size());
         bConnected = false;
         return false;
     }

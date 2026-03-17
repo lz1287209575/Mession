@@ -101,6 +101,13 @@ public:
     }
     
     virtual ~MActor() = default;
+
+    void Serialize(MArchive& Ar) override
+    {
+        Ar << Location;
+        Ar << Rotation;
+        Ar << Scale;
+    }
     
     // 设置复制启用
     void SetActorReplicates(bool b) { bActorReplicates = b; }

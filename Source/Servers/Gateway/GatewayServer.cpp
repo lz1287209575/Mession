@@ -68,6 +68,57 @@ FString DescribeClientLoginResponsePayload(const SClientLoginResponsePayload& Pa
            ", PlayerId=" + std::to_string(static_cast<unsigned long long>(Payload.PlayerId)) + "}";
 }
 
+const char* GetClientPacketLogName(const TArray& Packet)
+{
+    if (Packet.empty())
+    {
+        return "Empty";
+    }
+
+    switch (static_cast<EClientMessageType>(Packet[0]))
+    {
+    case EClientMessageType::MT_Login:
+        return "MT_Login";
+    case EClientMessageType::MT_LoginResponse:
+        return "MT_LoginResponse";
+    case EClientMessageType::MT_Handshake:
+        return "MT_Handshake";
+    case EClientMessageType::MT_PlayerMove:
+        return "MT_PlayerMove";
+    case EClientMessageType::MT_ActorCreate:
+        return "MT_ActorCreate";
+    case EClientMessageType::MT_ActorDestroy:
+        return "MT_ActorDestroy";
+    case EClientMessageType::MT_ActorUpdate:
+        return "MT_ActorUpdate";
+    case EClientMessageType::MT_RPC:
+        return "MT_RPC";
+    case EClientMessageType::MT_Chat:
+        return "MT_Chat";
+    case EClientMessageType::MT_Heartbeat:
+        return "MT_Heartbeat";
+    case EClientMessageType::MT_Error:
+        return "MT_Error";
+    default:
+        return "Unknown";
+    }
+}
+
+bool SendClientPacketWithLog(const TSharedPtr<MClientConnection>& Client, const TArray& Packet)
+{
+    if (!Client || !Client->Connection)
+    {
+        return false;
+    }
+
+    LOG_INFO("Outbound client packet: connection_id=%llu player=%llu type=%s bytes=%zu",
+             static_cast<unsigned long long>(Client->ConnectionId),
+             static_cast<unsigned long long>(Client->PlayerId),
+             GetClientPacketLogName(Packet),
+             Packet.size());
+    return Client->Connection->Send(Packet.data(), static_cast<uint32>(Packet.size()));
+}
+
 }
 
 bool MGatewayServer::LoadConfig(const FString& ConfigPath)
@@ -403,16 +454,25 @@ TSharedPtr<MClientConnection> MGatewayServer::FindClientByPlayerId(uint64 Player
         return nullptr;
     }
 
+    TSharedPtr<MClientConnection> FallbackClient;
     for (const auto& [ConnectionId, Client] : ClientConnections)
     {
         (void)ConnectionId;
         if (Client && Client->PlayerId == PlayerId)
         {
-            return Client;
+            if (Client->Connection && Client->Connection->IsConnected())
+            {
+                return Client;
+            }
+
+            if (!FallbackClient)
+            {
+                FallbackClient = Client;
+            }
         }
     }
 
-    return nullptr;
+    return FallbackClient;
 }
 
 void MGatewayServer::ResetClientAuthState(const TSharedPtr<MClientConnection>& Client)
@@ -431,6 +491,10 @@ void MGatewayServer::ResetClientAuthState(const TSharedPtr<MClientConnection>& C
     Client->bAuthenticated = false;
     Client->SessionToken = 0;
     Client->PlayerId = 0;
+    if (Client->Connection)
+    {
+        Client->Connection->SetPlayerId(0);
+    }
 }
 
 bool MGatewayServer::IsGeneratedRouteAuthorized(
@@ -936,6 +1000,10 @@ void MGatewayServer::OnLogin_PlayerLogin(const SPlayerLoginResponseMessage& Mess
     Client->PlayerId = Message.PlayerId;
     Client->SessionToken = Message.SessionKey;
     Client->bAuthenticated = true;
+    if (Client->Connection)
+    {
+        Client->Connection->SetPlayerId(Message.PlayerId);
+    }
 
     const SClientLoginResponsePayload ResponsePayload{Message.SessionKey, Message.PlayerId};
     LOG_INFO("Preparing client login response: ConnectionId=%llu, Response=%s",
@@ -947,7 +1015,7 @@ void MGatewayServer::OnLogin_PlayerLogin(const SPlayerLoginResponseMessage& Mess
     Packet.reserve(1 + RespPayload.size());
     Packet.push_back(static_cast<uint8>(EClientMessageType::MT_LoginResponse));
     Packet.insert(Packet.end(), RespPayload.begin(), RespPayload.end());
-    Client->Connection->Send(Packet.data(), static_cast<uint32>(Packet.size()));
+    SendClientPacketWithLog(Client, Packet);
 
     const uint64 RouteRequestId = QueryRoute(EServerType::World, Message.PlayerId);
     if (RouteRequestId != 0)
@@ -983,9 +1051,18 @@ void MGatewayServer::OnWorld_PlayerClientSync(const SPlayerClientSyncMessage& Me
         return;
     }
 
+    LOG_INFO("Outbound client packet: connection_id=%llu player=%llu type=%s bytes=%zu",
+             static_cast<unsigned long long>(Client->ConnectionId),
+             static_cast<unsigned long long>(Message.PlayerId),
+             GetClientPacketLogName(Message.Data),
+             Message.Data.size());
     if (!Client->Connection->Send(Message.Data.data(), Message.Data.size()))
     {
-        LOG_WARN("Failed to forward world sync to player %llu", (unsigned long long)Message.PlayerId);
+        LOG_WARN("Failed to forward world sync to player %llu (connection_id=%llu, connected=%s, bytes=%zu)",
+                 (unsigned long long)Message.PlayerId,
+                 (unsigned long long)Client->ConnectionId,
+                 Client->Connection->IsConnected() ? "true" : "false",
+                 Message.Data.size());
     }
 }
 

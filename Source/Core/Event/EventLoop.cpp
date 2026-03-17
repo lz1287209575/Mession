@@ -165,6 +165,15 @@ void MNetEventLoop::RunOnce(int TimeoutMs)
                 }
                 Packet.clear();
             }
+
+            if (!C.Conn->IsConnected())
+            {
+                if (C.OnClose)
+                {
+                    C.OnClose(Id);
+                }
+                ToClose.push_back(Id);
+            }
         }
     }
 

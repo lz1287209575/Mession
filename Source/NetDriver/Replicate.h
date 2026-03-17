@@ -68,18 +68,26 @@ public:
 class MMemoryArchive : public MArchive
 {
 private:
+    enum class EMode : uint8
+    {
+        Saving,
+        Loading
+    };
+
     TArray Data;
     size_t ReadPos;
+    EMode Mode;
     
 public:
-    MMemoryArchive() : ReadPos(0) {}
-    explicit MMemoryArchive(const TArray& InData) : Data(InData), ReadPos(0) {}
+    MMemoryArchive() : ReadPos(0), Mode(EMode::Saving) {}
+    explicit MMemoryArchive(const TArray& InData) : Data(InData), ReadPos(0), Mode(EMode::Loading) {}
     
     // 设置数据（加载时）
     void SetData(const TArray& InData)
     {
         Data = InData;
         ReadPos = 0;
+        Mode = EMode::Loading;
     }
     
     // 获取数据（保存时）
@@ -89,6 +97,7 @@ public:
     {
         Data.clear();
         ReadPos = 0;
+        Mode = EMode::Saving;
     }
     
     // MArchive接口
@@ -267,6 +276,6 @@ public:
         return *this;
     }
     
-    bool IsLoading() const override { return !Data.empty() && ReadPos < Data.size(); }
-    bool IsSaving() const override { return true; }
+    bool IsLoading() const override { return Mode == EMode::Loading; }
+    bool IsSaving() const override { return Mode == EMode::Saving; }
 };

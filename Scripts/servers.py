@@ -35,6 +35,7 @@ SERVER_ORDER = [
 ]
 
 PID_FILE_NAME = ".mession_servers.pid"
+SERVER_LOG_DIR = Path("Logs") / "servers"
 
 
 def log(msg: str) -> None:
@@ -67,6 +68,10 @@ def get_pid_file_path(build_dir: Path) -> Path:
     return build_dir / PID_FILE_NAME
 
 
+def get_server_log_dir() -> Path:
+    return get_project_root() / SERVER_LOG_DIR
+
+
 def wait_for_port(host: str, port: int, timeout: float) -> bool:
     import socket
     deadline = time.time() + timeout
@@ -90,8 +95,16 @@ def start_servers(build_dir: Path, wait_ready: bool = True) -> int:
         log(f"Build dir does not exist: {build_dir}")
         return 1
 
+    log_dir = get_server_log_dir()
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        log(f"Could not create log dir {log_dir}: {e}")
+        return 1
+
     pids: list[int] = []
     procs: list[subprocess.Popen] = []
+    log_files = []
 
     for name, port in SERVER_ORDER:
         exe = get_executable_path(build_dir, name)
@@ -103,16 +116,21 @@ def start_servers(build_dir: Path, wait_ready: bool = True) -> int:
                     p.wait(timeout=2)
                 except Exception:
                     p.kill()
+            for f in log_files:
+                f.close()
             return 1
         log(f"Starting {name} (port {port})...")
+        log_path = log_dir / f"{name}.log"
+        log_file = open(log_path, "w", encoding="utf-8")
         proc = subprocess.Popen(
             [str(exe)],
             cwd=str(build_dir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=log_file,
             start_new_session=True,
             env=os.environ.copy(),
         )
+        log_files.append(log_file)
         procs.append(proc)
         pids.append(proc.pid)
 
@@ -125,8 +143,13 @@ def start_servers(build_dir: Path, wait_ready: bool = True) -> int:
                         p.wait(timeout=2)
                     except Exception:
                         p.kill()
+                for f in log_files:
+                    f.close()
                 return 1
             time.sleep(0.3)
+
+    for f in log_files:
+        f.close()
 
     pid_file = get_pid_file_path(build_dir)
     try:
@@ -136,6 +159,8 @@ def start_servers(build_dir: Path, wait_ready: bool = True) -> int:
 
     log("All servers started.")
     log(f"  PIDs: {pids}")
+    log(f"  Logs: {log_dir}")
+    log("  Watch with: tail -f Logs/servers/GatewayServer.log")
     log("  Stop with: python3 Scripts/servers.py stop [--build-dir <dir>]")
     return 0
 
