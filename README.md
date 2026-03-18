@@ -123,7 +123,7 @@ flowchart TB
         subgraph Gameplay["Gameplay Domain"]
             Avatar[MPlayerAvatar]
             Member[AvatarMember]
-            Property[MPROPERTY(PersistentData, RepToClient)]
+            Property["MPROPERTY PersistentData + RepToClient"]
         end
 
         subgraph Runtime["Runtime State"]
