@@ -15,7 +15,7 @@ Client -> Gateway -> Router -> Login / World / Scene
 - 反射驱动的 snapshot / replication
 - 自动化验证与回归基线
 
-## 当前架构
+## 🏗️ 当前架构
 
 建议把仓库理解成三层：
 
@@ -36,7 +36,189 @@ Infrastructure
 - `Gameplay` 决定对象、状态和规则
 - `Infrastructure` 决定同步、持久化和传输
 
-## 文档入口
+### 🌐 服务拓扑
+
+```mermaid
+flowchart LR
+    Client[Client / UE] --> Gateway[Gateway]
+    Gateway --> Router[Router]
+    Gateway --> Login[Login]
+    Gateway --> World[World]
+    Scene[Scene] --> Router
+    Scene --> World
+    Login --> Router
+    World --> Router
+```
+
+### 🧭 当前架构图
+
+```mermaid
+flowchart TB
+    Client[Client / UE]
+
+    subgraph GatewayLayer["Gateway Server"]
+        GatewayIngress[MT_FunctionCall Ingress]
+        GatewayAuth[Connection/Auth State]
+        GatewayRoute[RouterResolved Route]
+        GatewayDownlink[MT_FunctionCall Downlink]
+    end
+
+    subgraph LoginLayer["Login Server"]
+        LoginSession[Session / SessionKey]
+    end
+
+    subgraph WorldLayer["World Server"]
+        WorldFlow[Player Session Flow]
+
+        subgraph GameplayLayer["Gameplay"]
+            Avatar[MPlayerAvatar]
+            Member[AvatarMember]
+        end
+
+        subgraph ReplicationLayer["Reflection / Snapshot / Replication"]
+            Reflection[Reflection Metadata]
+            Snapshot[Snapshot Write]
+            Replication[Replication Driver]
+        end
+    end
+
+    subgraph SceneLayer["Scene Server"]
+        SceneView[Scene View / Mirror]
+    end
+
+    subgraph RouterLayer["Router Server"]
+        RouterRegistry[Service Registry]
+        RouterBinding[Player -> World Binding]
+    end
+
+    Client --> GatewayIngress
+    GatewayIngress --> GatewayAuth
+    GatewayAuth --> GatewayRoute
+    GatewayRoute --> LoginSession
+    GatewayRoute --> WorldFlow
+    GatewayDownlink --> Client
+
+    WorldFlow --> Avatar
+    Avatar --> Member
+    Avatar --> Reflection
+    Reflection --> Snapshot
+    Snapshot --> Replication
+    Replication --> GatewayDownlink
+
+    WorldFlow --> SceneView
+    GatewayRoute --> RouterRegistry
+    LoginSession --> RouterRegistry
+    WorldFlow --> RouterRegistry
+    SceneView --> RouterRegistry
+    RouterRegistry --> RouterBinding
+```
+
+### 🎯 下一步目标图
+
+```mermaid
+flowchart TB
+    subgraph WorldServer["World Server"]
+        Session[PlayerSession]
+
+        subgraph Gameplay["Gameplay Domain"]
+            Avatar[MPlayerAvatar]
+            Member[AvatarMember]
+            Property[MPROPERTY(PersistentData, RepToClient)]
+        end
+
+        subgraph Runtime["Runtime State"]
+            Dirty[Per-Domain Dirty Tracking]
+            ClientDirty[Client Dirty Domain]
+            PersistentDirty[Persistent Dirty Domain]
+        end
+
+        subgraph Infra["Infrastructure"]
+            Reflection[Reflection Metadata]
+            Snapshot[Snapshot / Replication Export]
+            Replication[Replication Subsystem]
+            Persistence[Persistence Subsystem]
+        end
+    end
+
+    Session --> Avatar
+    Avatar --> Member
+    Avatar --> Property
+    Property --> Reflection
+    Property --> Dirty
+    Dirty --> ClientDirty
+    Dirty --> PersistentDirty
+    Reflection --> Snapshot
+    ClientDirty --> Replication
+    Snapshot --> Replication
+    PersistentDirty --> Persistence
+```
+
+这张图表达的目标是：
+
+- `Avatar` 仍然是运行时对象
+- 字段通过元数据声明属于哪些同步域
+- 属性修改后只标记 dirty
+- `Replication` 和 `Persistence` 各自消费自己的 dirty 域
+- 不把“改字段 -> 立刻写库 / 立刻发包”硬编码在业务对象里
+
+### 🧱 分层关系
+
+```mermaid
+flowchart TB
+    subgraph Server["Server Application"]
+        GatewaySvc[Gateway]
+        LoginSvc[Login]
+        WorldSvc[World]
+        SceneSvc[Scene]
+        RouterSvc[Router]
+    end
+
+    subgraph Gameplay["Gameplay Domain"]
+        Avatar[MPlayerAvatar]
+        Member[AvatarMember]
+        Attr[Attribute / Movement / Interaction]
+    end
+
+    subgraph Infra["Infrastructure"]
+        Reflection[Reflection]
+        Snapshot[Snapshot]
+        Replication[Replication]
+        Rpc[RPC / Messages]
+        Runtime[Socket / EventLoop]
+    end
+
+    Server --> Gameplay
+    Server --> Infra
+    Gameplay --> Infra
+    Avatar --> Member
+    Member --> Attr
+```
+
+### 🔄 主链路时序
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant G as Gateway
+    participant R as Router
+    participant L as Login
+    participant W as World
+    participant S as Scene
+
+    C->>G: MT_FunctionCall(Client_Handshake)
+    C->>G: MT_FunctionCall(Client_Login)
+    G->>R: Query Login / World route
+    G->>L: Forward login request
+    L-->>G: Login response + SessionKey
+    G->>W: Forward player login context
+    W->>L: Validate session
+    L-->>W: Session valid
+    W->>S: Player enter / scene sync
+    W-->>G: Client_OnActorCreate / Update
+    G-->>C: MT_FunctionCall downlink
+```
+
+## 📚 文档入口
 
 仓库只保留一套正式文档目录：`Docs/`。
 
@@ -48,7 +230,7 @@ Infrastructure
 4. [Docs/gameplay-avatar-framework.md](/workspaces/Mession/Docs/gameplay-avatar-framework.md)
 5. [Docs/validation.md](/workspaces/Mession/Docs/validation.md)
 
-## 仓库结构
+## 📁 仓库结构
 
 ```text
 Mession/
@@ -68,16 +250,16 @@ Mession/
 └── CMakeLists.txt
 ```
 
-## 快速开始
+## 🚀 快速开始
 
-### 构建
+### 🔧 构建
 
 ```bash
 cmake -S . -B Build -DCMAKE_BUILD_TYPE=Release
 cmake --build Build -j4
 ```
 
-### 运行主链路验证
+### ✅ 运行主链路验证
 
 ```bash
 python3 Scripts/validate.py --timeout 60
@@ -89,7 +271,7 @@ python3 Scripts/validate.py --timeout 60
 python3 Scripts/validate.py --timeout 60 --no-build
 ```
 
-### 只启动服务
+### ▶️ 只启动服务
 
 ```bash
 python3 Scripts/servers.py start
@@ -98,7 +280,7 @@ python3 Scripts/servers.py stop
 
 脚本说明见 [Scripts/README.md](/workspaces/Mession/Scripts/README.md)。
 
-## 当前重点文档
+## 📌 当前重点文档
 
 - 客户端与 UE 接入
   - [Docs/client-unified-function-call.md](/workspaces/Mession/Docs/client-unified-function-call.md)
@@ -113,7 +295,7 @@ python3 Scripts/servers.py stop
   - [Docs/validation.md](/workspaces/Mession/Docs/validation.md)
   - [Docs/TODO.md](/workspaces/Mession/Docs/TODO.md)
 
-## 当前建议
+## 💡 当前建议
 
 如果接下来继续推进项目，优先顺序建议是：
 

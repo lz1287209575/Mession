@@ -62,6 +62,20 @@ Gateway 不负责：
 - UE 下行统一函数调用
 - `validate.py` 正向与负向验证
 
+## 与反射体系的关系
+
+客户端协议逐步收口到函数声明驱动的原因是：
+
+- 业务语义和传输语义不应长期分裂
+- Client 和 Server 不应各维护一份协议映射表
+- Gateway 不应继续长成大 `switch`
+
+因此当前推荐是：
+
+- 业务层维护函数声明
+- 传输层维护自动生成的 `FunctionID`
+- Gateway 按生成结果做 decode / invoke / route
+
 相关文档：
 
 - [function-id-rules.md](/workspaces/Mession/Docs/function-id-rules.md)
