@@ -1,5 +1,6 @@
 #include "Core/Net/NetCore.h"
 #include "Core/Net/SocketPlatform.h"
+#include "NetDriver/Reflection.h"
 #include <atomic>
 #include <cstring>
 
@@ -43,22 +44,31 @@ static bool RecvAll(int Fd, uint8* Data, size_t Size)
 
 static bool SendLoginAndWaitResponse(int Fd, uint64 PlayerId)
 {
-    // 构造登录请求: Length(4) + MsgType(1) + PlayerId(8)，小端
-    const uint32 PayloadSize = 1 + 8;
-    uint8 Payload[PayloadSize];
-    Payload[0] = 1; // EClientMessageType::MT_Login
-    uint64* PlayerPtr = reinterpret_cast<uint64*>(Payload + 1);
-    *PlayerPtr = PlayerId;
+    // 构造统一函数调用登录请求:
+    // Length(4) + MsgType(1=MT_FunctionCall) + FunctionId(2) + PayloadSize(4) + PlayerId(8)
+    constexpr uint8 MsgType = 13; // EClientMessageType::MT_FunctionCall
+    const uint16 FunctionId = MGET_STABLE_RPC_FUNCTION_ID("MGatewayServer", "Client_Login");
+    const uint32 PlayerPayloadSize = sizeof(PlayerId);
+    const uint32 BodySize = 1 + sizeof(FunctionId) + sizeof(PlayerPayloadSize) + PlayerPayloadSize;
+
+    uint8 Payload[BodySize];
+    size_t Offset = 0;
+    Payload[Offset++] = MsgType;
+    std::memcpy(Payload + Offset, &FunctionId, sizeof(FunctionId));
+    Offset += sizeof(FunctionId);
+    std::memcpy(Payload + Offset, &PlayerPayloadSize, sizeof(PlayerPayloadSize));
+    Offset += sizeof(PlayerPayloadSize);
+    std::memcpy(Payload + Offset, &PlayerId, sizeof(PlayerId));
 
     uint8 Header[4];
-    uint32 LengthLE = PayloadSize;
+    uint32 LengthLE = BodySize;
     std::memcpy(Header, &LengthLE, sizeof(LengthLE));
 
     if (!SendAll(Fd, Header, sizeof(Header)))
     {
         return false;
     }
-    if (!SendAll(Fd, Payload, PayloadSize))
+    if (!SendAll(Fd, Payload, BodySize))
     {
         return false;
     }
@@ -83,11 +93,36 @@ static bool SendLoginAndWaitResponse(int Fd, uint64 PlayerId)
     {
         return false;
     }
-    if (RespBody[0] != 2) // EClientMessageType::MT_LoginResponse
+    if (RespBody.empty())
     {
         return false;
     }
-    return true;
+
+    if (RespBody[0] != 13) // EClientMessageType::MT_FunctionCall
+    {
+        return false;
+    }
+
+    if (RespBody.size() < 1 + sizeof(uint16) + sizeof(uint32) + sizeof(uint32) + sizeof(uint64))
+    {
+        return false;
+    }
+
+    uint16 ResponseFunctionId = 0;
+    std::memcpy(&ResponseFunctionId, RespBody.data() + 1, sizeof(ResponseFunctionId));
+    if (ResponseFunctionId != MGET_STABLE_RPC_FUNCTION_ID("MClientDownlink", "Client_OnLoginResponse"))
+    {
+        return false;
+    }
+
+    uint32 PayloadSize = 0;
+    std::memcpy(&PayloadSize, RespBody.data() + 1 + sizeof(ResponseFunctionId), sizeof(PayloadSize));
+    if (PayloadSize != sizeof(uint32) + sizeof(uint64))
+    {
+        return false;
+    }
+
+    return RespBody.size() >= 1 + sizeof(uint16) + sizeof(uint32) + PayloadSize;
 }
 
 static void RunClientWorker(const SBenchConfig& Config, int Index, std::atomic<int>& SuccessCount)
@@ -182,4 +217,3 @@ int main(int argc, char** argv)
 
     return 0;
 }
-

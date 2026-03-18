@@ -4,7 +4,7 @@
 #include "Core/Net/NetCore.h"
 
 MENUM()
-enum class ECharacterArchetype : uint8
+enum class EReflectionSmokeArchetype : uint8
 {
     Warrior = 1,
     Mage = 2,
@@ -12,10 +12,10 @@ enum class ECharacterArchetype : uint8
 };
 
 MCLASS()
-class MCharacter : public MReflectObject
+class MReflectionSmokeCharacter : public MReflectObject
 {
 public:
-    MGENERATED_BODY(MCharacter, MReflectObject, 0)
+    MGENERATED_BODY(MReflectionSmokeCharacter, MReflectObject, 0)
 
     MPROPERTY(Edit | SaveGame)
     FString Name = "Player";
@@ -48,7 +48,7 @@ public:
     int32 Gold = 0;
 
     MPROPERTY(Edit)
-    ECharacterArchetype Archetype = ECharacterArchetype::Warrior;
+    EReflectionSmokeArchetype Archetype = EReflectionSmokeArchetype::Warrior;
 
     MFUNCTION()
     void TakeDamage(float Damage);
@@ -76,7 +76,7 @@ public:
 };
 
 MSTRUCT()
-struct SAttributeSet
+struct SReflectionSmokeAttributeSet
 {
     MPROPERTY(Edit)
     int32 Strength = 0;
@@ -89,13 +89,13 @@ struct SAttributeSet
 };
 
 MSTRUCT()
-struct SCombatStats
+struct SReflectionSmokeCombatStats
 {
     MPROPERTY(Edit)
-    SAttributeSet Base;
+    SReflectionSmokeAttributeSet Base;
 
     MPROPERTY(Edit)
-    SAttributeSet Bonus;
+    SReflectionSmokeAttributeSet Bonus;
 
     MPROPERTY(Edit)
     float CritChance = 0.0f;
@@ -105,16 +105,16 @@ struct SCombatStats
 };
 
 MCLASS()
-class MHero : public MReflectObject
+class MReflectionSmokeHero : public MReflectObject
 {
 public:
-    MGENERATED_BODY(MHero, MReflectObject, 0)
+    MGENERATED_BODY(MReflectionSmokeHero, MReflectObject, 0)
 
     MPROPERTY(Edit)
     FString Name = "Hero";
 
     MPROPERTY(Edit)
-    SCombatStats CombatStats;
+    SReflectionSmokeCombatStats CombatStats;
 
     MPROPERTY(Edit)
     int32 Level = 1;
@@ -132,10 +132,10 @@ public:
 };
 
 MCLASS()
-class MPlayerData : public MReflectObject
+class MReflectionSmokePlayerData : public MReflectObject
 {
 public:
-    MGENERATED_BODY(MPlayerData, MReflectObject, 0)
+    MGENERATED_BODY(MReflectionSmokePlayerData, MReflectObject, 0)
 
     using FriendLevelMap = TMap<uint64, int32>;
     using BlackListSet = TSet<uint64>;
@@ -180,5 +180,4 @@ public:
     const TVector<uint64>& GetFriendsList() const { return FriendsList; }
     const FriendLevelMap& GetFriendLevels() const { return FriendLevels; }
     const BlackListSet& GetBlackList() const { return BlackList; }
-
 };

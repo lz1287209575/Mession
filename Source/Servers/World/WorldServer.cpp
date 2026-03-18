@@ -374,13 +374,13 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
             }
 
             auto* Player = GetPlayerById(PlayerId);
-            if (!Player || !Player->Character)
+            if (!Player || !Player->Avatar)
             {
                 return;
             }
 
             const SVector NewPos(MovePayload.X, MovePayload.Y, MovePayload.Z);
-            Player->Character->SetLocation(NewPos);
+            Player->Avatar->SetLocation(NewPos);
 
             const SPlayerSceneStateMessage Message{
                 Player->PlayerId,
@@ -443,88 +443,6 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
                      ChatPayload.Message.c_str());
             break;
         }
-        case EClientMessageType::MT_RPC:
-        {
-            // 客户端 RPC：Data 格式与 MonoServer 中的 MT_RPC 包保持一致：
-            // [MsgType(1)][ObjectId(8)][FunctionId(2)][PayloadSize(4)][Payload...]
-            if (Data.size() < 1 + sizeof(uint64) + sizeof(uint16) + sizeof(uint32))
-            {
-                LOG_WARN("MT_RPC packet too small from player %llu", (unsigned long long)PlayerId);
-                return;
-            }
-
-            SPlayer* Player = GetPlayerById(PlayerId);
-            if (!Player || !Player->HeroObject)
-            {
-                LOG_WARN("MT_RPC for unknown player %llu or missing HeroObject", (unsigned long long)PlayerId);
-                return;
-            }
-
-            size_t Offset = 1;
-            uint64 ObjectId = 0;
-            uint16 FunctionId = 0;
-            uint32 PayloadSize = 0;
-
-            std::memcpy(&ObjectId, Data.data() + Offset, sizeof(ObjectId));
-            Offset += sizeof(ObjectId);
-            std::memcpy(&FunctionId, Data.data() + Offset, sizeof(FunctionId));
-            Offset += sizeof(FunctionId);
-            std::memcpy(&PayloadSize, Data.data() + Offset, sizeof(PayloadSize));
-            Offset += sizeof(PayloadSize);
-
-            if (Offset + PayloadSize > Data.size())
-            {
-                LOG_WARN("MT_RPC payload out of range from player %llu", (unsigned long long)PlayerId);
-                return;
-            }
-
-            // 简单校验：ObjectId 必须匹配服务器端对象 ID
-            if (ObjectId != Player->HeroObject->GetId())
-            {
-                LOG_WARN("MT_RPC ObjectId mismatch: client=%llu server=%llu for player %llu",
-                         (unsigned long long)ObjectId,
-                         (unsigned long long)Player->HeroObject->GetId(),
-                         (unsigned long long)PlayerId);
-                return;
-            }
-
-            TArray Payload;
-            if (PayloadSize > 0)
-            {
-                Payload.resize(PayloadSize);
-                std::memcpy(Payload.data(), Data.data() + Offset, PayloadSize);
-            }
-
-            MClass* HeroClass = MHero::StaticClass();
-            if (!HeroClass)
-            {
-                LOG_ERROR("MHero::StaticClass returned nullptr in MT_RPC");
-                return;
-            }
-
-            MFunction* FuncMeta = HeroClass->FindFunctionById(FunctionId);
-            if (!FuncMeta || FuncMeta->RpcType != ERpcType::Server)
-            {
-                LOG_WARN("MT_RPC unknown or invalid FunctionId=%u for player %llu",
-                         (unsigned)FunctionId,
-                         (unsigned long long)PlayerId);
-                return;
-            }
-
-            MReflectArchive Ar(Payload);
-            if (!Player->HeroObject->InvokeSerializedFunction(FuncMeta, Ar))
-            {
-                LOG_WARN("MT_RPC invocation failed for player %llu: FuncId=%u",
-                         (unsigned long long)PlayerId,
-                         (unsigned)FunctionId);
-                return;
-            }
-
-            LOG_INFO("MT_RPC executed for player %llu: FuncId=%u", 
-                     (unsigned long long)PlayerId,
-                     (unsigned)FunctionId);
-            break;
-        }
         default:
             LOG_DEBUG("Unknown message type: %d", (int)MsgType);
             break;
@@ -546,17 +464,12 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 Gatewa
     Player.bOnline = true;
     
     // 创建角色
-    MActor* Character = new MActor();
-    Character->SetReplicated(true);
-    Character->SetActorReplicates(true);
-    Character->SetActorActive(true);
-    Character->SetLocation(SVector(-1040, 0, 90));
-    
-    Player.Character = Character;
+    MPlayerAvatar* Avatar = new MPlayerAvatar();
+    Avatar->SetOwnerPlayerId(PlayerId);
+    Avatar->SetDisplayName(Name);
+    Avatar->SetLocation(SVector(-1040, 0, 90));
 
-    // 为该玩家创建一个用于 RPC 测试的反射对象
-    Player.HeroObject = static_cast<MHero*>(MHero::StaticClass()->CreateInstance());
-    
+    Player.Avatar = Avatar;
     Players[PlayerId] = Player;
 
     TSharedPtr<INetConnection> ReplicationConnection = MakeShared<MGatewayClientTunnelConnection>(
@@ -588,19 +501,19 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 Gatewa
     ReplicationConnection->SetPlayerId(PlayerId);
 
     // 注册到复制系统
-    ReplicationDriver->RegisterActor(Character);
+    ReplicationDriver->RegisterActor(Avatar);
     ReplicationDriver->AddConnection(PlayerId, ReplicationConnection);
-    ReplicationDriver->AddRelevantActor(PlayerId, Character->GetObjectId());
+    ReplicationDriver->AddRelevantActor(PlayerId, Avatar->GetObjectId());
     // Also send the initial actor create to the owning player so a single UE client
     // can verify the world-sync path without requiring a second connected client.
-    ReplicationDriver->BroadcastActorCreate(Character);
+    ReplicationDriver->BroadcastActorCreate(Avatar);
 
     const SPlayerSceneStateMessage Message{
         Player.PlayerId,
         static_cast<uint16>(Player.CurrentSceneId),
-        Player.Character->GetLocation().X,
-        Player.Character->GetLocation().Y,
-        Player.Character->GetLocation().Z
+        Player.Avatar->GetLocation().X,
+        Player.Avatar->GetLocation().Y,
+        Player.Avatar->GetLocation().Z
     };
     BroadcastToScenes((uint8)EServerMessageType::MT_PlayerSwitchServer, BuildPayload(Message));
     
@@ -620,18 +533,12 @@ void MWorldServer::RemovePlayer(uint64 PlayerId)
     
     // 移除复制
     ReplicationDriver->RemoveConnection(Player.PlayerId);
-    if (Player.Character)
+    if (Player.Avatar)
     {
-        ReplicationDriver->BroadcastActorDestroy(Player.Character->GetObjectId());
-        delete Player.Character;
-        Player.Character = nullptr;
+        ReplicationDriver->BroadcastActorDestroy(Player.Avatar->GetObjectId());
+        delete Player.Avatar;
+        Player.Avatar = nullptr;
     }
-    if (Player.HeroObject)
-    {
-        delete Player.HeroObject;
-        Player.HeroObject = nullptr;
-    }
-
     BroadcastToScenes(
         (uint8)EServerMessageType::MT_PlayerLogout,
         BuildPayload(SPlayerSceneLeaveMessage{Player.PlayerId, static_cast<uint16>(Player.CurrentSceneId)}));
@@ -652,9 +559,9 @@ void MWorldServer::UpdateGameLogic(float DeltaTime)
     // 更新所有玩家角色
     for (auto& [PlayerId, Player] : Players)
     {
-        if (Player.Character)
+        if (Player.Avatar)
         {
-            Player.Character->Tick(DeltaTime);
+            static_cast<MActor*>(Player.Avatar)->Tick(DeltaTime);
         }
     }
 }

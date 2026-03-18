@@ -7,7 +7,7 @@
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"
-#include "Common/ReflectionExample.h"
+#include "Gameplay/PlayerAvatar.h"
 #include "NetDriver/NetObject.h"
 #include "NetDriver/ReplicationDriver.h"
 #include "Servers/Login/LoginRpcService.h"
@@ -37,9 +37,7 @@ struct SPlayer
     FString Name;
     uint64 GatewayConnectionId = 0;
     uint32 SessionKey;
-    MActor* Character = nullptr;
-    // 仅用于 RPC 示例的反射对象
-    MHero* HeroObject = nullptr;
+    MPlayerAvatar* Avatar = nullptr;
     uint32 CurrentSceneId = 0;
     bool bOnline = false;
 };

@@ -186,8 +186,8 @@ public:
 
     virtual ~MProperty() = default;
 
-    // 默认基于 Type 做序列化，容器等复杂类型可在子类中重写
-    virtual void SerializeValue(void* Object, MReflectArchive& Ar) const;
+    // 默认基于 Type 做快照读写，容器等复杂类型可在子类中重写
+    virtual void WriteValue(void* Object, MReflectArchive& Ar) const;
     virtual FString ExportValueToString(const void* Object) const;
 
     // 获取属性值（模板化）
@@ -395,9 +395,9 @@ public:
     void* CreateInstance() const;
     void Construct(void* Object) const;
     
-    // 序列化
-    virtual void Serialize(void* Object, class MReflectArchive& Ar) const;
-    virtual void Deserialize(void* Object, const TArray& Data) const;
+    // Snapshot 读写：反射层负责将对象状态映射到网络/存档字节流。
+    virtual void WriteSnapshot(void* Object, class MReflectArchive& Ar) const;
+    virtual void ReadSnapshot(void* Object, const TArray& Data) const;
     FString ExportObjectToString(const void* Object) const;
     
     // 复制属性
@@ -846,19 +846,19 @@ public:
     explicit MReflectArchive(const TArray& InData) : Data(InData), ReadPos(0), bReading(true), bWriting(false) {}
     
     // 序列化基本类型
-    MReflectArchive& operator<<(uint8& Value) { return SerializePrimitive(Value); }
-    MReflectArchive& operator<<(uint16& Value) { return SerializePrimitive(Value); }
-    MReflectArchive& operator<<(uint32& Value) { return SerializePrimitive(Value); }
-    MReflectArchive& operator<<(uint64& Value) { return SerializePrimitive(Value); }
-    MReflectArchive& operator<<(int8& Value) { return SerializePrimitive(Value); }
-    MReflectArchive& operator<<(int16& Value) { return SerializePrimitive(Value); }
-    MReflectArchive& operator<<(int32& Value) { return SerializePrimitive(Value); }
-    MReflectArchive& operator<<(int64& Value) { return SerializePrimitive(Value); }
-    MReflectArchive& operator<<(float& Value) { return SerializePrimitive(Value); }
-    MReflectArchive& operator<<(double& Value) { return SerializePrimitive(Value); }
-    MReflectArchive& operator<<(FString& Value) { return SerializeString(Value); }
-    MReflectArchive& operator<<(SVector& Value) { return SerializePrimitive(Value); }
-    MReflectArchive& operator<<(SRotator& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(uint8& Value) { return WritePOD(Value); }
+    MReflectArchive& operator<<(uint16& Value) { return WritePOD(Value); }
+    MReflectArchive& operator<<(uint32& Value) { return WritePOD(Value); }
+    MReflectArchive& operator<<(uint64& Value) { return WritePOD(Value); }
+    MReflectArchive& operator<<(int8& Value) { return WritePOD(Value); }
+    MReflectArchive& operator<<(int16& Value) { return WritePOD(Value); }
+    MReflectArchive& operator<<(int32& Value) { return WritePOD(Value); }
+    MReflectArchive& operator<<(int64& Value) { return WritePOD(Value); }
+    MReflectArchive& operator<<(float& Value) { return WritePOD(Value); }
+    MReflectArchive& operator<<(double& Value) { return WritePOD(Value); }
+    MReflectArchive& operator<<(FString& Value) { return WriteString(Value); }
+    MReflectArchive& operator<<(SVector& Value) { return WritePOD(Value); }
+    MReflectArchive& operator<<(SRotator& Value) { return WritePOD(Value); }
     template<typename T,
              std::enable_if_t<
                  std::is_trivially_copyable_v<T> &&
@@ -867,7 +867,7 @@ public:
                  !std::is_same_v<T, FString> &&
                  !std::is_same_v<T, SVector> &&
                  !std::is_same_v<T, SRotator>, int> = 0>
-    MReflectArchive& operator<<(T& Value) { return SerializePrimitive(Value); }
+    MReflectArchive& operator<<(T& Value) { return WritePOD(Value); }
     MReflectArchive& operator<<(bool& Value)
     {
         uint8 Temp = Value ? 1u : 0u;
@@ -893,7 +893,7 @@ public:
     }
 
     // 原始字节序列化，主要用于结构体等复杂类型的按字节拷贝
-    MReflectArchive& SerializeBytes(void* Buffer, size_t Size)
+    MReflectArchive& WriteBytes(void* Buffer, size_t Size)
     {
         if (!Buffer || Size == 0)
         {
@@ -916,7 +916,7 @@ public:
     
 private:
     template<typename T>
-    MReflectArchive& SerializePrimitive(T& Value)
+    MReflectArchive& WritePOD(T& Value)
     {
         if (bWriting)
         {
@@ -932,7 +932,7 @@ private:
         return *this;
     }
     
-    MReflectArchive& SerializeString(FString& Value)
+    MReflectArchive& WriteString(FString& Value)
     {
         if (bWriting)
         {
@@ -1424,7 +1424,7 @@ inline bool MReflectObject::ProcessEvent(MFunction* Func, void* Params)
         {
             continue;
         }
-        Param->SerializeValue(Params, InWriteAr);
+        Param->WriteValue(Params, InWriteAr);
     }
 
     MReflectArchive InReadAr(InWriteAr.Data);
@@ -1438,7 +1438,7 @@ inline bool MReflectObject::ProcessEvent(MFunction* Func, void* Params)
     if (Func->ReturnProperty && Params)
     {
         MReflectArchive OutReadAr(OutAr.Data);
-        Func->ReturnProperty->SerializeValue(Params, OutReadAr);
+        Func->ReturnProperty->WriteValue(Params, OutReadAr);
     }
 
     return true;
@@ -1500,7 +1500,7 @@ inline uint16 GetCachedRpcFunctionId(uint16& CachedFunctionId, const char* Name)
 
 // 前向声明：用于属性模板特化
 template<typename T>
-struct TPropertySerializer;
+struct TPropertySnapshotOps;
 
 template<typename T>
 struct TPropertyStringExporter;
@@ -1531,9 +1531,9 @@ public:
         Flags = InFlags;
     }
 
-    virtual void SerializeValue(void* Object, MReflectArchive& Ar) const override
+    virtual void WriteValue(void* Object, MReflectArchive& Ar) const override
     {
-        TPropertySerializer<T>::Serialize(this, Object, Ar);
+        TPropertySnapshotOps<T>::Apply(this, Object, Ar);
     }
 
     virtual FString ExportValueToString(const void* Object) const override
@@ -1588,15 +1588,15 @@ inline MProperty* CreateOffsetProperty(const FString& InName, EPropertyType InTy
 
 // 默认序列化：退回到 MProperty 的基础实现
 template<typename T>
-struct TPropertySerializer
+struct TPropertySnapshotOps
 {
-    static void Serialize(const MProperty* Prop, void* Object, MReflectArchive& Ar)
+    static void Apply(const MProperty* Prop, void* Object, MReflectArchive& Ar)
     {
         if (!Prop)
         {
             return;
         }
-        const_cast<MProperty*>(Prop)->MProperty::SerializeValue(Object, Ar);
+        const_cast<MProperty*>(Prop)->MProperty::WriteValue(Object, Ar);
     }
 };
 
@@ -1692,9 +1692,9 @@ inline FString ReflectValueToString(const TValue& Value)
 
 // TVector 容器专用序列化
 template<typename TElement>
-struct TPropertySerializer<TVector<TElement>>
+struct TPropertySnapshotOps<TVector<TElement>>
 {
-    static void Serialize(const MProperty* Prop, void* Object, MReflectArchive& Ar)
+    static void Apply(const MProperty* Prop, void* Object, MReflectArchive& Ar)
     {
         if (!Prop || !Object)
         {
@@ -1727,7 +1727,7 @@ struct TPropertySerializer<TVector<TElement>>
         if constexpr (std::is_trivially_copyable_v<TElement>)
         {
             // POD 元素：按字节批量序列化整个数组
-            Ar.SerializeBytes(Vec->data(), sizeof(TElement) * Count);
+            Ar.WriteBytes(Vec->data(), sizeof(TElement) * Count);
         }
         else
         {
@@ -1773,9 +1773,9 @@ struct TPropertyStringExporter<TVector<TElement>>
 
 // TMap<K, V> 容器专用序列化
 template<typename K, typename V, typename Compare>
-struct TPropertySerializer<TMap<K, V, Compare>>
+struct TPropertySnapshotOps<TMap<K, V, Compare>>
 {
-    static void Serialize(const MProperty* Prop, void* Object, MReflectArchive& Ar)
+    static void Apply(const MProperty* Prop, void* Object, MReflectArchive& Ar)
     {
         if (!Prop || !Object)
         {
@@ -1856,9 +1856,9 @@ struct TPropertyStringExporter<TMap<K, V, Compare>>
 
 // TSet<T> 容器专用序列化
 template<typename T, typename Compare>
-struct TPropertySerializer<TSet<T, Compare>>
+struct TPropertySnapshotOps<TSet<T, Compare>>
 {
-    static void Serialize(const MProperty* Prop, void* Object, MReflectArchive& Ar)
+    static void Apply(const MProperty* Prop, void* Object, MReflectArchive& Ar)
     {
         if (!Prop || !Object)
         {
@@ -1946,7 +1946,7 @@ public:
         Flags = InFlags;
     }
 
-    virtual void SerializeValue(void* Object, MReflectArchive& Ar) const override
+    virtual void WriteValue(void* Object, MReflectArchive& Ar) const override
     {
         if (!Object)
         {
@@ -2018,7 +2018,7 @@ public:
         Flags = InFlags;
     }
 
-    virtual void SerializeValue(void* Object, MReflectArchive& Ar) const override
+    virtual void WriteValue(void* Object, MReflectArchive& Ar) const override
     {
         auto* Vec = GetValuePtr<TVector<TElement>>(Object);
         if (!Vec)

@@ -39,7 +39,7 @@ FString FormatRotator(const SRotator& Value)
 }
 }
 
-void MProperty::SerializeValue(void* Object, MReflectArchive& Ar) const
+void MProperty::WriteValue(void* Object, MReflectArchive& Ar) const
 {
     if (!Object || Size == 0)
     {
@@ -141,17 +141,17 @@ void MProperty::SerializeValue(void* Object, MReflectArchive& Ar) const
     case EPropertyType::Struct:
     {
         // 目前对 Struct 做按字节序列化，适合仅包含 POD 字段的简单结构体。
-        Ar.SerializeBytes(FieldPtr, Size);
+        Ar.WriteBytes(FieldPtr, Size);
         break;
     }
     case EPropertyType::Enum:
     {
-        Ar.SerializeBytes(FieldPtr, Size);
+        Ar.WriteBytes(FieldPtr, Size);
         break;
     }
     default:
         // 复杂类型（Object / Class / Enum 等）暂未自动支持，需要自定义序列化。
-        LOG_WARN("Reflection Serialize: unsupported property type %d for '%s'",
+        LOG_WARN("Reflection snapshot write: unsupported property type %d for '%s'",
                  (int)Type, Name.c_str());
         break;
     }
@@ -380,7 +380,7 @@ MFunction* MClass::FindFunctionById(uint16 InId) const
     return nullptr;
 }
 
-void MClass::Serialize(void* Object, MReflectArchive& Ar) const
+void MClass::WriteSnapshot(void* Object, MReflectArchive& Ar) const
 {
     if (!Object)
     {
@@ -393,11 +393,11 @@ void MClass::Serialize(void* Object, MReflectArchive& Ar) const
         {
             continue;
         }
-        Prop->SerializeValue(Object, Ar);
+        Prop->WriteValue(Object, Ar);
     }
 }
 
-void MClass::Deserialize(void* Object, const TArray& Data) const
+void MClass::ReadSnapshot(void* Object, const TArray& Data) const
 {
     if (!Object)
     {
@@ -412,7 +412,7 @@ void MClass::Deserialize(void* Object, const TArray& Data) const
         {
             continue;
         }
-        Prop->SerializeValue(Object, Ar);
+        Prop->WriteValue(Object, Ar);
     }
 }
 

@@ -184,7 +184,7 @@ def main() -> int:
         print("OK  SSessionValidateRequestMessage round-trip")
 
     # Round-trip: SPlayerClientSyncMessage
-    payload = bytes([6, 0, 0, 0, 0, 0, 0, 0, 0, 13, 0, 0, 0])  # 示例 MT_ActorCreate 头
+    payload = bytes([6, 0, 0, 0, 0, 0, 0, 0, 0, 13, 0, 0, 0])  # 示例 PlayerClientSync payload
     blob = serialize_player_client_sync(10001, payload)
     pid, out_payload = deserialize_player_client_sync(blob)
     if pid != 10001 or out_payload != payload:

@@ -1,17 +1,46 @@
 #include "ReplicationDriver.h"
+#include "Common/ServerMessages.h"
+#include "Common/ServerRpcRuntime.h"
 
 namespace
 {
+bool BuildReflectedActorSnapshot(MActor* Actor, TArray& OutData)
+{
+    OutData.clear();
+    if (!Actor)
+    {
+        return false;
+    }
+
+    auto* ReflectActor = dynamic_cast<MReflectObject*>(Actor);
+    if (!ReflectActor)
+    {
+        LOG_WARN("Replication requires reflected actor: actor_id=%llu",
+                 static_cast<unsigned long long>(Actor->GetObjectId()));
+        return false;
+    }
+
+    MClass* ActorClass = ReflectActor->GetClass();
+    if (!ActorClass)
+    {
+        LOG_WARN("Replication missing class metadata: actor_id=%llu",
+                 static_cast<unsigned long long>(Actor->GetObjectId()));
+        return false;
+    }
+
+    MReflectArchive Ar;
+    ActorClass->WriteSnapshot(Actor, Ar);
+    OutData = Ar.Data;
+    return true;
+}
+
 TArray BuildActorUpdatePacket(uint64 ActorId, const TArray& Data)
 {
     TArray Packet;
-    const uint8 MsgType = static_cast<uint8>(EClientMessageType::MT_ActorUpdate);
-    const uint32 DataSize = static_cast<uint32>(Data.size());
-
-    Packet.push_back(MsgType);
-    Packet.insert(Packet.end(), reinterpret_cast<const uint8*>(&ActorId), reinterpret_cast<const uint8*>(&ActorId) + sizeof(ActorId));
-    Packet.insert(Packet.end(), reinterpret_cast<const uint8*>(&DataSize), reinterpret_cast<const uint8*>(&DataSize) + sizeof(DataSize));
-    Packet.insert(Packet.end(), Data.begin(), Data.end());
+    BuildClientFunctionCallPacketForPayload(
+        MClientDownlink::OnActorUpdate,
+        SClientActorUpdatePayload{ActorId, Data},
+        Packet);
     return Packet;
 }
 
@@ -23,26 +52,26 @@ TArray BuildActorCreatePacket(MActor* Actor)
         return Packet;
     }
 
-    MMemoryArchive Ar;
-    Actor->Serialize(Ar);
+    TArray SnapshotData;
+    if (!BuildReflectedActorSnapshot(Actor, SnapshotData))
+    {
+        return Packet;
+    }
 
-    const uint8 MsgType = static_cast<uint8>(EClientMessageType::MT_ActorCreate);
-    const uint64 ActorId = Actor->GetObjectId();
-    const uint32 DataSize = static_cast<uint32>(Ar.GetData().size());
-
-    Packet.push_back(MsgType);
-    Packet.insert(Packet.end(), reinterpret_cast<const uint8*>(&ActorId), reinterpret_cast<const uint8*>(&ActorId) + sizeof(ActorId));
-    Packet.insert(Packet.end(), reinterpret_cast<const uint8*>(&DataSize), reinterpret_cast<const uint8*>(&DataSize) + sizeof(DataSize));
-    Packet.insert(Packet.end(), Ar.GetData().begin(), Ar.GetData().end());
+    BuildClientFunctionCallPacketForPayload(
+        MClientDownlink::OnActorCreate,
+        SClientActorCreatePayload{Actor->GetObjectId(), SnapshotData},
+        Packet);
     return Packet;
 }
 
 TArray BuildActorDestroyPacket(uint64 ActorId)
 {
     TArray Packet;
-    const uint8 MsgType = static_cast<uint8>(EClientMessageType::MT_ActorDestroy);
-    Packet.push_back(MsgType);
-    Packet.insert(Packet.end(), reinterpret_cast<const uint8*>(&ActorId), reinterpret_cast<const uint8*>(&ActorId) + sizeof(ActorId));
+    BuildClientFunctionCallPacketForPayload(
+        MClientDownlink::OnActorDestroy,
+        SClientActorDestroyPayload{ActorId},
+        Packet);
     return Packet;
 }
 }
@@ -62,6 +91,11 @@ void MReplicationDriver::RegisterActor(MActor* Actor)
     {
         ReplicationMap[Actor->GetObjectId()] = Actor;
         Actor->SetActorActive(true);
+        TArray SnapshotData;
+        if (BuildReflectedActorSnapshot(Actor, SnapshotData))
+        {
+            LastSerializedSnapshots[Actor->GetObjectId()] = SnapshotData;
+        }
         LOG_DEBUG("Registered actor %llu for replication",
                   static_cast<unsigned long long>(Actor->GetObjectId()));
     }
@@ -75,6 +109,7 @@ void MReplicationDriver::UnregisterActor(uint64 ActorId)
         It->second->SetActorActive(false);
         ReplicationMap.erase(It);
     }
+    LastSerializedSnapshots.erase(ActorId);
 }
 
 void MReplicationDriver::AddConnection(uint64 ConnectionId, TSharedPtr<INetConnection> Connection)
@@ -118,15 +153,21 @@ void MReplicationDriver::Tick(float)
 {
     for (auto& [ActorId, Actor] : ReplicationMap)
     {
-        if (!Actor->NeedsNetUpdate())
+        if (!Actor || !Actor->IsReadyForNetUpdate())
         {
             continue;
         }
 
-        MMemoryArchive Ar;
-        Actor->GetReplicatedProperties(Ar);
-        if (Ar.GetData().empty())
+        TArray SnapshotData;
+        if (!BuildReflectedActorSnapshot(Actor, SnapshotData) || SnapshotData.empty())
         {
+            continue;
+        }
+
+        TArray& LastSnapshot = LastSerializedSnapshots[ActorId];
+        if (SnapshotData == LastSnapshot)
+        {
+            Actor->MarkNetUpdateSent();
             continue;
         }
 
@@ -137,12 +178,13 @@ void MReplicationDriver::Tick(float)
                 auto ConnIt = Connections.find(ConnectionId);
                 if (ConnIt != Connections.end() && ConnIt->second->IsConnected())
                 {
-                    SendActorUpdate(ConnectionId, ActorId, Ar.GetData());
+                    SendActorUpdate(ConnectionId, ActorId, SnapshotData);
                 }
             }
         }
 
-        Actor->ClearDirtyFlags();
+        LastSnapshot = SnapshotData;
+        Actor->MarkNetUpdateSent();
     }
 
     ProcessPendingUpdates();

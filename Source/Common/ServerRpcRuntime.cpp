@@ -34,18 +34,10 @@ const char* GetClientMessageTypeName(EClientMessageType MessageType)
     {
     case EClientMessageType::MT_Login:
         return "MT_Login";
-    case EClientMessageType::MT_LoginResponse:
-        return "MT_LoginResponse";
     case EClientMessageType::MT_Handshake:
         return "MT_Handshake";
     case EClientMessageType::MT_PlayerMove:
         return "MT_PlayerMove";
-    case EClientMessageType::MT_ActorCreate:
-        return "MT_ActorCreate";
-    case EClientMessageType::MT_ActorDestroy:
-        return "MT_ActorDestroy";
-    case EClientMessageType::MT_ActorUpdate:
-        return "MT_ActorUpdate";
     case EClientMessageType::MT_RPC:
         return "MT_RPC";
     case EClientMessageType::MT_Chat:
@@ -59,6 +51,28 @@ const char* GetClientMessageTypeName(EClientMessageType MessageType)
     default:
         return "Unknown";
     }
+}
+
+const char* ResolveClientDownlinkFunctionName(uint16 FunctionId)
+{
+    if (FunctionId == ComputeStableReflectId(MClientDownlink::ScopeName, MClientDownlink::OnLoginResponse))
+    {
+        return MClientDownlink::OnLoginResponse;
+    }
+    if (FunctionId == ComputeStableReflectId(MClientDownlink::ScopeName, MClientDownlink::OnActorCreate))
+    {
+        return MClientDownlink::OnActorCreate;
+    }
+    if (FunctionId == ComputeStableReflectId(MClientDownlink::ScopeName, MClientDownlink::OnActorUpdate))
+    {
+        return MClientDownlink::OnActorUpdate;
+    }
+    if (FunctionId == ComputeStableReflectId(MClientDownlink::ScopeName, MClientDownlink::OnActorDestroy))
+    {
+        return MClientDownlink::OnActorDestroy;
+    }
+
+    return nullptr;
 }
 
 SGeneratedClientRouteRequest::ERouteKind ParseGeneratedClientRouteKind(const char* RouteName)
@@ -97,10 +111,6 @@ EClientMessageType ParseGeneratedClientMessageType(const char* MessageName)
     {
         return EClientMessageType::MT_Login;
     }
-    if (Message == "MT_LoginResponse")
-    {
-        return EClientMessageType::MT_LoginResponse;
-    }
     if (Message == "MT_Handshake")
     {
         return EClientMessageType::MT_Handshake;
@@ -108,18 +118,6 @@ EClientMessageType ParseGeneratedClientMessageType(const char* MessageName)
     if (Message == "MT_PlayerMove")
     {
         return EClientMessageType::MT_PlayerMove;
-    }
-    if (Message == "MT_ActorCreate")
-    {
-        return EClientMessageType::MT_ActorCreate;
-    }
-    if (Message == "MT_ActorDestroy")
-    {
-        return EClientMessageType::MT_ActorDestroy;
-    }
-    if (Message == "MT_ActorUpdate")
-    {
-        return EClientMessageType::MT_ActorUpdate;
     }
     if (Message == "MT_RPC")
     {
@@ -248,17 +246,17 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientEntry(
         Request.AuthMode = Entry->AuthMode;
         Request.WrapMode = Entry->WrapMode;
         Request.Payload = &Payload;
-        if (!RouteTarget->HandleGeneratedClientRoute(Request))
+        Outcome.Result = RouteTarget->HandleGeneratedClientRoute(Request);
+        if (Outcome.Result != EGeneratedClientDispatchResult::Routed)
         {
-            LOG_WARN("Generated client route dispatch failed: class=%s function=%s route=%s",
+            LOG_WARN("Generated client route dispatch failed: class=%s function=%s route=%s result=%u",
                      TargetClass->GetName().c_str(),
                      Entry->FunctionName,
-                     Entry->RouteName);
-            Outcome.Result = EGeneratedClientDispatchResult::InvokeFailed;
+                     Entry->RouteName,
+                     static_cast<unsigned>(Outcome.Result));
             return Outcome;
         }
 
-        Outcome.Result = EGeneratedClientDispatchResult::Routed;
         return Outcome;
     }
 
@@ -684,4 +682,35 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientFunction(
         Entry,
         EClientMessageType::MT_FunctionCall,
         Payload);
+}
+
+uint16 GetClientDownlinkFunctionId(const char* FunctionName)
+{
+    if (!FunctionName || FunctionName[0] == '\0')
+    {
+        return 0;
+    }
+
+    return ComputeStableReflectId(MClientDownlink::ScopeName, FunctionName);
+}
+
+const char* GetClientDownlinkFunctionName(uint16 FunctionId)
+{
+    return ResolveClientDownlinkFunctionName(FunctionId);
+}
+
+bool BuildClientFunctionCallPacket(uint16 FunctionId, const TArray& InPayload, TArray& OutPacket)
+{
+    if (FunctionId == 0)
+    {
+        return false;
+    }
+
+    OutPacket.clear();
+    OutPacket.reserve(1 + sizeof(FunctionId) + sizeof(uint32) + InPayload.size());
+    OutPacket.push_back(static_cast<uint8>(EClientMessageType::MT_FunctionCall));
+    AppendValue(OutPacket, FunctionId);
+    AppendValue(OutPacket, static_cast<uint32>(InPayload.size()));
+    OutPacket.insert(OutPacket.end(), InPayload.begin(), InPayload.end());
+    return true;
 }

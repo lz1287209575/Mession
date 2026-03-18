@@ -1,66 +1,53 @@
-# 下一步方案
+# Next Steps
 
-> 主链路、EventLoop、服务器基类已收口；当前处于**基础阶段**，AOI 暂不作为重点。  
-> 本文档给出后续可选方向与推荐优先级，便于从 **Now** 中选一项推进。
+这份文档只回答一个问题：  
+如果现在继续推进 Mession，最值得做什么。
 
-## 一、推荐优先级（基础阶段优先）
+## 推荐优先级
 
-| 优先级 | 方向 | 目标 | 预估规模 | 依赖 |
-|--------|------|------|----------|------|
-| **P1** | **协议/字节序** | 评估并逐步统一字节序（见 protocol-byteorder.md），为跨端/跨平台打基础 | 小～中 | 无 |
-| **P2** | **测试与回归** | 压力测试常态化（CI 或夜间）、或增加场景（多区、断线重连边界） | 小 | 无 |
-| **P3** | **Reflection 边界** | 明确 NetDriver/Reflection.h 是主线还是示例，与复制/运行时对象边界 | 小 | 无 |
-| **P4** | **错误与可观测** | 更系统的 TResult/错误码、或统一断线/协议失败的可观测（日志/指标） | 中 | 可选依赖 P1 |
-| **P5** | **AOI 可见性** | （非当前重点）修正 AOI 并接入 World，用可见性驱动复制；待基础稳固后再推进 | 中 | 无 |
+### P1. 字段域与 dirty 域
 
----
+这是当前最值得做的事情。
 
-## 二、分项说明与子任务
+原因：
 
-### P1：协议/字节序（基础阶段推荐）
+- Gameplay 方向已经明确
+- replication 已经有 snapshot 主链路
+- 真正缺的是“字段修改后该去哪里”的正式机制
 
-- 当前约定见 `docs/protocol-byteorder.md`（主机序为主，脚本与服务器一致）。
-- 评估：客户端/多平台若需网络序，在编解码层统一（MessageUtils / PacketCodec）。
-- 子任务：定一两个消息类型先改为网络序并跑通 validate + verify_protocol，再逐步推广。
+目标：
 
-### P2：测试与回归
+- 给属性增加 `PersistentData`、`RepToClient` 等语义
+- 实现按 domain 的 dirty tracking
+- 让 persistence 和 replication 变成两个独立消费者
 
-- 压力测试：将 `validate.py --stress` 纳入 CI 或单独夜间任务，设定通过率/时延阈值。
-- 可选：多区（多 World）、Gateway 切换、断线重连边界用例（同一 PlayerId 快速重连、双端同时断等）。
+### P2. Persistence subsystem
 
-### P3：Reflection 边界
+在字段域之后，最自然的下一步就是最小 persistence 骨架。
 
-- 决定 `NetDriver/Reflection.h` 定位：主线（与复制/配置绑定）还是示例/实验。
-- 若保留：明确与复制系统、运行时对象系统的边界与依赖方向；文档记录。
+目标：
 
-### P4：错误与可观测
+- 把 DB 写回从业务对象里拆出来
+- 形成“运行时对象 -> persistent export -> writeback”的标准流程
 
-- 扩展 `TResult` 使用范围或引入轻量错误码，统一协议解析/业务失败返回形式。
-- 统一断线、协议失败、路由失败等日志格式或简单指标，便于排查与监控。
+### P3. Gameplay member 继续拆分
 
-### P5：AOI 可见性（暂非重点，待基础稳固后）
+在机制稳定后，再继续扩：
 
-- 修正 `AOIComponent` 中 `TMap<SAOICell, SAOICell>` 的语义，改为「格子 → 对象集合」。
-- 明确 AOI 数据结构（格子划分、进入/离开视野、跨格移动）。
-- 将 AOI 接入 `WorldServer` 的可见性计算。
-- 用 AOI 结果驱动 `ReplicationDriver::RelevantActors`，只向视野内连接复制。
-- 为跨格移动、进出视野、离线清理补验证（脚本或单测）。
+- Attribute
+- Inventory
+- Ability
+- Interaction
 
----
+原因：
 
-## 三、与 TODO 的对应
+- 没有字段域和持久化边界之前，先加业务类只会放大耦合
 
-- **Now**：从本方案中选一项填入 `docs/TODO.md` 的 Now，收口后再选下一项。
-- **Later**：P1～P4 的未做子任务及 AOI（P5）仍保留在 TODO 的 Later/Watchlist，随推进逐条勾选。
-- **Watchlist**：MServerConnectionManager、TResult/错误码体系、文档收敛等保持关注，有需要时提升为 Now。
+## 不推荐的优先项
 
----
+下面这些事情不是不能做，而是现在做性价比低：
 
-## 四、建议的「当前一步」（基础阶段）
-
-当前以打牢基础为主，建议优先：
-
-1. **P1（协议/字节序）**：改动集中、风险可控，为后续客户端/多平台铺路。
-2. 或 **P2（测试与回归）**：把压力/边界用例固化进 CI，主链路更稳。
-
-选定后可在 `docs/TODO.md` 的 **Now** 中写为一条具体任务（如「协议：评估并统一字节序」或「测试：压力测试纳入 CI」），再按子任务逐项完成并更新 Done。AOI 待基础稳固后再列入 Now。
+- AOI 大重构
+- 全面替换底层网络模型
+- 再加一批样例类型
+- 为兼容历史路径继续扩 message-based glue

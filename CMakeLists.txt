@@ -72,9 +72,9 @@ configure_mession_compile_options(mession_core)
 set(MESSION_COMMON_SOURCES
     Source/Common/Logger.cpp
     Source/Common/NetServerBase.cpp
+    Source/Common/ReflectionSmokeTypes.cpp
     Source/Common/ServerConnection.cpp
     Source/Common/ServerRpcRuntime.cpp
-    Source/Common/ReflectionExample.cpp
 )
 
 add_library(mession_common STATIC
@@ -93,6 +93,11 @@ configure_mession_compile_options(mession_common)
 
 # NetDriver 库（复制与网络对象：NetDriver/*）
 set(MESSION_NETDRIVER_SOURCES
+    Source/Gameplay/AvatarMember.cpp
+    Source/Gameplay/AttributeMember.cpp
+    Source/Gameplay/InteractionMember.cpp
+    Source/Gameplay/MovementMember.cpp
+    Source/Gameplay/PlayerAvatar.cpp
     Source/NetDriver/NetObject.cpp
     Source/NetDriver/ReplicationDriver.cpp
     Source/NetDriver/Reflection.cpp

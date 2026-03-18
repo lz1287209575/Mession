@@ -396,11 +396,16 @@ void MLoginServer::OnGateway_ServerHandshake(uint64 ConnectionId, const TArray& 
         if (ParseResult.IsOk() && IdPayload.PlayerId != 0)
         {
             const uint32 SessionKey = CreateSession(IdPayload.PlayerId, ConnectionId);
-            TArray RespPayload = BuildPayload(SClientLoginResponsePayload{SessionKey, IdPayload.PlayerId});
             TArray Packet;
-            Packet.reserve(1 + RespPayload.size());
-            Packet.push_back(static_cast<uint8>(EClientMessageType::MT_LoginResponse));
-            Packet.insert(Packet.end(), RespPayload.begin(), RespPayload.end());
+            if (!BuildClientFunctionCallPacketForPayload(
+                    MClientDownlink::OnLoginResponse,
+                    SClientLoginResponsePayload{SessionKey, IdPayload.PlayerId},
+                    Packet))
+            {
+                LOG_WARN("Failed to build unified login response packet for player %llu",
+                         (unsigned long long)IdPayload.PlayerId);
+                return;
+            }
             Peer.Connection->Send(Packet.data(), static_cast<uint32>(Packet.size()));
 
             LOG_INFO("Player %llu logged in, session key: %u",

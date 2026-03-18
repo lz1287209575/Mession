@@ -1,263 +1,40 @@
-# MHeaderTool Design Draft
+# MHeaderTool Design
 
-## Goal
+`MHeaderTool` 是 Mession 当前自定义反射系统的代码生成工具。
 
-`MHeaderTool` is a lightweight code generation tool for the custom Mession reflection system.
+## 目标
 
-The first milestone is to remove manual reflection glue such as:
+它的职责是把“声明”转成“运行时可用 glue”，减少手写注册代码。
 
-- `RegisterAllProperties`
-- `RegisterAllFunctions`
-- service RPC handler storage
-- `SetHandler_*`
-- `GetFunctionId_*`
+当前主要服务于：
 
-The target developer experience is close to Unreal Header Tool:
+- 反射类与属性注册
+- 函数注册
+- 服务间 RPC 入口
+- 客户端统一函数调用清单
 
-```cpp
-class MLoginService : public MReflectObject
-{
-public:
-    MGENERATED_BODY(MLoginService, MReflectObject, 0)
+## 当前结论
 
-    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Handler=true)
-    void Rpc_OnSessionValidateRequest(uint64 ConnectionId, uint64 PlayerId, uint32 SessionKey);
-};
-```
+工具链的存在是主线，而不是样例。
 
-Generated code should then provide the reflection registration and RPC helper glue automatically.
+也就是说：
 
-## Non-Goals For V1
+- 新的反射类应优先靠生成链路接入
+- 不应继续扩手写 `RegisterAllProperties` / `RegisterAllFunctions`
+- 协议和函数入口应尽量从声明统一派生
 
-The first version should not attempt to parse arbitrary C++.
+## 当前短板
 
-Not supported in V1:
+后续仍需继续补强：
 
-- overloaded reflected functions
-- function templates
-- class templates
-- macro-generated function names
-- complex declarators around reflected members
-- deep inheritance analysis across unrelated translation units
-- full C++ AST correctness
+- 更多声明形式覆盖
+- unsupported 场景报错
+- manifest 可靠性和可读性
 
-V1 should prefer a narrow syntax contract over broad language coverage.
+## 当前建议
 
-## Scope
+如果遇到反射或入口接入问题，先检查：
 
-V1 only needs to support:
-
-- classes with `MGENERATED_BODY(...)`
-- properties marked by `MPROPERTY(...)`
-- functions marked by `MFUNCTION(...)`
-- RPC metadata extraction from `MFUNCTION(...)`
-- generation of reflection registration code
-- generation of service RPC handler helper APIs
-
-## Input Conventions
-
-The tool scans project headers under `Source/`.
-
-V1 syntax rules:
-
-1. `MGENERATED_BODY(...)` must appear inside a class definition.
-2. `MPROPERTY(...)` must be immediately followed by a member field declaration.
-3. `MFUNCTION(...)` must be immediately followed by a member function declaration.
-4. Reflected function declarations must end with `;`.
-5. No overloaded reflected methods.
-
-Example:
-
-```cpp
-class MGatewayService : public MReflectObject
-{
-public:
-    MGENERATED_BODY(MGatewayService, MReflectObject, 0)
-
-    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Handler=true)
-    void Rpc_OnPlayerLoginResponse(uint64 ConnectionId, uint64 PlayerId, uint32 SessionKey);
-};
-```
-
-## Tool Pipeline
-
-The tool pipeline is intentionally simple:
-
-1. Discover candidate headers under `Source/`.
-2. Tokenize file contents.
-3. Parse only the subset needed for reflected classes.
-4. Build an intermediate model.
-5. Emit generated `.mgenerated.h` and `.mgenerated.cpp` files.
-
-## Intermediate Model
-
-Suggested core data model:
-
-```cpp
-struct ParsedParameter
-{
-    std::string Type;
-    std::string Name;
-};
-
-struct ParsedProperty
-{
-    std::string Name;
-    std::string Type;
-    std::string MacroArgs;
-};
-
-struct ParsedFunction
-{
-    std::string Name;
-    std::string ReturnType;
-    std::vector<ParsedParameter> Parameters;
-    std::string MacroArgs;
-    bool IsConst = false;
-    bool IsRpc = false;
-    bool NeedsHandler = false;
-};
-
-struct ParsedClass
-{
-    std::string Name;
-    std::string ParentName;
-    std::string FlagsExpr;
-    std::string HeaderPath;
-    std::vector<ParsedProperty> Properties;
-    std::vector<ParsedFunction> Functions;
-};
-```
-
-## Output Files
-
-Recommended generated files per reflected header:
-
-- `Foo.mgenerated.h`
-- `Foo.mgenerated.cpp`
-
-`Foo.mgenerated.h`:
-
-- generated declarations that must be visible to the owning class
-- optional helper declarations
-
-`Foo.mgenerated.cpp`:
-
-- `RegisterAllProperties`
-- `RegisterAllFunctions`
-- generated RPC helper storage
-- generated `SetHandler_*`
-- generated `GetFunctionId_*`
-
-## Integration Pattern
-
-Headers opt in by including their generated header:
-
-```cpp
-#include "Foo.mgenerated.h"
-```
-
-The generated source file should be compiled as part of the build.
-
-## Metadata Strategy
-
-V1 should normalize `MFUNCTION(...)` arguments into a small key-value model.
-
-Recommended shape:
-
-```cpp
-MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Handler=true)
-```
-
-Supported keys in V1:
-
-- `Rpc`
-- `Reliable`
-- `Handler`
-- `Endpoint`
-
-This makes the parser simpler and future-proof.
-
-## Generated Rules
-
-For each reflected function:
-
-- generate a reflection registration entry
-- if RPC metadata exists, generate `CreateRpcFunction(...)` registration
-- if `Handler=true`, generate:
-  - `using FHandler_<MethodName>`
-  - `SetHandler_<MethodName>`
-  - `GetFunctionId_<MethodName>`
-  - static handler storage
-
-For each reflected property:
-
-- map C++ type to `EPropertyType`
-- emit `MREGISTER_PROPERTY(...)`
-
-## Build Integration
-
-Planned CMake flow:
-
-1. Build `MHeaderTool`.
-2. Run it before normal targets.
-3. Generate outputs into a derived directory such as:
-   - `${CMAKE_BINARY_DIR}/Generated`
-4. Add generated sources to relevant targets.
-
-Recommended first integration path:
-
-- keep `MHeaderTool` as a standalone executable target
-- add an opt-in generation target first
-- once stable, make game/server targets depend on it
-
-## Error Reporting
-
-The tool must fail with actionable diagnostics:
-
-- file path
-- line number
-- class name when known
-- concise reason
-
-Examples:
-
-- `unsupported overloaded MFUNCTION`
-- `MFUNCTION must be followed by a member function declaration`
-- `missing MGENERATED_BODY inside reflected class`
-
-## Milestones
-
-### Milestone 1
-
-- create tool executable
-- header discovery
-- tokenizer
-- reflected class discovery
-
-### Milestone 2
-
-- parse `MFUNCTION(...)`
-- emit function registration code
-- support service RPC glue generation
-
-### Milestone 3
-
-- parse `MPROPERTY(...)`
-- emit property registration
-
-### Milestone 4
-
-- integrate generated files into main build
-- migrate existing handwritten registration out of source files
-
-## Recommended Next Step
-
-Start with a tool skeleton that:
-
-- accepts `--source-root`, `--output-dir`
-- discovers headers
-- reports candidate reflected classes
-- writes placeholder generated files
-
-Once that path is stable, add real parsing and code emission incrementally.
+1. 声明是否符合工具链约定
+2. 生成产物是否更新
+3. 工具是否已经覆盖这种声明形式

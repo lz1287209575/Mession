@@ -59,5 +59,7 @@ public:
     size_t GetActorCount() const { return ReplicationMap.size(); }
 
 private:
+    TMap<uint64, TArray> LastSerializedSnapshots;
+
     void ProcessPendingUpdates();
 };

@@ -97,8 +97,6 @@ private:
     TMap<uint64, TVector<SPendingResolvedClientRoute>> PendingResolvedClientRoutes;
     TMap<FString, uint64> InFlightResolvedRouteRequests;
     TMap<FString, SServerInfo> ResolvedRouteCache;
-    uint64 LegacyClientRpcCount = 0;
-    uint64 RejectedClientFallbackCount = 0;
     uint64 ClientFunctionCallCount = 0;
     uint64 ClientFunctionCallRejectedCount = 0;
     uint64 UnknownClientFunctionCount = 0;
@@ -155,21 +153,19 @@ private:
     TSharedPtr<MServerConnection> ResolveGeneratedRouteConnection(SGeneratedClientRouteRequest::ERouteKind RouteKind) const;
     TSharedPtr<MServerConnection> ResolveGeneratedRouteConnection(EServerType TargetServerType) const;
     bool EnsureGeneratedRouteResolved(const SGeneratedClientRouteRequest& Request, const TSharedPtr<MClientConnection>& Client);
-    bool ExecuteGeneratedRouteRawToConnection(const TSharedPtr<MServerConnection>& Connection, SGeneratedClientRouteRequest::ERouteKind RouteKind, const TArray& Packet);
-    bool ExecuteGeneratedRouteRaw(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
-    bool ExecuteGeneratedRoutePlayerClientSync(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
-    bool ExecuteGeneratedRouteLoginRpcOrLegacy(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
-    bool ExecuteGeneratedRouteByPolicy(
+    EGeneratedClientDispatchResult ExecuteGeneratedRouteRawToConnection(const TSharedPtr<MServerConnection>& Connection, SGeneratedClientRouteRequest::ERouteKind RouteKind, const TArray& Packet);
+    EGeneratedClientDispatchResult ExecuteGeneratedRouteRaw(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
+    EGeneratedClientDispatchResult ExecuteGeneratedRoutePlayerClientSync(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
+    EGeneratedClientDispatchResult ExecuteGeneratedRouteLoginRpcOrLegacy(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
+    EGeneratedClientDispatchResult ExecuteGeneratedRouteByPolicy(
         const TSharedPtr<MClientConnection>& Client,
         const FString& RouteKey,
         const FString& WrapMode,
         const SGeneratedClientRouteRequest* Request,
         const TArray& Packet);
-    bool HandleGeneratedClientRoute(const SGeneratedClientRouteRequest& Request) override;
-    bool IsExplicitLegacyClientMessage(EClientMessageType MsgType) const;
+    EGeneratedClientDispatchResult HandleGeneratedClientRoute(const SGeneratedClientRouteRequest& Request) override;
     void HandleClientPacket(uint64 ConnectionId, const TArray& Data);
     bool HandleClientFunctionCall(uint64 ConnectionId, const TArray& Data);
-    bool HandleLegacyClientRpc(uint64 ConnectionId, const TArray& Data);
     void HandleLoginServerMessage(uint8 Type, const TArray& Data);
     void HandleWorldServerMessage(uint8 Type, const TArray& Data);
     void HandleRouterServerMessage(uint8 Type, const TArray& Data);

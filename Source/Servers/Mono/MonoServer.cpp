@@ -1,5 +1,6 @@
 #include "MonoServer.h"
-#include "Common/ReflectionExample.h"
+#include "Common/ReflectionSmokeTypes.h"
+#include "Common/ServerConnection.h"
 #include "NetDriver/Reflection.h"
 #include "Messages/NetMessages.h"
 
@@ -30,19 +31,19 @@ bool RunReflectionTests()
 {
     LOG_INFO("=== MonoServer: Running reflection tests ===");
     
-    // 测试 1：MCharacter 属性反射、函数调用与序列化
+    // 测试 1：MReflectionSmokeCharacter 属性反射、函数调用与序列化
     {
-        MClass* CharacterClass = MCharacter::StaticClass();
+        MClass* CharacterClass = MReflectionSmokeCharacter::StaticClass();
         if (!CharacterClass)
         {
-            LOG_ERROR("MCharacter::StaticClass returned nullptr");
+            LOG_ERROR("MReflectionSmokeCharacter::StaticClass returned nullptr");
             return false;
         }
         
-        auto* Character = static_cast<MCharacter*>(CharacterClass->CreateInstance());
+        auto* Character = static_cast<MReflectionSmokeCharacter*>(CharacterClass->CreateInstance());
         if (!Character)
         {
-            LOG_ERROR("Failed to CreateInstance for MCharacter");
+            LOG_ERROR("Failed to CreateInstance for MReflectionSmokeCharacter");
             return false;
         }
         
@@ -57,19 +58,19 @@ bool RunReflectionTests()
         
         if (!LevelPtr || !HealthPtr || !GoldPtr)
         {
-            LOG_ERROR("Failed to get one or more properties from MCharacter");
+            LOG_ERROR("Failed to get one or more properties from MReflectionSmokeCharacter");
             return false;
         }
         
         const int32 OldLevel = *LevelPtr;
         
-        LOG_INFO("MCharacter before serialize: Level=%d Health=%.2f Gold=%d",
+        LOG_INFO("MReflectionSmokeCharacter before serialize: Level=%d Health=%.2f Gold=%d",
                  *LevelPtr, *HealthPtr, *GoldPtr);
         
         // 通过反射调用无参函数 LevelUp
         if (!Character->CallFunction("LevelUp"))
         {
-            LOG_ERROR("CallFunction(LevelUp) failed on MCharacter");
+            LOG_ERROR("CallFunction(LevelUp) failed on MReflectionSmokeCharacter");
             return false;
         }
         
@@ -81,11 +82,11 @@ bool RunReflectionTests()
                       LevelAfterCall ? *LevelAfterCall : -1);
             return false;
         }
-        LOG_INFO("MCharacter after CallFunction(LevelUp): Level=%d", *LevelAfterCall);
+        LOG_INFO("MReflectionSmokeCharacter after CallFunction(LevelUp): Level=%d", *LevelAfterCall);
 
         if (!Character->CallFunctionArgs("Rename", FString("ReflectedHero")))
         {
-            LOG_ERROR("CallFunctionArgs(Rename) failed on MCharacter");
+            LOG_ERROR("CallFunctionArgs(Rename) failed on MReflectionSmokeCharacter");
             return false;
         }
 
@@ -99,7 +100,7 @@ bool RunReflectionTests()
         int32 GoldByReturn = 0;
         if (!Character->CallFunctionWithReturn("GetGoldAmount", GoldByReturn))
         {
-            LOG_ERROR("CallFunctionWithReturn(GetGoldAmount) failed on MCharacter");
+            LOG_ERROR("CallFunctionWithReturn(GetGoldAmount) failed on MReflectionSmokeCharacter");
             return false;
         }
         if (GoldByReturn != 123)
@@ -111,7 +112,7 @@ bool RunReflectionTests()
         bool bIsAlive = false;
         if (!Character->CallFunctionWithReturn("IsAlive", bIsAlive))
         {
-            LOG_ERROR("CallFunctionWithReturn(IsAlive) failed on MCharacter");
+            LOG_ERROR("CallFunctionWithReturn(IsAlive) failed on MReflectionSmokeCharacter");
             return false;
         }
         if (!bIsAlive)
@@ -124,7 +125,7 @@ bool RunReflectionTests()
         RenameParams.NewName = "ProcessEventHero";
         if (!Character->ProcessEvent("Rename", &RenameParams))
         {
-            LOG_ERROR("ProcessEvent(Rename) failed on MCharacter");
+            LOG_ERROR("ProcessEvent(Rename) failed on MReflectionSmokeCharacter");
             return false;
         }
 
@@ -138,7 +139,7 @@ bool RunReflectionTests()
         SGetGoldAmountParams GoldParams;
         if (!Character->ProcessEvent("GetGoldAmount", &GoldParams))
         {
-            LOG_ERROR("ProcessEvent(GetGoldAmount) failed on MCharacter");
+            LOG_ERROR("ProcessEvent(GetGoldAmount) failed on MReflectionSmokeCharacter");
             return false;
         }
         if (GoldParams.ReturnValue != 123)
@@ -150,7 +151,7 @@ bool RunReflectionTests()
         SIsAliveParams AliveParams;
         if (!Character->ProcessEvent("IsAlive", &AliveParams))
         {
-            LOG_ERROR("ProcessEvent(IsAlive) failed on MCharacter");
+            LOG_ERROR("ProcessEvent(IsAlive) failed on MReflectionSmokeCharacter");
             return false;
         }
         if (!AliveParams.ReturnValue)
@@ -159,32 +160,32 @@ bool RunReflectionTests()
             return false;
         }
 
-        MEnum* ArchetypeEnum = MReflectObject::FindEnum("ECharacterArchetype");
+        MEnum* ArchetypeEnum = MReflectObject::FindEnum("EReflectionSmokeArchetype");
         if (!ArchetypeEnum)
         {
-            LOG_ERROR("ECharacterArchetype enum was not auto-registered");
+            LOG_ERROR("EReflectionSmokeArchetype enum was not auto-registered");
             return false;
         }
         const MEnumValue* MageValue = ArchetypeEnum->FindValue("Mage");
         if (!MageValue || MageValue->Value != 2)
         {
-            LOG_ERROR("ECharacterArchetype enum metadata is invalid");
+            LOG_ERROR("EReflectionSmokeArchetype enum metadata is invalid");
             return false;
         }
-        LOG_INFO("Reflected enum ECharacterArchetype registered with %zu values",
+        LOG_INFO("Reflected enum EReflectionSmokeArchetype registered with %zu values",
                  static_cast<size_t>(ArchetypeEnum->GetValues().size()));
         
         // 序列化
         MReflectArchive ArWrite;
-        CharacterClass->Serialize(Character, ArWrite);
+        CharacterClass->WriteSnapshot(Character, ArWrite);
         
-        auto* CharacterCopy = static_cast<MCharacter*>(CharacterClass->CreateInstance());
+        auto* CharacterCopy = static_cast<MReflectionSmokeCharacter*>(CharacterClass->CreateInstance());
         if (!CharacterCopy)
         {
-            LOG_ERROR("Failed to CreateInstance for MCharacter copy");
+            LOG_ERROR("Failed to CreateInstance for MReflectionSmokeCharacter copy");
             return false;
         }
-        CharacterClass->Deserialize(CharacterCopy, ArWrite.Data);
+        CharacterClass->ReadSnapshot(CharacterCopy, ArWrite.Data);
         
         int32* LevelCopy = GET_PROPERTY(CharacterCopy, int32, Level);
         float* HealthCopy = GET_PROPERTY(CharacterCopy, float, Health);
@@ -192,27 +193,27 @@ bool RunReflectionTests()
         
         if (!LevelCopy || !HealthCopy || !GoldCopy)
         {
-            LOG_ERROR("Failed to get one or more properties from MCharacter copy");
+            LOG_ERROR("Failed to get one or more properties from MReflectionSmokeCharacter copy");
             return false;
         }
         
-        LOG_INFO("MCharacter after deserialize: Level=%d Health=%.2f Gold=%d",
+        LOG_INFO("MReflectionSmokeCharacter after deserialize: Level=%d Health=%.2f Gold=%d",
                  *LevelCopy, *HealthCopy, *GoldCopy);
     }
     
-    // 测试 2：MPlayerData 容器序列化（FriendsList / FriendLevels / BlackList）
+    // 测试 2：MReflectionSmokePlayerData 容器序列化（FriendsList / FriendLevels / BlackList）
     {
-        MClass* PlayerDataClass = MPlayerData::StaticClass();
+        MClass* PlayerDataClass = MReflectionSmokePlayerData::StaticClass();
         if (!PlayerDataClass)
         {
-            LOG_ERROR("MPlayerData::StaticClass returned nullptr");
+            LOG_ERROR("MReflectionSmokePlayerData::StaticClass returned nullptr");
             return false;
         }
         
-        auto* Data = static_cast<MPlayerData*>(PlayerDataClass->CreateInstance());
+        auto* Data = static_cast<MReflectionSmokePlayerData*>(PlayerDataClass->CreateInstance());
         if (!Data)
         {
-            LOG_ERROR("Failed to CreateInstance for MPlayerData");
+            LOG_ERROR("Failed to CreateInstance for MReflectionSmokePlayerData");
             return false;
         }
         
@@ -236,13 +237,13 @@ bool RunReflectionTests()
 
         if (!Data->CallFunctionArgs("AddFriend", static_cast<uint64>(2004)))
         {
-            LOG_ERROR("CallFunctionArgs(AddFriend) failed on MPlayerData");
+            LOG_ERROR("CallFunctionArgs(AddFriend) failed on MReflectionSmokePlayerData");
             return false;
         }
         bool bHasFriend = false;
         if (!Data->CallFunctionWithReturn("HasFriend", bHasFriend, static_cast<uint64>(2004)))
         {
-            LOG_ERROR("CallFunctionWithReturn(HasFriend) failed on MPlayerData");
+            LOG_ERROR("CallFunctionWithReturn(HasFriend) failed on MReflectionSmokePlayerData");
             return false;
         }
         if (!bHasFriend)
@@ -255,7 +256,7 @@ bool RunReflectionTests()
         HasFriendParams.FriendId = 2004;
         if (!Data->ProcessEvent("HasFriend", &HasFriendParams))
         {
-            LOG_ERROR("ProcessEvent(HasFriend) failed on MPlayerData");
+            LOG_ERROR("ProcessEvent(HasFriend) failed on MReflectionSmokePlayerData");
             return false;
         }
         if (!HasFriendParams.ReturnValue)
@@ -268,7 +269,7 @@ bool RunReflectionTests()
         FString* AccountNamePtr = GET_PROPERTY(Data, FString, AccountName);
         int32* VipLevelPtr = GET_PROPERTY(Data, int32, VIPLevel);
         
-        LOG_INFO("MPlayerData before serialize: PlayerId=%llu Account=%s VIP=%d Friends=%zu FriendLevels=%zu BlackList=%zu",
+        LOG_INFO("MReflectionSmokePlayerData before serialize: PlayerId=%llu Account=%s VIP=%d Friends=%zu FriendLevels=%zu BlackList=%zu",
                  PlayerIdPtr ? (unsigned long long)(*PlayerIdPtr) : 0ull,
                  AccountNamePtr ? AccountNamePtr->c_str() : "",
                  VipLevelPtr ? *VipLevelPtr : -1,
@@ -279,23 +280,23 @@ bool RunReflectionTests()
         TArray Buffer;
         {
             MReflectArchive Ar;
-            PlayerDataClass->Serialize(Data, Ar);
+            PlayerDataClass->WriteSnapshot(Data, Ar);
             Buffer = Ar.Data;
         }
         
-        auto* DataCopy = static_cast<MPlayerData*>(PlayerDataClass->CreateInstance());
+        auto* DataCopy = static_cast<MReflectionSmokePlayerData*>(PlayerDataClass->CreateInstance());
         if (!DataCopy)
         {
-            LOG_ERROR("Failed to CreateInstance for MPlayerData copy");
+            LOG_ERROR("Failed to CreateInstance for MReflectionSmokePlayerData copy");
             return false;
         }
-        PlayerDataClass->Deserialize(DataCopy, Buffer);
+        PlayerDataClass->ReadSnapshot(DataCopy, Buffer);
         
         uint64* PlayerIdCopyPtr = GET_PROPERTY(DataCopy, uint64, PlayerId);
         FString* AccountNameCopyPtr = GET_PROPERTY(DataCopy, FString, AccountName);
         int32* VipLevelCopyPtr = GET_PROPERTY(DataCopy, int32, VIPLevel);
         
-        LOG_INFO("MPlayerData after deserialize: PlayerId=%llu Account=%s VIP=%d Friends=%zu FriendLevels=%zu BlackList=%zu",
+        LOG_INFO("MReflectionSmokePlayerData after deserialize: PlayerId=%llu Account=%s VIP=%d Friends=%zu FriendLevels=%zu BlackList=%zu",
                  PlayerIdCopyPtr ? (unsigned long long)(*PlayerIdCopyPtr) : 0ull,
                  AccountNameCopyPtr ? AccountNameCopyPtr->c_str() : "",
                  VipLevelCopyPtr ? *VipLevelCopyPtr : -1,
@@ -307,32 +308,32 @@ bool RunReflectionTests()
             DataCopy->GetFriendLevels().size() != 3 ||
             DataCopy->GetBlackList().size() != 2)
         {
-            LOG_ERROR("MPlayerData container serialization mismatch after deserialize");
+            LOG_ERROR("MReflectionSmokePlayerData container serialization mismatch after deserialize");
             return false;
         }
     }
 
-    // 测试 3：MHero 嵌套结构体（Struct 类型）自动序列化
+    // 测试 3：MReflectionSmokeHero 嵌套结构体（Struct 类型）自动序列化
     {
-        MClass* HeroClass = MHero::StaticClass();
+        MClass* HeroClass = MReflectionSmokeHero::StaticClass();
         if (!HeroClass)
         {
-            LOG_ERROR("MHero::StaticClass returned nullptr");
+            LOG_ERROR("MReflectionSmokeHero::StaticClass returned nullptr");
             return false;
         }
 
-        auto* Hero = static_cast<MHero*>(HeroClass->CreateInstance());
+        auto* Hero = static_cast<MReflectionSmokeHero*>(HeroClass->CreateInstance());
         if (!Hero)
         {
-            LOG_ERROR("Failed to CreateInstance for MHero");
+            LOG_ERROR("Failed to CreateInstance for MReflectionSmokeHero");
             return false;
         }
 
         // 通过反射拿到嵌套结构体整体指针
-        SCombatStats* StatsPtr = GET_PROPERTY(Hero, SCombatStats, CombatStats);
+        SReflectionSmokeCombatStats* StatsPtr = GET_PROPERTY(Hero, SReflectionSmokeCombatStats, CombatStats);
         if (!StatsPtr)
         {
-            LOG_ERROR("Failed to get CombatStats property from MHero");
+            LOG_ERROR("Failed to get CombatStats property from MReflectionSmokeHero");
             return false;
         }
 
@@ -349,7 +350,7 @@ bool RunReflectionTests()
         SET_PROPERTY(Hero, int32, Level, 15);
         SET_PROPERTY(Hero, float, Health, 350.0f);
 
-        LOG_INFO("MHero before serialize: "
+        LOG_INFO("MReflectionSmokeHero before serialize: "
                  "Base(STR=%d AGI=%d INT=%d) "
                  "Bonus(STR=%d AGI=%d INT=%d) "
                  "Crit=%.2f x%.2f Level=%d Health=%.2f",
@@ -366,24 +367,24 @@ bool RunReflectionTests()
 
         // 通过 MClass 通用接口序列化 / 反序列化
         MReflectArchive HeroArWrite;
-        HeroClass->Serialize(Hero, HeroArWrite);
+        HeroClass->WriteSnapshot(Hero, HeroArWrite);
 
-        auto* HeroCopy = static_cast<MHero*>(HeroClass->CreateInstance());
+        auto* HeroCopy = static_cast<MReflectionSmokeHero*>(HeroClass->CreateInstance());
         if (!HeroCopy)
         {
-            LOG_ERROR("Failed to CreateInstance for MHero copy");
+            LOG_ERROR("Failed to CreateInstance for MReflectionSmokeHero copy");
             return false;
         }
-        HeroClass->Deserialize(HeroCopy, HeroArWrite.Data);
+        HeroClass->ReadSnapshot(HeroCopy, HeroArWrite.Data);
 
-        SCombatStats* StatsCopyPtr = GET_PROPERTY(HeroCopy, SCombatStats, CombatStats);
+        SReflectionSmokeCombatStats* StatsCopyPtr = GET_PROPERTY(HeroCopy, SReflectionSmokeCombatStats, CombatStats);
         if (!StatsCopyPtr)
         {
-            LOG_ERROR("Failed to get CombatStats from MHero copy");
+            LOG_ERROR("Failed to get CombatStats from MReflectionSmokeHero copy");
             return false;
         }
 
-        LOG_INFO("MHero after deserialize: "
+        LOG_INFO("MReflectionSmokeHero after deserialize: "
                  "Base(STR=%d AGI=%d INT=%d) "
                  "Bonus(STR=%d AGI=%d INT=%d) "
                  "Crit=%.2f x%.2f Level=%d Health=%.2f",
@@ -401,11 +402,11 @@ bool RunReflectionTests()
 
     // 测试 4：RPC 元信息与网络包格式（本地自发自收模拟）
     {
-        MClass* HeroClass = MHero::StaticClass();
-        auto* Hero = static_cast<MHero*>(HeroClass->CreateInstance());
+        MClass* HeroClass = MReflectionSmokeHero::StaticClass();
+        auto* Hero = static_cast<MReflectionSmokeHero*>(HeroClass->CreateInstance());
         if (!Hero)
         {
-            LOG_ERROR("Failed to CreateInstance for MHero in RPC test");
+            LOG_ERROR("Failed to CreateInstance for MReflectionSmokeHero in RPC test");
             return false;
         }
 
@@ -429,12 +430,12 @@ bool RunReflectionTests()
 
         const uint32 PayloadSize = static_cast<uint32>(RpcPayloadAr.Data.size());
 
-        // 按 ENetMessageType::MT_RPC 设计网络包格式：
+        // 按 EServerMessageType::MT_RPC 设计网络包格式：
         // [MsgType(1)][ObjectId(8)][FunctionId(2)][PayloadSize(4)][Payload...]
         TArray Packet;
         Packet.reserve(1 + sizeof(ObjectId) + sizeof(FunctionId) + sizeof(PayloadSize) + PayloadSize);
 
-        uint8 MsgType = static_cast<uint8>(ENetMessageType::MT_RPC);
+        uint8 MsgType = static_cast<uint8>(EServerMessageType::MT_RPC);
         Packet.push_back(MsgType);
 
         // ObjectId
@@ -466,7 +467,7 @@ bool RunReflectionTests()
         }
 
         uint8 RecvType = Packet[Offset++];
-        if (RecvType != static_cast<uint8>(ENetMessageType::MT_RPC))
+        if (RecvType != static_cast<uint8>(EServerMessageType::MT_RPC))
         {
             LOG_ERROR("Unexpected RPC msg type: %u", (unsigned)RecvType);
             return false;
@@ -517,7 +518,7 @@ bool RunReflectionTests()
             return false;
         }
 
-        LOG_INFO("MHero after RPC invoke: Level=%d Health=%.2f",
+        LOG_INFO("MReflectionSmokeHero after RPC invoke: Level=%d Health=%.2f",
                  Hero->GetLevel(),
                  Hero->GetHealth());
     }

@@ -52,6 +52,15 @@ struct SGeneratedClientRouteRequest
     const TArray* Payload = nullptr;
 };
 
+namespace MClientDownlink
+{
+inline constexpr const char* ScopeName = "MClientDownlink";
+inline constexpr const char* OnLoginResponse = "Client_OnLoginResponse";
+inline constexpr const char* OnActorCreate = "Client_OnActorCreate";
+inline constexpr const char* OnActorUpdate = "Client_OnActorUpdate";
+inline constexpr const char* OnActorDestroy = "Client_OnActorDestroy";
+}
+
 enum class EGeneratedClientDispatchResult : uint8
 {
     NotFound = 0,
@@ -62,6 +71,9 @@ enum class EGeneratedClientDispatchResult : uint8
     MissingBinder = 5,
     ParamBindingFailed = 6,
     InvokeFailed = 7,
+    AuthRequired = 8,
+    RoutePending = 9,
+    BackendUnavailable = 10,
 };
 
 struct SGeneratedClientDispatchOutcome
@@ -75,7 +87,7 @@ class IGeneratedClientRouteTarget
 {
 public:
     virtual ~IGeneratedClientRouteTarget() = default;
-    virtual bool HandleGeneratedClientRoute(const SGeneratedClientRouteRequest& Request) = 0;
+    virtual EGeneratedClientDispatchResult HandleGeneratedClientRoute(const SGeneratedClientRouteRequest& Request) = 0;
 };
 
 inline const SRpcEndpointBinding* FindRpcEndpointByServerType(
@@ -121,6 +133,23 @@ TVector<SGeneratedRpcUnsupportedStat> GetGeneratedRpcUnsupportedStats();
 TVector<SGeneratedRpcUnsupportedStat> GetGeneratedRpcUnsupportedStats(EServerType ServerType);
 FString BuildGeneratedRpcUnsupportedStatsJson();
 FString BuildGeneratedRpcUnsupportedStatsJson(EServerType ServerType);
+uint16 GetClientDownlinkFunctionId(const char* FunctionName);
+const char* GetClientDownlinkFunctionName(uint16 FunctionId);
+bool BuildClientFunctionCallPacket(uint16 FunctionId, const TArray& InPayload, TArray& OutPacket);
+
+template<typename TMessage>
+inline bool BuildClientFunctionCallPacketForPayload(const char* FunctionName, const TMessage& Message, TArray& OutPacket)
+{
+    if (!FunctionName || FunctionName[0] == '\0')
+    {
+        return false;
+    }
+
+    return BuildClientFunctionCallPacket(
+        GetClientDownlinkFunctionId(FunctionName),
+        BuildPayload(Message),
+        OutPacket);
+}
 
 template<typename... TArgs>
 inline bool BuildRpcPayloadForRemoteCall(const char* ClassName, const char* FunctionName, TArray& OutData, TArgs&&... Args)

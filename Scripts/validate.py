@@ -8,20 +8,19 @@ Mession 脚本验证 - 启动所有服务器并验证登录、复制与清理路
 流程:
   1. 编译项目（如需要）
   2. 按顺序启动 Router -> Login -> World -> Scene -> Gateway
-  3. Test 1: Handshake 本地处理可达
-  4. Test 2: 多玩家登录，验证 SessionKey/PlayerId
-  5. Test 3: 复制链路 - 登录后收包，断言至少收到 MT_ActorCreate
+  3. Test 1: Handshake 本地处理可达（默认经 MT_FunctionCall）
+  4. Test 2: 多玩家登录，验证 SessionKey/PlayerId（默认经 MT_FunctionCall）
+  5. Test 3: 复制链路 - 登录后收包，断言统一下行 MT_FunctionCall 可解析 ActorCreate / ActorUpdate
   6. Test 4: RouterResolved 路由缓存建立
   7. Test 5: 清理路径 - 一端断线后重连同一 PlayerId，验证 Gateway/World 已回收状态，并尽量观察 route cache 失效日志
   8. Test 6: Chat 路径可达
   9. Test 7: Heartbeat 本地处理可达
-  10. Test 8: 客户端 MT_RPC 兼容路径可达
-  11. Test 9: 登录后立刻断开，验证重连恢复，并尽量观察 World 清理日志
-  12. Test 10: 双端同时断线，验证双玩家重连恢复
-  13. Test 11: 快速重连边界 - 同一 PlayerId 短时间内连续重连
-  14. Test 12: 并发 - 多线程同时连接登录，验证服务端可稳定处理并发
-  15. 可选 --stress：压力测试，大量并发连接 + 登录 + 多发收包
-  16. 清理并退出
+  10. Test 9: 登录后立刻断开，验证重连恢复，并尽量观察 World 清理日志
+  11. Test 10: 双端同时断线，验证双玩家重连恢复
+  12. Test 11: 快速重连边界 - 同一 PlayerId 短时间内连续重连
+  13. Test 12: 并发 - 多线程同时连接登录，验证服务端可稳定处理并发
+  14. 可选 --stress：压力测试，大量并发连接 + 登录 + 多发收包
+  15. 清理并退出
 """
 
 import argparse
@@ -46,10 +45,20 @@ MT_PLAYER_MOVE = 5
 MT_ACTOR_CREATE = 6
 MT_ACTOR_DESTROY = 7
 MT_ACTOR_UPDATE = 8
-MT_RPC = 9
 MT_CHAT = 10
 MT_HEARTBEAT = 11
 MT_FUNCTION_CALL = 13
+CLIENT_DOWNLINK_SCOPE = "MClientDownlink"
+FN_LOGIN_RESPONSE = "Client_OnLoginResponse"
+FN_ACTOR_CREATE = "Client_OnActorCreate"
+FN_ACTOR_UPDATE = "Client_OnActorUpdate"
+FN_ACTOR_DESTROY = "Client_OnActorDestroy"
+DOWNLINK_FUNCTION_NAMES = {
+    FN_LOGIN_RESPONSE,
+    FN_ACTOR_CREATE,
+    FN_ACTOR_UPDATE,
+    FN_ACTOR_DESTROY,
+}
 
 # 端口
 ROUTER_PORT = 8005
@@ -278,6 +287,21 @@ def wait_for_log_contains(log_path: Path, needle: str, timeout: float) -> bool:
     return False
 
 
+def wait_for_port_closed(host: str, port: int, timeout: float) -> bool:
+    """等待端口关闭。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect((host, port))
+            s.close()
+            time.sleep(0.1)
+        except (socket.error, OSError):
+            return True
+    return False
+
+
 def count_log_occurrences(log_path: Path, needle: str) -> int:
     """统计日志片段出现次数。"""
     try:
@@ -288,30 +312,29 @@ def count_log_occurrences(log_path: Path, needle: str) -> int:
 
 
 def recv_login_response(sock: socket.socket) -> tuple[bool, int, int]:
-    """接收登录响应: Length(4) + MsgType(1) + SessionKey(4) + PlayerId(8)"""
-    sock.settimeout(5.0)
-    header = sock.recv(4)
-    if len(header) < 4:
+    """接收登录响应，并严格要求正式下行走 MT_FunctionCall。"""
+    pkt = recv_one_packet_raw(sock, timeout=5.0)
+    if pkt is None:
         return False, 0, 0
 
-    resp_len = struct.unpack("<I", header)[0]
-    if resp_len < 1 + 4 + 8:
+    msg_type, payload = pkt
+    if msg_type != MT_FUNCTION_CALL:
+        log(f"Unexpected login response transport: {msg_type}")
         return False, 0, 0
 
-    body = b""
-    while len(body) < resp_len:
-        chunk = sock.recv(resp_len - len(body))
-        if not chunk:
-            return False, 0, 0
-        body += chunk
-
-    msg_type = body[0]
-    if msg_type != MT_LOGIN_RESPONSE:
-        log(f"Unexpected response type: {msg_type}")
+    decoded = decode_function_call_payload(payload)
+    if decoded is None:
+        log("Login response decode failed: invalid MT_FunctionCall payload")
         return False, 0, 0
 
-    session_key = struct.unpack("<I", body[1:5])[0]
-    resp_player_id = struct.unpack("<Q", body[5:13])[0]
+    function_id, function_payload = decoded
+    expected_id = compute_stable_function_id(CLIENT_DOWNLINK_SCOPE, FN_LOGIN_RESPONSE)
+    if function_id != expected_id or len(function_payload) < 12:
+        log(f"Unexpected login response function id: {function_id}")
+        return False, 0, 0
+
+    session_key = struct.unpack("<I", function_payload[:4])[0]
+    resp_player_id = struct.unpack("<Q", function_payload[4:12])[0]
     return True, session_key, resp_player_id
 
 
@@ -348,6 +371,23 @@ def send_function_call(sock: socket.socket, class_name: str, function_name: str,
     return True
 
 
+def decode_function_call_payload(payload: bytes) -> Optional[tuple[int, bytes]]:
+    if len(payload) < 2 + 4:
+        return None
+    function_id = struct.unpack("<H", payload[:2])[0]
+    payload_size = struct.unpack("<I", payload[2:6])[0]
+    if 6 + payload_size > len(payload):
+        return None
+    return function_id, payload[6:6 + payload_size]
+
+
+def resolve_downlink_function_name(function_id: int) -> Optional[str]:
+    for function_name in DOWNLINK_FUNCTION_NAMES:
+        if function_id == compute_stable_function_id(CLIENT_DOWNLINK_SCOPE, function_name):
+            return function_name
+    return None
+
+
 def send_function_handshake(sock: socket.socket, player_id: int = 0) -> bool:
     return send_function_call(sock, "MGatewayServer", "Client_Handshake", struct.pack("<Q", player_id))
 
@@ -372,84 +412,28 @@ def send_function_heartbeat(sock: socket.socket, sequence: int) -> bool:
 
 
 def send_login(sock: socket.socket, player_id: int = 12345) -> tuple[bool, int, int]:
-    """
-    发送登录包，返回 (成功, SessionKey, PlayerId)
-    协议: Length(4) + MsgType(1) + PlayerId(8)
-    """
-    payload = struct.pack("<BQ", MT_LOGIN, player_id)  # little endian
-    length = len(payload)
-    packet = struct.pack("<I", length) + payload
-
-    sock.sendall(packet)
-    return recv_login_response(sock)
+    """默认登录路径：经 MT_FunctionCall 发送 Client_Login。"""
+    return send_function_login(sock, player_id)
 
 
 def send_handshake(sock: socket.socket, player_id: int = 0) -> bool:
-    """
-    发送最小握手包
-    协议: Length(4) + MsgType(1) + PlayerId(8)
-    """
-    payload = struct.pack("<BQ", MT_HANDSHAKE, player_id)
-    length = len(payload)
-    packet = struct.pack("<I", length) + payload
-    sock.sendall(packet)
-    return True
+    """默认握手路径：经 MT_FunctionCall 发送 Client_Handshake。"""
+    return send_function_handshake(sock, player_id)
 
 
 def send_player_move(sock: socket.socket, x: float, y: float, z: float) -> bool:
-    """
-    发送玩家移动包
-    协议: Length(4) + MsgType(1) + X(4) + Y(4) + Z(4)
-    """
-    payload = struct.pack("<Bfff", MT_PLAYER_MOVE, x, y, z)
-    length = len(payload)
-    packet = struct.pack("<I", length) + payload
-    sock.sendall(packet)
-    return True
+    """默认移动路径：经 MT_FunctionCall 发送 Client_PlayerMove。"""
+    return send_function_player_move(sock, x, y, z)
 
 
 def send_chat(sock: socket.socket, message: str) -> bool:
-    """
-    发送聊天包
-    协议: Length(4) + MsgType(1) + MessageLen(2) + Message(bytes)
-    """
-    encoded = message.encode("utf-8")
-    payload = struct.pack("<BH", MT_CHAT, len(encoded)) + encoded
-    length = len(payload)
-    packet = struct.pack("<I", length) + payload
-    sock.sendall(packet)
-    return True
+    """默认聊天路径：经 MT_FunctionCall 发送 Client_Chat。"""
+    return send_function_chat(sock, message)
 
 
 def send_heartbeat(sock: socket.socket, sequence: int) -> bool:
-    """
-    发送心跳包
-    协议: Length(4) + MsgType(1) + Sequence(4)
-    """
-    payload = struct.pack("<BI", MT_HEARTBEAT, sequence)
-    length = len(payload)
-    packet = struct.pack("<I", length) + payload
-    sock.sendall(packet)
-    return True
-
-
-def send_rpc_add_stats(sock: socket.socket, hero_object_id: int, func_id: int, level_delta: int, health_delta: float) -> bool:
-    """
-    发送一个简单的 RPC 调用:
-      MsgType = MT_RPC
-      Payload = [ObjectId(8)][FunctionId(2)][PayloadSize(4)][LevelDelta(4)][HealthDelta(4)]
-    这里假设 FunctionId 已经在服务端稳定，hero_object_id 来自服务端（或采用固定值）。
-    """
-    payload = struct.pack("<B", MT_RPC)
-    payload += struct.pack("<Q", hero_object_id)
-    payload += struct.pack("<H", func_id)
-    inner = struct.pack("<if", level_delta, health_delta)
-    payload += struct.pack("<I", len(inner))
-    payload += inner
-    length = len(payload)
-    packet = struct.pack("<I", length) + payload
-    sock.sendall(packet)
-    return True
+    """默认心跳路径：经 MT_FunctionCall 发送 Client_Heartbeat。"""
+    return send_function_heartbeat(sock, sequence)
 
 
 def recv_one_packet(sock: socket.socket, timeout: float) -> Optional[tuple[int, bytes]]:
@@ -471,11 +455,88 @@ def recv_one_packet(sock: socket.socket, timeout: float) -> Optional[tuple[int, 
             if not chunk:
                 return None
             body += chunk
-        return (body[0], body[1:])
+        return body[0], body[1:]
     except socket.timeout:
         return None
     except (socket.error, OSError):
         return None
+
+
+def recv_one_packet_raw(sock: socket.socket, timeout: float) -> Optional[tuple[int, bytes]]:
+    """接收一个原始长度前缀包，不做统一下行兼容转换。"""
+    sock.settimeout(timeout)
+    try:
+        header = sock.recv(4)
+        if len(header) < 4:
+            return None
+        length = struct.unpack("<I", header)[0]
+        if length < 1:
+            return None
+        body = b""
+        while len(body) < length:
+            chunk = sock.recv(length - len(body))
+            if not chunk:
+                return None
+            body += chunk
+        return body[0], body[1:]
+    except socket.timeout:
+        return None
+    except (socket.error, OSError):
+        return None
+
+
+def collect_downlink_function_packets(
+    sock: socket.socket,
+    duration: float,
+    want_function_names: set[str],
+) -> list[tuple[str, bytes]]:
+    """收集严格经 MT_FunctionCall 下发的客户端下行函数。"""
+    deadline = time.time() + duration
+    found: list[tuple[str, bytes]] = []
+    while time.time() < deadline:
+        pkt = recv_one_packet_raw(sock, timeout=0.3)
+        if pkt is None:
+            continue
+        msg_type, payload = pkt
+        if msg_type != MT_FUNCTION_CALL:
+            continue
+        decoded = decode_function_call_payload(payload)
+        if decoded is None:
+            continue
+        function_id, function_payload = decoded
+        function_name = resolve_downlink_function_name(function_id)
+        if function_name in want_function_names:
+            found.append((function_name, function_payload))
+    return found
+
+
+def parse_actor_create_payload(payload: bytes) -> Optional[tuple[int, bytes]]:
+    if len(payload) < 8 + 4:
+        return None
+    actor_id = struct.unpack("<Q", payload[:8])[0]
+    data_size = struct.unpack("<I", payload[8:12])[0]
+    if 12 + data_size > len(payload):
+        return None
+    return actor_id, payload[12:12 + data_size]
+
+
+def parse_actor_update_payload(payload: bytes) -> Optional[tuple[int, bytes]]:
+    return parse_actor_create_payload(payload)
+
+
+def parse_actor_destroy_payload(payload: bytes) -> Optional[int]:
+    if len(payload) < 8:
+        return None
+    return struct.unpack("<Q", payload[:8])[0]
+
+
+def parse_reflected_actor_blob(data: bytes) -> Optional[dict]:
+    if not data:
+        return None
+    return {
+        "size": len(data),
+        "bytes": data,
+    }
 
 
 def collect_replication_packets(
@@ -597,6 +658,7 @@ def run_validation(
 ) -> bool:
     """执行完整验证流程"""
     procs: List[subprocess.Popen] = []
+    proc_by_name: dict[str, subprocess.Popen] = {}
     stop_lingering_servers()
     if debug_log_dir is None:
         debug_log_dir = build_dir / "validate_logs"
@@ -617,6 +679,30 @@ def run_validation(
             except Exception:
                 p.kill()
 
+    def launch_server(name: str, port: int) -> Optional[subprocess.Popen]:
+        proc = start_server(build_dir, name, port, dict(base_env), debug_log_dir)
+        if proc is not None:
+            procs.append(proc)
+            proc_by_name[name] = proc
+        return proc
+
+    def stop_server_process(name: str, port: int, timeout_seconds: float = 5.0) -> bool:
+        proc = proc_by_name.get(name)
+        if proc is None:
+            return False
+        try:
+            proc.terminate()
+            proc.wait(timeout=timeout_seconds)
+        except Exception:
+            proc.kill()
+        return wait_for_port_closed("127.0.0.1", port, timeout_seconds)
+
+    def restart_server_process(name: str, port: int, timeout_seconds: float = 8.0) -> bool:
+        proc = launch_server(name, port)
+        if proc is None:
+            return False
+        return wait_for_port("127.0.0.1", port, timeout_seconds)
+
     try:
         # 1. 启动 Router
         router_env = dict(base_env)
@@ -624,6 +710,7 @@ def run_validation(
         if not p:
             return False
         procs.append(p)
+        proc_by_name["RouterServer"] = p
         if not wait_for_port("127.0.0.1", ROUTER_PORT, timeout):
             log("RouterServer did not become ready")
             return False
@@ -636,10 +723,9 @@ def run_validation(
             ("SceneServer", SCENE_PORT),
             ("GatewayServer", GATEWAY_PORT),
         ]:
-            p = start_server(build_dir, name, port, dict(base_env), debug_log_dir)
+            p = launch_server(name, port)
             if not p:
                 return False
-            procs.append(p)
 
         # 3. 等待 Gateway 就绪
         if not wait_for_port("127.0.0.1", GATEWAY_PORT, timeout):
@@ -649,9 +735,10 @@ def run_validation(
         if gateway_debug is None:
             log("Gateway debug HTTP did not become ready")
             return False
-        initial_legacy_rpc_count = int(gateway_debug.get("legacyClientRpcCount", 0))
-        initial_rejected_fallback_count = int(gateway_debug.get("rejectedClientFallbackCount", 0))
         initial_function_call_count = int(gateway_debug.get("clientFunctionCallCount", 0))
+        initial_rejected_function_count = int(gateway_debug.get("clientFunctionCallRejectedCount", 0))
+        initial_unknown_function_count = int(gateway_debug.get("unknownClientFunctionCount", 0))
+        initial_decode_failure_count = int(gateway_debug.get("clientFunctionDecodeFailureCount", 0))
         gateway_log = debug_log_dir / "GatewayServer.log"
         world_log = debug_log_dir / "WorldServer.log"
 
@@ -708,26 +795,74 @@ def run_validation(
             log(f"  Player {pid} OK: SessionKey={session_key}")
             clients.append((sock, pid))
 
-        # 7. 复制链路：至少一名客户端应收到其他玩家的 MT_ActorCreate
-        log("Test 3: Replication (ActorCreate)...")
+        # 7. 复制链路：严格要求复制下行走 MT_FunctionCall，并能解析 ActorCreate 外层壳
+        log("Test 3: Replication downlink (ActorCreate/ActorUpdate)...")
         time.sleep(2.0)  # 等待路由、Session 校验、AddPlayer 与复制包下发
         all_creates = []
+        actor_states: dict[int, dict] = {}
         for sock, _ in clients:
-            replication = collect_replication_packets(
-                sock, 1.5, {MT_ACTOR_CREATE, MT_ACTOR_UPDATE}
+            replication = collect_downlink_function_packets(
+                sock,
+                1.5,
+                {FN_ACTOR_CREATE, FN_ACTOR_UPDATE},
             )
-            all_creates.extend(p for p in replication if p[0] == MT_ACTOR_CREATE)
+            all_creates.extend(payload for function_name, payload in replication if function_name == FN_ACTOR_CREATE)
         if not all_creates:
-            log("  No MT_ActorCreate received; replication path broken")
+            log("  No Client_OnActorCreate received via MT_FunctionCall; replication path broken")
             for s, _ in clients:
                 if s:
                     s.close()
             return False
-        log(f"  Received {len(all_creates)} MT_ActorCreate (replication OK)")
+        parsed_create_count = 0
+        for payload in all_creates:
+            parsed = parse_actor_create_payload(payload)
+            if not parsed:
+                continue
+            actor_id, actor_data = parsed
+            snapshot = parse_reflected_actor_blob(actor_data)
+            if snapshot is None:
+                continue
+            actor_states[actor_id] = snapshot
+            parsed_create_count += 1
+        if parsed_create_count == 0:
+            log("  ActorCreate packets arrived, but none could be decoded into ActorId + payload")
+            for s, _ in clients:
+                if s:
+                    s.close()
+            return False
+        log(f"  Parsed {parsed_create_count} Client_OnActorCreate payload(s) from MT_FunctionCall")
 
         for sock, pid in clients:
             send_player_move(sock, float(pid % 10), 0.0, 0.0)
         log("  Multi-player move sent")
+        actor_updates = []
+        for sock, _ in clients:
+            actor_updates.extend(
+                collect_downlink_function_packets(sock, 2.0, {FN_ACTOR_UPDATE})
+            )
+        applied_update = False
+        for _, payload in actor_updates:
+            parsed = parse_actor_update_payload(payload)
+            if not parsed:
+                continue
+            actor_id, actor_data = parsed
+            if actor_id not in actor_states:
+                continue
+            snapshot = parse_reflected_actor_blob(actor_data)
+            if snapshot is None:
+                continue
+            if snapshot["bytes"] == actor_states[actor_id]["bytes"]:
+                continue
+            actor_states[actor_id] = snapshot
+            applied_update = True
+            break
+        if not applied_update:
+            log("  No changed reflected Client_OnActorUpdate observed for a known actor")
+            for s, _ in clients:
+                if s:
+                    s.close()
+            return False
+        log("  Client_OnActorUpdate carried a changed reflected actor snapshot")
 
         # 8. 路由缓存：发送 RouterResolved 客户端消息后，Gateway 应建立 route cache
         log("Test 4: RouterResolved route cache...")
@@ -773,6 +908,23 @@ def run_validation(
             log(f"  Route cache invalidated with {invalidated_count} log(s)")
         else:
             log("  Route cache invalidation log not observed within window; continuing with reconnect check")
+        destroy_packets = collect_downlink_function_packets(clients[1][0], 1.5, {FN_ACTOR_DESTROY})
+        destroy_observed = False
+        for _, payload in destroy_packets:
+            actor_id = parse_actor_destroy_payload(payload)
+            if actor_id is None:
+                continue
+            if actor_id in actor_states:
+                destroy_observed = True
+                actor_states.pop(actor_id, None)
+                break
+        if not destroy_observed:
+            log("  Client_OnActorDestroy was not observed for a previously created actor")
+            for s, _ in clients:
+                if s:
+                    s.close()
+            return False
+        log("  Client_OnActorDestroy decoded for a known replicated actor")
 
         sock2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock2.settimeout(10.0)
@@ -964,62 +1116,259 @@ def run_validation(
             pass
         function_login_sock.close()
 
-        # 13. RPC 兼容测试：确认客户端 MT_RPC 仍作为受控 legacy policy 可达
-        log("Test 9: Client MT_RPC legacy compatibility...")
-        # 为简单起见，使用第一个仍在线的客户端执行 RPC 测试
-        rpc_sock = None
-        rpc_pid = 123456
-        try:
-            rpc_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            rpc_sock.settimeout(10.0)
-            rpc_sock.connect(("127.0.0.1", GATEWAY_PORT))
-            ok, _, _ = send_login(rpc_sock, rpc_pid)
-            if not ok:
-                log("  RPC login failed")
-                rpc_sock.close()
-                rpc_sock = None
-                # 不直接失败整个验证，但提示 RPC 未测试
-            else:
-                # 我们不知道服务器端 HeroObject 的实际 ObjectId / FunctionId，这里约定：
-                # - ObjectId 使用 0（WorldServer 内部会进行 ObjectId 校验并拒绝不匹配的包）
-                #   因此第一次调用应该被 validate/安全检查拒绝，不改变服务器状态。
-                # - 仅测试网络路径可达以及服务器不会崩溃。
-                # 如果后续我们在协议中回传 HeroObjectId/FunctionId，就可以在这里做更严格的断言。
-                send_rpc_add_stats(
-                    rpc_sock,
-                    hero_object_id=0,
-                    func_id=0,
-                    level_delta=10,
-                    health_delta=100.0,
-                )
-                gateway_status = wait_for_gateway_debug_value(
-                    "legacyClientRpcCount",
-                    lambda value: int(value) >= initial_legacy_rpc_count + 1,
-                    timeout=3.0,
-                )
-                if gateway_status is None:
-                    log("  Client MT_RPC compatibility path failed: Gateway legacyClientRpcCount did not increase")
-                    rpc_sock.close()
-                    for s, _ in clients:
-                        if s:
-                            s.close()
-                    sock2.close()
-                    return False
-                log(
-                    "  Client MT_RPC observed via explicit legacy policy: "
-                    f"legacyClientRpcCount={int(gateway_status.get('legacyClientRpcCount', 0))}"
-                )
-        except Exception as e:
-            log(f"  RPC test encountered exception: {e}")
-            if rpc_sock:
-                rpc_sock.close()
-            rpc_sock = None
+        # 13. 统一函数调用负向验证：未知 FunctionID / 包体越界 / payload 解码失败 / 未鉴权调用
+        log("Test 9: Unified function call negative cases...")
+        negative_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        negative_sock.settimeout(10.0)
+        negative_sock.connect(("127.0.0.1", GATEWAY_PORT))
 
-        if rpc_sock:
-            rpc_sock.close()
+        unknown_function_id = 65535
+        if unknown_function_id in {
+            compute_stable_function_id("MGatewayServer", "Client_Handshake"),
+            compute_stable_function_id("MGatewayServer", "Client_Login"),
+            compute_stable_function_id("MGatewayServer", "Client_PlayerMove"),
+            compute_stable_function_id("MGatewayServer", "Client_Chat"),
+            compute_stable_function_id("MGatewayServer", "Client_Heartbeat"),
+        }:
+            unknown_function_id = 65534
+        unknown_body = struct.pack("<BH", MT_FUNCTION_CALL, unknown_function_id) + struct.pack("<I", 0)
+        negative_sock.sendall(struct.pack("<I", len(unknown_body)) + unknown_body)
+        gateway_status = wait_for_gateway_debug_value(
+            "unknownClientFunctionCount",
+            lambda value: int(value) >= initial_unknown_function_count + 1,
+            timeout=3.0,
+        )
+        if gateway_status is None or gateway_status.get("lastClientFunctionError", "") != "UnknownFunctionId":
+            log("  Unknown FunctionID negative case failed")
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+
+        packet_too_small_body = bytes([MT_FUNCTION_CALL, 0x01, 0x02])
+        negative_sock.sendall(struct.pack("<I", len(packet_too_small_body)) + packet_too_small_body)
+        gateway_status = wait_for_gateway_debug_value(
+            "clientFunctionDecodeFailureCount",
+            lambda value: int(value) >= initial_decode_failure_count + 1,
+            timeout=3.0,
+        )
+        if gateway_status is None or gateway_status.get("lastClientFunctionError", "") != "PacketTooSmall":
+            log("  PacketTooSmall negative case failed")
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        initial_decode_failure_count = int(gateway_status.get("clientFunctionDecodeFailureCount", 0))
+
+        bad_payload_body = struct.pack("<BH", MT_FUNCTION_CALL, compute_stable_function_id("MGatewayServer", "Client_Handshake"))
+        bad_payload_body += struct.pack("<I", 16) + b"\x00\x00"
+        negative_sock.sendall(struct.pack("<I", len(bad_payload_body)) + bad_payload_body)
+        gateway_status = wait_for_gateway_debug_value(
+            "clientFunctionDecodeFailureCount",
+            lambda value: int(value) >= initial_decode_failure_count + 1,
+            timeout=3.0,
+        )
+        if gateway_status is None or gateway_status.get("lastClientFunctionError", "") != "PayloadOutOfRange":
+            log("  PayloadOutOfRange negative case failed")
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        initial_decode_failure_count = int(gateway_status.get("clientFunctionDecodeFailureCount", 0))
+
+        # Length/MsgType/FunctionID/PayloadSize 都合法，但 payload 本身不足以绑定到 SPlayerIdPayload。
+        malformed_payload_body = struct.pack(
+            "<BH",
+            MT_FUNCTION_CALL,
+            compute_stable_function_id("MGatewayServer", "Client_Handshake"),
+        )
+        malformed_payload_body += struct.pack("<I", 4) + struct.pack("<I", 1234)
+        negative_sock.sendall(struct.pack("<I", len(malformed_payload_body)) + malformed_payload_body)
+        gateway_status = wait_for_gateway_debug_value(
+            "clientFunctionCallRejectedCount",
+            lambda value: int(value) >= initial_rejected_function_count + 4,
+            timeout=3.0,
+        )
+        if gateway_status is None or gateway_status.get("lastClientFunctionError", "") != "PayloadDecodeFailed":
+            log("  PayloadDecodeFailed negative case failed")
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+
+        unauth_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        unauth_sock.settimeout(10.0)
+        unauth_sock.connect(("127.0.0.1", GATEWAY_PORT))
+        send_function_chat(unauth_sock, "unauth-chat")
+        gateway_status = wait_for_gateway_debug_value(
+            "clientFunctionCallRejectedCount",
+            lambda value: int(value) >= initial_rejected_function_count + 5,
+            timeout=3.0,
+        )
+        if gateway_status is None or gateway_status.get("lastClientFunctionError", "") != "AuthRequired":
+            log("  AuthRequired negative case failed")
+            unauth_sock.close()
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        log(
+            "  Negative cases OK: "
+            f"unknown={int(gateway_status.get('unknownClientFunctionCount', 0))}, "
+            f"decodeFailures={int(gateway_status.get('clientFunctionDecodeFailureCount', 0))}, "
+            f"lastError={gateway_status.get('lastClientFunctionError', '')}"
+        )
+
+        backend_baseline_rejected = int(gateway_status.get("clientFunctionCallRejectedCount", 0))
+        reconnect_baseline = int(gateway_status.get("reconnectAttempts", 0))
+
+        if not stop_server_process("LoginServer", LOGIN_PORT):
+            log("  Failed to stop LoginServer for BackendUnavailable injection")
+            unauth_sock.close()
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        gateway_status = wait_for_gateway_debug_value(
+            "reconnectAttempts",
+            lambda value: int(value) >= reconnect_baseline + 1,
+            timeout=8.0,
+        )
+        if gateway_status is None:
+            log("  Gateway did not observe LoginServer disconnect/reconnect attempt")
+            unauth_sock.close()
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+
+        backend_unavailable_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        backend_unavailable_sock.settimeout(10.0)
+        backend_unavailable_sock.connect(("127.0.0.1", GATEWAY_PORT))
+        send_function_call(
+            backend_unavailable_sock,
+            "MGatewayServer",
+            "Client_Login",
+            struct.pack("<Q", 40001),
+        )
+        gateway_status = wait_for_gateway_debug_value(
+            "clientFunctionCallRejectedCount",
+            lambda value: int(value) >= backend_baseline_rejected + 1,
+            timeout=3.0,
+        )
+        if gateway_status is None or gateway_status.get("lastClientFunctionError", "") != "BackendUnavailable":
+            log("  BackendUnavailable negative case failed")
+            backend_unavailable_sock.close()
+            unauth_sock.close()
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        backend_unavailable_sock.close()
+
+        if not restart_server_process("LoginServer", LOGIN_PORT):
+            log("  Failed to restart LoginServer after BackendUnavailable injection")
+            unauth_sock.close()
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        time.sleep(1.0)
+
+        route_pending_baseline = int(gateway_status.get("clientFunctionCallRejectedCount", 0))
+        reconnect_baseline = int(gateway_status.get("reconnectAttempts", 0))
+        if not stop_server_process("WorldServer", WORLD_PORT):
+            log("  Failed to stop WorldServer for RoutePending injection")
+            unauth_sock.close()
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        gateway_status = wait_for_gateway_debug_value(
+            "reconnectAttempts",
+            lambda value: int(value) >= reconnect_baseline + 1,
+            timeout=8.0,
+        )
+        if gateway_status is None:
+            log("  Gateway did not observe WorldServer disconnect/reconnect attempt")
+            unauth_sock.close()
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+
+        send_function_chat(clients[1][0], "route-pending-chat")
+        gateway_status = wait_for_gateway_debug_value(
+            "clientFunctionCallRejectedCount",
+            lambda value: int(value) >= route_pending_baseline + 1,
+            timeout=3.0,
+        )
+        if gateway_status is None or gateway_status.get("lastClientFunctionError", "") != "RoutePending":
+            log("  RoutePending negative case failed")
+            unauth_sock.close()
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+
+        if not restart_server_process("WorldServer", WORLD_PORT):
+            log("  Failed to restart WorldServer after RoutePending injection")
+            unauth_sock.close()
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        time.sleep(2.0)
+        gateway_status = wait_for_gateway_debug_value(
+            "backendActive",
+            lambda value: int(value) >= 3,
+            timeout=8.0,
+        )
+        if gateway_status is None:
+            log("  Gateway backend connections did not recover after WorldServer restart")
+            unauth_sock.close()
+            negative_sock.close()
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+
+        log(
+            "  Backend failure injection OK: "
+            f"backendUnavailable+routePending observed, lastError={gateway_status.get('lastClientFunctionError', '')}"
+        )
+        unauth_sock.close()
+        negative_sock.close()
 
         # 14. 登录后立刻断开：验证 World 清理完成后可以重新登录
-        log("Test 10: Immediate disconnect cleanup...")
+        log("Test 11: Immediate disconnect cleanup...")
         immediate_pid = 30000
         immediate_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         immediate_sock.settimeout(10.0)
@@ -1071,8 +1420,8 @@ def run_validation(
         immediate_reconnect_sock.close()
         time.sleep(0.2)
 
-        # 14. 双端同时断线：两个已登录玩家同时断开，再分别重连
-        log("Test 10: Dual disconnect cleanup...")
+        # 16. 双端同时断线：两个已登录玩家同时断开，再分别重连
+        log("Test 12: Dual disconnect cleanup...")
         dual_pids = [30010, 30011]
         dual_socks: list[socket.socket] = []
         for dual_pid in dual_pids:
@@ -1205,28 +1554,21 @@ def run_validation(
                 sock2.close()
                 return False
 
-        gateway_status = http_get_json("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, timeout=1.0)
+        gateway_status = wait_for_http_json(
+            "127.0.0.1",
+            GATEWAY_DEBUG_HTTP_PORT,
+            timeout=3.0,
+        )
         if gateway_status is None:
-            log("  Failed to fetch Gateway debug JSON for fallback policy check")
+            log("  Failed to fetch Gateway debug JSON for ingress policy check")
             for sock, _ in clients:
                 if sock:
                     sock.close()
             sock2.close()
             return False
-        rejected_fallback_count = int(gateway_status.get("rejectedClientFallbackCount", 0))
-        if rejected_fallback_count != initial_rejected_fallback_count:
-            log(
-                "  Unexpected rejected client fallback observed: "
-                f"initial={initial_rejected_fallback_count}, final={rejected_fallback_count}"
-            )
-            for sock, _ in clients:
-                if sock:
-                    sock.close()
-            sock2.close()
-            return False
-        log(f"  Client fallback policy clean: rejectedClientFallbackCount={rejected_fallback_count}")
+        log("  Client ingress policy clean: MT_FunctionCall-only validation completed")
 
-        # 18. 清理
+        # 17. 清理
         for sock, _ in clients:
             if sock:
                 sock.close()

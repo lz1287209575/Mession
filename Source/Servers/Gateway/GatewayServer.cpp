@@ -50,7 +50,7 @@ const SServerInfo* FindResolvedRouteCache(
     return nullptr;
 }
 
-using FGeneratedRouteExecutor = bool (MGatewayServer::*)(
+using FGeneratedRouteExecutor = EGeneratedClientDispatchResult (MGatewayServer::*)(
     const TSharedPtr<MClientConnection>&,
     const SGeneratedClientRouteRequest&,
     const TArray&);
@@ -75,22 +75,29 @@ const char* GetClientPacketLogName(const TArray& Packet)
         return "Empty";
     }
 
+    if (static_cast<EClientMessageType>(Packet[0]) == EClientMessageType::MT_FunctionCall)
+    {
+        if (Packet.size() >= 1 + sizeof(uint16))
+        {
+            uint16 FunctionId = 0;
+            std::memcpy(&FunctionId, Packet.data() + 1, sizeof(FunctionId));
+            if (const char* FunctionName = GetClientDownlinkFunctionName(FunctionId))
+            {
+                return FunctionName;
+            }
+        }
+
+        return "MT_FunctionCall";
+    }
+
     switch (static_cast<EClientMessageType>(Packet[0]))
     {
     case EClientMessageType::MT_Login:
         return "MT_Login";
-    case EClientMessageType::MT_LoginResponse:
-        return "MT_LoginResponse";
     case EClientMessageType::MT_Handshake:
         return "MT_Handshake";
     case EClientMessageType::MT_PlayerMove:
         return "MT_PlayerMove";
-    case EClientMessageType::MT_ActorCreate:
-        return "MT_ActorCreate";
-    case EClientMessageType::MT_ActorDestroy:
-        return "MT_ActorDestroy";
-    case EClientMessageType::MT_ActorUpdate:
-        return "MT_ActorUpdate";
     case EClientMessageType::MT_RPC:
         return "MT_RPC";
     case EClientMessageType::MT_Chat:
@@ -123,9 +130,15 @@ const char* GetGeneratedClientDispatchResultName(EGeneratedClientDispatchResult 
     case EGeneratedClientDispatchResult::MissingBinder:
         return "MissingBinder";
     case EGeneratedClientDispatchResult::ParamBindingFailed:
-        return "ParamBindingFailed";
+        return "PayloadDecodeFailed";
     case EGeneratedClientDispatchResult::InvokeFailed:
         return "InvokeFailed";
+    case EGeneratedClientDispatchResult::AuthRequired:
+        return "AuthRequired";
+    case EGeneratedClientDispatchResult::RoutePending:
+        return "RoutePending";
+    case EGeneratedClientDispatchResult::BackendUnavailable:
+        return "BackendUnavailable";
     default:
         return "Unknown";
     }
@@ -405,8 +418,6 @@ FString MGatewayServer::BuildDebugStatusJson() const
     W.Key("resolvedRouteCacheSize"); W.Value(static_cast<uint64>(ResolvedRouteCache.size()));
     W.Key("inFlightResolvedRoutes"); W.Value(static_cast<uint64>(InFlightResolvedRouteRequests.size()));
     W.Key("pendingResolvedRouteBuckets"); W.Value(static_cast<uint64>(PendingResolvedClientRoutes.size()));
-    W.Key("legacyClientRpcCount"); W.Value(LegacyClientRpcCount);
-    W.Key("rejectedClientFallbackCount"); W.Value(RejectedClientFallbackCount);
     W.Key("clientFunctionCallCount"); W.Value(ClientFunctionCallCount);
     W.Key("clientFunctionCallRejectedCount"); W.Value(ClientFunctionCallRejectedCount);
     W.Key("unknownClientFunctionCount"); W.Value(UnknownClientFunctionCount);
@@ -668,7 +679,7 @@ bool MGatewayServer::EnsureGeneratedRouteResolved(
     return false;
 }
 
-bool MGatewayServer::ExecuteGeneratedRouteRawToConnection(
+EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteRawToConnection(
     const TSharedPtr<MServerConnection>& Connection,
     SGeneratedClientRouteRequest::ERouteKind RouteKind,
     const TArray& Packet)
@@ -684,14 +695,14 @@ bool MGatewayServer::ExecuteGeneratedRouteRawToConnection(
         default: break;
         }
         LOG_WARN("%s server unavailable, dropping generated routed client message", RouteLabel);
-        return true;
+        return EGeneratedClientDispatchResult::BackendUnavailable;
     }
 
     Connection->SendRaw(Packet);
-    return true;
+    return EGeneratedClientDispatchResult::Routed;
 }
 
-bool MGatewayServer::ExecuteGeneratedRouteRaw(
+EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteRaw(
     const TSharedPtr<MClientConnection>&,
     const SGeneratedClientRouteRequest& Request,
     const TArray& Packet)
@@ -702,7 +713,7 @@ bool MGatewayServer::ExecuteGeneratedRouteRaw(
         Packet);
 }
 
-bool MGatewayServer::ExecuteGeneratedRoutePlayerClientSync(
+EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRoutePlayerClientSync(
     const TSharedPtr<MClientConnection>& Client,
     const SGeneratedClientRouteRequest&,
     const TArray& Packet)
@@ -710,17 +721,17 @@ bool MGatewayServer::ExecuteGeneratedRoutePlayerClientSync(
     if (!WorldServerConn || !WorldServerConn->IsConnected())
     {
         LOG_WARN("World server unavailable, dropping generated routed client message");
-        return true;
+        return EGeneratedClientDispatchResult::BackendUnavailable;
     }
 
     SendTypedServerMessage(
         WorldServerConn,
         EServerMessageType::MT_PlayerClientSync,
         SPlayerClientSyncMessage{Client ? Client->PlayerId : 0, Packet});
-    return true;
+    return EGeneratedClientDispatchResult::Routed;
 }
 
-bool MGatewayServer::ExecuteGeneratedRouteLoginRpcOrLegacy(
+EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteLoginRpcOrLegacy(
     const TSharedPtr<MClientConnection>&,
     const SGeneratedClientRouteRequest& Request,
     const TArray&)
@@ -728,7 +739,7 @@ bool MGatewayServer::ExecuteGeneratedRouteLoginRpcOrLegacy(
     if (!LoginServerConn || !LoginServerConn->IsConnected())
     {
         LOG_WARN("Login server unavailable, dropping generated routed client message");
-        return true;
+        return EGeneratedClientDispatchResult::BackendUnavailable;
     }
 
     SPlayerIdPayload RequestPayload;
@@ -736,7 +747,7 @@ bool MGatewayServer::ExecuteGeneratedRouteLoginRpcOrLegacy(
     if (!ParseResult.IsOk())
     {
         LOG_WARN("ParsePayload failed: %s", ParseResult.GetError().c_str());
-        return true;
+        return EGeneratedClientDispatchResult::ParamBindingFailed;
     }
 
     const bool bRpcSent = MRpc::TryRpcOrTypedLegacy(
@@ -755,16 +766,16 @@ bool MGatewayServer::ExecuteGeneratedRouteLoginRpcOrLegacy(
         LOG_INFO("Generated login route forwarded via legacy path: ConnectionId=%llu, PlayerId=%llu",
                  static_cast<unsigned long long>(Request.ConnectionId),
                  static_cast<unsigned long long>(RequestPayload.PlayerId));
-        return true;
+        return EGeneratedClientDispatchResult::Routed;
     }
 
     LOG_INFO("Generated login route forwarded via generated RPC: ConnectionId=%llu, PlayerId=%llu",
              static_cast<unsigned long long>(Request.ConnectionId),
              static_cast<unsigned long long>(RequestPayload.PlayerId));
-    return true;
+    return EGeneratedClientDispatchResult::Routed;
 }
 
-bool MGatewayServer::ExecuteGeneratedRouteByPolicy(
+EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteByPolicy(
     const TSharedPtr<MClientConnection>& Client,
     const FString& RouteKey,
     const FString& WrapMode,
@@ -785,7 +796,7 @@ bool MGatewayServer::ExecuteGeneratedRouteByPolicy(
         {
             if (!Request)
             {
-                return false;
+                return EGeneratedClientDispatchResult::InvokeFailed;
             }
             return (this->*Entry.Execute)(Client, *Request, Packet);
         }
@@ -795,7 +806,7 @@ bool MGatewayServer::ExecuteGeneratedRouteByPolicy(
              RouteKey.c_str(),
              WrapMode.c_str(),
              (Request && Request->FunctionName) ? Request->FunctionName : "");
-    return false;
+    return EGeneratedClientDispatchResult::RouteTargetUnsupported;
 }
 
 void MGatewayServer::InvalidateResolvedRoute(EServerType ServerType, uint64 PlayerId)
@@ -854,25 +865,25 @@ void MGatewayServer::RemovePendingResolvedClientRoutesForPlayer(uint64 PlayerId)
     }
 }
 
-bool MGatewayServer::HandleGeneratedClientRoute(const SGeneratedClientRouteRequest& Request)
+EGeneratedClientDispatchResult MGatewayServer::HandleGeneratedClientRoute(const SGeneratedClientRouteRequest& Request)
 {
     auto ClientIt = ClientConnections.find(Request.ConnectionId);
     if (ClientIt == ClientConnections.end() || !ClientIt->second)
     {
         LOG_WARN("Generated client route for unknown connection %llu",
                  static_cast<unsigned long long>(Request.ConnectionId));
-        return true;
+        return EGeneratedClientDispatchResult::InvokeFailed;
     }
 
     const TSharedPtr<MClientConnection>& Client = ClientIt->second;
     if (!IsGeneratedRouteAuthorized(Client, Request))
     {
-        return true;
+        return EGeneratedClientDispatchResult::AuthRequired;
     }
 
     if (!EnsureGeneratedRouteResolved(Request, Client))
     {
-        return true;
+        return EGeneratedClientDispatchResult::RoutePending;
     }
 
     const TArray Packet = BuildGeneratedRoutePacket(Request);
@@ -883,11 +894,6 @@ bool MGatewayServer::HandleGeneratedClientRoute(const SGeneratedClientRouteReque
             : FString(Request.RouteName ? Request.RouteName : "");
     const FString WrapMode = Request.WrapMode ? FString(Request.WrapMode) : FString();
     return ExecuteGeneratedRouteByPolicy(Client, RouteKey, WrapMode, &Request, Packet);
-}
-
-bool MGatewayServer::IsExplicitLegacyClientMessage(EClientMessageType MsgType) const
-{
-    return MsgType == EClientMessageType::MT_RPC;
 }
 
 bool MGatewayServer::HandleClientFunctionCall(uint64 ConnectionId, const TArray& Data)
@@ -975,60 +981,13 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TArray& Data)
     }
 
     const EClientMessageType MsgType = (EClientMessageType)Data[0];
-    const TArray Payload(Data.begin() + 1, Data.end());
     if (MsgType == EClientMessageType::MT_FunctionCall)
     {
         HandleClientFunctionCall(ConnectionId, Data);
         return;
     }
 
-    if (TryDispatchGeneratedClientMessage(this, ConnectionId, MsgType, Payload))
-    {
-        return;
-    }
-
-    if (IsExplicitLegacyClientMessage(MsgType))
-    {
-        if (!HandleLegacyClientRpc(ConnectionId, Data))
-        {
-            ++RejectedClientFallbackCount;
-        }
-        return;
-    }
-
-    ++RejectedClientFallbackCount;
-    LOG_WARN("Unhandled client message type %d: no generated route and no explicit legacy policy", (int)MsgType);
-}
-
-bool MGatewayServer::HandleLegacyClientRpc(uint64 ConnectionId, const TArray& Data)
-{
-    auto ClientIt = ClientConnections.find(ConnectionId);
-    if (ClientIt == ClientConnections.end())
-    {
-        LOG_WARN("Legacy MT_RPC for unknown connection %llu", (unsigned long long)ConnectionId);
-        return false;
-    }
-
-    if (!ClientIt->second->bAuthenticated)
-    {
-        LOG_WARN("Ignoring unauthenticated legacy MT_RPC");
-        return false;
-    }
-
-    if (!WorldServerConn || !WorldServerConn->IsConnected())
-    {
-        LOG_WARN("World server unavailable, dropping legacy MT_RPC");
-        return false;
-    }
-
-    ++LegacyClientRpcCount;
-    SendTypedServerMessage(
-        WorldServerConn,
-        EServerMessageType::MT_PlayerClientSync,
-        SPlayerClientSyncMessage{ClientIt->second->PlayerId, Data});
-    LOG_DEBUG("Forwarded legacy MT_RPC to WorldServer for player %llu",
-              (unsigned long long)ClientIt->second->PlayerId);
-    return true;
+    LOG_WARN("Rejected non-function client message type %d: MT_FunctionCall is the only supported ingress", (int)MsgType);
 }
 
 void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
@@ -1127,11 +1086,12 @@ void MGatewayServer::OnLogin_PlayerLogin(const SPlayerLoginResponseMessage& Mess
              static_cast<unsigned long long>(Message.ConnectionId),
              DescribeClientLoginResponsePayload(ResponsePayload).c_str());
 
-    TArray RespPayload = BuildPayload(ResponsePayload);
     TArray Packet;
-    Packet.reserve(1 + RespPayload.size());
-    Packet.push_back(static_cast<uint8>(EClientMessageType::MT_LoginResponse));
-    Packet.insert(Packet.end(), RespPayload.begin(), RespPayload.end());
+    if (!BuildClientFunctionCallPacketForPayload(MClientDownlink::OnLoginResponse, ResponsePayload, Packet))
+    {
+        LOG_WARN("Failed to build unified client login response packet");
+        return;
+    }
     SendClientPacketWithLog(Client, Packet);
 
     const uint64 RouteRequestId = QueryRoute(EServerType::World, Message.PlayerId);
@@ -1419,12 +1379,12 @@ void MGatewayServer::FlushPendingResolvedClientRoutes(EServerType ServerType)
             ReplayRequest.TargetServerType = ServerType;
             ReplayRequest.WrapMode = Pending.WrapMode.c_str();
 
-            if (!ExecuteGeneratedRouteByPolicy(
+            if (ExecuteGeneratedRouteByPolicy(
                     ClientIt->second,
                     GetServerTypeDisplayName(ServerType),
                     Pending.WrapMode,
                     &ReplayRequest,
-                    Pending.Packet))
+                    Pending.Packet) != EGeneratedClientDispatchResult::Routed)
             {
                 bAllFlushed = false;
             }

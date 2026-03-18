@@ -483,6 +483,70 @@ inline bool Deserialize(MMessageReader& Reader, SClientLoginResponsePayload& Out
     return Reader.Read(OutMessage.SessionKey) && Reader.Read(OutMessage.PlayerId);
 }
 
+// 客户端下行 ActorCreate：ActorId + 序列化后的完整 Actor 数据
+struct SClientActorCreatePayload
+{
+    uint64 ActorId = 0;
+    TArray Data;
+};
+
+inline void Serialize(MMessageWriter& Writer, const SClientActorCreatePayload& Message)
+{
+    const uint32 DataSize = static_cast<uint32>(Message.Data.size());
+    Writer.Write(Message.ActorId).Write(DataSize).WriteBytes(Message.Data);
+}
+
+inline bool Deserialize(MMessageReader& Reader, SClientActorCreatePayload& OutMessage)
+{
+    uint32 DataSize = 0;
+    if (!Reader.Read(OutMessage.ActorId) || !Reader.Read(DataSize))
+    {
+        return false;
+    }
+
+    return Reader.ReadBytes(DataSize, OutMessage.Data);
+}
+
+// 客户端下行 ActorUpdate：ActorId + 增量数据
+struct SClientActorUpdatePayload
+{
+    uint64 ActorId = 0;
+    TArray Data;
+};
+
+inline void Serialize(MMessageWriter& Writer, const SClientActorUpdatePayload& Message)
+{
+    const uint32 DataSize = static_cast<uint32>(Message.Data.size());
+    Writer.Write(Message.ActorId).Write(DataSize).WriteBytes(Message.Data);
+}
+
+inline bool Deserialize(MMessageReader& Reader, SClientActorUpdatePayload& OutMessage)
+{
+    uint32 DataSize = 0;
+    if (!Reader.Read(OutMessage.ActorId) || !Reader.Read(DataSize))
+    {
+        return false;
+    }
+
+    return Reader.ReadBytes(DataSize, OutMessage.Data);
+}
+
+// 客户端下行 ActorDestroy：仅携带 ActorId
+struct SClientActorDestroyPayload
+{
+    uint64 ActorId = 0;
+};
+
+inline void Serialize(MMessageWriter& Writer, const SClientActorDestroyPayload& Message)
+{
+    Writer.Write(Message.ActorId);
+}
+
+inline bool Deserialize(MMessageReader& Reader, SClientActorDestroyPayload& OutMessage)
+{
+    return Reader.Read(OutMessage.ActorId);
+}
+
 // 客户端移动载荷：位置 XYZ（World 解析 Gateway 转发的 gameplay 包）
 struct SPlayerMovePayload
 {

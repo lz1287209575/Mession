@@ -114,19 +114,22 @@ void MNetEventLoop::RunOnce(int TimeoutMs)
                 {
                     continue;
                 }
-                SAcceptedSocket Accepted = MSocket::AcceptConnection(L.Handle.Get());
-                if (!Accepted.IsValid())
+                while (true)
                 {
-                    break;
+                    SAcceptedSocket Accepted = MSocket::AcceptConnection(L.Handle.Get());
+                    if (!Accepted.IsValid())
+                    {
+                        break;
+                    }
+
+                    const uint64 ConnId = MUniqueIdGenerator::Generate();
+                    TSharedPtr<INetConnection> Conn = MakeShared<MTcpConnection>(
+                        std::move(Accepted.Socket), Accepted.RemoteAddress, Accepted.RemotePort);
+                    if (L.OnAccept)
+                    {
+                        L.OnAccept(ConnId, Conn);
+                    }
                 }
-                const uint64 ConnId = MUniqueIdGenerator::Generate();
-                TSharedPtr<INetConnection> Conn = MakeShared<MTcpConnection>(
-                    std::move(Accepted.Socket), Accepted.RemoteAddress, Accepted.RemotePort);
-                if (L.OnAccept)
-                {
-                    L.OnAccept(ConnId, Conn);
-                }
-                break;
             }
             continue;
         }
