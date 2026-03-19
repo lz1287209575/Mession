@@ -36,6 +36,8 @@ SERVER_ORDER = [
 
 PID_FILE_NAME = ".mession_servers.pid"
 SERVER_LOG_DIR = Path("Logs") / "servers"
+SERVER_LAUNCHER_DIR = Path("Build") / ".server_launchers"
+IS_WINDOWS = sys.platform == "win32"
 
 
 def log(msg: str) -> None:
@@ -72,6 +74,194 @@ def get_server_log_dir() -> Path:
     return get_project_root() / SERVER_LOG_DIR
 
 
+def get_server_launcher_dir() -> Path:
+    return get_project_root() / SERVER_LAUNCHER_DIR
+
+
+def get_watch_command_hint() -> str:
+    if IS_WINDOWS:
+        return r'Get-Content Logs\servers\GatewayServer.log -Wait'
+    return "tail -f Logs/servers/GatewayServer.log"
+
+
+def get_stop_command_hint() -> str:
+    if IS_WINDOWS:
+        return r"py -3 Scripts\servers.py stop [--build-dir <dir>]"
+    return "python3 Scripts/servers.py stop [--build-dir <dir>]"
+
+
+def get_popen_kwargs() -> dict:
+    if IS_WINDOWS:
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def get_foreground_popen_kwargs() -> dict:
+    return {}
+
+
+def get_split_window_popen_kwargs() -> dict:
+    if IS_WINDOWS:
+        return {
+            "creationflags": subprocess.CREATE_NEW_CONSOLE,
+        }
+    return {}
+
+
+def get_split_window_color(name: str) -> str:
+    color_map = {
+        "RouterServer": "0A",
+        "LoginServer": "0E",
+        "WorldServer": "09",
+        "SceneServer": "0B",
+        "GatewayServer": "0D",
+    }
+    return color_map.get(name, "07")
+
+
+def get_server_window_title(name: str) -> str:
+    return f"Mession - {name}"
+
+
+def create_split_window_launcher(exe: Path, build_dir: Path, name: str) -> Path:
+    launcher_dir = get_server_launcher_dir()
+    launcher_dir.mkdir(parents=True, exist_ok=True)
+
+    launcher_path = launcher_dir / f"{name}.cmd"
+    launcher_contents = "\r\n".join([
+        "@echo off",
+        f"title {get_server_window_title(name)}",
+        "chcp 65001>nul",
+        f"color {get_split_window_color(name)}",
+        f'cd /d "{build_dir}"',
+        f'call "{exe}"',
+        "",
+    ])
+    launcher_path.write_text(launcher_contents, encoding="utf-8", newline="")
+    return launcher_path
+
+
+def build_split_window_command(exe: Path, build_dir: Path, name: str) -> list[str]:
+    if IS_WINDOWS:
+        launcher = create_split_window_launcher(exe, build_dir, name)
+        return [
+            "cmd.exe",
+            "/d",
+            "/k",
+            str(launcher),
+        ]
+    return [str(exe)]
+
+
+def is_process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+
+    if IS_WINDOWS:
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+        output = result.stdout.strip()
+        return output.startswith('"')
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def request_window_close(name: str) -> bool:
+    if not IS_WINDOWS:
+        return False
+
+    title = get_server_window_title(name).replace("'", "''")
+    script = (
+        "Add-Type @\"\n"
+        "using System;\n"
+        "using System.Runtime.InteropServices;\n"
+        "public static class CodexWin32 {\n"
+        "  [DllImport(\"user32.dll\", CharSet = CharSet.Unicode, SetLastError = true)]\n"
+        "  public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);\n"
+        "  [DllImport(\"user32.dll\", SetLastError = true)]\n"
+        "  public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);\n"
+        "}\n"
+        "\"@;"
+        f"$hwnd = [CodexWin32]::FindWindow($null, '{title}');"
+        "if ($hwnd -eq [IntPtr]::Zero) { exit 2 }"
+        "if ([CodexWin32]::PostMessage($hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) { exit 0 }"
+        "exit 1"
+    )
+
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def terminate_pid(pid: int, force: bool = False) -> bool:
+    if pid <= 0:
+        return False
+
+    if IS_WINDOWS:
+        cmd = ["taskkill", "/PID", str(pid), "/T"]
+        if force:
+            cmd.append("/F")
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=10)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0
+
+    try:
+        os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+        return True
+    except OSError:
+        return False
+
+
+def find_pids_by_port(port: int) -> list[int]:
+    if port <= 0:
+        return []
+
+    if IS_WINDOWS:
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano", "-p", "tcp"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return []
+
+        pids: set[int] = set()
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            local_addr = parts[1]
+            pid_text = parts[-1]
+            if not pid_text.isdigit():
+                continue
+            if local_addr.endswith(f":{port}"):
+                pids.add(int(pid_text))
+        return sorted(pids)
+
+    return []
+
+
 def wait_for_port(host: str, port: int, timeout: float) -> bool:
     import socket
     deadline = time.time() + timeout
@@ -87,12 +277,106 @@ def wait_for_port(host: str, port: int, timeout: float) -> bool:
     return False
 
 
-def start_servers(build_dir: Path, wait_ready: bool = True) -> int:
+def stop_processes(pids: list[int], kill_by_port: bool = True) -> int:
+    if IS_WINDOWS:
+        stopped_any = False
+        graceful_requested = False
+
+        for name, _port in SERVER_ORDER:
+            if request_window_close(name):
+                log(f"Requested graceful shutdown for {name}")
+                graceful_requested = True
+
+        if graceful_requested:
+            deadline = time.time() + 5.0
+            while time.time() < deadline:
+                if all(not is_process_alive(pid) for pid in pids):
+                    break
+                time.sleep(0.2)
+
+        for pid in pids:
+            if graceful_requested and not is_process_alive(pid):
+                log(f"Stopped PID {pid}")
+                stopped_any = True
+                continue
+            try:
+                if terminate_pid(pid, force=True):
+                    log(f"Stopped PID {pid}")
+                    stopped_any = True
+                elif is_process_alive(pid):
+                    log(f"Could not stop PID {pid}")
+            except OSError as e:
+                log(f"Could not kill {pid}: {e}")
+
+        if kill_by_port:
+            for _name, port in SERVER_ORDER:
+                for pid in find_pids_by_port(port):
+                    if terminate_pid(pid, force=True):
+                        log(f"Stopped PID {pid} on TCP port {port}")
+                        stopped_any = True
+
+        if not stopped_any and pids:
+            log("No server processes were stopped.")
+        log("Stop done.")
+        return 0
+
+    stopped_any = False
+    for pid in pids:
+        try:
+            if terminate_pid(pid, force=False):
+                log(f"Sent stop signal to PID {pid}")
+                stopped_any = True
+            elif is_process_alive(pid):
+                log(f"Could not stop PID {pid} gracefully")
+        except OSError as e:
+            log(f"Could not kill {pid}: {e}")
+
+    if stopped_any:
+        time.sleep(1.0)
+
+    for pid in pids:
+        if not is_process_alive(pid):
+            continue
+        try:
+            if terminate_pid(pid, force=True):
+                log(f"Force-stopped PID {pid}")
+        except OSError:
+            pass
+
+    if kill_by_port and not IS_WINDOWS:
+        for _name, port in SERVER_ORDER:
+            try:
+                subprocess.run(
+                    ["fuser", "-k", f"{port}/tcp"],
+                    capture_output=True,
+                    timeout=5,
+                )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+
+    log("Stop done.")
+    return 0
+
+
+def start_servers(
+    build_dir: Path,
+    wait_ready: bool = True,
+    foreground: bool = False,
+    split_windows: bool = False,
+) -> int:
     project_root = get_project_root()
     if not build_dir.is_absolute():
         build_dir = (project_root / build_dir).resolve()
     if not build_dir.exists():
         log(f"Build dir does not exist: {build_dir}")
+        return 1
+
+    if split_windows and not IS_WINDOWS:
+        log("--split-windows is only supported on Windows")
+        return 1
+
+    if foreground and split_windows:
+        log("--foreground and --split-windows cannot be used together")
         return 1
 
     log_dir = get_server_log_dir()
@@ -120,17 +404,32 @@ def start_servers(build_dir: Path, wait_ready: bool = True) -> int:
                 f.close()
             return 1
         log(f"Starting {name} (port {port})...")
-        log_path = log_dir / f"{name}.log"
-        log_file = open(log_path, "w", encoding="utf-8")
+        if foreground:
+            stdout_target = None
+            stderr_target = None
+            extra_kwargs = get_foreground_popen_kwargs()
+            command = [str(exe)]
+        elif split_windows:
+            stdout_target = None
+            stderr_target = None
+            extra_kwargs = get_split_window_popen_kwargs()
+            command = build_split_window_command(exe, build_dir, name)
+        else:
+            log_path = log_dir / f"{name}.log"
+            log_file = open(log_path, "w", encoding="utf-8")
+            log_files.append(log_file)
+            stdout_target = log_file
+            stderr_target = log_file
+            extra_kwargs = get_popen_kwargs()
+            command = [str(exe)]
         proc = subprocess.Popen(
-            [str(exe)],
+            command,
             cwd=str(build_dir),
-            stdout=log_file,
-            stderr=log_file,
-            start_new_session=True,
+            stdout=stdout_target,
+            stderr=stderr_target,
             env=os.environ.copy(),
+            **extra_kwargs,
         )
-        log_files.append(log_file)
         procs.append(proc)
         pids.append(proc.pid)
 
@@ -151,17 +450,40 @@ def start_servers(build_dir: Path, wait_ready: bool = True) -> int:
     for f in log_files:
         f.close()
 
+    if foreground:
+        log("All servers started in foreground mode.")
+        log(f"  PIDs: {pids}")
+        log("  Press Ctrl+C to stop all servers.")
+        try:
+            while True:
+                for proc, name in zip(procs, [item[0] for item in SERVER_ORDER]):
+                    code = proc.poll()
+                    if code is not None:
+                        log(f"{name} exited with code {code}")
+                        return_code = 0 if code == 0 else code
+                        stop_processes([p.pid for p in procs if p.poll() is None], kill_by_port=True)
+                        return return_code
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            log("Received Ctrl+C, stopping all servers...")
+            stop_processes([p.pid for p in procs if p.poll() is None], kill_by_port=True)
+            return 0
+
     pid_file = get_pid_file_path(build_dir)
     try:
         pid_file.write_text("\n".join(str(pid) for pid in pids), encoding="utf-8")
     except OSError as e:
         log(f"Warning: could not write PID file: {e}")
 
-    log("All servers started.")
+    if split_windows:
+        log("All servers started in split-window mode.")
+    else:
+        log("All servers started.")
     log(f"  PIDs: {pids}")
-    log(f"  Logs: {log_dir}")
-    log("  Watch with: tail -f Logs/servers/GatewayServer.log")
-    log("  Stop with: python3 Scripts/servers.py stop [--build-dir <dir>]")
+    if not split_windows:
+        log(f"  Logs: {log_dir}")
+        log(f"  Watch with: {get_watch_command_hint()}")
+    log(f"  Stop with: {get_stop_command_hint()}")
     return 0
 
 
@@ -171,46 +493,18 @@ def stop_servers(build_dir: Path, kill_by_port: bool = True) -> int:
         build_dir = (project_root / build_dir).resolve()
     pid_file = get_pid_file_path(build_dir)
 
-    stopped_any = False
+    pids: list[int] = []
     if pid_file.exists():
         try:
             content = pid_file.read_text(encoding="utf-8")
             pids = [int(line.strip()) for line in content.splitlines() if line.strip()]
         except (ValueError, OSError):
             pids = []
-        for pid in pids:
-            try:
-                os.kill(pid, signal.SIGTERM)
-                log(f"Sent SIGTERM to PID {pid}")
-                stopped_any = True
-            except ProcessLookupError:
-                pass
-            except OSError as e:
-                log(f"Could not kill {pid}: {e}")
         try:
             pid_file.unlink()
         except OSError:
             pass
-        if stopped_any:
-            time.sleep(1.0)
-        for pid in pids:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                pass
-
-    if kill_by_port and sys.platform != "win32":
-        for _name, port in SERVER_ORDER:
-            try:
-                subprocess.run(
-                    ["fuser", "-k", f"{port}/tcp"],
-                    capture_output=True,
-                    timeout=5,
-                )
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                pass
-    log("Stop done.")
-    return 0
+    return stop_processes(pids, kill_by_port=kill_by_port)
 
 
 def main() -> int:
@@ -218,10 +512,17 @@ def main() -> int:
     parser.add_argument("command", choices=["start", "stop"], help="start or stop all servers")
     parser.add_argument("--build-dir", type=Path, default=Path("Build"), help="Build output directory (default: Build)")
     parser.add_argument("--no-wait", action="store_true", help="(start only) Do not wait for each server port to be ready")
+    parser.add_argument("--foreground", action="store_true", help="(start only) Run servers in the current terminal instead of the background")
+    parser.add_argument("--split-windows", action="store_true", help="(start only, Windows) Run each server in its own console window")
     args = parser.parse_args()
 
     if args.command == "start":
-        return start_servers(args.build_dir, wait_ready=not args.no_wait)
+        return start_servers(
+            args.build_dir,
+            wait_ready=not args.no_wait,
+            foreground=args.foreground,
+            split_windows=args.split_windows,
+        )
     return stop_servers(args.build_dir)
 
 

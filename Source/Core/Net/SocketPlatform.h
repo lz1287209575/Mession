@@ -29,6 +29,7 @@ public:
     static bool EnsureInit();
 
     static TSocketFd CreateTcpSocket();
+    static void ShutdownSocket(TSocketFd SocketFd);
     static void CloseSocket(TSocketFd SocketFd);
 
     static bool SetNonBlocking(TSocketFd SocketFd, bool bNonBlocking);
@@ -48,4 +49,5 @@ public:
     static FString GetLastErrorMessage();
     static bool IsWouldBlock(int Error);
     static bool IsConnectInProgress(int Error);
+    static bool IsConnectionReset(int Error);
 };

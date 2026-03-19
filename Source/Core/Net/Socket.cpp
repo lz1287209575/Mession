@@ -195,12 +195,20 @@ bool MTcpConnection::ReceivePacket(TArray& OutPacket)
             return false;
         }
 
-        if (MSocketPlatform::IsWouldBlock(MSocketPlatform::GetLastError()))
+        const int LastError = MSocketPlatform::GetLastError();
+        if (MSocketPlatform::IsWouldBlock(LastError))
         {
             return false;
         }
 
-        LOG_ERROR("Receive failed: %s", MSocketPlatform::GetLastErrorMessage().c_str());
+        if (MSocketPlatform::IsConnectionReset(LastError))
+        {
+            LOG_INFO("Connection reset by peer (player=%llu)", (unsigned long long)PlayerId);
+        }
+        else
+        {
+            LOG_ERROR("Receive failed: %s", MSocketPlatform::GetLastErrorMessage().c_str());
+        }
         bConnected = false;
         return false;
     }
@@ -249,6 +257,7 @@ void MTcpConnection::Close()
     {
         LOG_DEBUG("Closing connection (player=%llu, fd=%zd)",
                   (unsigned long long)PlayerId, (intptr_t)Socket.Get());
+        MSocketPlatform::ShutdownSocket(Socket.Get());
         Socket.Reset();
         bConnected = false;
     }

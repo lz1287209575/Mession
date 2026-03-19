@@ -12,6 +12,15 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/Bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/Bin/Lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/Bin/Lib)
 
+# Keep multi-config generators (Visual Studio/Xcode) from adding per-config
+# subdirectories so custom tools can be referenced from a stable Bin path.
+foreach(Config Debug Release RelWithDebInfo MinSizeRel)
+    string(TOUPPER "${Config}" ConfigUpper)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${ConfigUpper} ${CMAKE_SOURCE_DIR}/Bin)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${ConfigUpper} ${CMAKE_SOURCE_DIR}/Bin/Lib/${Config})
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${ConfigUpper} ${CMAKE_SOURCE_DIR}/Bin/Lib/${Config})
+endforeach()
+
 # 统一编译选项
 function(configure_mession_compile_options TargetName)
     target_compile_definitions(${TargetName}
@@ -24,6 +33,7 @@ function(configure_mession_compile_options TargetName)
             PRIVATE
                 /W4
                 /EHsc
+                /utf-8
                 $<$<CONFIG:Debug>:/Zi>
                 $<$<CONFIG:Debug>:/Od>
                 $<$<CONFIG:Release>:/O2>

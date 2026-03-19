@@ -12,7 +12,7 @@ struct SBenchConfig
     int RequestsPerClient = 50;   // 每个客户端执行多少次登录+移动
 };
 
-static bool SendAll(int Fd, const uint8* Data, size_t Size)
+static bool SendAll(TSocketFd Fd, const uint8* Data, size_t Size)
 {
     size_t SentTotal = 0;
     while (SentTotal < Size)
@@ -27,7 +27,7 @@ static bool SendAll(int Fd, const uint8* Data, size_t Size)
     return true;
 }
 
-static bool RecvAll(int Fd, uint8* Data, size_t Size)
+static bool RecvAll(TSocketFd Fd, uint8* Data, size_t Size)
 {
     size_t RecvTotal = 0;
     while (RecvTotal < Size)
@@ -42,7 +42,7 @@ static bool RecvAll(int Fd, uint8* Data, size_t Size)
     return true;
 }
 
-static bool SendLoginAndWaitResponse(int Fd, uint64 PlayerId)
+static bool SendLoginAndWaitResponse(TSocketFd Fd, uint64 PlayerId)
 {
     // 构造统一函数调用登录请求:
     // Length(4) + MsgType(1=MT_FunctionCall) + FunctionId(2) + PayloadSize(4) + PlayerId(8)
@@ -132,8 +132,8 @@ static void RunClientWorker(const SBenchConfig& Config, int Index, std::atomic<i
         return;
     }
 
-    int Fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (Fd < 0)
+    TSocketFd Fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (Fd == INVALID_SOCKET_FD)
     {
         return;
     }
@@ -146,7 +146,7 @@ static void RunClientWorker(const SBenchConfig& Config, int Index, std::atomic<i
 
     if (::connect(Fd, (sockaddr*)&Addr, sizeof(Addr)) != 0)
     {
-        ::close(Fd);
+        MSocketPlatform::CloseSocket(Fd);
         return;
     }
 
@@ -159,7 +159,7 @@ static void RunClientWorker(const SBenchConfig& Config, int Index, std::atomic<i
         }
     }
 
-    ::close(Fd);
+    MSocketPlatform::CloseSocket(Fd);
 }
 
 int main(int argc, char** argv)

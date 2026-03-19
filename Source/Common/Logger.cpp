@@ -4,6 +4,9 @@
 #include <chrono>
 #include <iomanip>
 #include <ctime>
+#if defined(_WIN32) || defined(_WIN64)
+#include <windows.h>
+#endif
 
 namespace
 {
@@ -22,6 +25,57 @@ ELogLevel LegacyIntToLevel(int Value)
     }
     return static_cast<ELogLevel>(Value);
 }
+
+#if defined(_WIN32) || defined(_WIN64)
+bool WriteUtf8LineToWindowsConsole(const FString& Line)
+{
+    HANDLE StdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (StdoutHandle == nullptr || StdoutHandle == INVALID_HANDLE_VALUE)
+    {
+        return false;
+    }
+
+    DWORD ConsoleMode = 0;
+    if (!GetConsoleMode(StdoutHandle, &ConsoleMode))
+    {
+        return false;
+    }
+
+    const int WideLength = MultiByteToWideChar(
+        CP_UTF8,
+        0,
+        Line.c_str(),
+        static_cast<int>(Line.size()),
+        nullptr,
+        0);
+    if (WideLength <= 0)
+    {
+        return false;
+    }
+
+    std::wstring WideLine;
+    WideLine.resize(static_cast<size_t>(WideLength));
+    if (MultiByteToWideChar(
+            CP_UTF8,
+            0,
+            Line.c_str(),
+            static_cast<int>(Line.size()),
+            WideLine.data(),
+            WideLength) <= 0)
+    {
+        return false;
+    }
+
+    WideLine += L"\n";
+    DWORD CharsWritten = 0;
+    return WriteConsoleW(
+        StdoutHandle,
+        WideLine.c_str(),
+        static_cast<DWORD>(WideLine.size()),
+        &CharsWritten,
+        nullptr) != 0;
+}
+#endif
 }
 
 void MConsoleSink::Write(ELogLevel Level, const FString& FormattedLine)
@@ -31,6 +85,12 @@ void MConsoleSink::Write(ELogLevel Level, const FString& FormattedLine)
         return;
     }
     std::lock_guard<std::mutex> Lock(WriteMutex);
+#if defined(_WIN32) || defined(_WIN64)
+    if (WriteUtf8LineToWindowsConsole(FormattedLine))
+    {
+        return;
+    }
+#endif
     std::cout << FormattedLine << std::endl;
 }
 
@@ -359,12 +419,12 @@ MLogger* MLogger::GetOrCreateLogger(const FString& Name)
 void MLogger::LogStartupBanner(const char* ServiceName, uint16 Port, intptr_t Fd)
 {
     static const char* const AsciiArt[] = {
-      " ███╗   ███╗███████╗███████╗███████╗██╗ ██████╗ ███╗   ██╗",
-      " ████╗ ████║██╔════╝██╔════╝██╔════╝██║██╔═══██╗████╗  ██║",
-      " ██╔████╔██║█████╗  ███████╗███████╗██║██║   ██║██╔██╗ ██║",
-      " ██║╚██╔╝██║██╔══╝  ╚════██║╚════██║██║██║   ██║██║╚██╗██║",
-      " ██║ ╚═╝ ██║███████╗███████║███████║██║╚██████╔╝██║ ╚████║",
-      " ╚═╝     ╚═╝╚══════╝╚══════╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝"
+      " ███╗   ███╗███████╗███████╗███████╗██╗ ██████╗ ███╗   ██╗ ",
+      " ████╗ ████║██╔════╝██╔════╝██╔════╝██║██╔═══██╗████╗  ██║ ",
+      " ██╔████╔██║█████╗  ███████╗███████╗██║██║   ██║██╔██╗ ██║ ",
+      " ██║╚██╔╝██║██╔══╝  ╚════██║╚════██║██║██║   ██║██║╚██╗██║ ",
+      " ██║ ╚═╝ ██║███████╗███████║███████║██║╚██████╔╝██║ ╚████║ ",
+      " ╚═╝     ╚═╝╚══════╝╚══════╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝ "
     };
     static const char* Version = "1.0.0";
 

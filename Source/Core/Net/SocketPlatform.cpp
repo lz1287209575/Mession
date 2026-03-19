@@ -46,6 +46,21 @@ TSocketFd MSocketPlatform::CreateTcpSocket()
     return socket(AF_INET, SOCK_STREAM, 0);
 }
 
+void MSocketPlatform::ShutdownSocket(TSocketFd SocketFd)
+{
+#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
+    if (IsValidSocket(SocketFd))
+    {
+        shutdown(SocketFd, SD_BOTH);
+    }
+#else
+    if (IsValidSocket(SocketFd))
+    {
+        shutdown(SocketFd, SHUT_RDWR);
+    }
+#endif
+}
+
 void MSocketPlatform::CloseSocket(TSocketFd SocketFd)
 {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
@@ -222,5 +237,14 @@ bool MSocketPlatform::IsConnectInProgress(int Error)
     return Error == WSAEWOULDBLOCK || Error == WSAEINPROGRESS;
 #else
     return Error == EINPROGRESS;
+#endif
+}
+
+bool MSocketPlatform::IsConnectionReset(int Error)
+{
+#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
+    return Error == WSAECONNRESET;
+#else
+    return Error == ECONNRESET;
 #endif
 }
