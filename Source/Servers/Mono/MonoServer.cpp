@@ -8,7 +8,7 @@ namespace
 {
 struct SRenameParams
 {
-    FString NewName;
+    MString NewName;
 };
 
 struct SGetGoldAmountParams
@@ -84,13 +84,13 @@ bool RunReflectionTests()
         }
         LOG_INFO("MReflectionSmokeCharacter after CallFunction(LevelUp): Level=%d", *LevelAfterCall);
 
-        if (!Character->CallFunctionArgs("Rename", FString("ReflectedHero")))
+        if (!Character->CallFunctionArgs("Rename", MString("ReflectedHero")))
         {
             LOG_ERROR("CallFunctionArgs(Rename) failed on MReflectionSmokeCharacter");
             return false;
         }
 
-        FString* NameAfterRename = GET_PROPERTY(Character, FString, Name);
+        MString* NameAfterRename = GET_PROPERTY(Character, MString, Name);
         if (!NameAfterRename || *NameAfterRename != "ReflectedHero")
         {
             LOG_ERROR("Rename via reflection did not update Name");
@@ -129,7 +129,7 @@ bool RunReflectionTests()
             return false;
         }
 
-        NameAfterRename = GET_PROPERTY(Character, FString, Name);
+        NameAfterRename = GET_PROPERTY(Character, MString, Name);
         if (!NameAfterRename || *NameAfterRename != "ProcessEventHero")
         {
             LOG_ERROR("ProcessEvent(Rename) did not update Name");
@@ -219,10 +219,10 @@ bool RunReflectionTests()
         
         // 通过反射接口设置基本字段
         SET_PROPERTY(Data, uint64, PlayerId, 1001);
-        SET_PROPERTY(Data, FString, AccountName, FString("TestAccount"));
+        SET_PROPERTY(Data, MString, AccountName, MString("TestAccount"));
         SET_PROPERTY(Data, int32, VIPLevel, 3);
         SET_PROPERTY(Data, int64, LoginTime, 123456789);
-        SET_PROPERTY(Data, FString, LastLoginIP, FString("127.0.0.1"));
+        SET_PROPERTY(Data, MString, LastLoginIP, MString("127.0.0.1"));
 
         // 直接操作容器字段（通过普通 C++ 访问）
         Data->GetFriendsList() = {2001, 2002, 2003};
@@ -266,7 +266,7 @@ bool RunReflectionTests()
         }
         
         uint64* PlayerIdPtr = GET_PROPERTY(Data, uint64, PlayerId);
-        FString* AccountNamePtr = GET_PROPERTY(Data, FString, AccountName);
+        MString* AccountNamePtr = GET_PROPERTY(Data, MString, AccountName);
         int32* VipLevelPtr = GET_PROPERTY(Data, int32, VIPLevel);
         
         LOG_INFO("MReflectionSmokePlayerData before serialize: PlayerId=%llu Account=%s VIP=%d Friends=%zu FriendLevels=%zu BlackList=%zu",
@@ -277,7 +277,7 @@ bool RunReflectionTests()
                  (size_t)Data->GetFriendLevels().size(),
                  (size_t)Data->GetBlackList().size());
         
-        TArray Buffer;
+        TByteArray Buffer;
         {
             MReflectArchive Ar;
             PlayerDataClass->WriteSnapshot(Data, Ar);
@@ -293,7 +293,7 @@ bool RunReflectionTests()
         PlayerDataClass->ReadSnapshot(DataCopy, Buffer);
         
         uint64* PlayerIdCopyPtr = GET_PROPERTY(DataCopy, uint64, PlayerId);
-        FString* AccountNameCopyPtr = GET_PROPERTY(DataCopy, FString, AccountName);
+        MString* AccountNameCopyPtr = GET_PROPERTY(DataCopy, MString, AccountName);
         int32* VipLevelCopyPtr = GET_PROPERTY(DataCopy, int32, VIPLevel);
         
         LOG_INFO("MReflectionSmokePlayerData after deserialize: PlayerId=%llu Account=%s VIP=%d Friends=%zu FriendLevels=%zu BlackList=%zu",
@@ -432,7 +432,7 @@ bool RunReflectionTests()
 
         // 按 EServerMessageType::MT_RPC 设计网络包格式：
         // [MsgType(1)][ObjectId(8)][FunctionId(2)][PayloadSize(4)][Payload...]
-        TArray Packet;
+        TByteArray Packet;
         Packet.reserve(1 + sizeof(ObjectId) + sizeof(FunctionId) + sizeof(PayloadSize) + PayloadSize);
 
         uint8 MsgType = static_cast<uint8>(EServerMessageType::MT_RPC);
@@ -498,7 +498,7 @@ bool RunReflectionTests()
             return false;
         }
 
-        TArray RecvPayload;
+        TByteArray RecvPayload;
         if (RecvPayloadSize > 0)
         {
             RecvPayload.resize(RecvPayloadSize);

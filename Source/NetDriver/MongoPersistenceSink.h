@@ -4,9 +4,9 @@
 
 struct SMongoPersistenceConfig
 {
-    FString Uri = "mongodb://127.0.0.1:27017";
-    FString Database = "mession";
-    FString Collection = "world_snapshots";
+    MString Uri = "mongodb://127.0.0.1:27017";
+    MString Database = "mession";
+    MString Collection = "world_snapshots";
     bool bUpsert = true;
 };
 

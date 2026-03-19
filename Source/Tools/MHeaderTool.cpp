@@ -839,11 +839,11 @@ std::string InferPropertyKind(const std::string& TypeName)
     {
         return "Bool";
     }
-    if (Compact == "FString")
+    if (Compact == "MString")
     {
         return "String";
     }
-    if (Compact == "FName")
+    if (Compact == "MName")
     {
         return "Name";
     }
@@ -855,7 +855,7 @@ std::string InferPropertyKind(const std::string& TypeName)
     {
         return "Rotator";
     }
-    if (StartsWith(Compact, "TVector<") || StartsWith(Compact, "TArray<") ||
+    if (StartsWith(Compact, "TVector<") || StartsWith(Compact, "TByteArray<") ||
         StartsWith(Compact, "TMap<") || StartsWith(Compact, "TSet<"))
     {
         return "Array";
@@ -2100,7 +2100,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
             }
             const size_t PayloadParamCount = Function.Params.size() - InjectedParamCount;
 
-            Out << "inline bool " << BinderFunctionName << "(uint64 ConnectionId, const TArray& Payload, TArray& OutParamStorage)\n";
+            Out << "inline bool " << BinderFunctionName << "(uint64 ConnectionId, const TByteArray& Payload, TByteArray& OutParamStorage)\n";
             Out << "{\n";
             Out << "    OutParamStorage.assign(sizeof(" << ParamStructName << "), 0);\n";
             Out << "    auto* Params = reinterpret_cast<" << ParamStructName << "*>(OutParamStorage.data());\n";
@@ -2157,7 +2157,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
             Out << "{\n";
             Out << "namespace " << SanitizeIdentifier(ParsedClass.Name) << "\n";
             Out << "{\n";
-            Out << "inline bool " << Function.Name << "(TArray& OutData";
+            Out << "inline bool " << Function.Name << "(TByteArray& OutData";
             for (const auto& Param : Function.Params)
             {
                 Out << ", " << Param.Type << " " << Param.Name;
@@ -2179,7 +2179,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
             }
             Out << ")\n";
             Out << "{\n";
-            Out << "    TArray RpcPayload;\n";
+            Out << "    TByteArray RpcPayload;\n";
             Out << "    if (!" << Function.Name << "(RpcPayload";
             for (const auto& Param : Function.Params)
             {
@@ -2539,7 +2539,7 @@ bool WriteGeneratedRpcManifest(const fs::path& OutputDir, const std::vector<SPar
         Out << "struct TBuilder<EFunction::" << HelperName << ">\n";
         Out << "{\n";
         Out << "    template<typename... TArgs>\n";
-        Out << "    static bool Build(EServerType ServerType, TArray& OutData, TArgs&&... Args)\n";
+        Out << "    static bool Build(EServerType ServerType, TByteArray& OutData, TArgs&&... Args)\n";
         Out << "{\n";
         Out << "    switch (ServerType)\n";
         Out << "    {\n";
@@ -2556,7 +2556,7 @@ bool WriteGeneratedRpcManifest(const fs::path& OutputDir, const std::vector<SPar
         Out << "};\n\n";
     }
     Out << "template<EFunction Function, typename... TArgs>\n";
-    Out << "inline bool Build(EServerType ServerType, TArray& OutData, TArgs&&... Args)\n";
+    Out << "inline bool Build(EServerType ServerType, TByteArray& OutData, TArgs&&... Args)\n";
     Out << "{\n";
     Out << "    return TBuilder<Function>::Build(ServerType, OutData, std::forward<TArgs>(Args)...);\n";
     Out << "}\n";
@@ -2567,7 +2567,7 @@ bool WriteGeneratedRpcManifest(const fs::path& OutputDir, const std::vector<SPar
     Out << "template<MRpcManifest::EFunction Function, typename TConnection, typename... TArgs>\n";
     Out << "inline bool Call(TConnection&& Connection, EServerType ServerType, TArgs&&... Args)\n";
     Out << "{\n";
-    Out << "    TArray RpcPayload;\n";
+    Out << "    TByteArray RpcPayload;\n";
     Out << "    if (!MRpcManifest::Build<Function>(ServerType, RpcPayload, std::forward<TArgs>(Args)...))\n";
     Out << "    {\n";
     Out << "        ReportUnsupportedGeneratedRpcEndpoint(ServerType, MRpcManifest::GetFunctionName(Function));\n";
@@ -2803,7 +2803,7 @@ bool WriteGeneratedClientManifest(const fs::path& OutputDir, const std::vector<S
     Out << "\n";
     Out << "namespace MClientManifest\n";
     Out << "{\n";
-    Out << "using FBindParamsFn = bool(*)(uint64 ConnectionId, const TArray& Payload, TArray& OutParamStorage);\n";
+    Out << "using FBindParamsFn = bool(*)(uint64 ConnectionId, const TByteArray& Payload, TByteArray& OutParamStorage);\n";
     Out << "struct SEntry\n";
     Out << "{\n";
     Out << "    uint16 FunctionId;\n";

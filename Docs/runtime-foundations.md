@@ -7,7 +7,7 @@
 项目在 `Core/NetCore.h` 和 `Common/` 中统一封装常用能力，例如：
 
 - 基础整数与字符串类型
-- `TArray` / `TVector` / `TMap` / `TSet`
+- `TByteArray` / `TVector` / `TMap` / `TSet`
 - 时间与唯一 ID
 - `SVector` / `SRotator`
 - 配置、字符串工具、结果类型

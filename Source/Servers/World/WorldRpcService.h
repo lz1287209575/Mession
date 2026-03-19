@@ -13,9 +13,9 @@ public:
     using FHandler_Rpc_OnPlayerLoginRequest = TFunction<void(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey)>;
     using FHandler_Rpc_OnSessionValidateResponse = TFunction<void(uint64 ValidationRequestId, uint64 PlayerId, bool bValid)>;
     using FHandler_Rpc_OnMgoLoadSnapshotResponse =
-        TFunction<void(uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const FString& ClassName, const FString& SnapshotHex)>;
+        TFunction<void(uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const MString& ClassName, const MString& SnapshotHex)>;
     using FHandler_Rpc_OnMgoPersistSnapshotResult =
-        TFunction<void(uint32 OwnerWorldId, uint64 RequestId, uint64 ObjectId, uint64 Version, bool bSuccess, const FString& Reason)>;
+        TFunction<void(uint32 OwnerWorldId, uint64 RequestId, uint64 ObjectId, uint64 Version, bool bSuccess, const MString& Reason)>;
 
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true)
     void Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey);
@@ -23,9 +23,9 @@ public:
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true)
     void Rpc_OnSessionValidateResponse(uint64 ValidationRequestId, uint64 PlayerId, bool bValid);
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true)
-    void Rpc_OnMgoLoadSnapshotResponse(uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const FString& ClassName, const FString& SnapshotHex);
+    void Rpc_OnMgoLoadSnapshotResponse(uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const MString& ClassName, const MString& SnapshotHex);
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true)
-    void Rpc_OnMgoPersistSnapshotResult(uint32 OwnerWorldId, uint64 RequestId, uint64 ObjectId, uint64 Version, bool bSuccess, const FString& Reason);
+    void Rpc_OnMgoPersistSnapshotResult(uint32 OwnerWorldId, uint64 RequestId, uint64 ObjectId, uint64 Version, bool bSuccess, const MString& Reason);
 
     static void SetHandler_Rpc_OnPlayerLoginRequest(const FHandler_Rpc_OnPlayerLoginRequest& InHandler);
     static void SetHandler_Rpc_OnSessionValidateResponse(const FHandler_Rpc_OnSessionValidateResponse& InHandler);
@@ -79,7 +79,7 @@ inline void MWorldService::SetHandler_Rpc_OnSessionValidateResponse(const FHandl
     Handler_Rpc_OnSessionValidateResponse = InHandler;
 }
 
-inline void MWorldService::Rpc_OnMgoLoadSnapshotResponse(uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const FString& ClassName, const FString& SnapshotHex)
+inline void MWorldService::Rpc_OnMgoLoadSnapshotResponse(uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const MString& ClassName, const MString& SnapshotHex)
 {
     if (Handler_Rpc_OnMgoLoadSnapshotResponse)
     {
@@ -104,7 +104,7 @@ inline void MWorldService::Rpc_OnMgoPersistSnapshotResult(
     uint64 ObjectId,
     uint64 Version,
     bool bSuccess,
-    const FString& Reason)
+    const MString& Reason)
 {
     if (Handler_Rpc_OnMgoPersistSnapshotResult)
     {
@@ -140,12 +140,12 @@ inline void MWorldService::BindHandlers(TServer* Server)
             Server->Rpc_OnSessionValidateResponse(ValidationRequestId, PlayerId, bValid);
         });
     SetHandler_Rpc_OnMgoLoadSnapshotResponse(
-        [Server](uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const FString& ClassName, const FString& SnapshotHex)
+        [Server](uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const MString& ClassName, const MString& SnapshotHex)
         {
             Server->Rpc_OnMgoLoadSnapshotResponse(RequestId, ObjectId, bFound, ClassId, ClassName, SnapshotHex);
         });
     SetHandler_Rpc_OnMgoPersistSnapshotResult(
-        [Server](uint32 OwnerWorldId, uint64 RequestId, uint64 ObjectId, uint64 Version, bool bSuccess, const FString& Reason)
+        [Server](uint32 OwnerWorldId, uint64 RequestId, uint64 ObjectId, uint64 Version, bool bSuccess, const MString& Reason)
         {
             Server->Rpc_OnMgoPersistSnapshotResult(OwnerWorldId, RequestId, ObjectId, Version, bSuccess, Reason);
         });

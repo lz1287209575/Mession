@@ -22,7 +22,7 @@ struct SServerHandshakeMessage
 {
     uint32 ServerId = 0;
     EServerType ServerType = EServerType::Unknown;
-    FString ServerName;
+    MString ServerName;
 };
 
 inline void Serialize(MMessageWriter& Writer, const SServerHandshakeMessage& Message)
@@ -50,8 +50,8 @@ struct SServerRegisterMessage
 {
     uint32 ServerId = 0;
     EServerType ServerType = EServerType::Unknown;
-    FString ServerName;
-    FString Address;
+    MString ServerName;
+    MString Address;
     uint16 Port = 0;
     uint16 ZoneId = 0;
 };
@@ -383,7 +383,7 @@ inline bool Deserialize(MMessageReader& Reader, SHeartbeatMessage& OutMessage)
 struct SChatMessage
 {
     uint64 FromPlayerId = 0;
-    FString Message;
+    MString Message;
 };
 
 inline void Serialize(MMessageWriter& Writer, const SChatMessage& InMessage)
@@ -401,7 +401,7 @@ inline bool Deserialize(MMessageReader& Reader, SChatMessage& OutMessage)
 struct SGameplaySyncMessage
 {
     uint64 ConnectionId = 0;
-    TArray Data;
+    TByteArray Data;
 };
 
 inline void Serialize(MMessageWriter& Writer, const SGameplaySyncMessage& Message)
@@ -427,7 +427,7 @@ inline bool Deserialize(MMessageReader& Reader, SGameplaySyncMessage& OutMessage
 struct SPlayerClientSyncMessage
 {
     uint64 PlayerId = 0;
-    TArray Data;
+    TByteArray Data;
 };
 
 inline void Serialize(MMessageWriter& Writer, const SPlayerClientSyncMessage& Message)
@@ -487,7 +487,7 @@ inline bool Deserialize(MMessageReader& Reader, SClientLoginResponsePayload& Out
 struct SClientActorCreatePayload
 {
     uint64 ActorId = 0;
-    TArray Data;
+    TByteArray Data;
 };
 
 inline void Serialize(MMessageWriter& Writer, const SClientActorCreatePayload& Message)
@@ -511,7 +511,7 @@ inline bool Deserialize(MMessageReader& Reader, SClientActorCreatePayload& OutMe
 struct SClientActorUpdatePayload
 {
     uint64 ActorId = 0;
-    TArray Data;
+    TByteArray Data;
 };
 
 inline void Serialize(MMessageWriter& Writer, const SClientActorUpdatePayload& Message)
@@ -651,7 +651,7 @@ inline bool Deserialize(MMessageReader& Reader, SPlayerMovePayload& OutMessage)
 // 客户端聊天载荷：仅包含消息文本，发送者身份以服务端认证态为准
 struct SClientChatPayload
 {
-    FString Message;
+    MString Message;
 };
 
 inline void Serialize(MMessageWriter& Writer, const SClientChatPayload& Message)
@@ -665,7 +665,7 @@ inline bool Deserialize(MMessageReader& Reader, SClientChatPayload& OutMessage)
 }
 
 template<typename TMessage>
-inline TArray BuildPayload(const TMessage& Message)
+inline TByteArray BuildPayload(const TMessage& Message)
 {
     MMessageWriter Writer;
     Serialize(Writer, Message);
@@ -674,37 +674,37 @@ inline TArray BuildPayload(const TMessage& Message)
 
 // 解析结果：成功为 Ok()，失败为 Err(描述信息)。Context 用于日志上下文（如消息类型名）。
 template<typename TMessage>
-inline TResult<void, FString> ParsePayload(const TArray& Data, TMessage& OutMessage, const char* Context = nullptr)
+inline TResult<void, MString> ParsePayload(const TByteArray& Data, TMessage& OutMessage, const char* Context = nullptr)
 {
     MMessageReader Reader(Data);
     const size_t PayloadSize = Data.size();
 
     if (!Deserialize(Reader, OutMessage))
     {
-        FString Err = (Context && Context[0]) ? (FString(Context) + ": ") : FString();
+        MString Err = (Context && Context[0]) ? (MString(Context) + ": ") : MString();
         Err += "payload_size=" + MString::ToString(static_cast<uint64>(PayloadSize)) + ", deserialize_failed";
-        return TResult<void, FString>::Err(std::move(Err));
+        return TResult<void, MString>::Err(std::move(Err));
     }
     if (!Reader.IsValid())
     {
-        FString Err = (Context && Context[0]) ? (FString(Context) + ": ") : FString();
+        MString Err = (Context && Context[0]) ? (MString(Context) + ": ") : MString();
         Err += "payload_size=" + MString::ToString(static_cast<uint64>(PayloadSize)) + ", read_overflow";
-        return TResult<void, FString>::Err(std::move(Err));
+        return TResult<void, MString>::Err(std::move(Err));
     }
     const size_t Trailing = Reader.GetRemainingSize();
     if (Trailing != 0)
     {
-        FString Err = (Context && Context[0]) ? (FString(Context) + ": ") : FString();
+        MString Err = (Context && Context[0]) ? (MString(Context) + ": ") : MString();
         Err += "payload_size=" + MString::ToString(static_cast<uint64>(PayloadSize)) + ", trailing_bytes=" + MString::ToString(static_cast<uint64>(Trailing));
-        return TResult<void, FString>::Err(std::move(Err));
+        return TResult<void, MString>::Err(std::move(Err));
     }
-    return TResult<void, FString>::Ok();
+    return TResult<void, MString>::Ok();
 }
 
 template<typename TMessage>
 inline bool SendTypedServerMessage(MServerConnection& Connection, EServerMessageType Type, const TMessage& Message)
 {
-    TArray Payload = BuildPayload(Message);
+    TByteArray Payload = BuildPayload(Message);
     const uint8* PayloadData = Payload.empty() ? nullptr : Payload.data();
     return Connection.Send(static_cast<uint8>(Type), PayloadData, static_cast<uint32>(Payload.size()));
 }
@@ -723,8 +723,8 @@ inline bool SendTypedServerMessage(const TSharedPtr<MServerConnection>& Connecti
 template<typename TMessage>
 inline bool SendTypedServerMessage(INetConnection& Connection, EServerMessageType Type, const TMessage& Message)
 {
-    TArray Payload = BuildPayload(Message);
-    TArray Packet;
+    TByteArray Payload = BuildPayload(Message);
+    TByteArray Packet;
     Packet.reserve(1 + Payload.size());
     Packet.push_back(static_cast<uint8>(Type));
     Packet.insert(Packet.end(), Payload.begin(), Payload.end());
@@ -752,7 +752,7 @@ struct TServerMessageHandlerTraits;
 class MServerMessageDispatcher
 {
 public:
-    using FHandler = TFunction<void(uint64, const TArray&)>;
+    using FHandler = TFunction<void(uint64, const TByteArray&)>;
 
 private:
     TMap<uint8, FHandler> Handlers;
@@ -770,7 +770,7 @@ public:
 
         const uint8 TypeValue = static_cast<uint8>(Type);
 
-        Handlers[TypeValue] = [Object, MemberFunc, Context, Type](uint64 /*ConnectionId*/, const TArray& Data)
+        Handlers[TypeValue] = [Object, MemberFunc, Context, Type](uint64 /*ConnectionId*/, const TByteArray& Data)
         {
             TMessage Message;
             auto ParseResult = ParsePayload(Data, Message, Context);
@@ -799,7 +799,7 @@ public:
         }
 
         const uint8 TypeValue = static_cast<uint8>(Type);
-        Handlers[TypeValue] = [Object, Context, Type](uint64 ConnectionId, const TArray& Data)
+        Handlers[TypeValue] = [Object, Context, Type](uint64 ConnectionId, const TByteArray& Data)
         {
             if constexpr (Traits::bUsesRawData)
             {
@@ -823,12 +823,12 @@ public:
         };
     }
 
-    void Dispatch(uint8 Type, const TArray& Data) const
+    void Dispatch(uint8 Type, const TByteArray& Data) const
     {
         Dispatch(0, Type, Data);
     }
 
-    void Dispatch(uint64 ConnectionId, uint8 Type, const TArray& Data) const
+    void Dispatch(uint64 ConnectionId, uint8 Type, const TByteArray& Data) const
     {
         auto It = Handlers.find(Type);
         if (It == Handlers.end())
@@ -847,7 +847,7 @@ struct TServerMessageHandlerTraits<MemberFunc>
 {
     using ObjectType = TObject;
     using MessageType = TMessage;
-    static constexpr bool bUsesRawData = std::is_same_v<std::remove_cv_t<std::remove_reference_t<TMessage>>, TArray>;
+    static constexpr bool bUsesRawData = std::is_same_v<std::remove_cv_t<std::remove_reference_t<TMessage>>, TByteArray>;
 
     static void Invoke(TObject* Object, uint64 /*ConnectionId*/, const TMessage& Message)
     {
@@ -860,7 +860,7 @@ struct TServerMessageHandlerTraits<MemberFunc>
 {
     using ObjectType = TObject;
     using MessageType = TMessage;
-    static constexpr bool bUsesRawData = std::is_same_v<std::remove_cv_t<std::remove_reference_t<TMessage>>, TArray>;
+    static constexpr bool bUsesRawData = std::is_same_v<std::remove_cv_t<std::remove_reference_t<TMessage>>, TByteArray>;
 
     static void Invoke(TObject* Object, uint64 ConnectionId, const TMessage& Message)
     {

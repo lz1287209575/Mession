@@ -3,18 +3,18 @@
 #include "Common/ServerMessages.h"
 #include "NetDriver/Reflection.h"
 #include "Common/ServerConnection.h"
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include "Messages/NetMessages.h"
 
 #include <cstddef>
 #include <utility>
 
-bool BuildServerRpcPayload(uint16 FunctionId, const TArray& InPayload, TArray& OutData);
-bool BuildServerRpcMessage(const TArray& RpcPayload, TArray& OutPacket);
-bool SendServerRpcMessage(MServerConnection& Connection, const TArray& RpcPayload);
-bool SendServerRpcMessage(const TSharedPtr<MServerConnection>& Connection, const TArray& RpcPayload);
-bool SendServerRpcMessage(INetConnection& Connection, const TArray& RpcPayload);
-bool SendServerRpcMessage(const TSharedPtr<INetConnection>& Connection, const TArray& RpcPayload);
+bool BuildServerRpcPayload(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutData);
+bool BuildServerRpcMessage(const TByteArray& RpcPayload, TByteArray& OutPacket);
+bool SendServerRpcMessage(MServerConnection& Connection, const TByteArray& RpcPayload);
+bool SendServerRpcMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& RpcPayload);
+bool SendServerRpcMessage(INetConnection& Connection, const TByteArray& RpcPayload);
+bool SendServerRpcMessage(const TSharedPtr<INetConnection>& Connection, const TByteArray& RpcPayload);
 
 struct SRpcEndpointBinding
 {
@@ -26,7 +26,7 @@ struct SRpcEndpointBinding
 struct SGeneratedRpcUnsupportedStat
 {
     EServerType ServerType = EServerType::Unknown;
-    FString FunctionName;
+    MString FunctionName;
     uint64 Count = 0;
 };
 
@@ -49,7 +49,7 @@ struct SGeneratedClientRouteRequest
     const char* TargetName = nullptr;
     const char* AuthMode = nullptr;
     const char* WrapMode = nullptr;
-    const TArray* Payload = nullptr;
+    const TByteArray* Payload = nullptr;
 };
 
 namespace MClientDownlink
@@ -137,39 +137,39 @@ inline const SRpcEndpointBinding* FindRpcEndpointByServerType(
     return nullptr;
 }
 
-bool BuildRpcPayloadForEndpoint(const SRpcEndpointBinding& Binding, const TArray& InPayload, TArray& OutData);
-bool TryInvokeServerRpc(MReflectObject* ServiceInstance, const TArray& Data, ERpcType ExpectedType);
+bool BuildRpcPayloadForEndpoint(const SRpcEndpointBinding& Binding, const TByteArray& InPayload, TByteArray& OutData);
+bool TryInvokeServerRpc(MReflectObject* ServiceInstance, const TByteArray& Data, ERpcType ExpectedType);
 bool TryDispatchGeneratedClientMessage(
     MReflectObject* TargetInstance,
     uint64 ConnectionId,
     EClientMessageType MessageType,
-    const TArray& Payload);
+    const TByteArray& Payload);
 SGeneratedClientDispatchOutcome DispatchGeneratedClientMessage(
     MReflectObject* TargetInstance,
     uint64 ConnectionId,
     EClientMessageType MessageType,
-    const TArray& Payload);
+    const TByteArray& Payload);
 SGeneratedClientDispatchOutcome DispatchGeneratedClientFunction(
     MReflectObject* TargetInstance,
     uint64 ConnectionId,
     uint16 FunctionId,
-    const TArray& Payload);
+    const TByteArray& Payload);
 const char* GetServerTypeDisplayName(EServerType ServerType);
 bool FindGeneratedRpcEndpoint(EServerType ServerType, const char* FunctionName, SRpcEndpointBinding& OutBinding);
 bool ServerSupportsGeneratedRpc(EServerType ServerType, const char* FunctionName);
-TVector<FString> GetGeneratedRpcFunctionNames(EServerType ServerType);
-FString BuildGeneratedRpcManifestJson(EServerType ServerType);
+TVector<MString> GetGeneratedRpcFunctionNames(EServerType ServerType);
+MString BuildGeneratedRpcManifestJson(EServerType ServerType);
 void ReportUnsupportedGeneratedRpcEndpoint(EServerType ServerType, const char* FunctionName);
 TVector<SGeneratedRpcUnsupportedStat> GetGeneratedRpcUnsupportedStats();
 TVector<SGeneratedRpcUnsupportedStat> GetGeneratedRpcUnsupportedStats(EServerType ServerType);
-FString BuildGeneratedRpcUnsupportedStatsJson();
-FString BuildGeneratedRpcUnsupportedStatsJson(EServerType ServerType);
+MString BuildGeneratedRpcUnsupportedStatsJson();
+MString BuildGeneratedRpcUnsupportedStatsJson(EServerType ServerType);
 uint16 GetClientDownlinkFunctionId(const char* FunctionName);
 const char* GetClientDownlinkFunctionName(uint16 FunctionId);
-bool BuildClientFunctionCallPacket(uint16 FunctionId, const TArray& InPayload, TArray& OutPacket);
+bool BuildClientFunctionCallPacket(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutPacket);
 
 template<typename TMessage>
-inline bool BuildClientFunctionCallPacketForPayload(const char* FunctionName, const TMessage& Message, TArray& OutPacket)
+inline bool BuildClientFunctionCallPacketForPayload(const char* FunctionName, const TMessage& Message, TByteArray& OutPacket)
 {
     if (!FunctionName || FunctionName[0] == '\0')
     {
@@ -183,13 +183,13 @@ inline bool BuildClientFunctionCallPacketForPayload(const char* FunctionName, co
 }
 
 template<typename TMessage>
-inline bool BuildClientFunctionCallPacketForPayload(uint16 FunctionId, const TMessage& Message, TArray& OutPacket)
+inline bool BuildClientFunctionCallPacketForPayload(uint16 FunctionId, const TMessage& Message, TByteArray& OutPacket)
 {
     return BuildClientFunctionCallPacket(FunctionId, BuildPayload(Message), OutPacket);
 }
 
 template<typename... TArgs>
-inline bool BuildRpcPayloadForRemoteCall(const char* ClassName, const char* FunctionName, TArray& OutData, TArgs&&... Args)
+inline bool BuildRpcPayloadForRemoteCall(const char* ClassName, const char* FunctionName, TByteArray& OutData, TArgs&&... Args)
 {
     if (!ClassName || !FunctionName)
     {
@@ -211,7 +211,7 @@ inline bool BuildRpcPayloadForRemoteCall(const char* ClassName, const char* Func
 }
 
 template<typename... TArgs>
-inline bool BuildRpcPayloadForEndpointCall(const SRpcEndpointBinding& Binding, TArray& OutData, TArgs&&... Args)
+inline bool BuildRpcPayloadForEndpointCall(const SRpcEndpointBinding& Binding, TByteArray& OutData, TArgs&&... Args)
 {
     return BuildRpcPayloadForRemoteCall(
         Binding.ClassName,
@@ -221,7 +221,7 @@ inline bool BuildRpcPayloadForEndpointCall(const SRpcEndpointBinding& Binding, T
 }
 
 template<typename... TArgs>
-inline bool BuildGeneratedRpcPayloadForServer(EServerType ServerType, const char* FunctionName, TArray& OutData, TArgs&&... Args)
+inline bool BuildGeneratedRpcPayloadForServer(EServerType ServerType, const char* FunctionName, TByteArray& OutData, TArgs&&... Args)
 {
     SRpcEndpointBinding Binding;
     if (!FindGeneratedRpcEndpoint(ServerType, FunctionName, Binding))
@@ -265,7 +265,7 @@ inline bool TryRpcOrTypedLegacy(
 template<typename... TArgs>
 inline bool Call(MServerConnection& Connection, EServerType ServerType, const char* FunctionName, TArgs&&... Args)
 {
-    TArray RpcPayload;
+    TByteArray RpcPayload;
     if (!BuildGeneratedRpcPayloadForServer(ServerType, FunctionName, RpcPayload, std::forward<TArgs>(Args)...))
     {
         return false;
@@ -288,7 +288,7 @@ inline bool Call(const TSharedPtr<MServerConnection>& Connection, EServerType Se
 template<typename... TArgs>
 inline bool Call(INetConnection& Connection, EServerType ServerType, const char* FunctionName, TArgs&&... Args)
 {
-    TArray RpcPayload;
+    TByteArray RpcPayload;
     if (!BuildGeneratedRpcPayloadForServer(ServerType, FunctionName, RpcPayload, std::forward<TArgs>(Args)...))
     {
         return false;
@@ -311,7 +311,7 @@ inline bool Call(const TSharedPtr<INetConnection>& Connection, EServerType Serve
 template<typename... TArgs>
 inline bool CallRemote(MServerConnection& Connection, const char* ClassName, const char* FunctionName, TArgs&&... Args)
 {
-    TArray RpcPayload;
+    TByteArray RpcPayload;
     if (!BuildRpcPayloadForRemoteCall(ClassName, FunctionName, RpcPayload, std::forward<TArgs>(Args)...))
     {
         return false;
@@ -334,7 +334,7 @@ inline bool CallRemote(const TSharedPtr<MServerConnection>& Connection, const ch
 template<typename... TArgs>
 inline bool CallRemote(INetConnection& Connection, const char* ClassName, const char* FunctionName, TArgs&&... Args)
 {
-    TArray RpcPayload;
+    TByteArray RpcPayload;
     if (!BuildRpcPayloadForRemoteCall(ClassName, FunctionName, RpcPayload, std::forward<TArgs>(Args)...))
     {
         return false;

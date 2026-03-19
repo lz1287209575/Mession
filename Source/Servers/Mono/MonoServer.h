@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include "Common/Logger.h"
 #include "NetDriver/Reflection.h"
 

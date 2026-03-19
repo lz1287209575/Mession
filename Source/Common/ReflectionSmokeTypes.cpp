@@ -35,7 +35,7 @@ void MReflectionSmokeCharacter::LevelUp()
     Health = MaxHealth;
 }
 
-void MReflectionSmokeCharacter::Rename(const FString& NewName)
+void MReflectionSmokeCharacter::Rename(const MString& NewName)
 {
     Name = NewName;
 }

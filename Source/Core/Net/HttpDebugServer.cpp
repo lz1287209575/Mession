@@ -165,7 +165,7 @@ void MHttpDebugServer::RunLoop()
 void MHttpDebugServer::HandleClient(int ClientFd)
 {
     char Buffer[1024];
-    TString Request;
+    MString Request;
 
     // 读取到 header 结束或连接关闭
     while (true)
@@ -176,7 +176,7 @@ void MHttpDebugServer::HandleClient(int ClientFd)
             break;
         }
         Request.append(Buffer, Buffer + Received);
-        if (Request.find("\r\n\r\n") != TString::npos)
+        if (Request.find("\r\n\r\n") != MString::npos)
         {
             break;
         }
@@ -187,7 +187,7 @@ void MHttpDebugServer::HandleClient(int ClientFd)
     }
 
     // 当前实现只支持 GET，忽略路径与头部，始终返回状态文本
-    FString Body;
+    MString Body;
     if (StatusHandler)
     {
         Body = StatusHandler();
@@ -197,7 +197,7 @@ void MHttpDebugServer::HandleClient(int ClientFd)
         Body = "OK";
     }
 
-    TString Response;
+    MString Response;
     Response.reserve(128 + Body.size());
     Response += "HTTP/1.1 200 OK\r\n";
     Response += "Content-Type: application/json; charset=utf-8\r\n";

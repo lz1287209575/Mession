@@ -1,13 +1,13 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
 
 namespace MConfig
 {
-inline bool LoadFromFile(const FString& Path, TMap<FString, FString>& OutVars)
+inline bool LoadFromFile(const MString& Path, TMap<MString, MString>& OutVars)
 {
     TIfstream File(Path);
     if (!File.is_open())
@@ -15,20 +15,20 @@ inline bool LoadFromFile(const FString& Path, TMap<FString, FString>& OutVars)
         return false;
     }
 
-    FString Line;
+    MString Line;
     while (std::getline(File, Line))
     {
         size_t CommentPos = Line.find('#');
-        if (CommentPos != FString::npos)
+        if (CommentPos != MString::npos)
         {
             Line = Line.substr(0, CommentPos);
         }
 
         size_t EqPos = Line.find('=');
-        if (EqPos != FString::npos && EqPos > 0)
+        if (EqPos != MString::npos && EqPos > 0)
         {
-            FString Key = Line.substr(0, EqPos);
-            FString Value = Line.substr(EqPos + 1);
+            MString Key = Line.substr(0, EqPos);
+            MString Value = Line.substr(EqPos + 1);
 
             while (!Key.empty() && (Key.back() == ' ' || Key.back() == '\t'))
             {
@@ -56,10 +56,10 @@ inline bool LoadFromFile(const FString& Path, TMap<FString, FString>& OutVars)
     return true;
 }
 
-inline FString GetEnv(const char* Name)
+inline MString GetEnv(const char* Name)
 {
     const char* Val = std::getenv(Name);
-    return Val ? FString(Val) : FString();
+    return Val ? MString(Val) : MString();
 }
 
 inline int GetEnvInt(const char* Name, int Default)
@@ -72,12 +72,12 @@ inline int GetEnvInt(const char* Name, int Default)
     return std::atoi(Val);
 }
 
-inline void ApplyEnvOverrides(TMap<FString, FString>& Vars,
-    const TMap<FString, const char*>& EnvMap)
+inline void ApplyEnvOverrides(TMap<MString, MString>& Vars,
+    const TMap<MString, const char*>& EnvMap)
 {
     for (const auto& [Key, EnvName] : EnvMap)
     {
-        FString Val = GetEnv(EnvName);
+        MString Val = GetEnv(EnvName);
         if (!Val.empty())
         {
             Vars[Key] = Val;
@@ -85,7 +85,7 @@ inline void ApplyEnvOverrides(TMap<FString, FString>& Vars,
     }
 }
 
-inline int32 GetInt(const TMap<FString, FString>& Vars, const FString& Key, int32 Default)
+inline int32 GetInt(const TMap<MString, MString>& Vars, const MString& Key, int32 Default)
 {
     auto It = Vars.find(Key);
     if (It == Vars.end())
@@ -95,7 +95,7 @@ inline int32 GetInt(const TMap<FString, FString>& Vars, const FString& Key, int3
     return std::atoi(It->second.c_str());
 }
 
-inline uint16 GetU16(const TMap<FString, FString>& Vars, const FString& Key, uint16 Default)
+inline uint16 GetU16(const TMap<MString, MString>& Vars, const MString& Key, uint16 Default)
 {
     auto It = Vars.find(Key);
     if (It == Vars.end())
@@ -106,14 +106,14 @@ inline uint16 GetU16(const TMap<FString, FString>& Vars, const FString& Key, uin
     return (Val > 0 && Val <= 65535) ? static_cast<uint16>(Val) : Default;
 }
 
-inline uint32 GetU32(const TMap<FString, FString>& Vars, const FString& Key, uint32 Default)
+inline uint32 GetU32(const TMap<MString, MString>& Vars, const MString& Key, uint32 Default)
 {
     auto It = Vars.find(Key);
     if (It == Vars.end())
     {
         return Default;
     }
-    const FString& S = It->second;
+    const MString& S = It->second;
     if (S.empty())
     {
         return Default;
@@ -127,14 +127,14 @@ inline uint32 GetU32(const TMap<FString, FString>& Vars, const FString& Key, uin
     return static_cast<uint32>(Val);
 }
 
-inline uint64 GetU64(const TMap<FString, FString>& Vars, const FString& Key, uint64 Default)
+inline uint64 GetU64(const TMap<MString, MString>& Vars, const MString& Key, uint64 Default)
 {
     auto It = Vars.find(Key);
     if (It == Vars.end())
     {
         return Default;
     }
-    const FString& S = It->second;
+    const MString& S = It->second;
     if (S.empty())
     {
         return Default;
@@ -148,7 +148,7 @@ inline uint64 GetU64(const TMap<FString, FString>& Vars, const FString& Key, uin
     return static_cast<uint64>(Val);
 }
 
-inline bool GetBool(const TMap<FString, FString>& Vars, const FString& Key, bool Default)
+inline bool GetBool(const TMap<MString, MString>& Vars, const MString& Key, bool Default)
 {
     auto It = Vars.find(Key);
     if (It == Vars.end() || It->second.empty())
@@ -175,7 +175,7 @@ inline bool GetBool(const TMap<FString, FString>& Vars, const FString& Key, bool
     return std::atoi(It->second.c_str()) != 0;
 }
 
-inline FString GetStr(const TMap<FString, FString>& Vars, const FString& Key, const FString& Default)
+inline MString GetStr(const TMap<MString, MString>& Vars, const MString& Key, const MString& Default)
 {
     auto It = Vars.find(Key);
     return (It != Vars.end()) ? It->second : Default;

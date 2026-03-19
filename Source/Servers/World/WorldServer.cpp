@@ -4,6 +4,7 @@
 #include "Common/Config.h"
 #include "Common/ServerRpcRuntime.h"
 #include "Common/StringUtils.h"
+#include "Common/HexUtils.h"
 #include "Gameplay/InventoryMember.h"
 #include "Messages/NetMessages.h"
 #include "Core/Json.h"
@@ -11,7 +12,7 @@
 
 namespace
 {
-const TMap<FString, const char*> WorldEnvMap = {
+const TMap<MString, const char*> WorldEnvMap = {
     {"port", "MESSION_WORLD_PORT"},
     {"router_addr", "MESSION_ROUTER_ADDR"},
     {"router_port", "MESSION_ROUTER_PORT"},
@@ -60,7 +61,7 @@ public:
         PlayerId = Id;
     }
 
-    bool ReceivePacket(TArray& /*OutPayload*/) override
+    bool ReceivePacket(TByteArray& /*OutPayload*/) override
     {
         return false;
     }
@@ -106,63 +107,6 @@ public:
     }
 };
 
-FString BytesToHex(const TArray& InData)
-{
-    static const char* Digits = "0123456789ABCDEF";
-    FString Out;
-    Out.reserve(InData.size() * 2);
-    for (uint8 Byte : InData)
-    {
-        Out.push_back(Digits[(Byte >> 4) & 0x0F]);
-        Out.push_back(Digits[Byte & 0x0F]);
-    }
-    return Out;
-}
-
-bool TryDecodeHex(const FString& InHex, TArray& OutBytes)
-{
-    OutBytes.clear();
-    if (InHex.empty())
-    {
-        return true;
-    }
-    if ((InHex.size() % 2) != 0)
-    {
-        return false;
-    }
-
-    auto HexNibble = [](char Ch) -> int32
-    {
-        if (Ch >= '0' && Ch <= '9')
-        {
-            return static_cast<int32>(Ch - '0');
-        }
-        if (Ch >= 'A' && Ch <= 'F')
-        {
-            return 10 + static_cast<int32>(Ch - 'A');
-        }
-        if (Ch >= 'a' && Ch <= 'f')
-        {
-            return 10 + static_cast<int32>(Ch - 'a');
-        }
-        return -1;
-    };
-
-    OutBytes.reserve(InHex.size() / 2);
-    for (size_t Index = 0; Index < InHex.size(); Index += 2)
-    {
-        const int32 Hi = HexNibble(InHex[Index]);
-        const int32 Lo = HexNibble(InHex[Index + 1]);
-        if (Hi < 0 || Lo < 0)
-        {
-            OutBytes.clear();
-            return false;
-        }
-        OutBytes.push_back(static_cast<uint8>((Hi << 4) | Lo));
-    }
-    return true;
-}
-
 class MWorldMgoRpcSink : public IPersistenceSink
 {
 public:
@@ -179,7 +123,7 @@ public:
             return false;
         }
 
-        const FString SnapshotHex = BytesToHex(InRecord.SnapshotData);
+        const MString SnapshotHex = Hex::BytesToHex(InRecord.SnapshotData);
         const bool bSent = MRpc::MMgoService::Rpc_OnPersistSnapshot(
             *MgoConn,
             InRecord.ObjectId,
@@ -218,9 +162,9 @@ MWorldServer::MWorldServer()
     PersistenceSubsystem.SetSink(TUniquePtr<IPersistenceSink>(new MWorldPersistenceLogSink()));
 }
 
-bool MWorldServer::LoadConfig(const FString& ConfigPath)
+bool MWorldServer::LoadConfig(const MString& ConfigPath)
 {
-    TMap<FString, FString> Vars;
+    TMap<MString, MString> Vars;
     if (!ConfigPath.empty())
     {
         MConfig::LoadFromFile(ConfigPath, Vars);
@@ -281,7 +225,7 @@ bool MWorldServer::Init(int InPort)
             QueryMgoServerRoute();
         }
     });
-    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
         HandleRouterServerMessage(Type, Data);
     });
     RouterServerConn->Connect();
@@ -306,7 +250,7 @@ bool MWorldServer::Init(int InPort)
     LoginServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Login server authenticated: %s", Info.ServerName.c_str());
     });
-    LoginServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+    LoginServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
         HandleLoginServerMessage(Type, Data);
     });
 
@@ -315,7 +259,7 @@ bool MWorldServer::Init(int InPort)
         MgoServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
             LOG_INFO("Mgo server authenticated: %s", Info.ServerName.c_str());
         });
-        MgoServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+        MgoServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
             if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
             {
                 LOG_DEBUG("World received MT_RPC from Mgo (%llu bytes)", static_cast<unsigned long long>(Data.size()));
@@ -341,7 +285,7 @@ void MWorldServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
     BackendConnections[ConnId] = Peer;
     LOG_INFO("New connection (connection_id=%llu)", (unsigned long long)ConnId);
     EventLoop.RegisterConnection(ConnId, Conn,
-        [this](uint64 Id, const TArray& Payload)
+        [this](uint64 Id, const TByteArray& Payload)
         {
             HandlePacket(Id, Payload);
         },
@@ -482,7 +426,7 @@ void MWorldServer::TickBackends()
     }
 }
 
-FString MWorldServer::BuildDebugStatusJson() const
+MString MWorldServer::BuildDebugStatusJson() const
 {
     const SConnectionManagerStats Stats = BackendConnectionManager.GetStats();
     const size_t PlayerCount = Players.size();
@@ -495,7 +439,7 @@ FString MWorldServer::BuildDebugStatusJson() const
     W.Key("bytesSent"); W.Value(static_cast<uint64>(Stats.BytesSent));
     W.Key("bytesReceived"); W.Value(static_cast<uint64>(Stats.BytesReceived));
     W.Key("reconnectAttempts"); W.Value(static_cast<uint64>(Stats.ReconnectAttempts));
-    const TVector<FString> RpcFunctions = GetGeneratedRpcFunctionNames(EServerType::World);
+    const TVector<MString> RpcFunctions = GetGeneratedRpcFunctionNames(EServerType::World);
     W.Key("rpcManifestCount"); W.Value(static_cast<uint64>(RpcFunctions.size()));
     W.Key("mgoPersistenceEnabled"); W.Value(Config.EnableMgoPersistence);
     W.Key("ownerServerId"); W.Value(static_cast<uint64>(Config.OwnerServerId));
@@ -512,7 +456,7 @@ FString MWorldServer::BuildDebugStatusJson() const
     W.Key("persistAckUnmatched"); W.Value(PersistAckUnmatchedCount);
     W.Key("rpcFunctions");
     W.BeginArray();
-    for (const FString& Name : RpcFunctions)
+    for (const MString& Name : RpcFunctions)
     {
         W.Value(Name);
     }
@@ -531,7 +475,7 @@ FString MWorldServer::BuildDebugStatusJson() const
     return W.ToString();
 }
 
-void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
+void MWorldServer::HandlePacket(uint64 ConnectionId, const TByteArray& Data)
 {
     if (Data.empty())
     {
@@ -545,7 +489,7 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
     }
 
     const uint8 MsgType = Data[0];
-    const TArray Payload(Data.begin() + 1, Data.end());
+    const TByteArray Payload(Data.begin() + 1, Data.end());
 
     if (MsgType == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
@@ -559,7 +503,7 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
     BackendMessageDispatcher.Dispatch(ConnectionId, MsgType, Payload);
 }
 
-void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
+void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TByteArray& Data)
 {
     if (Data.empty())
     {
@@ -572,7 +516,7 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
     {
         case EClientMessageType::MT_PlayerMove:
         {
-            TArray Payload(Data.begin() + 1, Data.end());
+            TByteArray Payload(Data.begin() + 1, Data.end());
             SPlayerMovePayload MovePayload;
             auto ParseResult = ParsePayload(Payload, MovePayload, "MT_PlayerMove");
             if (!ParseResult.IsOk())
@@ -605,7 +549,7 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
         }
         case EClientMessageType::MT_Chat:
         {
-            TArray Payload(Data.begin() + 1, Data.end());
+            TByteArray Payload(Data.begin() + 1, Data.end());
             SClientChatPayload ChatPayload;
             auto ParseResult = ParsePayload(Payload, ChatPayload, "MT_Chat");
             if (!ParseResult.IsOk())
@@ -620,7 +564,7 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
                 return;
             }
 
-            auto SendChatToPlayer = [this](uint64 InTargetPlayerId, uint64 InFromPlayerId, const FString& InMessage)
+            auto SendChatToPlayer = [this](uint64 InTargetPlayerId, uint64 InFromPlayerId, const MString& InMessage)
             {
                 auto TargetIt = Players.find(InTargetPlayerId);
                 if (TargetIt == Players.end() || !TargetIt->second.bOnline || TargetIt->second.GatewayConnectionId == 0)
@@ -628,8 +572,8 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
                     return;
                 }
                 const SChatMessage OutgoingChat{InFromPlayerId, InMessage};
-                const TArray ChatPayloadBytes = BuildPayload(OutgoingChat);
-                TArray ChatPacket;
+                const TByteArray ChatPayloadBytes = BuildPayload(OutgoingChat);
+                TByteArray ChatPacket;
                 ChatPacket.reserve(1 + ChatPayloadBytes.size());
                 ChatPacket.push_back(static_cast<uint8>(EClientMessageType::MT_Chat));
                 ChatPacket.insert(ChatPacket.end(), ChatPayloadBytes.begin(), ChatPayloadBytes.end());
@@ -655,8 +599,8 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
                 }
 
                 std::istringstream SS(ChatPayload.Message);
-                FString Cmd;
-                FString Action;
+                MString Cmd;
+                MString Action;
                 SS >> Cmd >> Action;
 
                 if (Action == "add")
@@ -738,8 +682,8 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
             }
 
             const SChatMessage OutgoingChat{PlayerId, ChatPayload.Message};
-            const TArray ChatPayloadBytes = BuildPayload(OutgoingChat);
-            TArray ChatPacket;
+            const TByteArray ChatPayloadBytes = BuildPayload(OutgoingChat);
+            TByteArray ChatPacket;
             ChatPacket.reserve(1 + ChatPayloadBytes.size());
             ChatPacket.push_back(static_cast<uint8>(EClientMessageType::MT_Chat));
             ChatPacket.insert(ChatPacket.end(), ChatPayloadBytes.begin(), ChatPayloadBytes.end());
@@ -774,7 +718,7 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
     }
 }
 
-bool MWorldServer::SendClientFunctionPacketToPlayer(uint64 PlayerId, const TArray& Packet)
+bool MWorldServer::SendClientFunctionPacketToPlayer(uint64 PlayerId, const TByteArray& Packet)
 {
     auto TargetIt = Players.find(PlayerId);
     if (TargetIt == Players.end() || !TargetIt->second.bOnline || TargetIt->second.GatewayConnectionId == 0)
@@ -819,7 +763,7 @@ bool MWorldServer::SendInventoryPullToPlayer(uint64 PlayerId)
         });
     }
 
-    TArray Packet;
+    TByteArray Packet;
     if (!BuildClientFunctionCallPacketForPayload(MClientDownlink::Id_OnInventoryPull(), Payload, Packet))
     {
         return false;
@@ -828,7 +772,7 @@ bool MWorldServer::SendInventoryPullToPlayer(uint64 PlayerId)
     return SendClientFunctionPacketToPlayer(PlayerId, Packet);
 }
 
-void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 GatewayConnectionId)
+void MWorldServer::AddPlayer(uint64 PlayerId, const MString& Name, uint64 GatewayConnectionId)
 {
     if (Players.find(PlayerId) != Players.end())
     {
@@ -854,7 +798,7 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 Gatewa
     TSharedPtr<INetConnection> ReplicationConnection = MakeShared<MGatewayClientTunnelConnection>(
         [this, GatewayConnectionId, PlayerId](const void* Data, uint32 Size) -> bool
         {
-            TArray PacketBytes;
+            TByteArray PacketBytes;
             const uint8* ByteData = static_cast<const uint8*>(Data);
             PacketBytes.insert(PacketBytes.end(), ByteData, ByteData + Size);
             const bool bOk = SendServerMessage(
@@ -954,7 +898,7 @@ void MWorldServer::UpdateGameLogic(float DeltaTime)
     }
 }
 
-bool MWorldServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload)
+bool MWorldServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload)
 {
     auto It = BackendConnections.find(ConnectionId);
     if (It == BackendConnections.end() || !It->second.Connection)
@@ -962,7 +906,7 @@ bool MWorldServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArr
         return false;
     }
 
-    TArray Packet;
+    TByteArray Packet;
     Packet.reserve(1 + Payload.size());
     Packet.push_back(Type);
     Packet.insert(Packet.end(), Payload.begin(), Payload.end());
@@ -982,7 +926,7 @@ uint64 MWorldServer::FindAuthenticatedBackendConnectionId(EServerType ServerType
     return 0;
 }
 
-void MWorldServer::BroadcastToScenes(uint8 Type, const TArray& Payload)
+void MWorldServer::BroadcastToScenes(uint8 Type, const TByteArray& Payload)
 {
     for (auto& [ConnectionId, Peer] : BackendConnections)
     {
@@ -995,7 +939,7 @@ void MWorldServer::BroadcastToScenes(uint8 Type, const TArray& Payload)
     }
 }
 
-void MWorldServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
+void MWorldServer::HandleLoginServerMessage(uint8 Type, const TByteArray& Data)
 {
     // 新的服务器间 RPC：Type 为 MT_RPC，Data 格式：
     // [FunctionId(2)][PayloadSize(4)][Payload...]
@@ -1043,7 +987,7 @@ void MWorldServer::RequestSessionValidation(uint64 GatewayConnectionId, uint64 P
         SSessionValidateRequestMessage{ValidationRequestId, PlayerId, SessionKey});
 }
 
-void MWorldServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
+void MWorldServer::HandleRouterServerMessage(uint8 Type, const TByteArray& Data)
 {
     if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
@@ -1233,8 +1177,8 @@ void MWorldServer::Rpc_OnRouterRouteResponse(
     bool bFound,
     uint32 ServerId,
     uint8 ServerTypeValue,
-    const FString& ServerName,
-    const FString& Address,
+    const MString& ServerName,
+    const MString& Address,
     uint16 Port,
     uint16 ZoneId)
 {
@@ -1320,8 +1264,8 @@ void MWorldServer::Rpc_OnMgoLoadSnapshotResponse(
     uint64 ObjectId,
     bool bFound,
     uint16 ClassId,
-    const FString& ClassName,
-    const FString& SnapshotHex)
+    const MString& ClassName,
+    const MString& SnapshotHex)
 {
     auto PendingIt = PendingMgoLoads.find(RequestId);
     if (PendingIt == PendingMgoLoads.end())
@@ -1371,7 +1315,7 @@ void MWorldServer::Rpc_OnMgoPersistSnapshotResult(
     uint64 ObjectId,
     uint64 Version,
     bool bSuccess,
-    const FString& Reason)
+    const MString& Reason)
 {
     if (OwnerWorldId != Config.OwnerServerId)
     {
@@ -1455,8 +1399,8 @@ void MWorldServer::FinalizePlayerLogin(
     uint32 SessionKey,
     bool bApplyLoadedSnapshot,
     uint16 LoadedClassId,
-    const FString& LoadedClassName,
-    const FString& LoadedSnapshotHex)
+    const MString& LoadedClassName,
+    const MString& LoadedSnapshotHex)
 {
     AddPlayer(PlayerId, "Player" + MString::ToString(PlayerId), GatewayConnectionId);
     auto* Player = GetPlayerById(PlayerId);
@@ -1480,14 +1424,14 @@ void MWorldServer::FinalizePlayerLogin(
     (void)SendInventoryPullToPlayer(PlayerId);
 }
 
-bool MWorldServer::ApplyLoadedSnapshotToPlayer(SPlayer& Player, uint16 ClassId, const FString& ClassName, const FString& SnapshotHex)
+bool MWorldServer::ApplyLoadedSnapshotToPlayer(SPlayer& Player, uint16 ClassId, const MString& ClassName, const MString& SnapshotHex)
 {
     if (!Player.Avatar)
     {
         return false;
     }
 
-    TArray SnapshotBytes;
+    TByteArray SnapshotBytes;
     if (!TryDecodeHex(SnapshotHex, SnapshotBytes))
     {
         LOG_WARN("Loaded snapshot decode failed: player=%llu invalid_hex", static_cast<unsigned long long>(Player.PlayerId));
@@ -1579,7 +1523,7 @@ void MWorldServer::SendLoadReport()
         SServerLoadReportMessage{OnlineCount, Config.MaxPlayers});
 }
 
-void MWorldServer::ApplyLoginServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port)
+void MWorldServer::ApplyLoginServerRoute(uint32 ServerId, const MString& ServerName, const MString& Address, uint16 Port)
 {
     if (!LoginServerConn)
     {
@@ -1610,7 +1554,7 @@ void MWorldServer::ApplyLoginServerRoute(uint32 ServerId, const FString& ServerN
     }
 }
 
-void MWorldServer::ApplyMgoServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port)
+void MWorldServer::ApplyMgoServerRoute(uint32 ServerId, const MString& ServerName, const MString& Address, uint16 Port)
 {
     if (!MgoServerConn)
     {

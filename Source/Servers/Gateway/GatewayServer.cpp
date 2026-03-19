@@ -11,7 +11,7 @@
 
 namespace
 {
-const TMap<FString, const char*> GatewayEnvMap = {
+const TMap<MString, const char*> GatewayEnvMap = {
     {"port", "MESSION_GATEWAY_PORT"},
     {"router_addr", "MESSION_ROUTER_ADDR"},
     {"router_port", "MESSION_ROUTER_PORT"},
@@ -19,18 +19,18 @@ const TMap<FString, const char*> GatewayEnvMap = {
     {"debug_http_port", "MESSION_GATEWAY_DEBUG_HTTP_PORT"},
 };
 
-FString BuildResolvedRouteKey(EServerType ServerType, uint64 PlayerId)
+MString BuildResolvedRouteKey(EServerType ServerType, uint64 PlayerId)
 {
     return std::to_string(static_cast<int>(ServerType)) + ":" +
            std::to_string(static_cast<unsigned long long>(PlayerId));
 }
 
 const SServerInfo* FindResolvedRouteCache(
-    const TMap<FString, SServerInfo>& Cache,
+    const TMap<MString, SServerInfo>& Cache,
     EServerType ServerType,
     uint64 PlayerId)
 {
-    const FString PlayerRouteKey = BuildResolvedRouteKey(ServerType, PlayerId);
+    const MString PlayerRouteKey = BuildResolvedRouteKey(ServerType, PlayerId);
     auto It = Cache.find(PlayerRouteKey);
     if (It != Cache.end())
     {
@@ -39,7 +39,7 @@ const SServerInfo* FindResolvedRouteCache(
 
     if (PlayerId != 0)
     {
-        const FString SharedRouteKey = BuildResolvedRouteKey(ServerType, 0);
+        const MString SharedRouteKey = BuildResolvedRouteKey(ServerType, 0);
         It = Cache.find(SharedRouteKey);
         if (It != Cache.end())
         {
@@ -53,7 +53,7 @@ const SServerInfo* FindResolvedRouteCache(
 using FGeneratedRouteExecutor = EGeneratedClientDispatchResult (MGatewayServer::*)(
     const TSharedPtr<MClientConnection>&,
     const SGeneratedClientRouteRequest&,
-    const TArray&);
+    const TByteArray&);
 
 struct SGeneratedRouteExecutorEntry
 {
@@ -62,13 +62,13 @@ struct SGeneratedRouteExecutorEntry
     FGeneratedRouteExecutor Execute = nullptr;
 };
 
-FString DescribeClientLoginResponsePayload(const SClientLoginResponsePayload& Payload)
+MString DescribeClientLoginResponsePayload(const SClientLoginResponsePayload& Payload)
 {
     return "SClientLoginResponsePayload{SessionKey=" + std::to_string(static_cast<unsigned>(Payload.SessionKey)) +
            ", PlayerId=" + std::to_string(static_cast<unsigned long long>(Payload.PlayerId)) + "}";
 }
 
-const char* GetClientPacketLogName(const TArray& Packet)
+const char* GetClientPacketLogName(const TByteArray& Packet)
 {
     if (Packet.empty())
     {
@@ -144,7 +144,7 @@ const char* GetGeneratedClientDispatchResultName(EGeneratedClientDispatchResult 
     }
 }
 
-bool SendClientPacketWithLog(const TSharedPtr<MClientConnection>& Client, const TArray& Packet)
+bool SendClientPacketWithLog(const TSharedPtr<MClientConnection>& Client, const TByteArray& Packet)
 {
     if (!Client || !Client->Connection)
     {
@@ -161,9 +161,9 @@ bool SendClientPacketWithLog(const TSharedPtr<MClientConnection>& Client, const 
 
 }
 
-bool MGatewayServer::LoadConfig(const FString& ConfigPath)
+bool MGatewayServer::LoadConfig(const MString& ConfigPath)
 {
-    TMap<FString, FString> Vars;
+    TMap<MString, MString> Vars;
     if (!ConfigPath.empty())
     {
         MConfig::LoadFromFile(ConfigPath, Vars);
@@ -209,7 +209,7 @@ bool MGatewayServer::Init(int InPort)
         QueryRoute(EServerType::Login);
         QueryRoute(EServerType::World);
     });
-    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
         HandleRouterServerMessage(Type, Data);
     });
 
@@ -227,7 +227,7 @@ bool MGatewayServer::Init(int InPort)
     LoginServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Login Server authenticated: %s", Info.ServerName.c_str());
     });
-    LoginServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+    LoginServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
         HandleLoginServerMessage(Type, Data);
     });
     
@@ -239,7 +239,7 @@ bool MGatewayServer::Init(int InPort)
         FlushPendingWorldLogins();
         FlushPendingResolvedClientRoutes(EServerType::World);
     });
-    WorldServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+    WorldServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
         HandleWorldServerMessage(Type, Data);
     });
     
@@ -276,7 +276,7 @@ void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
     ClientConnections[ConnId] = Client;
     LOG_INFO("New client connected (connection_id=%llu)", (unsigned long long)ConnId);
     EventLoop.RegisterConnection(ConnId, Conn,
-        [this](uint64 Id, const TArray& Payload)
+        [this](uint64 Id, const TByteArray& Payload)
         {
             HandleClientPacket(Id, Payload);
         },
@@ -380,7 +380,7 @@ void MGatewayServer::TickBackends()
     }
 }
 
-FString MGatewayServer::BuildDebugStatusJson() const
+MString MGatewayServer::BuildDebugStatusJson() const
 {
     const size_t ClientCount = ClientConnections.size();
     const SConnectionManagerStats Stats = BackendConnectionManager.GetStats();
@@ -429,11 +429,11 @@ FString MGatewayServer::BuildDebugStatusJson() const
     W.Key("lastClientHandshakePlayerId"); W.Value(LastHandshakePlayerId);
     W.Key("clientHeartbeatCount"); W.Value(HeartbeatCount);
     W.Key("lastClientHeartbeatSequence"); W.Value(static_cast<uint64>(LastHeartbeatSequence));
-    const TVector<FString> RpcFunctions = GetGeneratedRpcFunctionNames(EServerType::Gateway);
+    const TVector<MString> RpcFunctions = GetGeneratedRpcFunctionNames(EServerType::Gateway);
     W.Key("rpcManifestCount"); W.Value(static_cast<uint64>(RpcFunctions.size()));
     W.Key("rpcFunctions");
     W.BeginArray();
-    for (const FString& Name : RpcFunctions)
+    for (const MString& Name : RpcFunctions)
     {
         W.Value(Name);
     }
@@ -546,7 +546,7 @@ bool MGatewayServer::IsGeneratedRouteAuthorized(
     const TSharedPtr<MClientConnection>& Client,
     const SGeneratedClientRouteRequest& Request) const
 {
-    const FString AuthMode = Request.AuthMode ? FString(Request.AuthMode) : FString();
+    const MString AuthMode = Request.AuthMode ? MString(Request.AuthMode) : MString();
     if (AuthMode == "Required" && (!Client || !Client->bAuthenticated))
     {
         LOG_WARN("Generated client route requires authenticated client: connection=%llu message=%d",
@@ -558,9 +558,9 @@ bool MGatewayServer::IsGeneratedRouteAuthorized(
     return true;
 }
 
-TArray MGatewayServer::BuildGeneratedRoutePacket(const SGeneratedClientRouteRequest& Request) const
+TByteArray MGatewayServer::BuildGeneratedRoutePacket(const SGeneratedClientRouteRequest& Request) const
 {
-    TArray Packet;
+    TByteArray Packet;
     Packet.push_back(static_cast<uint8>(Request.MessageType));
     if (Request.Payload && !Request.Payload->empty())
     {
@@ -617,7 +617,7 @@ bool MGatewayServer::EnsureGeneratedRouteResolved(
     if (Request.TargetServerType != EServerType::Unknown)
     {
         const uint64 PlayerId = Client ? Client->PlayerId : 0;
-        const FString RouteKey = BuildResolvedRouteKey(Request.TargetServerType, PlayerId);
+        const MString RouteKey = BuildResolvedRouteKey(Request.TargetServerType, PlayerId);
         if (const SServerInfo* CachedRoute = FindResolvedRouteCache(
                 ResolvedRouteCache,
                 Request.TargetServerType,
@@ -665,7 +665,7 @@ bool MGatewayServer::EnsureGeneratedRouteResolved(
                     Request.ConnectionId,
                     PlayerId,
                     Request.TargetServerType,
-                    Request.WrapMode ? FString(Request.WrapMode) : FString(),
+                    Request.WrapMode ? MString(Request.WrapMode) : MString(),
                     BuildGeneratedRoutePacket(Request)});
         }
 
@@ -682,7 +682,7 @@ bool MGatewayServer::EnsureGeneratedRouteResolved(
 EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteRawToConnection(
     const TSharedPtr<MServerConnection>& Connection,
     SGeneratedClientRouteRequest::ERouteKind RouteKind,
-    const TArray& Packet)
+    const TByteArray& Packet)
 {
     if (!Connection || !Connection->IsConnected())
     {
@@ -705,7 +705,7 @@ EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteRawToConnect
 EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteRaw(
     const TSharedPtr<MClientConnection>&,
     const SGeneratedClientRouteRequest& Request,
-    const TArray& Packet)
+    const TByteArray& Packet)
 {
     return ExecuteGeneratedRouteRawToConnection(
         ResolveGeneratedRouteConnection(Request.RouteKind),
@@ -716,7 +716,7 @@ EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteRaw(
 EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRoutePlayerClientSync(
     const TSharedPtr<MClientConnection>& Client,
     const SGeneratedClientRouteRequest&,
-    const TArray& Packet)
+    const TByteArray& Packet)
 {
     if (!WorldServerConn || !WorldServerConn->IsConnected())
     {
@@ -734,7 +734,7 @@ EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRoutePlayerClient
 EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteLoginRpcOrLegacy(
     const TSharedPtr<MClientConnection>&,
     const SGeneratedClientRouteRequest& Request,
-    const TArray&)
+    const TByteArray&)
 {
     if (!LoginServerConn || !LoginServerConn->IsConnected())
     {
@@ -777,10 +777,10 @@ EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteLoginRpcOrLe
 
 EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteByPolicy(
     const TSharedPtr<MClientConnection>& Client,
-    const FString& RouteKey,
-    const FString& WrapMode,
+    const MString& RouteKey,
+    const MString& WrapMode,
     const SGeneratedClientRouteRequest* Request,
-    const TArray& Packet)
+    const TByteArray& Packet)
 {
     static const SGeneratedRouteExecutorEntry GeneratedRouteExecutors[] = {
         {"World", "PlayerClientSync", &MGatewayServer::ExecuteGeneratedRoutePlayerClientSync},
@@ -811,7 +811,7 @@ EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteByPolicy(
 
 void MGatewayServer::InvalidateResolvedRoute(EServerType ServerType, uint64 PlayerId)
 {
-    const FString RouteKey = BuildResolvedRouteKey(ServerType, PlayerId);
+    const MString RouteKey = BuildResolvedRouteKey(ServerType, PlayerId);
     if (ResolvedRouteCache.erase(RouteKey) > 0)
     {
         LOG_INFO("Resolved route cache invalidated: target=%d player=%llu",
@@ -886,17 +886,17 @@ EGeneratedClientDispatchResult MGatewayServer::HandleGeneratedClientRoute(const 
         return EGeneratedClientDispatchResult::RoutePending;
     }
 
-    const TArray Packet = BuildGeneratedRoutePacket(Request);
-    const FString RouteKey =
+    const TByteArray Packet = BuildGeneratedRoutePacket(Request);
+    const MString RouteKey =
         (Request.RouteKind == SGeneratedClientRouteRequest::ERouteKind::RouterResolved &&
          Request.TargetServerType == EServerType::World)
-            ? FString("World")
-            : FString(Request.RouteName ? Request.RouteName : "");
-    const FString WrapMode = Request.WrapMode ? FString(Request.WrapMode) : FString();
+            ? MString("World")
+            : MString(Request.RouteName ? Request.RouteName : "");
+    const MString WrapMode = Request.WrapMode ? MString(Request.WrapMode) : MString();
     return ExecuteGeneratedRouteByPolicy(Client, RouteKey, WrapMode, &Request, Packet);
 }
 
-bool MGatewayServer::HandleClientFunctionCall(uint64 ConnectionId, const TArray& Data)
+bool MGatewayServer::HandleClientFunctionCall(uint64 ConnectionId, const TByteArray& Data)
 {
     LastClientFunctionError.clear();
 
@@ -933,7 +933,7 @@ bool MGatewayServer::HandleClientFunctionCall(uint64 ConnectionId, const TArray&
         return true;
     }
 
-    TArray Payload;
+    TByteArray Payload;
     if (PayloadSize > 0)
     {
         Payload.resize(PayloadSize);
@@ -973,7 +973,7 @@ bool MGatewayServer::HandleClientFunctionCall(uint64 ConnectionId, const TArray&
     return true;
 }
 
-void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TArray& Data)
+void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& Data)
 {
     if (Data.empty())
     {
@@ -990,7 +990,7 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TArray& Data)
     LOG_WARN("Rejected non-function client message type %d: MT_FunctionCall is the only supported ingress", (int)MsgType);
 }
 
-void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
+void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TByteArray& Data)
 {
     if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
@@ -1004,12 +1004,12 @@ void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TArray& Data)
     LoginMessageDispatcher.Dispatch(Type, Data);
 }
 
-void MGatewayServer::HandleWorldServerMessage(uint8 Type, const TArray& Data)
+void MGatewayServer::HandleWorldServerMessage(uint8 Type, const TByteArray& Data)
 {
     WorldMessageDispatcher.Dispatch(Type, Data);
 }
 
-void MGatewayServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
+void MGatewayServer::HandleRouterServerMessage(uint8 Type, const TByteArray& Data)
 {
     if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
@@ -1086,7 +1086,7 @@ void MGatewayServer::OnLogin_PlayerLogin(const SPlayerLoginResponseMessage& Mess
              static_cast<unsigned long long>(Message.ConnectionId),
              DescribeClientLoginResponsePayload(ResponsePayload).c_str());
 
-    TArray Packet;
+    TByteArray Packet;
     if (!BuildClientFunctionCallPacketForPayload(MClientDownlink::Id_OnLoginResponse(), ResponsePayload, Packet))
     {
         LOG_WARN("Failed to build unified client login response packet");
@@ -1206,8 +1206,8 @@ void MGatewayServer::Rpc_OnRouterRouteResponse(
     bool bFound,
     uint32 ServerId,
     uint8 ServerTypeValue,
-    const FString& ServerName,
-    const FString& Address,
+    const MString& ServerName,
+    const MString& Address,
     uint16 Port,
     uint16 ZoneId)
 {
@@ -1258,7 +1258,7 @@ uint64 MGatewayServer::QueryRoute(EServerType ServerType, uint64 PlayerId)
     return RequestId;
 }
 
-void MGatewayServer::ApplyRoute(EServerType ServerType, uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port)
+void MGatewayServer::ApplyRoute(EServerType ServerType, uint32 ServerId, const MString& ServerName, const MString& Address, uint16 Port)
 {
     TSharedPtr<MServerConnection> TargetConn;
     if (ServerType == EServerType::Login)

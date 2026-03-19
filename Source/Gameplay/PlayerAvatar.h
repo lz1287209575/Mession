@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include "Gameplay/AvatarMember.h"
 #include "NetDriver/NetObject.h"
 
@@ -25,8 +25,8 @@ public:
     void SetOwnerPlayerId(uint64 InOwnerPlayerId);
     uint64 GetOwnerPlayerId() const { return OwnerPlayerId; }
 
-    void SetDisplayName(const FString& InDisplayName);
-    const FString& GetDisplayName() const { return DisplayName; }
+    void SetDisplayName(const MString& InDisplayName);
+    const MString& GetDisplayName() const { return DisplayName; }
 
     void SetAlive(bool bInAlive);
     bool IsAlive() const { return bAlive; }
@@ -89,7 +89,7 @@ private:
     SVector ReplicatedScale = SVector(1.0f, 1.0f, 1.0f);
 
     MPROPERTY(Edit | RepToClient | SaveGame)
-    FString DisplayName;
+    MString DisplayName;
 
     MPROPERTY(Edit | RepToClient | SaveGame)
     bool bAlive = true;

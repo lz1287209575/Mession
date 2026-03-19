@@ -19,7 +19,7 @@ int main(int argc, char* argv[])
     signal(SIGINT, SignalHandler);
     signal(SIGTERM, SignalHandler);
 
-    FString ConfigPath;
+    MString ConfigPath;
     int Port = 8006;
     MParseArgs::Parse(argc, argv, ConfigPath, Port, 8006);
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include "Core/Net/Socket.h"
 #include "Core/Net/HttpDebugServer.h"
 #include "Common/Logger.h"
@@ -18,11 +18,11 @@
 struct SGatewayConfig
 {
     uint16 ListenPort = 8001;        // 客户端连接端口
-    FString RouterServerAddr = "127.0.0.1";
+    MString RouterServerAddr = "127.0.0.1";
     uint16 RouterServerPort = 8005;
-    FString LoginServerAddr = "127.0.0.1";
+    MString LoginServerAddr = "127.0.0.1";
     uint16 LoginServerPort = 8002;
-    FString WorldServerAddr = "127.0.0.1";
+    MString WorldServerAddr = "127.0.0.1";
     uint16 WorldServerPort = 8003;
     uint16 ZoneId = 0;               // 0 = 任意区
     uint16 DebugHttpPort = 0;        // 调试 HTTP 端口（0 = 关闭）
@@ -59,8 +59,8 @@ struct SPendingResolvedClientRoute
     uint64 ConnectionId = 0;
     uint64 PlayerId = 0;
     EServerType TargetServerType = EServerType::Unknown;
-    FString WrapMode;
-    TArray Packet;
+    MString WrapMode;
+    TByteArray Packet;
 };
 
 // 网关服务器
@@ -95,15 +95,15 @@ private:
     uint64 NextRouteRequestId = 1;
     TMap<uint64, SPendingWorldLoginRoute> PendingWorldLoginRoutes;
     TMap<uint64, TVector<SPendingResolvedClientRoute>> PendingResolvedClientRoutes;
-    TMap<FString, uint64> InFlightResolvedRouteRequests;
-    TMap<FString, SServerInfo> ResolvedRouteCache;
+    TMap<MString, uint64> InFlightResolvedRouteRequests;
+    TMap<MString, SServerInfo> ResolvedRouteCache;
     uint64 ClientFunctionCallCount = 0;
     uint64 ClientFunctionCallRejectedCount = 0;
     uint64 UnknownClientFunctionCount = 0;
     uint64 ClientFunctionDecodeFailureCount = 0;
     uint16 LastClientFunctionId = 0;
-    FString LastClientFunctionName;
-    FString LastClientFunctionError;
+    MString LastClientFunctionName;
+    MString LastClientFunctionError;
 
     MGatewayService GatewayService;
 
@@ -116,7 +116,7 @@ public:
     MGatewayServer() {}
     ~MGatewayServer() { Shutdown(); }
     
-    bool LoadConfig(const FString& ConfigPath);
+    bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
     void Tick();
     void Run() override { MNetServerBase::Run(); }
@@ -140,7 +140,7 @@ public:
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Gateway)
     void Rpc_OnRouterServerRegisterAck(uint8 Result);
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Gateway)
-    void Rpc_OnRouterRouteResponse(uint64 RequestId, uint8 RequestedTypeValue, uint64 PlayerId, bool bFound, uint32 ServerId, uint8 ServerTypeValue, const FString& ServerName, const FString& Address, uint16 Port, uint16 ZoneId);
+    void Rpc_OnRouterRouteResponse(uint64 RequestId, uint8 RequestedTypeValue, uint64 PlayerId, bool bFound, uint32 ServerId, uint8 ServerTypeValue, const MString& ServerName, const MString& Address, uint16 Port, uint16 ZoneId);
 
 private:
     void ConnectToLoginServer();
@@ -149,26 +149,26 @@ private:
     TSharedPtr<MClientConnection> FindClientByPlayerId(uint64 PlayerId);
     void ResetClientAuthState(const TSharedPtr<MClientConnection>& Client);
     bool IsGeneratedRouteAuthorized(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request) const;
-    TArray BuildGeneratedRoutePacket(const SGeneratedClientRouteRequest& Request) const;
+    TByteArray BuildGeneratedRoutePacket(const SGeneratedClientRouteRequest& Request) const;
     TSharedPtr<MServerConnection> ResolveGeneratedRouteConnection(SGeneratedClientRouteRequest::ERouteKind RouteKind) const;
     TSharedPtr<MServerConnection> ResolveGeneratedRouteConnection(EServerType TargetServerType) const;
     bool EnsureGeneratedRouteResolved(const SGeneratedClientRouteRequest& Request, const TSharedPtr<MClientConnection>& Client);
-    EGeneratedClientDispatchResult ExecuteGeneratedRouteRawToConnection(const TSharedPtr<MServerConnection>& Connection, SGeneratedClientRouteRequest::ERouteKind RouteKind, const TArray& Packet);
-    EGeneratedClientDispatchResult ExecuteGeneratedRouteRaw(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
-    EGeneratedClientDispatchResult ExecuteGeneratedRoutePlayerClientSync(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
-    EGeneratedClientDispatchResult ExecuteGeneratedRouteLoginRpcOrLegacy(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TArray& Packet);
+    EGeneratedClientDispatchResult ExecuteGeneratedRouteRawToConnection(const TSharedPtr<MServerConnection>& Connection, SGeneratedClientRouteRequest::ERouteKind RouteKind, const TByteArray& Packet);
+    EGeneratedClientDispatchResult ExecuteGeneratedRouteRaw(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TByteArray& Packet);
+    EGeneratedClientDispatchResult ExecuteGeneratedRoutePlayerClientSync(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TByteArray& Packet);
+    EGeneratedClientDispatchResult ExecuteGeneratedRouteLoginRpcOrLegacy(const TSharedPtr<MClientConnection>& Client, const SGeneratedClientRouteRequest& Request, const TByteArray& Packet);
     EGeneratedClientDispatchResult ExecuteGeneratedRouteByPolicy(
         const TSharedPtr<MClientConnection>& Client,
-        const FString& RouteKey,
-        const FString& WrapMode,
+        const MString& RouteKey,
+        const MString& WrapMode,
         const SGeneratedClientRouteRequest* Request,
-        const TArray& Packet);
+        const TByteArray& Packet);
     EGeneratedClientDispatchResult HandleGeneratedClientRoute(const SGeneratedClientRouteRequest& Request) override;
-    void HandleClientPacket(uint64 ConnectionId, const TArray& Data);
-    bool HandleClientFunctionCall(uint64 ConnectionId, const TArray& Data);
-    void HandleLoginServerMessage(uint8 Type, const TArray& Data);
-    void HandleWorldServerMessage(uint8 Type, const TArray& Data);
-    void HandleRouterServerMessage(uint8 Type, const TArray& Data);
+    void HandleClientPacket(uint64 ConnectionId, const TByteArray& Data);
+    bool HandleClientFunctionCall(uint64 ConnectionId, const TByteArray& Data);
+    void HandleLoginServerMessage(uint8 Type, const TByteArray& Data);
+    void HandleWorldServerMessage(uint8 Type, const TByteArray& Data);
+    void HandleRouterServerMessage(uint8 Type, const TByteArray& Data);
 
     // 使用分发器注册 / 处理具体消息
     void InitLoginMessageHandlers();
@@ -182,11 +182,11 @@ private:
     void OnRouter_RouteResponse(const SRouteResponseMessage& Message);
     void SendRouterRegister();
     uint64 QueryRoute(EServerType ServerType, uint64 PlayerId = 0);
-    void ApplyRoute(EServerType ServerType, uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
+    void ApplyRoute(EServerType ServerType, uint32 ServerId, const MString& ServerName, const MString& Address, uint16 Port);
     void InvalidateResolvedRoute(EServerType ServerType, uint64 PlayerId);
     void InvalidateResolvedRoutesForPlayer(uint64 PlayerId);
     void RemovePendingResolvedClientRoutesForPlayer(uint64 PlayerId);
     void FlushPendingWorldLogins();
     void FlushPendingResolvedClientRoutes(EServerType ServerType);
-    FString BuildDebugStatusJson() const;
+    MString BuildDebugStatusJson() const;
 };

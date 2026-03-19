@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 
 // AOI (Area of Interest) 区域
 struct SAOICell

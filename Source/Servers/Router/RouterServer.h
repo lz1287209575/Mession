@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include "Core/Net/Socket.h"
 #include "Core/Net/HttpDebugServer.h"
 #include "Common/Logger.h"
@@ -25,8 +25,8 @@ struct SRouterPeer
     bool bRegistered = false;
     uint32 ServerId = 0;
     EServerType ServerType = EServerType::Unknown;
-    FString ServerName;
-    FString Address = "127.0.0.1";
+    MString ServerName;
+    MString Address = "127.0.0.1";
     uint16 Port = 0;
     uint16 ZoneId = 0;
     uint32 CurrentLoad = 0;
@@ -58,7 +58,7 @@ public:
     MRouterServer() = default;
     ~MRouterServer() { Shutdown(); }
 
-    bool LoadConfig(const FString& ConfigPath);
+    bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
     void Tick();
     void Run() override { MNetServerBase::Run(); }
@@ -70,8 +70,8 @@ public:
     void OnRunStarted() override;
 
 private:
-    void HandlePacket(uint64 ConnectionId, const TArray& Data);
-    bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
+    void HandlePacket(uint64 ConnectionId, const TByteArray& Data);
+    bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload);
     template<typename TMessage>
     bool SendServerMessage(uint64 ConnectionId, EServerMessageType Type, const TMessage& Message)
     {
@@ -80,7 +80,7 @@ private:
     const SRouterPeer* SelectRouteTarget(EServerType RequestedType, uint64 PlayerId, uint16 ZoneId = 0);
     const SRouterPeer* FindRegisteredServerById(uint32 ServerId) const;
     void RemovePeer(uint64 ConnectionId);
-    FString BuildDebugStatusJson() const;
+    MString BuildDebugStatusJson() const;
     void InitPeerMessageHandlers();
     void OnPeer_ServerHandshake(uint64 ConnectionId, const SServerHandshakeMessage& Message);
     void OnPeer_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& Message);

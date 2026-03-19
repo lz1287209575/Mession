@@ -5,7 +5,7 @@
 
 namespace
 {
-bool BuildReflectedActorSnapshot(MActor* Actor, TArray& OutData)
+bool BuildReflectedActorSnapshot(MActor* Actor, TByteArray& OutData)
 {
     OutData.clear();
     if (!Actor)
@@ -52,9 +52,9 @@ bool ClassHasDomainProperties(const MClass* InClass, EPropertyDomainFlags InDoma
     return false;
 }
 
-TArray BuildActorUpdatePacket(uint64 ActorId, const TArray& Data)
+TByteArray BuildActorUpdatePacket(uint64 ActorId, const TByteArray& Data)
 {
-    TArray Packet;
+    TByteArray Packet;
     BuildClientFunctionCallPacketForPayload(
         MClientDownlink::Id_OnActorUpdate(),
         SClientActorUpdatePayload{ActorId, Data},
@@ -62,15 +62,15 @@ TArray BuildActorUpdatePacket(uint64 ActorId, const TArray& Data)
     return Packet;
 }
 
-TArray BuildActorCreatePacket(MActor* Actor)
+TByteArray BuildActorCreatePacket(MActor* Actor)
 {
-    TArray Packet;
+    TByteArray Packet;
     if (!Actor)
     {
         return Packet;
     }
 
-    TArray SnapshotData;
+    TByteArray SnapshotData;
     if (!BuildReflectedActorSnapshot(Actor, SnapshotData))
     {
         return Packet;
@@ -83,9 +83,9 @@ TArray BuildActorCreatePacket(MActor* Actor)
     return Packet;
 }
 
-TArray BuildActorDestroyPacket(uint64 ActorId)
+TByteArray BuildActorDestroyPacket(uint64 ActorId)
 {
-    TArray Packet;
+    TByteArray Packet;
     BuildClientFunctionCallPacketForPayload(
         MClientDownlink::Id_OnActorDestroy(),
         SClientActorDestroyPayload{ActorId},
@@ -109,7 +109,7 @@ void MReplicationDriver::RegisterActor(MActor* Actor)
     {
         ReplicationMap[Actor->GetObjectId()] = Actor;
         Actor->SetActorActive(true);
-        TArray SnapshotData;
+        TByteArray SnapshotData;
         if (BuildReflectedActorSnapshot(Actor, SnapshotData))
         {
             LastSerializedSnapshots[Actor->GetObjectId()] = SnapshotData;
@@ -188,13 +188,13 @@ void MReplicationDriver::Tick(float)
             continue;
         }
 
-        TArray SnapshotData;
+        TByteArray SnapshotData;
         if (!BuildReflectedActorSnapshot(Actor, SnapshotData) || SnapshotData.empty())
         {
             continue;
         }
 
-        TArray& LastSnapshot = LastSerializedSnapshots[ActorId];
+        TByteArray& LastSnapshot = LastSerializedSnapshots[ActorId];
         if (SnapshotData == LastSnapshot)
         {
             if (bUseReplicationDirtyDomain)
@@ -228,7 +228,7 @@ void MReplicationDriver::Tick(float)
     ProcessPendingUpdates();
 }
 
-void MReplicationDriver::SendActorUpdate(uint64 ConnectionId, uint64 ActorId, const TArray& Data)
+void MReplicationDriver::SendActorUpdate(uint64 ConnectionId, uint64 ActorId, const TByteArray& Data)
 {
     auto ConnIt = Connections.find(ConnectionId);
     if (ConnIt == Connections.end())
@@ -236,7 +236,7 @@ void MReplicationDriver::SendActorUpdate(uint64 ConnectionId, uint64 ActorId, co
         return;
     }
 
-    const TArray Packet = BuildActorUpdatePacket(ActorId, Data);
+    const TByteArray Packet = BuildActorUpdatePacket(ActorId, Data);
     ConnIt->second->Send(Packet.data(), Packet.size());
 }
 
@@ -247,7 +247,7 @@ void MReplicationDriver::BroadcastActorCreate(MActor* Actor, uint64 ExcludeConne
         return;
     }
 
-    const TArray Packet = BuildActorCreatePacket(Actor);
+    const TByteArray Packet = BuildActorCreatePacket(Actor);
     for (auto& [ConnectionId, Connection] : Connections)
     {
         if (ConnectionId != ExcludeConnectionId && Connection->IsConnected())
@@ -259,7 +259,7 @@ void MReplicationDriver::BroadcastActorCreate(MActor* Actor, uint64 ExcludeConne
 
 void MReplicationDriver::BroadcastActorDestroy(uint64 ActorId, uint64 ExcludeConnectionId)
 {
-    const TArray Packet = BuildActorDestroyPacket(ActorId);
+    const TByteArray Packet = BuildActorDestroyPacket(ActorId);
     for (auto& [ConnectionId, Connection] : Connections)
     {
         if (ConnectionId != ExcludeConnectionId && Connection->IsConnected())

@@ -9,8 +9,8 @@ struct SPersistenceRecord
     uint32 OwnerServerId = 0;
     uint64 RequestId = 0;
     uint64 Version = 0;
-    FString ClassName;
-    TArray SnapshotData;
+    MString ClassName;
+    TByteArray SnapshotData;
 };
 
 class IPersistenceSink

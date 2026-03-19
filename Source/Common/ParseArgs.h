@@ -1,12 +1,12 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include <cstring>
 #include <cstdlib>
 
 namespace MParseArgs
 {
-inline void Parse(int argc, char* argv[], FString& OutConfigPath, int& OutPort, int DefaultPort)
+inline void Parse(int argc, char* argv[], MString& OutConfigPath, int& OutPort, int DefaultPort)
 {
     OutConfigPath.clear();
     OutPort = DefaultPort;

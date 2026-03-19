@@ -42,7 +42,7 @@ int main(int argc, char* argv[])
     SetConsoleCtrlHandler(ConsoleControlHandler, TRUE);
 #endif
 
-    FString ConfigPath;
+    MString ConfigPath;
     int Port = 8004;
     MParseArgs::Parse(argc, argv, ConfigPath, Port, 8004);
 

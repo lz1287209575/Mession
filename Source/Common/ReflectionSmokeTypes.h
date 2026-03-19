@@ -1,7 +1,7 @@
 #pragma once
 
 #include "NetDriver/Reflection.h"
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 
 MENUM()
 enum class EReflectionSmokeArchetype : uint8
@@ -18,7 +18,7 @@ public:
     MGENERATED_BODY(MReflectionSmokeCharacter, MReflectObject, 0)
 
     MPROPERTY(Edit | SaveGame)
-    FString Name = "Player";
+    MString Name = "Player";
 
     MPROPERTY(Edit)
     int32 Level = 1;
@@ -63,7 +63,7 @@ public:
     void LevelUp();
 
     MFUNCTION()
-    void Rename(const FString& NewName);
+    void Rename(const MString& NewName);
 
     MFUNCTION()
     int32 GetGoldAmount() const;
@@ -111,7 +111,7 @@ public:
     MGENERATED_BODY(MReflectionSmokeHero, MReflectObject, 0)
 
     MPROPERTY(Edit)
-    FString Name = "Hero";
+    MString Name = "Hero";
 
     MPROPERTY(Edit)
     SReflectionSmokeCombatStats CombatStats;
@@ -144,7 +144,7 @@ public:
     uint64 PlayerId = 0;
 
     MPROPERTY(Edit)
-    FString AccountName;
+    MString AccountName;
 
     MPROPERTY(Edit)
     int32 VIPLevel = 0;
@@ -153,7 +153,7 @@ public:
     int64 LoginTime = 0;
 
     MPROPERTY(SaveGame)
-    FString LastLoginIP;
+    MString LastLoginIP;
 
     MPROPERTY(SaveGame)
     TVector<uint64> FriendsList;

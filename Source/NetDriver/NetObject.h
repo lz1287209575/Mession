@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include "Common/Logger.h"
 #include "Common/StringUtils.h"
 
@@ -27,10 +27,10 @@ public:
     void SetReplicated(bool b) { bReplicated = b; }
     bool IsReplicated() const { return bReplicated; }
     
-    virtual FString ToString() const
+    virtual MString ToString() const
     {
         return "MObject{ObjectId=" + MString::ToString(ObjectId) +
-               ", Replicated=" + FString(bReplicated ? "true" : "false") + "}";
+               ", Replicated=" + MString(bReplicated ? "true" : "false") + "}";
     }
 };
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include <condition_variable>
 #include <mutex>
 
@@ -9,7 +9,7 @@
 class MHttpDebugServer
 {
 public:
-    using TStatusHandler = TFunction<FString()>;
+    using TStatusHandler = TFunction<MString()>;
 
     MHttpDebugServer(uint16 InPort, TStatusHandler InHandler);
     ~MHttpDebugServer();

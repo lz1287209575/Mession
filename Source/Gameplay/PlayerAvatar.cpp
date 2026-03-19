@@ -68,7 +68,7 @@ void MPlayerAvatar::SetOwnerPlayerId(uint64 InOwnerPlayerId)
     }
 }
 
-void MPlayerAvatar::SetDisplayName(const FString& InDisplayName)
+void MPlayerAvatar::SetDisplayName(const MString& InDisplayName)
 {
     if (DisplayName == InDisplayName)
     {

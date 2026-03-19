@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 
 // 属性复制条件
 enum class ELifetimeRep : uint8
@@ -56,7 +56,7 @@ public:
     virtual MArchive& operator<<(int64& Value) = 0;
     virtual MArchive& operator<<(float& Value) = 0;
     virtual MArchive& operator<<(double& Value) = 0;
-    virtual MArchive& operator<<(FString& Value) = 0;
+    virtual MArchive& operator<<(MString& Value) = 0;
     virtual MArchive& operator<<(SVector& Value) = 0;
     virtual MArchive& operator<<(SRotator& Value) = 0;
     
@@ -74,16 +74,16 @@ private:
         Loading
     };
 
-    TArray Data;
+    TByteArray Data;
     size_t ReadPos;
     EMode Mode;
     
 public:
     MMemoryArchive() : ReadPos(0), Mode(EMode::Saving) {}
-    explicit MMemoryArchive(const TArray& InData) : Data(InData), ReadPos(0), Mode(EMode::Loading) {}
+    explicit MMemoryArchive(const TByteArray& InData) : Data(InData), ReadPos(0), Mode(EMode::Loading) {}
     
     // 设置数据（加载时）
-    void SetData(const TArray& InData)
+    void SetData(const TByteArray& InData)
     {
         Data = InData;
         ReadPos = 0;
@@ -91,7 +91,7 @@ public:
     }
     
     // 获取数据（保存时）
-    const TArray& GetData() const { return Data; }
+    const TByteArray& GetData() const { return Data; }
     
     void Clear()
     {
@@ -247,7 +247,7 @@ public:
         return *this;
     }
     
-    MArchive& operator<<(FString& Value) override
+    MArchive& operator<<(MString& Value) override
     {
         uint32 Len = (uint32)Value.size();
         *this << Len;

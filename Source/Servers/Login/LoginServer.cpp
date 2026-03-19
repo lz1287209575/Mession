@@ -9,7 +9,7 @@
 
 namespace
 {
-const TMap<FString, const char*> LoginEnvMap = {
+const TMap<MString, const char*> LoginEnvMap = {
     {"port", "MESSION_LOGIN_PORT"},
     {"router_addr", "MESSION_ROUTER_ADDR"},
     {"router_port", "MESSION_ROUTER_PORT"},
@@ -23,9 +23,9 @@ MLoginServer::MLoginServer()
     Rng = std::mt19937(Rd());
 }
 
-bool MLoginServer::LoadConfig(const FString& ConfigPath)
+bool MLoginServer::LoadConfig(const MString& ConfigPath)
 {
-    TMap<FString, FString> Vars;
+    TMap<MString, MString> Vars;
     if (!ConfigPath.empty())
     {
         MConfig::LoadFromFile(ConfigPath, Vars);
@@ -64,7 +64,7 @@ bool MLoginServer::Init(int InPort)
         LOG_INFO("Router server authenticated: %s", Info.ServerName.c_str());
         SendRouterRegister();
     });
-    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
         HandleRouterServerMessage(Type, Data);
     });
     RouterServerConn->Connect();
@@ -98,7 +98,7 @@ void MLoginServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
     GatewayConnections[ConnId] = Peer;
     LOG_INFO("New gateway connected (connection_id=%llu)", (unsigned long long)ConnId);
     EventLoop.RegisterConnection(ConnId, Conn,
-        [this](uint64 Id, const TArray& Payload)
+        [this](uint64 Id, const TByteArray& Payload)
         {
             HandleGatewayPacket(Id, Payload);
         },
@@ -169,7 +169,7 @@ void MLoginServer::OnRunStarted()
     LOG_INFO("Login server running...");
 }
 
-FString MLoginServer::BuildDebugStatusJson() const
+MString MLoginServer::BuildDebugStatusJson() const
 {
     const size_t GatewayCount = GatewayConnections.size();
     const size_t SessionCount = Sessions.size();
@@ -178,11 +178,11 @@ FString MLoginServer::BuildDebugStatusJson() const
     W.Key("server"); W.Value("Login");
     W.Key("gateways"); W.Value(static_cast<uint64>(GatewayCount));
     W.Key("sessions"); W.Value(static_cast<uint64>(SessionCount));
-    const TVector<FString> RpcFunctions = GetGeneratedRpcFunctionNames(EServerType::Login);
+    const TVector<MString> RpcFunctions = GetGeneratedRpcFunctionNames(EServerType::Login);
     W.Key("rpcManifestCount"); W.Value(static_cast<uint64>(RpcFunctions.size()));
     W.Key("rpcFunctions");
     W.BeginArray();
-    for (const FString& Name : RpcFunctions)
+    for (const MString& Name : RpcFunctions)
     {
         W.Value(Name);
     }
@@ -201,7 +201,7 @@ FString MLoginServer::BuildDebugStatusJson() const
     return W.ToString();
 }
 
-void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
+void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TByteArray& Data)
 {
     if (Data.empty())
     {
@@ -215,7 +215,7 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
     }
 
     const uint8 MsgType = Data[0];
-    const TArray Payload(Data.begin() + 1, Data.end());
+    const TByteArray Payload(Data.begin() + 1, Data.end());
 
     if (MsgType == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
@@ -236,7 +236,7 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TArray& Data)
     GatewayMessageDispatcher.Dispatch(ConnectionId, MsgType, Payload);
 }
 
-bool MLoginServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload)
+bool MLoginServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload)
 {
     auto It = GatewayConnections.find(ConnectionId);
     if (It == GatewayConnections.end() || !It->second.Connection)
@@ -244,7 +244,7 @@ bool MLoginServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArr
         return false;
     }
 
-    TArray Packet;
+    TByteArray Packet;
     Packet.reserve(1 + Payload.size());
     Packet.push_back(Type);
     Packet.insert(Packet.end(), Payload.begin(), Payload.end());
@@ -316,7 +316,7 @@ uint64 MLoginServer::FindAuthenticatedPeerConnectionId(EServerType ServerType) c
     return 0;
 }
 
-void MLoginServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
+void MLoginServer::HandleRouterServerMessage(uint8 Type, const TByteArray& Data)
 {
     if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
@@ -380,7 +380,7 @@ void MLoginServer::InitRouterMessageHandlers()
         "MT_ServerRegisterAck");
 }
 
-void MLoginServer::OnGateway_ServerHandshake(uint64 ConnectionId, const TArray& Payload)
+void MLoginServer::OnGateway_ServerHandshake(uint64 ConnectionId, const TByteArray& Payload)
 {
     auto PeerIt = GatewayConnections.find(ConnectionId);
     if (PeerIt == GatewayConnections.end())
@@ -396,7 +396,7 @@ void MLoginServer::OnGateway_ServerHandshake(uint64 ConnectionId, const TArray& 
         if (ParseResult.IsOk() && IdPayload.PlayerId != 0)
         {
             const uint32 SessionKey = CreateSession(IdPayload.PlayerId, ConnectionId);
-            TArray Packet;
+            TByteArray Packet;
             if (!BuildClientFunctionCallPacketForPayload(
                     MClientDownlink::Id_OnLoginResponse(),
                     SClientLoginResponsePayload{SessionKey, IdPayload.PlayerId},

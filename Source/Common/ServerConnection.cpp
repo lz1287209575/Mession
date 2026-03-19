@@ -7,7 +7,7 @@ bool MTcpMessageChannel::Send(const void* Data, uint32 Size)
     return Connection && Connection->Send(Data, Size);
 }
 
-bool MTcpMessageChannel::ReceivePacket(TArray& OutPacket)
+bool MTcpMessageChannel::ReceivePacket(TByteArray& OutPacket)
 {
     return Connection && Connection->ReceivePacket(OutPacket);
 }
@@ -118,7 +118,7 @@ bool MServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
         return false;
     }
     
-    TArray Payload;
+    TByteArray Payload;
     Payload.resize(1 + Size);
     Payload[0] = Type;
     if (Size > 0 && Data)
@@ -129,7 +129,7 @@ bool MServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
     return SendRaw(Payload);
 }
 
-bool MServerConnection::SendRaw(const TArray& Data)
+bool MServerConnection::SendRaw(const TByteArray& Data)
 {
     if (!Transport || !Transport->IsConnected() || Data.empty())
     {
@@ -190,14 +190,14 @@ void MServerConnection::ProcessRecv()
         return;
     }
 
-    TArray Packet;
+    TByteArray Packet;
     while (Transport->ReceivePacket(Packet))
     {
         if (!Packet.empty())
         {
             BytesReceived += static_cast<uint64>(Packet.size());
             const uint8 Type = Packet[0];
-            TArray Payload(Packet.begin() + 1, Packet.end());
+            TByteArray Payload(Packet.begin() + 1, Packet.end());
             HandleMessage(Type, Payload);
         }
     }
@@ -209,7 +209,7 @@ void MServerConnection::ProcessRecv()
     }
 }
 
-void MServerConnection::HandleMessage(uint8 Type, const TArray& Data)
+void MServerConnection::HandleMessage(uint8 Type, const TByteArray& Data)
 {
     switch (Type)
     {
@@ -266,7 +266,7 @@ void MServerConnection::SendHandshake()
         LocalServerInfo.ServerType,
         LocalServerInfo.ServerName
     };
-    TArray Data = BuildPayload(Message);
+    TByteArray Data = BuildPayload(Message);
     Send((uint8)EServerMessageType::MT_ServerHandshake, Data.data(), Data.size());
     
     LOG_INFO("%s Sent handshake to %s:%d", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
@@ -282,7 +282,7 @@ void MServerConnection::SendHandshakeAck()
 void MServerConnection::SendHeartbeat()
 {
     const SHeartbeatMessage Message{++HeartbeatSeq};
-    TArray Data = BuildPayload(Message);
+    TByteArray Data = BuildPayload(Message);
     Send((uint8)EServerMessageType::MT_Heartbeat, Data.data(), Data.size());
 }
 
@@ -295,21 +295,21 @@ void MServerConnection::SendHeartbeatAck()
 bool MServerConnection::SendPlayerLogin(uint64 PlayerId, uint32 SessionKey)
 {
     const SPlayerLoginResponseMessage Message{0, PlayerId, SessionKey};
-    TArray Data = BuildPayload(Message);
+    TByteArray Data = BuildPayload(Message);
     return Send((uint8)EServerMessageType::MT_PlayerLogin, Data.data(), Data.size());
 }
 
 bool MServerConnection::SendPlayerLogout(uint64 PlayerId)
 {
     const SPlayerLogoutMessage Message{PlayerId};
-    TArray Data = BuildPayload(Message);
+    TByteArray Data = BuildPayload(Message);
     return Send((uint8)EServerMessageType::MT_PlayerLogout, Data.data(), Data.size());
 }
 
-bool MServerConnection::SendChatMessage(uint64 FromPlayerId, const FString& Message)
+bool MServerConnection::SendChatMessage(uint64 FromPlayerId, const MString& Message)
 {
     const SChatMessage ChatMessage{FromPlayerId, Message};
-    TArray Data = BuildPayload(ChatMessage);
+    TByteArray Data = BuildPayload(ChatMessage);
     return Send((uint8)EServerMessageType::MT_ChatMessage, Data.data(), Data.size());
 }
 

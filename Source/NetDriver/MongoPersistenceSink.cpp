@@ -1,22 +1,8 @@
 #include "NetDriver/MongoPersistenceSink.h"
 
 #include "Common/Logger.h"
+#include "Common/HexUtils.h"
 
-namespace
-{
-FString BytesToHex(const TArray& InData)
-{
-    static const char* Digits = "0123456789ABCDEF";
-    FString Out;
-    Out.reserve(InData.size() * 2);
-    for (uint8 Byte : InData)
-    {
-        Out.push_back(Digits[(Byte >> 4) & 0x0F]);
-        Out.push_back(Digits[Byte & 0x0F]);
-    }
-    return Out;
-}
-}
 
 MMongoPersistenceSink::MMongoPersistenceSink(SMongoPersistenceConfig InConfig)
     : Config(std::move(InConfig))
@@ -42,6 +28,6 @@ bool MMongoPersistenceSink::Persist(const SPersistenceRecord& InRecord)
         static_cast<unsigned long long>(InRecord.ObjectId),
         static_cast<unsigned>(InRecord.ClassId),
         InRecord.ClassName.c_str(),
-        BytesToHex(InRecord.SnapshotData).c_str());
+        Hex::BytesToHex(InRecord.SnapshotData).c_str());
     return true;
 }

@@ -5,7 +5,7 @@
 
 namespace
 {
-const TMap<FString, const char*> SceneEnvMap = {
+const TMap<MString, const char*> SceneEnvMap = {
     {"port", "MESSION_SCENE_PORT"},
     {"router_addr", "MESSION_ROUTER_ADDR"},
     {"router_port", "MESSION_ROUTER_PORT"},
@@ -20,9 +20,9 @@ MSceneServer::MSceneServer()
     InitWorldMessageHandlers();
 }
 
-bool MSceneServer::LoadConfig(const FString& ConfigPath)
+bool MSceneServer::LoadConfig(const MString& ConfigPath)
 {
-    TMap<FString, FString> Vars;
+    TMap<MString, MString> Vars;
     if (!ConfigPath.empty())
     {
         MConfig::LoadFromFile(ConfigPath, Vars);
@@ -145,7 +145,7 @@ void MSceneServer::TickBackends()
     }
 }
 
-FString MSceneServer::BuildDebugStatusJson() const
+MString MSceneServer::BuildDebugStatusJson() const
 {
     const SConnectionManagerStats Stats = BackendConnectionManager.GetStats();
     size_t EntityCount = 0;
@@ -182,7 +182,7 @@ void MSceneServer::ConnectToRouterServer()
         SendRouterRegister();
         QueryWorldServerRoute();
     });
-    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
         HandleRouterServerMessage(Type, Data);
     });
     RouterServerConn->Connect();
@@ -202,7 +202,7 @@ void MSceneServer::ConnectToWorldServer()
     WorldServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Connected to world server: %s", Info.ServerName.c_str());
     });
-    WorldServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+    WorldServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
         HandleWorldPacket(Type, Data);
     });
     if (!WorldServerConn->IsConnected() && !WorldServerConn->IsConnecting())
@@ -213,7 +213,7 @@ void MSceneServer::ConnectToWorldServer()
     LOG_INFO("Connecting to world server...");
 }
 
-void MSceneServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
+void MSceneServer::HandleRouterServerMessage(uint8 Type, const TByteArray& Data)
 {
     RouterMessageDispatcher.Dispatch(Type, Data);
 }
@@ -275,7 +275,7 @@ void MSceneServer::QueryWorldServerRoute()
         SRouteQueryMessage{NextRouteRequestId++, EServerType::World, 0, 0});
 }
 
-void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port)
+void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const MString& ServerName, const MString& Address, uint16 Port)
 {
     if (!WorldServerConn)
     {
@@ -303,7 +303,7 @@ void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const FString& ServerN
     ConnectToWorldServer();
 }
 
-void MSceneServer::HandleWorldPacket(uint8 Type, const TArray& Data)
+void MSceneServer::HandleWorldPacket(uint8 Type, const TByteArray& Data)
 {
     WorldMessageDispatcher.Dispatch(Type, Data);
 }

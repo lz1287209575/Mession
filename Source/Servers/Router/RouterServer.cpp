@@ -8,7 +8,7 @@
 
 namespace
 {
-const TMap<FString, const char*> RouterEnvMap = {
+const TMap<MString, const char*> RouterEnvMap = {
     {"port", "MESSION_ROUTER_PORT"},
     {"route_lease_seconds", "MESSION_ROUTE_LEASE_SECONDS"},
     {"debug_http_port", "MESSION_ROUTER_DEBUG_HTTP_PORT"},
@@ -16,9 +16,9 @@ const TMap<FString, const char*> RouterEnvMap = {
 
 }
 
-bool MRouterServer::LoadConfig(const FString& ConfigPath)
+bool MRouterServer::LoadConfig(const MString& ConfigPath)
 {
-    TMap<FString, FString> Vars;
+    TMap<MString, MString> Vars;
     if (!ConfigPath.empty())
     {
         MConfig::LoadFromFile(ConfigPath, Vars);
@@ -72,7 +72,7 @@ void MRouterServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
     Peers[ConnId] = Peer;
     LOG_INFO("New router peer connected: %s (connection_id=%llu)", Peer.Address.c_str(), (unsigned long long)ConnId);
     EventLoop.RegisterConnection(ConnId, Conn,
-        [this](uint64 Id, const TArray& Payload)
+        [this](uint64 Id, const TByteArray& Payload)
         {
             HandlePacket(Id, Payload);
         },
@@ -119,7 +119,7 @@ void MRouterServer::Tick()
     // 由 EventLoop.RunOnce 驱动，此处仅保留接口兼容
 }
 
-FString MRouterServer::BuildDebugStatusJson() const
+MString MRouterServer::BuildDebugStatusJson() const
 {
     size_t RegisteredCount = 0;
     for (const auto& [Id, Peer] : Peers)
@@ -142,7 +142,7 @@ FString MRouterServer::BuildDebugStatusJson() const
     {
         W.Key(GetServerTypeDisplayName(ServerType));
         W.BeginArray();
-        for (const FString& Name : GetGeneratedRpcFunctionNames(ServerType))
+        for (const MString& Name : GetGeneratedRpcFunctionNames(ServerType))
         {
             W.Value(Name);
         }
@@ -164,7 +164,7 @@ FString MRouterServer::BuildDebugStatusJson() const
     return W.ToString();
 }
 
-void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
+void MRouterServer::HandlePacket(uint64 ConnectionId, const TByteArray& Data)
 {
     if (Data.empty())
     {
@@ -178,7 +178,7 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TArray& Data)
     }
 
     const uint8 MsgType = Data[0];
-    const TArray Payload(Data.begin() + 1, Data.end());
+    const TByteArray Payload(Data.begin() + 1, Data.end());
     PeerMessageDispatcher.Dispatch(ConnectionId, MsgType, Payload);
 }
 
@@ -338,7 +338,7 @@ void MRouterServer::OnPeer_RouteQuery(uint64 ConnectionId, const SRouteQueryMess
              Target ? Target->ServerName.c_str() : "none");
 }
 
-bool MRouterServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload)
+bool MRouterServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload)
 {
     auto It = Peers.find(ConnectionId);
     if (It == Peers.end() || !It->second.Connection)
@@ -346,7 +346,7 @@ bool MRouterServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TAr
         return false;
     }
 
-    TArray Packet;
+    TByteArray Packet;
     Packet.reserve(1 + Payload.size());
     Packet.push_back(Type);
     Packet.insert(Packet.end(), Payload.begin(), Payload.end());

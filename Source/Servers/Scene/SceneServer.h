@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include "Core/Net/Socket.h"
 #include "Core/Net/HttpDebugServer.h"
 #include "Common/Logger.h"
@@ -16,11 +16,11 @@ struct SSceneConfig
 {
     uint16 ListenPort = 8004;  // 世界服务器连接端口
     uint16 SceneId = 1;
-    FString SceneName = "MainWorld";
+    MString SceneName = "MainWorld";
     uint16 ZoneId = 0;
-    FString RouterServerAddr = "127.0.0.1";
+    MString RouterServerAddr = "127.0.0.1";
     uint16 RouterServerPort = 8005;
-    FString WorldServerAddr = "127.0.0.1";
+    MString WorldServerAddr = "127.0.0.1";
     uint16 WorldServerPort = 8003;
     SVector SceneSize = SVector(1000, 1000, 500);
     uint16 DebugHttpPort = 0;      // 调试 HTTP 端口（0 = 关闭）
@@ -40,18 +40,18 @@ class MScene
 {
 private:
     uint16 SceneId;
-    FString SceneName;
+    MString SceneName;
     SVector Size;
     
     // 场景中的实体
     TMap<uint64, SSceneEntity> Entities;
     
 public:
-    MScene(uint16 InId, const FString& InName, const SVector& InSize)
+    MScene(uint16 InId, const MString& InName, const SVector& InSize)
         : SceneId(InId), SceneName(InName), Size(InSize) {}
     
     uint16 GetSceneId() const { return SceneId; }
-    const FString& GetSceneName() const { return SceneName; }
+    const MString& GetSceneName() const { return SceneName; }
     
     void AddEntity(const SSceneEntity& Entity);
     void RemoveEntity(uint64 EntityId);
@@ -88,7 +88,7 @@ public:
     MSceneServer();
     ~MSceneServer() { Shutdown(); }
 
-    bool LoadConfig(const FString& ConfigPath);
+    bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
     void Tick();
     void Run() override { MNetServerBase::Run(); }
@@ -102,15 +102,15 @@ public:
 private:
     void ConnectToRouterServer();
     void ConnectToWorldServer();
-    void HandleRouterServerMessage(uint8 Type, const TArray& Data);
+    void HandleRouterServerMessage(uint8 Type, const TByteArray& Data);
     void SendRouterRegister();
     void QueryWorldServerRoute();
     void SendLoadReport();
-    void ApplyWorldServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
-    void HandleWorldPacket(uint8 Type, const TArray& Data);
+    void ApplyWorldServerRoute(uint32 ServerId, const MString& ServerName, const MString& Address, uint16 Port);
+    void HandleWorldPacket(uint8 Type, const TByteArray& Data);
     void CreateDefaultScenes();
     TSharedPtr<MScene> GetScene(uint16 SceneId);
-    FString BuildDebugStatusJson() const;
+    MString BuildDebugStatusJson() const;
 
     // 分发器注册与具体处理函数
     void InitRouterMessageHandlers();

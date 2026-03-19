@@ -1,37 +1,20 @@
 #include "NetDriver/Reflection.h"
+#include "Common/HexUtils.h"
 #include "Common/Logger.h"
 
 // MProperty 序列化实现（默认按基础类型 / 简单结构体处理）
 
 namespace
 {
-FString BytesToHexString(const uint8* Data, size_t Size)
-{
-    static const char* HexDigits = "0123456789ABCDEF";
-    if (!Data || Size == 0)
-    {
-        return "";
-    }
 
-    FString Result;
-    Result.reserve(Size * 2);
-    for (size_t Index = 0; Index < Size; ++Index)
-    {
-        const uint8 Value = Data[Index];
-        Result.push_back(HexDigits[(Value >> 4) & 0x0F]);
-        Result.push_back(HexDigits[Value & 0x0F]);
-    }
-    return Result;
-}
-
-FString FormatVector(const SVector& Value)
+MString FormatVector(const SVector& Value)
 {
     return "{X=" + MString::ToString(Value.X) +
            ", Y=" + MString::ToString(Value.Y) +
            ", Z=" + MString::ToString(Value.Z) + "}";
 }
 
-FString FormatRotator(const SRotator& Value)
+MString FormatRotator(const SRotator& Value)
 {
     return "{Pitch=" + MString::ToString(Value.Pitch) +
            ", Yaw=" + MString::ToString(Value.Yaw) +
@@ -122,7 +105,7 @@ void MProperty::WriteValue(void* Object, MReflectArchive& Ar) const
     }
     case EPropertyType::String:
     {
-        FString& Value = *reinterpret_cast<FString*>(FieldPtr);
+        MString& Value = *reinterpret_cast<MString*>(FieldPtr);
         Ar << Value;
         break;
     }
@@ -157,7 +140,7 @@ void MProperty::WriteValue(void* Object, MReflectArchive& Ar) const
     }
 }
 
-FString MProperty::ExportValueToString(const void* Object) const
+MString MProperty::ExportValueToString(const void* Object) const
 {
     if (!Object)
     {
@@ -195,7 +178,7 @@ FString MProperty::ExportValueToString(const void* Object) const
     case EPropertyType::Bool:
         return *reinterpret_cast<const bool*>(FieldPtr) ? "true" : "false";
     case EPropertyType::String:
-        return "\"" + *reinterpret_cast<const FString*>(FieldPtr) + "\"";
+        return "\"" + *reinterpret_cast<const MString*>(FieldPtr) + "\"";
     case EPropertyType::Vector:
         return FormatVector(*reinterpret_cast<const SVector*>(FieldPtr));
     case EPropertyType::Rotator:
@@ -242,7 +225,7 @@ FString MProperty::ExportValueToString(const void* Object) const
         {
             return StructMeta->ExportObjectToString(FieldPtr);
         }
-        return "<struct:" + Name + " hex=" + BytesToHexString(FieldPtr, Size) + ">";
+        return "<struct:" + Name + " hex=" + Hex::BytesToHexString(FieldPtr, Size) + ">";
     case EPropertyType::Array:
         return "<array>";
     case EPropertyType::Object:
@@ -308,7 +291,7 @@ void MClass::Construct(void* Object) const
     }
 }
 
-MProperty* MClass::FindProperty(const FString& InName) const
+MProperty* MClass::FindProperty(const MString& InName) const
 {
     for (MProperty* Prop : Properties)
     {
@@ -344,7 +327,7 @@ MProperty* MClass::FindPropertyById(uint16 InId) const
     return nullptr;
 }
 
-MFunction* MClass::FindFunction(const FString& InName) const
+MFunction* MClass::FindFunction(const MString& InName) const
 {
     for (MFunction* Func : Functions)
     {
@@ -414,7 +397,7 @@ void MClass::WriteSnapshotByDomain(void* Object, MReflectArchive& Ar, uint64 InD
     }
 }
 
-void MClass::ReadSnapshot(void* Object, const TArray& Data) const
+void MClass::ReadSnapshot(void* Object, const TByteArray& Data) const
 {
     if (!Object)
     {
@@ -433,7 +416,7 @@ void MClass::ReadSnapshot(void* Object, const TArray& Data) const
     }
 }
 
-void MClass::ReadSnapshotByDomain(void* Object, const TArray& Data, uint64 InDomainMask) const
+void MClass::ReadSnapshotByDomain(void* Object, const TByteArray& Data, uint64 InDomainMask) const
 {
     if (!Object || InDomainMask == 0)
     {
@@ -452,14 +435,14 @@ void MClass::ReadSnapshotByDomain(void* Object, const TArray& Data, uint64 InDom
     }
 }
 
-FString MClass::ExportObjectToString(const void* Object) const
+MString MClass::ExportObjectToString(const void* Object) const
 {
     if (!Object)
     {
         return ClassName + "{<null>}";
     }
 
-    FString Result = ClassName + "{";
+    MString Result = ClassName + "{";
     bool bFirst = true;
     if (ParentClass)
     {
@@ -499,7 +482,7 @@ FString MClass::ExportObjectToString(const void* Object) const
     return Result;
 }
 
-FString MReflectObject::ToString() const
+MString MReflectObject::ToString() const
 {
     MClass* LocalClass = GetClass();
     if (!LocalClass)
@@ -507,7 +490,7 @@ FString MReflectObject::ToString() const
         return "MReflectObject{Class=<null>, ObjectId=" + MString::ToString(ObjectId) + "}";
     }
 
-    FString Body = LocalClass->ExportObjectToString(this);
+    MString Body = LocalClass->ExportObjectToString(this);
     if (!Name.empty())
     {
         Body += " [Name=\"" + Name + "\"]";
@@ -542,7 +525,7 @@ void MClass::CopyProperties(void* Dest, const void* Src) const
 
 // MReflectObject 实现
 
-bool MReflectObject::CallFunction(const FString& InName)
+bool MReflectObject::CallFunction(const MString& InName)
 {
     return InvokeFunction<void>(InName, nullptr);
 }

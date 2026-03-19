@@ -11,12 +11,12 @@ public:
     public:
 
     using FHandler_Rpc_OnPersistSnapshot =
-        TFunction<void(uint64 ObjectId, uint16 ClassId, uint32 OwnerWorldId, uint64 RequestId, uint64 Version, const FString& ClassName, const FString& SnapshotHex)>;
+        TFunction<void(uint64 ObjectId, uint16 ClassId, uint32 OwnerWorldId, uint64 RequestId, uint64 Version, const MString& ClassName, const MString& SnapshotHex)>;
     using FHandler_Rpc_OnLoadSnapshotRequest =
         TFunction<void(uint64 RequestId, uint64 ObjectId)>;
 
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true)
-    void Rpc_OnPersistSnapshot(uint64 ObjectId, uint16 ClassId, uint32 OwnerWorldId, uint64 RequestId, uint64 Version, const FString& ClassName, const FString& SnapshotHex);
+    void Rpc_OnPersistSnapshot(uint64 ObjectId, uint16 ClassId, uint32 OwnerWorldId, uint64 RequestId, uint64 Version, const MString& ClassName, const MString& SnapshotHex);
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true)
     void Rpc_OnLoadSnapshotRequest(uint64 RequestId, uint64 ObjectId);
 
@@ -31,7 +31,7 @@ private:
     inline static FHandler_Rpc_OnLoadSnapshotRequest Handler_Rpc_OnLoadSnapshotRequest;
 };
 
-inline void MMgoService::Rpc_OnPersistSnapshot(uint64 ObjectId, uint16 ClassId, uint32 OwnerWorldId, uint64 RequestId, uint64 Version, const FString& ClassName, const FString& SnapshotHex)
+inline void MMgoService::Rpc_OnPersistSnapshot(uint64 ObjectId, uint16 ClassId, uint32 OwnerWorldId, uint64 RequestId, uint64 Version, const MString& ClassName, const MString& SnapshotHex)
 {
     if (Handler_Rpc_OnPersistSnapshot)
     {
@@ -76,7 +76,7 @@ template<typename TServer>
 inline void MMgoService::BindHandlers(TServer* Server)
 {
     SetHandler_Rpc_OnPersistSnapshot(
-        [Server](uint64 ObjectId, uint16 ClassId, uint32 OwnerWorldId, uint64 RequestId, uint64 Version, const FString& ClassName, const FString& SnapshotHex)
+        [Server](uint64 ObjectId, uint16 ClassId, uint32 OwnerWorldId, uint64 RequestId, uint64 Version, const MString& ClassName, const MString& SnapshotHex)
         {
             Server->Rpc_OnPersistSnapshot(ObjectId, ClassId, OwnerWorldId, RequestId, Version, ClassName, SnapshotHex);
         });

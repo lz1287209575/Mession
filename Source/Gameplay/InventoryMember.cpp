@@ -132,7 +132,7 @@ uint32 MInventoryMember::GetItemCount(uint32 ItemId) const
     return 0;
 }
 
-FString MInventoryMember::BuildSummary() const
+MString MInventoryMember::BuildSummary() const
 {
     return "gold=" + MString::ToString(Gold) +
            ", slots=" + MString::ToString(static_cast<uint64>(Items.size())) + "/" + MString::ToString(static_cast<uint64>(MaxSlots)) +

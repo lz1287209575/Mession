@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include "Core/Net/Socket.h"
 #include "Common/Logger.h"
 #include <thread>
@@ -48,18 +48,18 @@ struct SServerInfo
 {
     uint32 ServerId = 0;
     EServerType ServerType = EServerType::Unknown;
-    FString ServerName;
-    FString Address;
+    MString ServerName;
+    MString Address;
     uint16 Port = 0;
     uint16 ZoneId = 0;
 
     SServerInfo() = default;
-    SServerInfo(uint32 Id, EServerType Type, const FString& Name, const FString& Addr, uint16 P, uint16 Z = 0)
+    SServerInfo(uint32 Id, EServerType Type, const MString& Name, const MString& Addr, uint16 P, uint16 Z = 0)
         : ServerId(Id), ServerType(Type), ServerName(Name), Address(Addr), Port(P), ZoneId(Z) {}
 };
 
 // 用于 ApplyRoute 等需要完整 ServerInfo 的场景
-inline SServerInfo MakeServerInfo(uint32 Id, EServerType Type, const FString& Name, const FString& Addr, uint16 Port, uint16 ZoneId = 0)
+inline SServerInfo MakeServerInfo(uint32 Id, EServerType Type, const MString& Name, const MString& Addr, uint16 Port, uint16 ZoneId = 0)
 {
     SServerInfo Info;
     Info.ServerId = Id;
@@ -85,8 +85,8 @@ struct SServerConnectionConfig
 {
     uint32 ServerId = 0;
     EServerType ServerType = EServerType::Unknown;
-    FString ServerName;
-    FString Address;
+    MString ServerName;
+    MString Address;
     uint16 Port = 0;
     
     // 心跳配置
@@ -96,8 +96,8 @@ struct SServerConnectionConfig
     
     SServerConnectionConfig() = default;
     
-    SServerConnectionConfig(uint32 Id, EServerType Type, const FString& Name, 
-                           const FString& Addr, uint16 P)
+    SServerConnectionConfig(uint32 Id, EServerType Type, const MString& Name, 
+                           const MString& Addr, uint16 P)
         : ServerId(Id), ServerType(Type), ServerName(Name), Address(Addr), Port(P) {}
 };
 
@@ -107,7 +107,7 @@ class MMessageChannel
 public:
     virtual ~MMessageChannel() = default;
     virtual bool Send(const void* Data, uint32 Size) = 0;
-    virtual bool ReceivePacket(TArray& OutPacket) = 0;
+    virtual bool ReceivePacket(TByteArray& OutPacket) = 0;
     virtual bool IsConnected() const = 0;
     virtual void Close() = 0;
 };
@@ -122,7 +122,7 @@ public:
     }
 
     bool Send(const void* Data, uint32 Size) override;
-    bool ReceivePacket(TArray& OutPacket) override;
+    bool ReceivePacket(TByteArray& OutPacket) override;
     bool IsConnected() const override;
     void Close() override;
 
@@ -159,11 +159,11 @@ private:
     // 回调
     TFunction<void(TSharedPtr<MServerConnection>)> OnConnectCallback;
     TFunction<void(TSharedPtr<MServerConnection>)> OnDisconnectCallback;
-    TFunction<void(TSharedPtr<MServerConnection>, uint8, const TArray&)> OnMessageCallback;
+    TFunction<void(TSharedPtr<MServerConnection>, uint8, const TByteArray&)> OnMessageCallback;
     TFunction<void(TSharedPtr<MServerConnection>, const SServerInfo&)> OnServerAuthenticatedCallback;
     
     // 日志前缀
-    FString LogPrefix;
+    MString LogPrefix;
     
 public:
     MServerConnection() {}
@@ -184,7 +184,7 @@ public:
     const SServerConnectionConfig& GetConfig() const { return Config; }
     
     // 静态方法：设置本服务器信息
-    static void SetLocalInfo(uint32 Id, EServerType Type, const FString& Name)
+    static void SetLocalInfo(uint32 Id, EServerType Type, const MString& Name)
     {
         LocalServerInfo.ServerId = Id;
         LocalServerInfo.ServerType = Type;
@@ -194,7 +194,7 @@ public:
     // 回调设置
     void SetOnConnect(TFunction<void(TSharedPtr<MServerConnection>)> CB) { OnConnectCallback = CB; }
     void SetOnDisconnect(TFunction<void(TSharedPtr<MServerConnection>)> CB) { OnDisconnectCallback = CB; }
-    void SetOnMessage(TFunction<void(TSharedPtr<MServerConnection>, uint8, const TArray&)> CB) { OnMessageCallback = CB; }
+    void SetOnMessage(TFunction<void(TSharedPtr<MServerConnection>, uint8, const TByteArray&)> CB) { OnMessageCallback = CB; }
     void SetOnAuthenticated(TFunction<void(TSharedPtr<MServerConnection>, const SServerInfo&)> CB) { OnServerAuthenticatedCallback = CB; }
     
     // 连接/断开
@@ -211,12 +211,12 @@ public:
     
     // 发送消息
     bool Send(uint8 Type, const void* Data, uint32 Size);
-    bool SendRaw(const TArray& Data);
+    bool SendRaw(const TByteArray& Data);
     
     // 便捷发送方法
     bool SendPlayerLogin(uint64 PlayerId, uint32 SessionKey);
     bool SendPlayerLogout(uint64 PlayerId);
-    bool SendChatMessage(uint64 FromPlayerId, const FString& Message);
+    bool SendChatMessage(uint64 FromPlayerId, const MString& Message);
     bool Broadcast(uint8 Type, const void* Data, uint32 Size);
     
     // 更新（主循环调用）
@@ -238,7 +238,7 @@ private:
     void UpdateLogPrefix();
     bool TryConnect();
     void ProcessRecv();
-    void HandleMessage(uint8 Type, const TArray& Data);
+    void HandleMessage(uint8 Type, const TByteArray& Data);
     void SendHandshake();
     void SendHandshakeAck();
     void SendHeartbeat();
@@ -285,8 +285,8 @@ public:
     
     // 添加远程服务器（便捷方法）
     TSharedPtr<MServerConnection> AddServer(uint32 ServerId, EServerType Type, 
-                                                   const FString& Name, 
-                                                   const FString& Addr, uint16 Port)
+                                                   const MString& Name, 
+                                                   const MString& Addr, uint16 Port)
     {
         SServerConnectionConfig Config(ServerId, Type, Name, Addr, Port);
         return AddServer(Config);

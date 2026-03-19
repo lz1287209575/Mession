@@ -29,7 +29,7 @@ private:
     {
         uint64 ConnectionId;
         uint64 ActorId;
-        TArray Data;
+        TByteArray Data;
     };
     TQueue<SPendingUpdate> PendingUpdates;
     
@@ -48,7 +48,7 @@ public:
     void AddRelevantActor(uint64 ConnectionId, uint64 ActorId);
     void RemoveRelevantActor(uint64 ConnectionId, uint64 ActorId);
     void Tick(float DeltaTime);
-    void SendActorUpdate(uint64 ConnectionId, uint64 ActorId, const TArray& Data);
+    void SendActorUpdate(uint64 ConnectionId, uint64 ActorId, const TByteArray& Data);
     void BroadcastActorCreate(MActor* Actor, uint64 ExcludeConnectionId = 0);
     void BroadcastActorDestroy(uint64 ActorId, uint64 ExcludeConnectionId = 0);
     
@@ -59,7 +59,7 @@ public:
     size_t GetActorCount() const { return ReplicationMap.size(); }
 
 private:
-    TMap<uint64, TArray> LastSerializedSnapshots;
+    TMap<uint64, TByteArray> LastSerializedSnapshots;
 
     void ProcessPendingUpdates();
 };

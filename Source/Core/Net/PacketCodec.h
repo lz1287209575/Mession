@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include <cstring>
 
 enum class EPacketDecodeResult : uint8
@@ -13,7 +13,7 @@ enum class EPacketDecodeResult : uint8
 class MLengthPrefixedPacketCodec
 {
 public:
-    static bool EncodePacket(const TArray& Payload, TArray& OutBytes)
+    static bool EncodePacket(const TByteArray& Payload, TByteArray& OutBytes)
     {
         if (Payload.empty() || Payload.size() > MAX_PACKET_SIZE)
         {
@@ -27,7 +27,7 @@ public:
         return true;
     }
 
-    static EPacketDecodeResult TryDecodePacket(TArray& InOutRecvBuffer, TArray& OutPayload)
+    static EPacketDecodeResult TryDecodePacket(TByteArray& InOutRecvBuffer, TByteArray& OutPayload)
     {
         OutPayload.clear();
 

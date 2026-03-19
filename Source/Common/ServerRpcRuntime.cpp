@@ -12,7 +12,7 @@ namespace
 struct SGeneratedRpcUnsupportedKey
 {
     EServerType ServerType = EServerType::Unknown;
-    FString FunctionName;
+    MString FunctionName;
 
     bool operator<(const SGeneratedRpcUnsupportedKey& Other) const
     {
@@ -86,7 +86,7 @@ SGeneratedClientRouteRequest::ERouteKind ParseGeneratedClientRouteKind(const cha
         return SGeneratedClientRouteRequest::ERouteKind::None;
     }
 
-    const FString Route(RouteName);
+    const MString Route(RouteName);
     if (Route == "Login")
     {
         return SGeneratedClientRouteRequest::ERouteKind::Login;
@@ -110,7 +110,7 @@ EClientMessageType ParseGeneratedClientMessageType(const char* MessageName)
         return EClientMessageType::MT_Error;
     }
 
-    const FString Message(MessageName);
+    const MString Message(MessageName);
     if (Message == "MT_Login")
     {
         return EClientMessageType::MT_Login;
@@ -149,7 +149,7 @@ EServerType ParseGeneratedClientTargetServerType(const char* TargetName)
         return EServerType::Unknown;
     }
 
-    const FString Target(TargetName);
+    const MString Target(TargetName);
     if (Target == "Login")
     {
         return EServerType::Login;
@@ -213,7 +213,7 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientEntry(
     uint64 ConnectionId,
     const MClientManifest::SEntry* Entry,
     EClientMessageType MessageType,
-    const TArray& Payload)
+    const TByteArray& Payload)
 {
     SGeneratedClientDispatchOutcome Outcome;
     if (!TargetInstance || !Entry)
@@ -287,7 +287,7 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientEntry(
         return Outcome;
     }
 
-    TArray ParamStorage;
+    TByteArray ParamStorage;
     if (!Entry->BindParams(ConnectionId, Payload, ParamStorage))
     {
         LOG_WARN("Generated client dispatch param binding failed: class=%s function=%s message=%s",
@@ -334,7 +334,7 @@ const char* GetServerTypeDisplayName(EServerType ServerType)
     }
 }
 
-bool BuildServerRpcPayload(uint16 FunctionId, const TArray& InPayload, TArray& OutData)
+bool BuildServerRpcPayload(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutData)
 {
     const uint32 PayloadSize = static_cast<uint32>(InPayload.size());
 
@@ -355,7 +355,7 @@ bool BuildServerRpcPayload(uint16 FunctionId, const TArray& InPayload, TArray& O
     return true;
 }
 
-bool BuildServerRpcMessage(const TArray& RpcPayload, TArray& OutPacket)
+bool BuildServerRpcMessage(const TByteArray& RpcPayload, TByteArray& OutPacket)
 {
     OutPacket.clear();
     OutPacket.reserve(1 + RpcPayload.size());
@@ -364,7 +364,7 @@ bool BuildServerRpcMessage(const TArray& RpcPayload, TArray& OutPacket)
     return true;
 }
 
-bool SendServerRpcMessage(MServerConnection& Connection, const TArray& RpcPayload)
+bool SendServerRpcMessage(MServerConnection& Connection, const TByteArray& RpcPayload)
 {
     return Connection.Send(
         static_cast<uint8>(EServerMessageType::MT_RPC),
@@ -372,7 +372,7 @@ bool SendServerRpcMessage(MServerConnection& Connection, const TArray& RpcPayloa
         static_cast<uint32>(RpcPayload.size()));
 }
 
-bool SendServerRpcMessage(const TSharedPtr<MServerConnection>& Connection, const TArray& RpcPayload)
+bool SendServerRpcMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& RpcPayload)
 {
     if (!Connection)
     {
@@ -382,14 +382,14 @@ bool SendServerRpcMessage(const TSharedPtr<MServerConnection>& Connection, const
     return SendServerRpcMessage(*Connection, RpcPayload);
 }
 
-bool SendServerRpcMessage(INetConnection& Connection, const TArray& RpcPayload)
+bool SendServerRpcMessage(INetConnection& Connection, const TByteArray& RpcPayload)
 {
-    TArray Packet;
+    TByteArray Packet;
     BuildServerRpcMessage(RpcPayload, Packet);
     return Connection.Send(Packet.data(), static_cast<uint32>(Packet.size()));
 }
 
-bool SendServerRpcMessage(const TSharedPtr<INetConnection>& Connection, const TArray& RpcPayload)
+bool SendServerRpcMessage(const TSharedPtr<INetConnection>& Connection, const TByteArray& RpcPayload)
 {
     if (!Connection)
     {
@@ -399,7 +399,7 @@ bool SendServerRpcMessage(const TSharedPtr<INetConnection>& Connection, const TA
     return SendServerRpcMessage(*Connection, RpcPayload);
 }
 
-bool BuildRpcPayloadForEndpoint(const SRpcEndpointBinding& Binding, const TArray& InPayload, TArray& OutData)
+bool BuildRpcPayloadForEndpoint(const SRpcEndpointBinding& Binding, const TByteArray& InPayload, TByteArray& OutData)
 {
     if (!Binding.ClassName || !Binding.FunctionName)
     {
@@ -426,7 +426,7 @@ bool FindGeneratedRpcEndpoint(EServerType ServerType, const char* FunctionName, 
     for (size_t Index = 0; Index < MRpcManifest::GetEntryCount(); ++Index)
     {
         const MRpcManifest::SEntry& Entry = Entries[Index];
-        if (Entry.ServerType == ServerType && Entry.FunctionName && FString(Entry.FunctionName) == FunctionName)
+        if (Entry.ServerType == ServerType && Entry.FunctionName && MString(Entry.FunctionName) == FunctionName)
         {
             OutBinding.ServerType = Entry.ServerType;
             OutBinding.ClassName = Entry.ClassName;
@@ -444,19 +444,19 @@ bool ServerSupportsGeneratedRpc(EServerType ServerType, const char* FunctionName
     return FindGeneratedRpcEndpoint(ServerType, FunctionName, Binding);
 }
 
-TVector<FString> GetGeneratedRpcFunctionNames(EServerType ServerType)
+TVector<MString> GetGeneratedRpcFunctionNames(EServerType ServerType)
 {
-    TVector<FString> Result;
+    TVector<MString> Result;
     MRpcManifest::ForEachSupportedFunction(
         ServerType,
         [&Result](const MRpcManifest::SEntry& Entry)
         {
-            Result.push_back(Entry.FunctionName ? FString(Entry.FunctionName) : FString());
+            Result.push_back(Entry.FunctionName ? MString(Entry.FunctionName) : MString());
         });
     return Result;
 }
 
-FString BuildGeneratedRpcManifestJson(EServerType ServerType)
+MString BuildGeneratedRpcManifestJson(EServerType ServerType)
 {
     MJsonWriter W = MJsonWriter::Object();
     W.Key("serverType");
@@ -479,7 +479,7 @@ FString BuildGeneratedRpcManifestJson(EServerType ServerType)
     W.EndArray();
     W.Key("functionsFlat");
     W.BeginArray();
-    for (const FString& Name : GetGeneratedRpcFunctionNames(ServerType))
+    for (const MString& Name : GetGeneratedRpcFunctionNames(ServerType))
     {
         W.Value(Name);
     }
@@ -489,7 +489,7 @@ FString BuildGeneratedRpcManifestJson(EServerType ServerType)
 
 void ReportUnsupportedGeneratedRpcEndpoint(EServerType ServerType, const char* FunctionName)
 {
-    const FString Name = FunctionName ? FString(FunctionName) : FString();
+    const MString Name = FunctionName ? MString(FunctionName) : MString();
     if (Name.empty())
     {
         return;
@@ -536,7 +536,7 @@ TVector<SGeneratedRpcUnsupportedStat> GetGeneratedRpcUnsupportedStats(EServerTyp
     return Result;
 }
 
-FString BuildGeneratedRpcUnsupportedStatsJson()
+MString BuildGeneratedRpcUnsupportedStatsJson()
 {
     MJsonWriter W = MJsonWriter::Array();
     for (const SGeneratedRpcUnsupportedStat& Stat : GetGeneratedRpcUnsupportedStats())
@@ -553,7 +553,7 @@ FString BuildGeneratedRpcUnsupportedStatsJson()
     return W.ToString();
 }
 
-FString BuildGeneratedRpcUnsupportedStatsJson(EServerType ServerType)
+MString BuildGeneratedRpcUnsupportedStatsJson(EServerType ServerType)
 {
     MJsonWriter W = MJsonWriter::Array();
     for (const SGeneratedRpcUnsupportedStat& Stat : GetGeneratedRpcUnsupportedStats(ServerType))
@@ -570,7 +570,7 @@ FString BuildGeneratedRpcUnsupportedStatsJson(EServerType ServerType)
     return W.ToString();
 }
 
-bool TryInvokeServerRpc(MReflectObject* ServiceInstance, const TArray& Data, ERpcType ExpectedType)
+bool TryInvokeServerRpc(MReflectObject* ServiceInstance, const TByteArray& Data, ERpcType ExpectedType)
 {
     if (!ServiceInstance)
     {
@@ -626,7 +626,7 @@ bool TryInvokeServerRpc(MReflectObject* ServiceInstance, const TArray& Data, ERp
         return false;
     }
 
-    TArray Payload;
+    TByteArray Payload;
     if (PayloadSize > 0)
     {
         Payload.resize(PayloadSize);
@@ -641,7 +641,7 @@ bool TryDispatchGeneratedClientMessage(
     MReflectObject* TargetInstance,
     uint64 ConnectionId,
     EClientMessageType MessageType,
-    const TArray& Payload)
+    const TByteArray& Payload)
 {
     return DispatchGeneratedClientMessage(TargetInstance, ConnectionId, MessageType, Payload).Result !=
            EGeneratedClientDispatchResult::NotFound;
@@ -651,7 +651,7 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientMessage(
     MReflectObject* TargetInstance,
     uint64 ConnectionId,
     EClientMessageType MessageType,
-    const TArray& Payload)
+    const TByteArray& Payload)
 {
     SGeneratedClientDispatchOutcome Outcome;
     if (!TargetInstance)
@@ -672,7 +672,7 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientFunction(
     MReflectObject* TargetInstance,
     uint64 ConnectionId,
     uint16 FunctionId,
-    const TArray& Payload)
+    const TByteArray& Payload)
 {
     SGeneratedClientDispatchOutcome Outcome;
     if (!TargetInstance)
@@ -709,7 +709,7 @@ const char* GetClientDownlinkFunctionName(uint16 FunctionId)
     return ResolveClientDownlinkFunctionName(FunctionId);
 }
 
-bool BuildClientFunctionCallPacket(uint16 FunctionId, const TArray& InPayload, TArray& OutPacket)
+bool BuildClientFunctionCallPacket(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutPacket)
 {
     if (FunctionId == 0)
     {

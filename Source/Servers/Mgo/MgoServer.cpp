@@ -24,7 +24,7 @@
 
 namespace
 {
-const TMap<FString, const char*> MgoEnvMap = {
+const TMap<MString, const char*> MgoEnvMap = {
     {"port", "MESSION_MGO_PORT"},
     {"router_addr", "MESSION_ROUTER_ADDR"},
     {"router_port", "MESSION_ROUTER_PORT"},
@@ -41,7 +41,7 @@ struct SMongoRuntime
 {
     std::unique_ptr<mongocxx::instance> Instance;
     std::unique_ptr<mongocxx::pool> Pool;
-    FString MongoUri;
+    MString MongoUri;
     std::mutex Mutex;
 };
 
@@ -77,7 +77,7 @@ bool EnsureMongoClientReady(const SMgoConfig& Config)
     }
 }
 
-bool TryDecodeHex(const FString& InHex, TArray& OutBytes)
+bool TryDecodeHex(const MString& InHex, TByteArray& OutBytes)
 {
     OutBytes.clear();
     if (InHex.empty())
@@ -125,7 +125,7 @@ template<typename TSubDocument>
 void AppendVectorField(TSubDocument& InDoc, const char* InKey, const SVector& InValue)
 {
     using bsoncxx::builder::basic::kvp;
-    const FString Key = InKey ? InKey : "";
+    const MString Key = InKey ? InKey : "";
     InDoc.append(kvp(Key, [&](bsoncxx::builder::basic::sub_document InSubDoc)
     {
         InSubDoc.append(kvp("x", InValue.X));
@@ -138,7 +138,7 @@ template<typename TSubDocument>
 void AppendRotatorField(TSubDocument& InDoc, const char* InKey, const SRotator& InValue)
 {
     using bsoncxx::builder::basic::kvp;
-    const FString Key = InKey ? InKey : "";
+    const MString Key = InKey ? InKey : "";
     InDoc.append(kvp(Key, [&](bsoncxx::builder::basic::sub_document InSubDoc)
     {
         InSubDoc.append(kvp("pitch", InValue.Pitch));
@@ -159,7 +159,7 @@ void AppendPropertyField(TSubDocument& InDoc, const MProperty* InProp, const voi
         return;
     }
 
-    const FString Key = InProp->Name;
+    const MString Key = InProp->Name;
     switch (InProp->Type)
     {
     case EPropertyType::Int8:
@@ -206,7 +206,7 @@ void AppendPropertyField(TSubDocument& InDoc, const MProperty* InProp, const voi
         InDoc.append(kvp(Key, *InProp->GetValuePtr<bool>(InObject)));
         return;
     case EPropertyType::String:
-        InDoc.append(kvp(Key, *InProp->GetValuePtr<FString>(InObject)));
+        InDoc.append(kvp(Key, *InProp->GetValuePtr<MString>(InObject)));
         return;
     case EPropertyType::Vector:
         AppendVectorField(InDoc, Key.c_str(), *InProp->GetValuePtr<SVector>(InObject));
@@ -366,8 +366,8 @@ bool PersistSnapshotToMongo(
     uint32 OwnerWorldId,
     uint64 RequestId,
     uint64 Version,
-    const FString& ClassName,
-    const FString& SnapshotHex)
+    const MString& ClassName,
+    const MString& SnapshotHex)
 {
     if (!EnsureMongoClientReady(Config))
     {
@@ -384,7 +384,7 @@ bool PersistSnapshotToMongo(
 
     const int32 SnapshotSize = static_cast<int32>(SnapshotHex.size() / 2);
 
-    TArray SnapshotBytes;
+    TByteArray SnapshotBytes;
     const bool bHexDecoded = TryDecodeHex(SnapshotHex, SnapshotBytes);
     MClass* ClassMeta = MReflectObject::FindClass(ClassName);
     if (!ClassMeta && ClassId != 0)
@@ -580,8 +580,8 @@ bool LoadSnapshotFromMongo(
     uint64 ObjectId,
     bool& bOutFound,
     uint16& OutClassId,
-    FString& OutClassName,
-    FString& OutSnapshotHex)
+    MString& OutClassName,
+    MString& OutSnapshotHex)
 {
     bOutFound = false;
     OutClassId = 0;
@@ -659,9 +659,9 @@ bool LoadSnapshotFromMongo(
 #endif
 }
 
-bool MMgoServer::LoadConfig(const FString& ConfigPath)
+bool MMgoServer::LoadConfig(const MString& ConfigPath)
 {
-    TMap<FString, FString> Vars;
+    TMap<MString, MString> Vars;
     if (!ConfigPath.empty())
     {
         MConfig::LoadFromFile(ConfigPath, Vars);
@@ -706,7 +706,7 @@ bool MMgoServer::Init(int InPort)
         LOG_INFO("Router server authenticated: %s", Info.ServerName.c_str());
         SendRouterRegister();
     });
-    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
         HandleRouterServerMessage(Type, Data);
     });
     RouterServerConn->Connect();
@@ -762,7 +762,7 @@ void MMgoServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
     LOG_INFO("New backend connected (connection_id=%llu)", static_cast<unsigned long long>(ConnId));
 
     EventLoop.RegisterConnection(ConnId, Conn,
-        [this](uint64 Id, const TArray& Payload)
+        [this](uint64 Id, const TByteArray& Payload)
         {
             HandleBackendPacket(Id, Payload);
         },
@@ -824,7 +824,7 @@ void MMgoServer::TickBackends()
     }
 }
 
-FString MMgoServer::BuildDebugStatusJson() const
+MString MMgoServer::BuildDebugStatusJson() const
 {
     MJsonWriter W = MJsonWriter::Object();
     W.Key("server"); W.Value("Mgo");
@@ -842,7 +842,7 @@ FString MMgoServer::BuildDebugStatusJson() const
     return W.ToString();
 }
 
-void MMgoServer::HandleBackendPacket(uint64 ConnectionId, const TArray& Data)
+void MMgoServer::HandleBackendPacket(uint64 ConnectionId, const TByteArray& Data)
 {
     if (Data.empty())
     {
@@ -856,7 +856,7 @@ void MMgoServer::HandleBackendPacket(uint64 ConnectionId, const TArray& Data)
     }
 
     const uint8 MsgType = Data[0];
-    const TArray Payload(Data.begin() + 1, Data.end());
+    const TByteArray Payload(Data.begin() + 1, Data.end());
 
     if (MsgType == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
@@ -877,7 +877,7 @@ void MMgoServer::HandleBackendPacket(uint64 ConnectionId, const TArray& Data)
     BackendMessageDispatcher.Dispatch(ConnectionId, MsgType, Payload);
 }
 
-bool MMgoServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload)
+bool MMgoServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload)
 {
     auto It = BackendConnections.find(ConnectionId);
     if (It == BackendConnections.end() || !It->second.Connection)
@@ -885,14 +885,14 @@ bool MMgoServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray
         return false;
     }
 
-    TArray Packet;
+    TByteArray Packet;
     Packet.reserve(1 + Payload.size());
     Packet.push_back(Type);
     Packet.insert(Packet.end(), Payload.begin(), Payload.end());
     return It->second.Connection->Send(Packet.data(), Packet.size());
 }
 
-void MMgoServer::HandleRouterServerMessage(uint8 Type, const TArray& Data)
+void MMgoServer::HandleRouterServerMessage(uint8 Type, const TByteArray& Data)
 {
     if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
@@ -982,8 +982,8 @@ void MMgoServer::Rpc_OnPersistSnapshot(
     uint32 OwnerWorldId,
     uint64 RequestId,
     uint64 Version,
-    const FString& ClassName,
-    const FString& SnapshotHex)
+    const MString& ClassName,
+    const MString& SnapshotHex)
 {
     ++PersistRequestCount;
     PersistBytesTotal += static_cast<uint64>(SnapshotHex.size() / 2);
@@ -1093,8 +1093,8 @@ void MMgoServer::Rpc_OnLoadSnapshotRequest(uint64 RequestId, uint64 ObjectId)
             bool bDbCallOk = false;
             bool bFound = false;
             uint16 ClassId = 0;
-            FString ClassName;
-            FString SnapshotHex;
+            MString ClassName;
+            MString SnapshotHex;
         };
 
         MPromise<SLoadResult> LoadPromise;
@@ -1186,8 +1186,8 @@ void MMgoServer::SendLoadSnapshotResponseToWorlds(
     uint64 ObjectId,
     bool bFound,
     uint16 ClassId,
-    const FString& ClassName,
-    const FString& SnapshotHex)
+    const MString& ClassName,
+    const MString& SnapshotHex)
 {
     for (auto& [ConnectionId, Peer] : BackendConnections)
     {
@@ -1221,7 +1221,7 @@ void MMgoServer::SendPersistSnapshotResultToWorlds(
     uint64 ObjectId,
     uint64 Version,
     bool bSuccess,
-    const FString& Reason)
+    const MString& Reason)
 {
     for (auto& [ConnectionId, Peer] : BackendConnections)
     {

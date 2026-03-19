@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include "Core/Event/MEventLoop.h"
 #include "Core/Event/EventLoop.h"
 #include "Core/Event/TaskEventLoop.h"

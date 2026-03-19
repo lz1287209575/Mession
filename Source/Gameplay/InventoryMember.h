@@ -65,5 +65,5 @@ public:
     const TVector<SInventoryItem>& GetItems() const { return Items; }
     uint32 GetTotalItemCount() const;
     uint32 GetItemCount(uint32 ItemId) const;
-    FString BuildSummary() const;
+    MString BuildSummary() const;
 };

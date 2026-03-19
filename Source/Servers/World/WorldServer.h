@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include "Core/Net/Socket.h"
 #include "Core/Net/HttpDebugServer.h"
 #include "Common/Logger.h"
@@ -21,11 +21,11 @@ struct SWorldConfig
 {
     uint16 ListenPort = 8003;      // 网关连接端口
     uint16 SceneServerPort = 8004; // 场景服务器端口
-    FString RouterServerAddr = "127.0.0.1";
+    MString RouterServerAddr = "127.0.0.1";
     uint16 RouterServerPort = 8005;
-    FString LoginServerAddr = "127.0.0.1";
+    MString LoginServerAddr = "127.0.0.1";
     uint16 LoginServerPort = 8002;
-    FString ServerName = "World01";
+    MString ServerName = "World01";
     uint32 MaxPlayers = 10000;
     uint16 ZoneId = 0;             // 0 = 默认区
     uint16 DebugHttpPort = 0;      // 调试 HTTP 端口（0 = 关闭）
@@ -37,7 +37,7 @@ struct SWorldConfig
 struct SPlayer
 {
     uint64 PlayerId;
-    FString Name;
+    MString Name;
     uint64 GatewayConnectionId = 0;
     uint32 SessionKey;
     MPlayerAvatar* Avatar = nullptr;
@@ -51,7 +51,7 @@ struct SBackendPeer
     bool bAuthenticated = false;
     uint32 ServerId = 0;
     EServerType ServerType = EServerType::Unknown;
-    FString ServerName;
+    MString ServerName;
 };
 
 struct SPendingSessionValidation
@@ -131,7 +131,7 @@ public:
     MWorldServer();
     ~MWorldServer() { Shutdown(); }
     
-    bool LoadConfig(const FString& ConfigPath);
+    bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
     void Tick();
     void Run() override { MNetServerBase::Run(); }
@@ -143,48 +143,48 @@ public:
     void OnRunStarted() override;
     void Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey);
     void Rpc_OnSessionValidateResponse(uint64 ValidationRequestId, uint64 PlayerId, bool bValid);
-    void Rpc_OnMgoLoadSnapshotResponse(uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const FString& ClassName, const FString& SnapshotHex);
-    void Rpc_OnMgoPersistSnapshotResult(uint32 OwnerWorldId, uint64 RequestId, uint64 ObjectId, uint64 Version, bool bSuccess, const FString& Reason);
+    void Rpc_OnMgoLoadSnapshotResponse(uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const MString& ClassName, const MString& SnapshotHex);
+    void Rpc_OnMgoPersistSnapshotResult(uint32 OwnerWorldId, uint64 RequestId, uint64 ObjectId, uint64 Version, bool bSuccess, const MString& Reason);
     void OnPersistRequestDispatched(uint64 RequestId, uint64 ObjectId, uint64 Version);
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=World)
     void Rpc_OnRouterServerRegisterAck(uint8 Result);
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=World)
-    void Rpc_OnRouterRouteResponse(uint64 RequestId, uint8 RequestedTypeValue, uint64 PlayerId, bool bFound, uint32 ServerId, uint8 ServerTypeValue, const FString& ServerName, const FString& Address, uint16 Port, uint16 ZoneId);
+    void Rpc_OnRouterRouteResponse(uint64 RequestId, uint8 RequestedTypeValue, uint64 PlayerId, bool bFound, uint32 ServerId, uint8 ServerTypeValue, const MString& ServerName, const MString& Address, uint16 Port, uint16 ZoneId);
 
 private:
-    void HandlePacket(uint64 ConnectionId, const TArray& Data);
-    void HandleGameplayPacket(uint64 PlayerId, const TArray& Data);
-    bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
-    bool SendClientFunctionPacketToPlayer(uint64 PlayerId, const TArray& Packet);
+    void HandlePacket(uint64 ConnectionId, const TByteArray& Data);
+    void HandleGameplayPacket(uint64 PlayerId, const TByteArray& Data);
+    bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload);
+    bool SendClientFunctionPacketToPlayer(uint64 PlayerId, const TByteArray& Packet);
     bool SendInventoryPullToPlayer(uint64 PlayerId);
     template<typename TMessage>
     bool SendServerMessage(uint64 ConnectionId, EServerMessageType Type, const TMessage& Message)
     {
         return SendServerMessage(ConnectionId, static_cast<uint8>(Type), BuildPayload(Message));
     }
-    void BroadcastToScenes(uint8 Type, const TArray& Payload);
-    void HandleRouterServerMessage(uint8 Type, const TArray& Data);
+    void BroadcastToScenes(uint8 Type, const TByteArray& Payload);
+    void HandleRouterServerMessage(uint8 Type, const TByteArray& Data);
     void SendRouterRegister();
     void QueryLoginServerRoute();
     void QueryMgoServerRoute();
     void SendLoadReport();
-    void ApplyLoginServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
-    void ApplyMgoServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port);
+    void ApplyLoginServerRoute(uint32 ServerId, const MString& ServerName, const MString& Address, uint16 Port);
+    void ApplyMgoServerRoute(uint32 ServerId, const MString& ServerName, const MString& Address, uint16 Port);
     uint64 FindAuthenticatedBackendConnectionId(EServerType ServerType) const;
-    void HandleLoginServerMessage(uint8 Type, const TArray& Data);
+    void HandleLoginServerMessage(uint8 Type, const TByteArray& Data);
     void RequestSessionValidation(uint64 GatewayConnectionId, uint64 PlayerId, uint32 SessionKey);
     bool RequestMgoLoad(uint64 PlayerId, uint64 GatewayConnectionId, uint32 SessionKey);
-    void FinalizePlayerLogin(uint64 PlayerId, uint64 GatewayConnectionId, uint32 SessionKey, bool bApplyLoadedSnapshot, uint16 LoadedClassId, const FString& LoadedClassName, const FString& LoadedSnapshotHex);
-    bool ApplyLoadedSnapshotToPlayer(SPlayer& Player, uint16 ClassId, const FString& ClassName, const FString& SnapshotHex);
+    void FinalizePlayerLogin(uint64 PlayerId, uint64 GatewayConnectionId, uint32 SessionKey, bool bApplyLoadedSnapshot, uint16 LoadedClassId, const MString& LoadedClassName, const MString& LoadedSnapshotHex);
+    bool ApplyLoadedSnapshotToPlayer(SPlayer& Player, uint16 ClassId, const MString& ClassName, const MString& SnapshotHex);
     
     // 玩家管理
-    void AddPlayer(uint64 PlayerId, const FString& Name, uint64 GatewayConnectionId);
+    void AddPlayer(uint64 PlayerId, const MString& Name, uint64 GatewayConnectionId);
     void RemovePlayer(uint64 PlayerId);
     SPlayer* GetPlayerById(uint64 PlayerId);
     
     // 游戏逻辑
     void UpdateGameLogic(float DeltaTime);
-    FString BuildDebugStatusJson() const;
+    MString BuildDebugStatusJson() const;
 
     // 分发器注册与具体处理函数
     void InitBackendMessageHandlers();

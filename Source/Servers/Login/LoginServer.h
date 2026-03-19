@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 #include "Core/Net/Socket.h"
 #include "Core/Net/HttpDebugServer.h"
 #include "Common/Logger.h"
@@ -18,7 +18,7 @@
 struct SLoginConfig
 {
     uint16 ListenPort = 8002;  // 网关连接端口
-    FString RouterServerAddr = "127.0.0.1";
+    MString RouterServerAddr = "127.0.0.1";
     uint16 RouterServerPort = 8005;
     uint32 SessionKeyMin = 100000;
     uint32 SessionKeyMax = 999999;
@@ -40,7 +40,7 @@ struct SGatewayPeer
     bool bAuthenticated = false;
     uint32 ServerId = 0;
     EServerType ServerType = EServerType::Unknown;
-    FString ServerName;
+    MString ServerName;
 };
 
 // 登录服务器
@@ -72,7 +72,7 @@ public:
     MLoginServer();
     ~MLoginServer() { Shutdown(); }
 
-    bool LoadConfig(const FString& ConfigPath);
+    bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
     void Tick();
     void Run() override { MNetServerBase::Run(); }
@@ -92,23 +92,23 @@ public:
     void Rpc_OnRouterServerRegisterAck(uint8 Result);
 
 private:
-    void HandleGatewayPacket(uint64 ConnectionId, const TArray& Data);
-    bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TArray& Payload);
+    void HandleGatewayPacket(uint64 ConnectionId, const TByteArray& Data);
+    bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload);
     template<typename TMessage>
     bool SendServerMessage(uint64 ConnectionId, EServerMessageType Type, const TMessage& Message)
     {
         return SendServerMessage(ConnectionId, static_cast<uint8>(Type), BuildPayload(Message));
     }
-    void HandleRouterServerMessage(uint8 Type, const TArray& Data);
+    void HandleRouterServerMessage(uint8 Type, const TByteArray& Data);
     void SendRouterRegister();
     uint32 GenerateSessionKey();
     uint64 FindAuthenticatedPeerConnectionId(EServerType ServerType) const;
-    FString BuildDebugStatusJson() const;
+    MString BuildDebugStatusJson() const;
 
     // 分发器注册与具体处理函数
     void InitGatewayMessageHandlers();
     void InitRouterMessageHandlers();
-    void OnGateway_ServerHandshake(uint64 ConnectionId, const TArray& Payload);
+    void OnGateway_ServerHandshake(uint64 ConnectionId, const TByteArray& Payload);
     void OnGateway_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& Message);
     void OnGateway_PlayerLogin(uint64 ConnectionId, const SPlayerLoginRequestMessage& Request);
     void OnGateway_SessionValidateRequest(uint64 ConnectionId, const SSessionValidateRequestMessage& Request);

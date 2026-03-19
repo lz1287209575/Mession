@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 
 // 当前客户端协议消息类型
 enum class EClientMessageType : uint8

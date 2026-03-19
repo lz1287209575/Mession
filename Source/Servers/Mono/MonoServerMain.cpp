@@ -1,6 +1,6 @@
 #include "MonoServer.h"
 #include "Common/Logger.h"
-#include "Core/Net/NetCore.h"
+#include "Common/MLib.h"
 
 int main(int argc, char* argv[])
 {
