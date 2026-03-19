@@ -1,6 +1,7 @@
 #include "ReplicationDriver.h"
 #include "Common/ServerMessages.h"
 #include "Common/ServerRpcRuntime.h"
+#include "NetDriver/Reflection.h"
 
 namespace
 {
@@ -34,11 +35,28 @@ bool BuildReflectedActorSnapshot(MActor* Actor, TArray& OutData)
     return true;
 }
 
+bool ClassHasDomainProperties(const MClass* InClass, EPropertyDomainFlags InDomain)
+{
+    if (!InClass)
+    {
+        return false;
+    }
+
+    for (const MProperty* Prop : InClass->GetProperties())
+    {
+        if (Prop && Prop->HasAnyDomains(InDomain))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 TArray BuildActorUpdatePacket(uint64 ActorId, const TArray& Data)
 {
     TArray Packet;
     BuildClientFunctionCallPacketForPayload(
-        MClientDownlink::OnActorUpdate,
+        MClientDownlink::Id_OnActorUpdate(),
         SClientActorUpdatePayload{ActorId, Data},
         Packet);
     return Packet;
@@ -59,7 +77,7 @@ TArray BuildActorCreatePacket(MActor* Actor)
     }
 
     BuildClientFunctionCallPacketForPayload(
-        MClientDownlink::OnActorCreate,
+        MClientDownlink::Id_OnActorCreate(),
         SClientActorCreatePayload{Actor->GetObjectId(), SnapshotData},
         Packet);
     return Packet;
@@ -69,7 +87,7 @@ TArray BuildActorDestroyPacket(uint64 ActorId)
 {
     TArray Packet;
     BuildClientFunctionCallPacketForPayload(
-        MClientDownlink::OnActorDestroy,
+        MClientDownlink::Id_OnActorDestroy(),
         SClientActorDestroyPayload{ActorId},
         Packet);
     return Packet;
@@ -158,6 +176,18 @@ void MReplicationDriver::Tick(float)
             continue;
         }
 
+        MReflectObject* ReflectActor = dynamic_cast<MReflectObject*>(Actor);
+        MClass* ActorClass = ReflectActor ? ReflectActor->GetClass() : nullptr;
+        const bool bUseReplicationDirtyDomain =
+            ReflectActor && ActorClass && ClassHasDomainProperties(ActorClass, EPropertyDomainFlags::Replication);
+
+        if (bUseReplicationDirtyDomain &&
+            !ReflectActor->HasAnyDirtyPropertyForDomain(EPropertyDomainFlags::Replication))
+        {
+            Actor->MarkNetUpdateSent();
+            continue;
+        }
+
         TArray SnapshotData;
         if (!BuildReflectedActorSnapshot(Actor, SnapshotData) || SnapshotData.empty())
         {
@@ -167,6 +197,10 @@ void MReplicationDriver::Tick(float)
         TArray& LastSnapshot = LastSerializedSnapshots[ActorId];
         if (SnapshotData == LastSnapshot)
         {
+            if (bUseReplicationDirtyDomain)
+            {
+                ReflectActor->ClearDirtyDomain(EPropertyDomainFlags::Replication);
+            }
             Actor->MarkNetUpdateSent();
             continue;
         }
@@ -184,6 +218,10 @@ void MReplicationDriver::Tick(float)
         }
 
         LastSnapshot = SnapshotData;
+        if (bUseReplicationDirtyDomain)
+        {
+            ReflectActor->ClearDirtyDomain(EPropertyDomainFlags::Replication);
+        }
         Actor->MarkNetUpdateSent();
     }
 

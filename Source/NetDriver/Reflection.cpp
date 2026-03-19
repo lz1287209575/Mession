@@ -397,6 +397,23 @@ void MClass::WriteSnapshot(void* Object, MReflectArchive& Ar) const
     }
 }
 
+void MClass::WriteSnapshotByDomain(void* Object, MReflectArchive& Ar, uint64 InDomainMask) const
+{
+    if (!Object || InDomainMask == 0)
+    {
+        return;
+    }
+
+    for (MProperty* Prop : Properties)
+    {
+        if (!Prop || (Prop->DomainFlags & InDomainMask) == 0)
+        {
+            continue;
+        }
+        Prop->WriteValue(Object, Ar);
+    }
+}
+
 void MClass::ReadSnapshot(void* Object, const TArray& Data) const
 {
     if (!Object)
@@ -409,6 +426,25 @@ void MClass::ReadSnapshot(void* Object, const TArray& Data) const
     for (MProperty* Prop : Properties)
     {
         if (!Prop)
+        {
+            continue;
+        }
+        Prop->WriteValue(Object, Ar);
+    }
+}
+
+void MClass::ReadSnapshotByDomain(void* Object, const TArray& Data, uint64 InDomainMask) const
+{
+    if (!Object || InDomainMask == 0)
+    {
+        return;
+    }
+
+    MReflectArchive Ar(Data);
+
+    for (MProperty* Prop : Properties)
+    {
+        if (!Prop || (Prop->DomainFlags & InDomainMask) == 0)
         {
             continue;
         }

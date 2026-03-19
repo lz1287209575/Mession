@@ -22,13 +22,13 @@ public:
     void SetRotation(const SRotator& InRotation);
     void SetScale(const SVector& InScale);
 
-    void SetOwnerPlayerId(uint64 InOwnerPlayerId) { OwnerPlayerId = InOwnerPlayerId; }
+    void SetOwnerPlayerId(uint64 InOwnerPlayerId);
     uint64 GetOwnerPlayerId() const { return OwnerPlayerId; }
 
-    void SetDisplayName(const FString& InDisplayName) { DisplayName = InDisplayName; }
+    void SetDisplayName(const FString& InDisplayName);
     const FString& GetDisplayName() const { return DisplayName; }
 
-    void SetAlive(bool bInAlive) { bAlive = bInAlive; }
+    void SetAlive(bool bInAlive);
     bool IsAlive() const { return bAlive; }
 
     template<typename TMember, typename... TArgs>
@@ -38,7 +38,9 @@ public:
 
         TUniquePtr<TMember> Member = std::make_unique<TMember>(std::forward<TArgs>(Args)...);
         TMember* RawMember = Member.get();
+        RawMember->SetClass(TMember::StaticClass());
         RawMember->SetOwnerAvatar(this);
+        RawMember->SetOwnerPlayerId(OwnerPlayerId);
         RawMember->Initialize();
         Members.push_back(std::move(Member));
         return RawMember;
@@ -65,26 +67,31 @@ public:
         return FindMember<TMember>();
     }
 
+    const TVector<TUniquePtr<MAvatarMember>>& GetMembers() const
+    {
+        return Members;
+    }
+
 private:
     void InitializeDefaultMembers();
 
 private:
-    MPROPERTY(Edit)
+    MPROPERTY(Edit | SaveGame)
     uint64 OwnerPlayerId = 0;
 
-    MPROPERTY(Edit)
+    MPROPERTY(Edit | RepToClient)
     SVector ReplicatedLocation;
 
-    MPROPERTY(Edit)
+    MPROPERTY(Edit | RepToClient)
     SRotator ReplicatedRotation;
 
-    MPROPERTY(Edit)
+    MPROPERTY(Edit | RepToClient)
     SVector ReplicatedScale = SVector(1.0f, 1.0f, 1.0f);
 
-    MPROPERTY(Edit)
+    MPROPERTY(Edit | RepToClient | SaveGame)
     FString DisplayName;
 
-    MPROPERTY(Edit)
+    MPROPERTY(Edit | RepToClient | SaveGame)
     bool bAlive = true;
 
     TVector<TUniquePtr<MAvatarMember>> Members;

@@ -54,7 +54,37 @@ enum class EPropertyFlags : uint64
     Replicated = 1 << 8,        // 复制
     RepSkip = 1 << 9,          // 跳过复制
     RepNotify = 1 << 10,        // 复制通知
+    PersistentData = 1 << 11,   // 持久化域
+    RepToClient = 1 << 12,      // 客户端复制域
 };
+
+// 属性域：用于将“是否同步到客户端”“是否进入持久化”从业务逻辑中抽离。
+enum class EPropertyDomainFlags : uint64
+{
+    None = 0,
+    Replication = 1 << 0,
+    Persistence = 1 << 1,
+};
+
+inline constexpr uint64 ToMask(EPropertyFlags Flags)
+{
+    return static_cast<uint64>(Flags);
+}
+
+inline constexpr uint64 ToMask(EPropertyDomainFlags Flags)
+{
+    return static_cast<uint64>(Flags);
+}
+
+inline constexpr bool HasAnyPropertyFlags(EPropertyFlags Value, EPropertyFlags Mask)
+{
+    return (ToMask(Value) & ToMask(Mask)) != 0;
+}
+
+inline constexpr bool HasAnyPropertyDomains(uint64 Value, EPropertyDomainFlags Mask)
+{
+    return (Value & ToMask(Mask)) != 0;
+}
 
 // 函数标志
 enum class EFunctionFlags : uint32
@@ -138,6 +168,7 @@ public:
     size_t Offset = 0;
     size_t Size = 0;
     uint16 PropertyId = 0;
+    uint64 DomainFlags = ToMask(EPropertyDomainFlags::None);
     std::type_index CppTypeIndex = typeid(void);
     MutableAccessor MutableValueAccessor = nullptr;
     ConstAccessor ConstValueAccessor = nullptr;
@@ -243,6 +274,16 @@ public:
             return ConstValueAccessor(Object);
         }
         return reinterpret_cast<const uint8*>(Object) + Offset;
+    }
+
+    bool HasAnyFlags(EPropertyFlags InFlags) const
+    {
+        return HasAnyPropertyFlags(Flags, InFlags);
+    }
+
+    bool HasAnyDomains(EPropertyDomainFlags InFlags) const
+    {
+        return HasAnyPropertyDomains(DomainFlags, InFlags);
     }
 };
 
@@ -380,6 +421,7 @@ public:
     const FString& GetPath() const { return ClassPath; }
     uint16 GetId() const { return ClassId; }
     const std::type_index& GetCppTypeIndex() const { return CppTypeIndex; }
+    const MClass* GetParentClass() const { return ParentClass; }
     
     // 获取属性
     const TVector<MProperty*>& GetProperties() const { return Properties; }
@@ -397,7 +439,9 @@ public:
     
     // Snapshot 读写：反射层负责将对象状态映射到网络/存档字节流。
     virtual void WriteSnapshot(void* Object, class MReflectArchive& Ar) const;
+    virtual void WriteSnapshotByDomain(void* Object, class MReflectArchive& Ar, uint64 InDomainMask) const;
     virtual void ReadSnapshot(void* Object, const TArray& Data) const;
+    virtual void ReadSnapshotByDomain(void* Object, const TArray& Data, uint64 InDomainMask) const;
     FString ExportObjectToString(const void* Object) const;
     
     // 复制属性
@@ -438,6 +482,21 @@ public:
     void RegisterProperty(MProperty* InProperty)
     {
         InProperty->PropertyId = ++GlobalPropertyId;
+
+        // 默认从已有 PropertyFlags 推导属性域，避免旧代码必须立刻迁移。
+        uint64 InferredDomains = ToMask(EPropertyDomainFlags::None);
+        if (InProperty->HasAnyFlags(EPropertyFlags::Replicated) ||
+            InProperty->HasAnyFlags(EPropertyFlags::RepNotify) ||
+            InProperty->HasAnyFlags(EPropertyFlags::RepToClient))
+        {
+            InferredDomains |= ToMask(EPropertyDomainFlags::Replication);
+        }
+        if (InProperty->HasAnyFlags(EPropertyFlags::SaveGame) ||
+            InProperty->HasAnyFlags(EPropertyFlags::PersistentData))
+        {
+            InferredDomains |= ToMask(EPropertyDomainFlags::Persistence);
+        }
+        InProperty->DomainFlags = InferredDomains;
         Properties.push_back(InProperty);
     }
     
@@ -520,6 +579,8 @@ protected:
     uint64 ObjectFlags = 0;
     uint64 ObjectId = 0;
     FString Name;
+    uint64 DirtyDomainFlags = ToMask(EPropertyDomainFlags::None);
+    TSet<uint16> DirtyPropertyIds;
     
 public:
     MReflectObject() : ObjectId(++GlobalObjectId) {}
@@ -565,6 +626,7 @@ public:
             return;
         }
         *Prop->GetValuePtr<T>(this) = Value;
+        MarkPropertyDirty(Prop);
     }
     
     bool CallFunction(const FString& InName);
@@ -674,6 +736,105 @@ public:
     void SetClass(MClass* InClass)
     {
         Class = InClass;
+    }
+
+    void MarkPropertyDirty(const FString& InName)
+    {
+        if (!Class)
+        {
+            return;
+        }
+
+        MProperty* Prop = Class->FindProperty(InName);
+        MarkPropertyDirty(Prop);
+    }
+
+    void MarkPropertyDirtyById(uint16 InPropertyId)
+    {
+        if (!Class)
+        {
+            return;
+        }
+
+        MProperty* Prop = Class->FindPropertyById(InPropertyId);
+        MarkPropertyDirty(Prop);
+    }
+
+    void SetPropertyDirtyById(uint16 InPropertyId)
+    {
+        MarkPropertyDirtyById(InPropertyId);
+    }
+
+    void MarkPropertyDirty(const MProperty* InProperty)
+    {
+        if (!InProperty)
+        {
+            return;
+        }
+
+        DirtyPropertyIds.insert(InProperty->PropertyId);
+        DirtyDomainFlags |= InProperty->DomainFlags;
+    }
+
+    void SetPropertyDirty(const MProperty* InProperty)
+    {
+        MarkPropertyDirty(InProperty);
+    }
+
+    bool HasDirtyDomain(EPropertyDomainFlags InDomain) const
+    {
+        return HasAnyPropertyDomains(DirtyDomainFlags, InDomain);
+    }
+
+    bool HasAnyDirtyPropertyForDomain(EPropertyDomainFlags InDomain) const
+    {
+        if (!Class || DirtyPropertyIds.empty())
+        {
+            return false;
+        }
+
+        for (uint16 PropertyId : DirtyPropertyIds)
+        {
+            if (const MProperty* Prop = Class->FindPropertyById(PropertyId))
+            {
+                if (Prop->HasAnyDomains(InDomain))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    void ClearDirtyDomain(EPropertyDomainFlags InDomain)
+    {
+        if (!Class)
+        {
+            DirtyDomainFlags &= ~ToMask(InDomain);
+            return;
+        }
+
+        for (auto It = DirtyPropertyIds.begin(); It != DirtyPropertyIds.end(); )
+        {
+            const MProperty* Prop = Class->FindPropertyById(*It);
+            if (!Prop || Prop->HasAnyDomains(InDomain))
+            {
+                It = DirtyPropertyIds.erase(It);
+            }
+            else
+            {
+                ++It;
+            }
+        }
+
+        DirtyDomainFlags = ToMask(EPropertyDomainFlags::None);
+        for (uint16 PropertyId : DirtyPropertyIds)
+        {
+            if (const MProperty* Prop = Class->FindPropertyById(PropertyId))
+            {
+                DirtyDomainFlags |= Prop->DomainFlags;
+            }
+        }
     }
     
 private:

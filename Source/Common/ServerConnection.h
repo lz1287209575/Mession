@@ -14,7 +14,8 @@ enum class EServerType : uint8
     Login = 2,
     World = 3,
     Scene = 4,
-    Router = 5
+    Router = 5,
+    Mgo = 6
 };
 
 // 服务器间消息类型

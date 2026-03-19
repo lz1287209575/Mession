@@ -547,6 +547,89 @@ inline bool Deserialize(MMessageReader& Reader, SClientActorDestroyPayload& OutM
     return Reader.Read(OutMessage.ActorId);
 }
 
+// 客户端下行 InventoryPull：完整背包快照（用于主动拉取/刷新）
+struct SClientInventoryItemPayload
+{
+    uint64 InstanceId = 0;
+    uint32 ItemId = 0;
+    uint32 Count = 0;
+    bool bBound = false;
+    int64 ExpireAtUnixSeconds = 0;
+    uint32 Flags = 0;
+};
+
+inline void Serialize(MMessageWriter& Writer, const SClientInventoryItemPayload& Message)
+{
+    Writer.Write(Message.InstanceId)
+        .Write(Message.ItemId)
+        .Write(Message.Count)
+        .Write(static_cast<uint8>(Message.bBound ? 1 : 0))
+        .Write(Message.ExpireAtUnixSeconds)
+        .Write(Message.Flags);
+}
+
+inline bool Deserialize(MMessageReader& Reader, SClientInventoryItemPayload& OutMessage)
+{
+    uint8 BoundValue = 0;
+    if (!Reader.Read(OutMessage.InstanceId) ||
+        !Reader.Read(OutMessage.ItemId) ||
+        !Reader.Read(OutMessage.Count) ||
+        !Reader.Read(BoundValue) ||
+        !Reader.Read(OutMessage.ExpireAtUnixSeconds) ||
+        !Reader.Read(OutMessage.Flags))
+    {
+        return false;
+    }
+
+    OutMessage.bBound = (BoundValue != 0);
+    return true;
+}
+
+struct SClientInventoryPullPayload
+{
+    uint64 PlayerId = 0;
+    int32 Gold = 0;
+    uint32 MaxSlots = 0;
+    TVector<SClientInventoryItemPayload> Items;
+};
+
+inline void Serialize(MMessageWriter& Writer, const SClientInventoryPullPayload& Message)
+{
+    Writer.Write(Message.PlayerId)
+        .Write(Message.Gold)
+        .Write(Message.MaxSlots)
+        .Write(static_cast<uint32>(Message.Items.size()));
+    for (const SClientInventoryItemPayload& Item : Message.Items)
+    {
+        Serialize(Writer, Item);
+    }
+}
+
+inline bool Deserialize(MMessageReader& Reader, SClientInventoryPullPayload& OutMessage)
+{
+    uint32 ItemCount = 0;
+    if (!Reader.Read(OutMessage.PlayerId) ||
+        !Reader.Read(OutMessage.Gold) ||
+        !Reader.Read(OutMessage.MaxSlots) ||
+        !Reader.Read(ItemCount))
+    {
+        return false;
+    }
+
+    OutMessage.Items.clear();
+    OutMessage.Items.reserve(static_cast<size_t>(ItemCount));
+    for (uint32 Index = 0; Index < ItemCount; ++Index)
+    {
+        SClientInventoryItemPayload Item;
+        if (!Deserialize(Reader, Item))
+        {
+            return false;
+        }
+        OutMessage.Items.push_back(Item);
+    }
+    return true;
+}
+
 // 客户端移动载荷：位置 XYZ（World 解析 Gateway 转发的 gameplay 包）
 struct SPlayerMovePayload
 {

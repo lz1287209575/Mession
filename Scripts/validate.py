@@ -7,7 +7,7 @@ Mession 脚本验证 - 启动所有服务器并验证登录、复制与清理路
 
 流程:
   1. 编译项目（如需要）
-  2. 按顺序启动 Router -> Login -> World -> Scene -> Gateway
+  2. 按顺序启动 Router -> Mgo -> Login -> World -> Scene -> Gateway
   3. Test 1: Handshake 本地处理可达（默认经 MT_FunctionCall）
   4. Test 2: 多玩家登录，验证 SessionKey/PlayerId（默认经 MT_FunctionCall）
   5. Test 3: 复制链路 - 登录后收包，断言统一下行 MT_FunctionCall 可解析 ActorCreate / ActorUpdate
@@ -66,8 +66,13 @@ GATEWAY_PORT = 8001
 LOGIN_PORT = 8002
 WORLD_PORT = 8003
 SCENE_PORT = 8004
+MGO_PORT = 8006
+WORLD_DEBUG_HTTP_PORT = 18083
 ROUTER_DEBUG_HTTP_PORT = 18085
 GATEWAY_DEBUG_HTTP_PORT = 18081
+MGO_DEBUG_HTTP_PORT = 18086
+VALIDATE_MONGO_SANDBOX_DB = "mession_validate_sandbox"
+VALIDATE_MONGO_SANDBOX_COLLECTION = "world_snapshots"
 
 
 def log(msg: str) -> None:
@@ -76,7 +81,7 @@ def log(msg: str) -> None:
 
 def stop_lingering_servers() -> None:
     """尽量清理上一次残留的服务器进程，避免端口占用导致本轮验证误失败。"""
-    server_names = ["GatewayServer", "LoginServer", "WorldServer", "SceneServer", "RouterServer"]
+    server_names = ["GatewayServer", "LoginServer", "WorldServer", "SceneServer", "RouterServer", "MgoServer"]
 
     pkill = shutil.which("pkill")
     if pkill:
@@ -88,7 +93,7 @@ def stop_lingering_servers() -> None:
 
     fuser = shutil.which("fuser")
     if fuser and sys.platform != "win32":
-        for port in [GATEWAY_PORT, LOGIN_PORT, WORLD_PORT, SCENE_PORT, ROUTER_PORT]:
+        for port in [GATEWAY_PORT, LOGIN_PORT, WORLD_PORT, SCENE_PORT, ROUTER_PORT, MGO_PORT]:
             try:
                 subprocess.run(
                     [fuser, "-k", f"{port}/tcp"],
@@ -263,9 +268,20 @@ def wait_for_gateway_debug_value(
     timeout: float,
 ) -> Optional[dict]:
     """等待 Gateway debug JSON 某字段满足条件。"""
+    return wait_for_debug_value("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, key, predicate, timeout)
+
+
+def wait_for_debug_value(
+    host: str,
+    port: int,
+    key: str,
+    predicate,
+    timeout: float,
+) -> Optional[dict]:
+    """等待任意 debug JSON 某字段满足条件。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        payload = http_get_json("127.0.0.1", GATEWAY_DEBUG_HTTP_PORT, timeout=1.0)
+        payload = http_get_json(host, port, timeout=1.0)
         if payload is not None and predicate(payload.get(key, 0)):
             return payload
         time.sleep(0.1)
@@ -311,9 +327,9 @@ def count_log_occurrences(log_path: Path, needle: str) -> int:
     return text.count(needle)
 
 
-def recv_login_response(sock: socket.socket) -> tuple[bool, int, int]:
+def recv_login_response(sock: socket.socket, timeout: float = 5.0) -> tuple[bool, int, int]:
     """接收登录响应，并严格要求正式下行走 MT_FunctionCall。"""
-    pkt = recv_one_packet_raw(sock, timeout=5.0)
+    pkt = recv_one_packet_raw(sock, timeout=timeout)
     if pkt is None:
         return False, 0, 0
 
@@ -392,9 +408,13 @@ def send_function_handshake(sock: socket.socket, player_id: int = 0) -> bool:
     return send_function_call(sock, "MGatewayServer", "Client_Handshake", struct.pack("<Q", player_id))
 
 
-def send_function_login(sock: socket.socket, player_id: int = 12345) -> tuple[bool, int, int]:
+def send_function_login(
+    sock: socket.socket,
+    player_id: int = 12345,
+    response_timeout: float = 5.0,
+) -> tuple[bool, int, int]:
     send_function_call(sock, "MGatewayServer", "Client_Login", struct.pack("<Q", player_id))
-    return recv_login_response(sock)
+    return recv_login_response(sock, timeout=response_timeout)
 
 
 def send_function_chat(sock: socket.socket, message: str) -> bool:
@@ -411,9 +431,13 @@ def send_function_heartbeat(sock: socket.socket, sequence: int) -> bool:
     return send_function_call(sock, "MGatewayServer", "Client_Heartbeat", struct.pack("<I", sequence))
 
 
-def send_login(sock: socket.socket, player_id: int = 12345) -> tuple[bool, int, int]:
+def send_login(
+    sock: socket.socket,
+    player_id: int = 12345,
+    response_timeout: float = 5.0,
+) -> tuple[bool, int, int]:
     """默认登录路径：经 MT_FunctionCall 发送 Client_Login。"""
-    return send_function_login(sock, player_id)
+    return send_function_login(sock, player_id, response_timeout=response_timeout)
 
 
 def send_handshake(sock: socket.socket, player_id: int = 0) -> bool:
@@ -436,6 +460,25 @@ def send_heartbeat(sock: socket.socket, sequence: int) -> bool:
     return send_function_heartbeat(sock, sequence)
 
 
+def recv_exact(sock: socket.socket, size: int) -> Optional[bytes]:
+    """精确接收 size 字节；超时/断连返回 None。"""
+    if size <= 0:
+        return b""
+
+    buf = bytearray()
+    while len(buf) < size:
+        try:
+            chunk = sock.recv(size - len(buf))
+        except socket.timeout:
+            return None
+        except (socket.error, OSError):
+            return None
+        if not chunk:
+            return None
+        buf.extend(chunk)
+    return bytes(buf)
+
+
 def recv_one_packet(sock: socket.socket, timeout: float) -> Optional[tuple[int, bytes]]:
     """
     接收一个长度前缀包，返回 (msg_type, payload) 或 None（超时/断连）。
@@ -443,18 +486,15 @@ def recv_one_packet(sock: socket.socket, timeout: float) -> Optional[tuple[int, 
     """
     sock.settimeout(timeout)
     try:
-        header = sock.recv(4)
-        if len(header) < 4:
+        header = recv_exact(sock, 4)
+        if header is None:
             return None
         length = struct.unpack("<I", header)[0]
         if length < 1:
             return None
-        body = b""
-        while len(body) < length:
-            chunk = sock.recv(length - len(body))
-            if not chunk:
-                return None
-            body += chunk
+        body = recv_exact(sock, length)
+        if body is None:
+            return None
         return body[0], body[1:]
     except socket.timeout:
         return None
@@ -466,18 +506,15 @@ def recv_one_packet_raw(sock: socket.socket, timeout: float) -> Optional[tuple[i
     """接收一个原始长度前缀包，不做统一下行兼容转换。"""
     sock.settimeout(timeout)
     try:
-        header = sock.recv(4)
-        if len(header) < 4:
+        header = recv_exact(sock, 4)
+        if header is None:
             return None
         length = struct.unpack("<I", header)[0]
         if length < 1:
             return None
-        body = b""
-        while len(body) < length:
-            chunk = sock.recv(length - len(body))
-            if not chunk:
-                return None
-            body += chunk
+        body = recv_exact(sock, length)
+        if body is None:
+            return None
         return body[0], body[1:]
     except socket.timeout:
         return None
@@ -619,32 +656,57 @@ def run_stress(
 def run_parallel_login_batch(indices: list[int], base_pid: int) -> tuple[int, list[int]]:
     """执行一轮并发登录，返回成功数和失败下标。"""
 
-    def one_login(idx: int) -> tuple[int, bool]:
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(10.0)
-            sock.connect(("127.0.0.1", GATEWAY_PORT))
-            ok, _, _ = send_login(sock, base_pid + idx)
-            sock.close()
-            return idx, ok
-        except Exception:
-            return idx, False
+    def one_login(idx: int) -> tuple[int, bool, str]:
+        player_id = base_pid + idx
+        last_reason = "unknown"
+        for attempt in range(2):
+            sock: Optional[socket.socket] = None
+            try:
+                # Stagger a tiny amount to avoid connect/send thundering herd on localhost.
+                if attempt == 0:
+                    time.sleep((idx % 5) * 0.01)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(10.0)
+                sock.connect(("127.0.0.1", GATEWAY_PORT))
+                ok, _, _ = send_login(sock, player_id, response_timeout=8.0)
+                if ok:
+                    return idx, True, ""
+                last_reason = "login_response_timeout_or_invalid"
+            except Exception as exc:
+                last_reason = f"{type(exc).__name__}: {exc}"
+            finally:
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except OSError:
+                        pass
+            if attempt == 0:
+                time.sleep(0.15)
+        return idx, False, last_reason
 
     ok_count = 0
     failed_indices: list[int] = []
+    failure_reasons: dict[int, str] = {}
     if not indices:
         return ok_count, failed_indices
 
-    with ThreadPoolExecutor(max_workers=len(indices)) as ex:
+    with ThreadPoolExecutor(max_workers=min(len(indices), 16)) as ex:
         futures = [ex.submit(one_login, i) for i in indices]
         for f in as_completed(futures):
-            idx, ok = f.result()
+            idx, ok, reason = f.result()
             if ok:
                 ok_count += 1
             else:
                 failed_indices.append(idx)
+                failure_reasons[idx] = reason
 
     failed_indices.sort()
+    if failed_indices:
+        reason_parts = [
+            f"{idx}:{failure_reasons.get(idx, 'unknown')}"
+            for idx in failed_indices
+        ]
+        log("  Parallel login failure details: " + ", ".join(reason_parts))
     return ok_count, failed_indices
 
 
@@ -655,6 +717,9 @@ def run_validation(
     debug_log_dir: Optional[Path] = None,
     stress_clients: int = 0,
     stress_moves: int = 5,
+    enable_mgo: bool = True,
+    mongo_db: str = VALIDATE_MONGO_SANDBOX_DB,
+    mongo_collection: str = VALIDATE_MONGO_SANDBOX_COLLECTION,
 ) -> bool:
     """执行完整验证流程"""
     procs: List[subprocess.Popen] = []
@@ -667,7 +732,22 @@ def run_validation(
     base_env = {
         "MESSION_ROUTER_DEBUG_HTTP_PORT": str(ROUTER_DEBUG_HTTP_PORT),
         "MESSION_GATEWAY_DEBUG_HTTP_PORT": str(GATEWAY_DEBUG_HTTP_PORT),
+        "MESSION_WORLD_DEBUG_HTTP_PORT": str(WORLD_DEBUG_HTTP_PORT),
     }
+    if enable_mgo:
+        base_env["MESSION_MGO_DEBUG_HTTP_PORT"] = str(MGO_DEBUG_HTTP_PORT)
+        base_env["MESSION_WORLD_MGO_PERSISTENCE_ENABLE"] = "1"
+        base_env["MESSION_MGO_MONGO_ENABLE"] = os.environ.get("MESSION_MGO_MONGO_ENABLE", "1")
+        base_env["MESSION_MGO_MONGO_DB"] = os.environ.get("MESSION_MGO_MONGO_DB", mongo_db)
+        base_env["MESSION_MGO_MONGO_COLLECTION"] = os.environ.get(
+            "MESSION_MGO_MONGO_COLLECTION",
+            mongo_collection,
+        )
+        log(
+            "Mongo sandbox target: "
+            f"db={base_env['MESSION_MGO_MONGO_DB']} "
+            f"collection={base_env['MESSION_MGO_MONGO_COLLECTION']}"
+        )
     if zone_id is not None:
         base_env["MESSION_ZONE_ID"] = str(zone_id)
 
@@ -716,7 +796,18 @@ def run_validation(
             return False
         time.sleep(0.5)
 
-        # 2. 启动 Login, World, Scene, Gateway（可选 Zone）
+        # 2. 启动 Mgo（默认启用）
+        if enable_mgo:
+            p = launch_server("MgoServer", MGO_PORT)
+            if not p:
+                log("MgoServer failed to start")
+                return False
+            if not wait_for_port("127.0.0.1", MGO_PORT, timeout):
+                log("MgoServer did not become ready")
+                return False
+            time.sleep(0.2)
+
+        # 3. 启动 Login, World, Scene, Gateway（可选 Zone）
         for name, port in [
             ("LoginServer", LOGIN_PORT),
             ("WorldServer", WORLD_PORT),
@@ -727,7 +818,7 @@ def run_validation(
             if not p:
                 return False
 
-        # 3. 等待 Gateway 就绪
+        # 4. 等待 Gateway 就绪
         if not wait_for_port("127.0.0.1", GATEWAY_PORT, timeout):
             log("GatewayServer did not become ready")
             return False
@@ -735,6 +826,16 @@ def run_validation(
         if gateway_debug is None:
             log("Gateway debug HTTP did not become ready")
             return False
+        world_debug = wait_for_http_json("127.0.0.1", WORLD_DEBUG_HTTP_PORT, timeout)
+        if world_debug is None:
+            log("World debug HTTP did not become ready")
+            return False
+        mgo_debug = None
+        if enable_mgo:
+            mgo_debug = wait_for_http_json("127.0.0.1", MGO_DEBUG_HTTP_PORT, timeout)
+            if mgo_debug is None:
+                log("Mgo debug HTTP did not become ready")
+                return False
         initial_function_call_count = int(gateway_debug.get("clientFunctionCallCount", 0))
         initial_rejected_function_count = int(gateway_debug.get("clientFunctionCallRejectedCount", 0))
         initial_unknown_function_count = int(gateway_debug.get("unknownClientFunctionCount", 0))
@@ -742,7 +843,7 @@ def run_validation(
         gateway_log = debug_log_dir / "GatewayServer.log"
         world_log = debug_log_dir / "WorldServer.log"
 
-        # 4. 等待后端握手完成
+        # 5. 等待后端握手完成
         time.sleep(2.0)
 
         # 5. Handshake 本地处理：通过 Gateway debug 状态确认未再转发到 Login
@@ -963,6 +1064,46 @@ def run_validation(
             sock2.close()
             return False
         log("  MT_Chat delivered through Gateway -> World -> client path")
+
+        log("Test 6.1: Inventory bag command...")
+        send_chat(chat_sender, "/bag add 1001")
+        bag_packets = collect_replication_packets(chat_sender, 2.0, {MT_CHAT})
+        bag_add_ok = False
+        for _, payload in bag_packets:
+            parsed = parse_chat_payload(payload)
+            if not parsed:
+                continue
+            from_player_id, message = parsed
+            if from_player_id == 0 and "[bag] add ok: item=1001" in message:
+                bag_add_ok = True
+                break
+        if not bag_add_ok:
+            log("  Bag add command failed: expected system ack not received")
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+
+        send_chat(chat_sender, "/bag show")
+        bag_packets = collect_replication_packets(chat_sender, 2.0, {MT_CHAT})
+        bag_show_ok = False
+        for _, payload in bag_packets:
+            parsed = parse_chat_payload(payload)
+            if not parsed:
+                continue
+            from_player_id, message = parsed
+            if from_player_id == 0 and "[bag] gold=" in message and "items=" in message:
+                bag_show_ok = True
+                break
+        if not bag_show_ok:
+            log("  Bag show command failed: expected summary not received")
+            for s, _ in clients:
+                if s:
+                    s.close()
+            sock2.close()
+            return False
+        log("  Bag command path OK: add/show")
 
         # 11. Heartbeat 测试：通过 Gateway 本地声明式入口处理 MT_Heartbeat
         log("Test 7: Heartbeat local route...")
@@ -1540,6 +1681,54 @@ def run_validation(
         else:
             log(f"  {concurrency} parallel logins OK")
 
+        if enable_mgo:
+            log("Test 13: Persistence owner/version + merge + replay...")
+            world_debug_now = http_get_json("127.0.0.1", WORLD_DEBUG_HTTP_PORT, timeout=1.0) or {}
+            mgo_debug_now = http_get_json("127.0.0.1", MGO_DEBUG_HTTP_PORT, timeout=1.0) or {}
+            owner_server_id = int(world_debug_now.get("ownerServerId", 0))
+            persistence_enqueued = int(world_debug_now.get("persistenceEnqueued", 0))
+            persistence_flushed = int(world_debug_now.get("persistenceFlushed", 0))
+            persistence_merged = int(world_debug_now.get("persistenceMerged", 0))
+            mongo_success = int(mgo_debug_now.get("mongoSuccess", 0))
+
+            if owner_server_id <= 0:
+                log("  Persistence regression failed: ownerServerId is missing/invalid in World debug status")
+                for s, _ in clients:
+                    if s:
+                        s.close()
+                sock2.close()
+                return False
+            if persistence_enqueued <= 0:
+                log("  Persistence regression failed: no persistence records enqueued")
+                for s, _ in clients:
+                    if s:
+                        s.close()
+                sock2.close()
+                return False
+            if persistence_flushed <= 0:
+                log("  Persistence regression failed: no persistence records flushed")
+                for s, _ in clients:
+                    if s:
+                        s.close()
+                sock2.close()
+                return False
+            if mongo_success <= 0:
+                log("  Persistence regression failed: Mgo reported no successful Mongo writes")
+                for s, _ in clients:
+                    if s:
+                        s.close()
+                sock2.close()
+                return False
+
+            log(
+                "  Persistence regression OK: "
+                f"ownerServerId={owner_server_id}, "
+                f"enqueued={persistence_enqueued}, "
+                f"flushed={persistence_flushed}, "
+                f"merged={persistence_merged}, "
+                f"mongoSuccess={mongo_success}"
+            )
+
         # 17. 压力测试（可选）
         if stress_clients > 0:
             log(f"Stress test: {stress_clients} clients, {stress_moves} moves each...")
@@ -1625,6 +1814,21 @@ def main() -> int:
         metavar="M",
         help="Moves per client during stress test (default 5)",
     )
+    parser.add_argument(
+        "--no-mgo",
+        action="store_true",
+        help="Do not start MgoServer in validation",
+    )
+    parser.add_argument(
+        "--mongo-db",
+        default=VALIDATE_MONGO_SANDBOX_DB,
+        help=f"Mongo database for validate MgoServer (default: {VALIDATE_MONGO_SANDBOX_DB})",
+    )
+    parser.add_argument(
+        "--mongo-collection",
+        default=VALIDATE_MONGO_SANDBOX_COLLECTION,
+        help=f"Mongo collection for validate MgoServer (default: {VALIDATE_MONGO_SANDBOX_COLLECTION})",
+    )
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parent.parent
@@ -1638,6 +1842,9 @@ def main() -> int:
 
     if not get_executable_path(build_dir, "GatewayServer"):
         log(f"GatewayServer not found in {build_dir}")
+        return 1
+    if not args.no_mgo and not get_executable_path(build_dir, "MgoServer"):
+        log(f"MgoServer not found in {build_dir}")
         return 1
 
     debug_log_dir = None
@@ -1653,6 +1860,9 @@ def main() -> int:
         debug_log_dir,
         stress_clients=args.stress,
         stress_moves=args.stress_moves,
+        enable_mgo=(not args.no_mgo),
+        mongo_db=args.mongo_db,
+        mongo_collection=args.mongo_collection,
     )
     return 0 if ok else 1
 

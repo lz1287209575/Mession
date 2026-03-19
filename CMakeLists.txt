@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(Mession VERSION 1.0.0 LANGUAGES CXX)
+option(MESSION_USE_MONGOCXX "Enable MongoDB C++ driver integration for MgoServer" OFF)
 
 # C++标准
 set(CMAKE_CXX_STANDARD 20)
@@ -95,10 +96,12 @@ configure_mession_compile_options(mession_common)
 set(MESSION_NETDRIVER_SOURCES
     Source/Gameplay/AvatarMember.cpp
     Source/Gameplay/AttributeMember.cpp
+    Source/Gameplay/InventoryMember.cpp
     Source/Gameplay/InteractionMember.cpp
     Source/Gameplay/MovementMember.cpp
     Source/Gameplay/PlayerAvatar.cpp
     Source/NetDriver/NetObject.cpp
+    Source/NetDriver/MongoPersistenceSink.cpp
     Source/NetDriver/ReplicationDriver.cpp
     Source/NetDriver/Reflection.cpp
 )
@@ -129,14 +132,47 @@ configure_mession_compile_options(MHeaderTool)
 
 set(MESSION_GENERATED_DIR "${CMAKE_SOURCE_DIR}/Build/Generated")
 set(MESSION_HEADERTOOL_MANIFEST "${MESSION_GENERATED_DIR}/MHeaderToolTargets.cmake")
+file(MAKE_DIRECTORY "${MESSION_GENERATED_DIR}")
+
+set(MESSION_HEADERTOOL_EXE "${CMAKE_SOURCE_DIR}/Bin/MHeaderTool")
+set(MESSION_HEADERTOOL_BOOTSTRAP_EXE "${CMAKE_BINARY_DIR}/MHeaderTool.bootstrap")
+
+# Fresh checkout bootstrap:
+# If Bin/MHeaderTool does not exist yet, compile a temporary host tool at configure-time
+# so generated reflection sources and manifest are available in the first build.
+if(NOT EXISTS "${MESSION_HEADERTOOL_EXE}")
+    execute_process(
+        COMMAND
+            "${CMAKE_CXX_COMPILER}"
+            -std=c++20
+            -O2
+            "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool.cpp"
+            -o
+            "${MESSION_HEADERTOOL_BOOTSTRAP_EXE}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        RESULT_VARIABLE MESSION_HEADERTOOL_BOOTSTRAP_RESULT
+        ERROR_VARIABLE MESSION_HEADERTOOL_BOOTSTRAP_ERROR
+    )
+    if(NOT MESSION_HEADERTOOL_BOOTSTRAP_RESULT EQUAL 0)
+        message(WARNING
+            "Failed to compile configure-time MHeaderTool bootstrap (code ${MESSION_HEADERTOOL_BOOTSTRAP_RESULT}). "
+            "First build may require reconfigure.\n${MESSION_HEADERTOOL_BOOTSTRAP_ERROR}")
+    endif()
+endif()
+
+set(MESSION_HEADERTOOL_RUNNER "${MESSION_HEADERTOOL_EXE}")
+if(NOT EXISTS "${MESSION_HEADERTOOL_RUNNER}" AND EXISTS "${MESSION_HEADERTOOL_BOOTSTRAP_EXE}")
+    set(MESSION_HEADERTOOL_RUNNER "${MESSION_HEADERTOOL_BOOTSTRAP_EXE}")
+endif()
+
 set(MESSION_HEADERTOOL_CMD
-    "${CMAKE_SOURCE_DIR}/Bin/MHeaderTool"
+    "${MESSION_HEADERTOOL_RUNNER}"
     "--source-root=${CMAKE_SOURCE_DIR}/Source"
     "--output-dir=${MESSION_GENERATED_DIR}"
     "--cmake-manifest=${MESSION_HEADERTOOL_MANIFEST}"
 )
 
-if(EXISTS "${CMAKE_SOURCE_DIR}/Bin/MHeaderTool")
+if(EXISTS "${MESSION_HEADERTOOL_RUNNER}")
     execute_process(
         COMMAND ${MESSION_HEADERTOOL_CMD}
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -165,11 +201,19 @@ function(mession_define_generated_group GroupName)
     string(TOUPPER "${GroupName}" GroupNameUpper)
     string(REGEX REPLACE "[^A-Z0-9_]" "_" GroupVarSuffix "${GroupNameUpper}")
     set(GroupSourcesVar "MESSION_GENERATED_${GroupVarSuffix}_SOURCES")
+    set(GroupSources ${${GroupSourcesVar}})
 
-    add_library(${TargetName} OBJECT
-        Source/Tools/MGeneratedStub.cpp
-        ${${GroupSourcesVar}}
-    )
+    # Use a stub only when this group currently has no generated sources.
+    # This avoids brittle duplicate stub object dependencies across groups.
+    if(GroupSources)
+        add_library(${TargetName} OBJECT
+            ${GroupSources}
+        )
+    else()
+        add_library(${TargetName} OBJECT
+            Source/Tools/MGeneratedStub.cpp
+        )
+    endif()
     target_include_directories(${TargetName}
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}
@@ -285,6 +329,30 @@ target_link_libraries(RouterServer
 configure_mession_target(RouterServer)
 mession_attach_generated_groups(RouterServer shared router)
 
+# 6. Mgo Server - 持久化接入层服务器
+add_executable(MgoServer
+    Source/Servers/Mgo/MgoServer.h
+    Source/Servers/Mgo/MgoServer.cpp
+    Source/Servers/Mgo/MgoServerMain.cpp
+)
+target_link_libraries(MgoServer
+    PRIVATE
+        mession_netdriver
+)
+if(MESSION_USE_MONGOCXX)
+    find_package(mongocxx CONFIG QUIET)
+    find_package(bsoncxx CONFIG QUIET)
+    if(mongocxx_FOUND AND bsoncxx_FOUND)
+        target_link_libraries(MgoServer PRIVATE mongo::mongocxx_shared mongo::bsoncxx_shared)
+        target_compile_definitions(MgoServer PRIVATE MESSION_USE_MONGOCXX=1)
+        message(STATUS "MgoServer MongoDB integration: enabled (mongocxx/bsoncxx found)")
+    else()
+        message(WARNING "MESSION_USE_MONGOCXX=ON but mongocxx/bsoncxx not found; building MgoServer without MongoDB driver")
+    endif()
+endif()
+configure_mession_target(MgoServer)
+mession_attach_generated_groups(MgoServer shared mgo)
+
 # NetBench - 简单网络压测工具
 add_executable(NetBench
     Source/Tools/NetBench.cpp
@@ -295,7 +363,7 @@ target_link_libraries(NetBench
 )
 configure_mession_compile_options(NetBench)
 
-# 6. Mono Server - 单机测试服务器（用于反射等功能验证）
+# 7. Mono Server - 单机测试服务器（用于反射等功能验证）
 add_executable(MonoServer
     Source/Servers/Mono/MonoServer.h
     Source/Servers/Mono/MonoServer.cpp
@@ -315,6 +383,7 @@ install(TARGETS
     WorldServer 
     SceneServer 
     RouterServer
+    MgoServer
     MonoServer
     DESTINATION bin
 )
@@ -324,5 +393,5 @@ message(STATUS "  Mession - Distributed MMO Server")
 message(STATUS "=====================================")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
-message(STATUS "  Servers: Gateway, Login, World, Scene, Router")
+message(STATUS "  Servers: Gateway, Login, World, Scene, Router, Mgo")
 message(STATUS "=====================================")

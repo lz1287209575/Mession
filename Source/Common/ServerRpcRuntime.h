@@ -59,6 +59,37 @@ inline constexpr const char* OnLoginResponse = "Client_OnLoginResponse";
 inline constexpr const char* OnActorCreate = "Client_OnActorCreate";
 inline constexpr const char* OnActorUpdate = "Client_OnActorUpdate";
 inline constexpr const char* OnActorDestroy = "Client_OnActorDestroy";
+inline constexpr const char* OnInventoryPull = "Client_OnInventoryPull";
+
+inline uint16 Id_OnLoginResponse()
+{
+    static uint16 Id = MGET_STABLE_RPC_FUNCTION_ID("MClientDownlink", "Client_OnLoginResponse");
+    return Id;
+}
+
+inline uint16 Id_OnActorCreate()
+{
+    static uint16 Id = MGET_STABLE_RPC_FUNCTION_ID("MClientDownlink", "Client_OnActorCreate");
+    return Id;
+}
+
+inline uint16 Id_OnActorUpdate()
+{
+    static uint16 Id = MGET_STABLE_RPC_FUNCTION_ID("MClientDownlink", "Client_OnActorUpdate");
+    return Id;
+}
+
+inline uint16 Id_OnActorDestroy()
+{
+    static uint16 Id = MGET_STABLE_RPC_FUNCTION_ID("MClientDownlink", "Client_OnActorDestroy");
+    return Id;
+}
+
+inline uint16 Id_OnInventoryPull()
+{
+    static uint16 Id = MGET_STABLE_RPC_FUNCTION_ID("MClientDownlink", "Client_OnInventoryPull");
+    return Id;
+}
 }
 
 enum class EGeneratedClientDispatchResult : uint8
@@ -149,6 +180,12 @@ inline bool BuildClientFunctionCallPacketForPayload(const char* FunctionName, co
         GetClientDownlinkFunctionId(FunctionName),
         BuildPayload(Message),
         OutPacket);
+}
+
+template<typename TMessage>
+inline bool BuildClientFunctionCallPacketForPayload(uint16 FunctionId, const TMessage& Message, TArray& OutPacket)
+{
+    return BuildClientFunctionCallPacket(FunctionId, BuildPayload(Message), OutPacket);
 }
 
 template<typename... TArgs>

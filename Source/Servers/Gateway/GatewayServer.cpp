@@ -1087,7 +1087,7 @@ void MGatewayServer::OnLogin_PlayerLogin(const SPlayerLoginResponseMessage& Mess
              DescribeClientLoginResponsePayload(ResponsePayload).c_str());
 
     TArray Packet;
-    if (!BuildClientFunctionCallPacketForPayload(MClientDownlink::OnLoginResponse, ResponsePayload, Packet))
+    if (!BuildClientFunctionCallPacketForPayload(MClientDownlink::Id_OnLoginResponse(), ResponsePayload, Packet))
     {
         LOG_WARN("Failed to build unified client login response packet");
         return;

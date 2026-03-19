@@ -55,21 +55,25 @@ const char* GetClientMessageTypeName(EClientMessageType MessageType)
 
 const char* ResolveClientDownlinkFunctionName(uint16 FunctionId)
 {
-    if (FunctionId == ComputeStableReflectId(MClientDownlink::ScopeName, MClientDownlink::OnLoginResponse))
+    if (FunctionId == MClientDownlink::Id_OnLoginResponse())
     {
         return MClientDownlink::OnLoginResponse;
     }
-    if (FunctionId == ComputeStableReflectId(MClientDownlink::ScopeName, MClientDownlink::OnActorCreate))
+    if (FunctionId == MClientDownlink::Id_OnActorCreate())
     {
         return MClientDownlink::OnActorCreate;
     }
-    if (FunctionId == ComputeStableReflectId(MClientDownlink::ScopeName, MClientDownlink::OnActorUpdate))
+    if (FunctionId == MClientDownlink::Id_OnActorUpdate())
     {
         return MClientDownlink::OnActorUpdate;
     }
-    if (FunctionId == ComputeStableReflectId(MClientDownlink::ScopeName, MClientDownlink::OnActorDestroy))
+    if (FunctionId == MClientDownlink::Id_OnActorDestroy())
     {
         return MClientDownlink::OnActorDestroy;
+    }
+    if (FunctionId == MClientDownlink::Id_OnInventoryPull())
+    {
+        return MClientDownlink::OnInventoryPull;
     }
 
     return nullptr;
@@ -165,6 +169,10 @@ EServerType ParseGeneratedClientTargetServerType(const char* TargetName)
     if (Target == "Gateway")
     {
         return EServerType::Gateway;
+    }
+    if (Target == "Mgo")
+    {
+        return EServerType::Mgo;
     }
 
     return EServerType::Unknown;
@@ -319,6 +327,8 @@ const char* GetServerTypeDisplayName(EServerType ServerType)
         return "Scene";
     case EServerType::Router:
         return "Router";
+    case EServerType::Mgo:
+        return "Mgo";
     default:
         return "Unknown";
     }

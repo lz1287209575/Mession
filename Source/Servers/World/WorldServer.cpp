@@ -1,9 +1,13 @@
 #include "WorldServer.h"
 #include "Build/Generated/MLoginService.mgenerated.h"
+#include "Build/Generated/MMgoService.mgenerated.h"
 #include "Common/Config.h"
+#include "Common/ServerRpcRuntime.h"
 #include "Common/StringUtils.h"
+#include "Gameplay/InventoryMember.h"
 #include "Messages/NetMessages.h"
 #include "Core/Json.h"
+#include <sstream>
 
 namespace
 {
@@ -14,6 +18,9 @@ const TMap<FString, const char*> WorldEnvMap = {
     {"login_addr", "MESSION_LOGIN_ADDR"},
     {"login_port", "MESSION_LOGIN_PORT"},
     {"zone_id", "MESSION_ZONE_ID"},
+    {"debug_http_port", "MESSION_WORLD_DEBUG_HTTP_PORT"},
+    {"mgo_persistence_enable", "MESSION_WORLD_MGO_PERSISTENCE_ENABLE"},
+    {"owner_server_id", "MESSION_WORLD_OWNER_SERVER_ID"},
 };
 
 class MGatewayClientTunnelConnection : public INetConnection
@@ -81,11 +88,134 @@ private:
     TFunction<bool(const void*, uint32)> SendCallback;
     TFunction<bool()> IsConnectedCallback;
 };
+
+class MWorldPersistenceLogSink : public IPersistenceSink
+{
+public:
+    bool Persist(const SPersistenceRecord& InRecord) override
+    {
+        LOG_DEBUG(
+            "Persistence flush: object=%llu class=%s owner=%u req=%llu ver=%llu bytes=%llu",
+            static_cast<unsigned long long>(InRecord.ObjectId),
+            InRecord.ClassName.c_str(),
+            static_cast<unsigned>(InRecord.OwnerServerId),
+            static_cast<unsigned long long>(InRecord.RequestId),
+            static_cast<unsigned long long>(InRecord.Version),
+            static_cast<unsigned long long>(InRecord.SnapshotData.size()));
+        return true;
+    }
+};
+
+FString BytesToHex(const TArray& InData)
+{
+    static const char* Digits = "0123456789ABCDEF";
+    FString Out;
+    Out.reserve(InData.size() * 2);
+    for (uint8 Byte : InData)
+    {
+        Out.push_back(Digits[(Byte >> 4) & 0x0F]);
+        Out.push_back(Digits[Byte & 0x0F]);
+    }
+    return Out;
+}
+
+bool TryDecodeHex(const FString& InHex, TArray& OutBytes)
+{
+    OutBytes.clear();
+    if (InHex.empty())
+    {
+        return true;
+    }
+    if ((InHex.size() % 2) != 0)
+    {
+        return false;
+    }
+
+    auto HexNibble = [](char Ch) -> int32
+    {
+        if (Ch >= '0' && Ch <= '9')
+        {
+            return static_cast<int32>(Ch - '0');
+        }
+        if (Ch >= 'A' && Ch <= 'F')
+        {
+            return 10 + static_cast<int32>(Ch - 'A');
+        }
+        if (Ch >= 'a' && Ch <= 'f')
+        {
+            return 10 + static_cast<int32>(Ch - 'a');
+        }
+        return -1;
+    };
+
+    OutBytes.reserve(InHex.size() / 2);
+    for (size_t Index = 0; Index < InHex.size(); Index += 2)
+    {
+        const int32 Hi = HexNibble(InHex[Index]);
+        const int32 Lo = HexNibble(InHex[Index + 1]);
+        if (Hi < 0 || Lo < 0)
+        {
+            OutBytes.clear();
+            return false;
+        }
+        OutBytes.push_back(static_cast<uint8>((Hi << 4) | Lo));
+    }
+    return true;
+}
+
+class MWorldMgoRpcSink : public IPersistenceSink
+{
+public:
+    explicit MWorldMgoRpcSink(TSharedPtr<MServerConnection>* InMgoConn, MWorldServer* InOwnerServer)
+        : MgoConn(InMgoConn)
+        , OwnerServer(InOwnerServer)
+    {
+    }
+
+    bool Persist(const SPersistenceRecord& InRecord) override
+    {
+        if (!MgoConn || !(*MgoConn) || !(*MgoConn)->IsConnected())
+        {
+            return false;
+        }
+
+        const FString SnapshotHex = BytesToHex(InRecord.SnapshotData);
+        const bool bSent = MRpc::MMgoService::Rpc_OnPersistSnapshot(
+            *MgoConn,
+            InRecord.ObjectId,
+            InRecord.ClassId,
+            InRecord.OwnerServerId,
+            InRecord.RequestId,
+            InRecord.Version,
+            InRecord.ClassName,
+            SnapshotHex);
+        if (!bSent)
+        {
+            LOG_WARN("World->Mgo persist RPC send failed: object=%llu owner=%u req=%llu ver=%llu class=%s",
+                     static_cast<unsigned long long>(InRecord.ObjectId),
+                     static_cast<unsigned>(InRecord.OwnerServerId),
+                     static_cast<unsigned long long>(InRecord.RequestId),
+                     static_cast<unsigned long long>(InRecord.Version),
+                     InRecord.ClassName.c_str());
+            return false;
+        }
+        if (OwnerServer)
+        {
+            OwnerServer->OnPersistRequestDispatched(InRecord.RequestId, InRecord.ObjectId, InRecord.Version);
+        }
+        return true;
+    }
+
+private:
+    TSharedPtr<MServerConnection>* MgoConn = nullptr;
+    MWorldServer* OwnerServer = nullptr;
+};
 }
 
 MWorldServer::MWorldServer()
 {
     ReplicationDriver = new MReplicationDriver();
+    PersistenceSubsystem.SetSink(TUniquePtr<IPersistenceSink>(new MWorldPersistenceLogSink()));
 }
 
 bool MWorldServer::LoadConfig(const FString& ConfigPath)
@@ -105,6 +235,12 @@ bool MWorldServer::LoadConfig(const FString& ConfigPath)
     Config.MaxPlayers = MConfig::GetU32(Vars, "max_players", Config.MaxPlayers);
     Config.ServerName = MConfig::GetStr(Vars, "server_name", Config.ServerName);
     Config.DebugHttpPort = MConfig::GetU16(Vars, "debug_http_port", Config.DebugHttpPort);
+    Config.EnableMgoPersistence = MConfig::GetBool(Vars, "mgo_persistence_enable", Config.EnableMgoPersistence);
+    Config.OwnerServerId = MConfig::GetU32(Vars, "owner_server_id", Config.OwnerServerId);
+    if (Config.OwnerServerId == 0)
+    {
+        Config.OwnerServerId = 3;
+    }
     return true;
 }
 
@@ -114,11 +250,18 @@ bool MWorldServer::Init(int InPort)
     {
         Config.ListenPort = static_cast<uint16>(InPort);
     }
-    MServerConnection::SetLocalInfo(3, EServerType::World, Config.ServerName);
+    MServerConnection::SetLocalInfo(Config.OwnerServerId, EServerType::World, Config.ServerName);
+    PersistenceSubsystem.SetOwnerServerId(Config.OwnerServerId);
 
     bRunning = true;
 
     MLogger::LogStartupBanner("WorldServer", Config.ListenPort, 0);
+
+    if (!Config.EnableMgoPersistence)
+    {
+        PersistenceSubsystem.SetSink(TUniquePtr<IPersistenceSink>(new MWorldPersistenceLogSink()));
+        LOG_INFO("World persistence sink: Log");
+    }
 
     // 初始化服务器消息分发器
     InitBackendMessageHandlers();
@@ -133,6 +276,10 @@ bool MWorldServer::Init(int InPort)
         LOG_INFO("Router server authenticated: %s", Info.ServerName.c_str());
         SendRouterRegister();
         QueryLoginServerRoute();
+        if (Config.EnableMgoPersistence)
+        {
+            QueryMgoServerRoute();
+        }
     });
     RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
         HandleRouterServerMessage(Type, Data);
@@ -141,6 +288,8 @@ bool MWorldServer::Init(int InPort)
 
     SServerConnectionConfig LoginConfig(2, EServerType::Login, "Login01", "", 0);
     LoginServerConn = BackendConnectionManager.AddServer(LoginConfig);
+    SServerConnectionConfig MgoConfig(6, EServerType::Mgo, "Mgo01", "", 0);
+    MgoServerConn = BackendConnectionManager.AddServer(MgoConfig);
 
     // 启动调试 HTTP 服务器（仅当配置端口 > 0 时）
     if (Config.DebugHttpPort > 0)
@@ -160,6 +309,21 @@ bool MWorldServer::Init(int InPort)
     LoginServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
         HandleLoginServerMessage(Type, Data);
     });
+
+    if (MgoServerConn)
+    {
+        MgoServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
+            LOG_INFO("Mgo server authenticated: %s", Info.ServerName.c_str());
+        });
+        MgoServerConn->SetOnMessage([this](auto, uint8 Type, const TArray& Data) {
+            if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
+            {
+                LOG_DEBUG("World received MT_RPC from Mgo (%llu bytes)", static_cast<unsigned long long>(Data.size()));
+            }
+        });
+        PersistenceSubsystem.SetSink(TUniquePtr<IPersistenceSink>(new MWorldMgoRpcSink(&MgoServerConn, this)));
+        LOG_INFO("World persistence sink: Mgo RPC");
+    }
     
     return true;
 }
@@ -213,6 +377,7 @@ void MWorldServer::ShutdownConnections()
     BackendConnectionManager.DisconnectAll();
     RouterServerConn.reset();
     LoginServerConn.reset();
+    MgoServerConn.reset();
     PendingSessionValidations.clear();
     Players.clear();
     delete ReplicationDriver;
@@ -259,6 +424,16 @@ void MWorldServer::TickBackends()
         }
     }
 
+    MgoRouteQueryTimer += DEFAULT_TICK_RATE;
+    if (RouterServerConn && RouterServerConn->IsConnected() && MgoRouteQueryTimer >= 1.0f)
+    {
+        MgoRouteQueryTimer = 0.0f;
+        if (Config.EnableMgoPersistence && (!MgoServerConn || !MgoServerConn->IsConnected()))
+        {
+            QueryMgoServerRoute();
+        }
+    }
+
     LoadReportTimer += DEFAULT_TICK_RATE;
     if (RouterServerConn && RouterServerConn->IsConnected() && LoadReportTimer >= 5.0f)
     {
@@ -285,6 +460,26 @@ void MWorldServer::TickBackends()
     {
         ReplicationDriver->Tick(DEFAULT_TICK_RATE);
     }
+    PersistenceSubsystem.Flush(64);
+
+    const double Now = MTime::GetTimeSeconds();
+    for (auto It = PendingMgoPersists.begin(); It != PendingMgoPersists.end();)
+    {
+        const double Elapsed = Now - It->second.DispatchTime;
+        if (Elapsed < 10.0)
+        {
+            ++It;
+            continue;
+        }
+
+        ++PersistAckTimeoutCount;
+        LOG_WARN("Mgo persist ACK timeout: request=%llu object=%llu version=%llu elapsed=%.2fs",
+                 static_cast<unsigned long long>(It->second.RequestId),
+                 static_cast<unsigned long long>(It->second.ObjectId),
+                 static_cast<unsigned long long>(It->second.Version),
+                 Elapsed);
+        It = PendingMgoPersists.erase(It);
+    }
 }
 
 FString MWorldServer::BuildDebugStatusJson() const
@@ -302,6 +497,19 @@ FString MWorldServer::BuildDebugStatusJson() const
     W.Key("reconnectAttempts"); W.Value(static_cast<uint64>(Stats.ReconnectAttempts));
     const TVector<FString> RpcFunctions = GetGeneratedRpcFunctionNames(EServerType::World);
     W.Key("rpcManifestCount"); W.Value(static_cast<uint64>(RpcFunctions.size()));
+    W.Key("mgoPersistenceEnabled"); W.Value(Config.EnableMgoPersistence);
+    W.Key("ownerServerId"); W.Value(static_cast<uint64>(Config.OwnerServerId));
+    W.Key("mgoConnected"); W.Value(MgoServerConn && MgoServerConn->IsConnected());
+    W.Key("persistencePending"); W.Value(PersistenceSubsystem.GetPendingCount());
+    W.Key("persistenceEnqueued"); W.Value(PersistenceSubsystem.GetEnqueuedCount());
+    W.Key("persistenceFlushed"); W.Value(PersistenceSubsystem.GetFlushedCount());
+    W.Key("persistenceMerged"); W.Value(PersistenceSubsystem.GetMergedCount());
+    W.Key("persistenceRetryBlocked"); W.Value(PersistenceSubsystem.GetRetryBlockedCount());
+    W.Key("persistAckPending"); W.Value(static_cast<uint64>(PendingMgoPersists.size()));
+    W.Key("persistAckSuccess"); W.Value(PersistAckSuccessCount);
+    W.Key("persistAckFailed"); W.Value(PersistAckFailedCount);
+    W.Key("persistAckTimeout"); W.Value(PersistAckTimeoutCount);
+    W.Key("persistAckUnmatched"); W.Value(PersistAckUnmatchedCount);
     W.Key("rpcFunctions");
     W.BeginArray();
     for (const FString& Name : RpcFunctions)
@@ -412,6 +620,123 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
                 return;
             }
 
+            auto SendChatToPlayer = [this](uint64 InTargetPlayerId, uint64 InFromPlayerId, const FString& InMessage)
+            {
+                auto TargetIt = Players.find(InTargetPlayerId);
+                if (TargetIt == Players.end() || !TargetIt->second.bOnline || TargetIt->second.GatewayConnectionId == 0)
+                {
+                    return;
+                }
+                const SChatMessage OutgoingChat{InFromPlayerId, InMessage};
+                const TArray ChatPayloadBytes = BuildPayload(OutgoingChat);
+                TArray ChatPacket;
+                ChatPacket.reserve(1 + ChatPayloadBytes.size());
+                ChatPacket.push_back(static_cast<uint8>(EClientMessageType::MT_Chat));
+                ChatPacket.insert(ChatPacket.end(), ChatPayloadBytes.begin(), ChatPayloadBytes.end());
+                SendServerMessage(
+                    TargetIt->second.GatewayConnectionId,
+                    EServerMessageType::MT_PlayerClientSync,
+                    SPlayerClientSyncMessage{InTargetPlayerId, ChatPacket});
+            };
+
+            if (ChatPayload.Message.rfind("/bag", 0) == 0)
+            {
+                SPlayer* Player = GetPlayerById(PlayerId);
+                if (!Player || !Player->Avatar)
+                {
+                    return;
+                }
+
+                MInventoryMember* Inventory = Player->Avatar->GetRequiredMember<MInventoryMember>();
+                if (!Inventory)
+                {
+                    SendChatToPlayer(PlayerId, 0, "[bag] inventory member missing");
+                    return;
+                }
+
+                std::istringstream SS(ChatPayload.Message);
+                FString Cmd;
+                FString Action;
+                SS >> Cmd >> Action;
+
+                if (Action == "add")
+                {
+                    uint32 ItemId = 0;
+                    SS >> ItemId;
+                    if (ItemId == 0)
+                    {
+                        SendChatToPlayer(PlayerId, 0, "[bag] usage: /bag add <item_id>");
+                        return;
+                    }
+                    const bool bAdded = Inventory->AddItem(ItemId);
+                    if (!bAdded)
+                    {
+                        SendChatToPlayer(PlayerId, 0, "[bag] add failed: bag full or invalid item");
+                        return;
+                    }
+                    PersistenceSubsystem.EnqueueIfDirty(Inventory, Inventory->GetClass());
+                    (void)SendInventoryPullToPlayer(PlayerId);
+                    SendChatToPlayer(
+                        PlayerId,
+                        0,
+                        "[bag] add ok: item=" + MString::ToString(ItemId) +
+                        " count=" + MString::ToString(static_cast<uint64>(Inventory->GetItemCount(ItemId))));
+                    return;
+                }
+                if (Action == "del")
+                {
+                    uint32 ItemId = 0;
+                    SS >> ItemId;
+                    if (ItemId == 0)
+                    {
+                        SendChatToPlayer(PlayerId, 0, "[bag] usage: /bag del <item_id>");
+                        return;
+                    }
+                    const bool bRemoved = Inventory->RemoveItem(ItemId);
+                    if (bRemoved)
+                    {
+                        PersistenceSubsystem.EnqueueIfDirty(Inventory, Inventory->GetClass());
+                        (void)SendInventoryPullToPlayer(PlayerId);
+                    }
+                    SendChatToPlayer(PlayerId, 0, bRemoved
+                        ? ("[bag] del ok: item=" + MString::ToString(ItemId))
+                        : ("[bag] del miss: item=" + MString::ToString(ItemId)));
+                    return;
+                }
+                if (Action == "gold")
+                {
+                    int32 Delta = 0;
+                    SS >> Delta;
+                    if (Delta >= 0)
+                    {
+                        Inventory->AddGold(Delta);
+                    }
+                    else
+                    {
+                        (void)Inventory->SpendGold(-Delta);
+                    }
+                    PersistenceSubsystem.EnqueueIfDirty(Inventory, Inventory->GetClass());
+                    (void)SendInventoryPullToPlayer(PlayerId);
+                    SendChatToPlayer(PlayerId, 0, "[bag] gold=" + MString::ToString(Inventory->GetGold()));
+                    return;
+                }
+                if (Action == "show")
+                {
+                    if (!SendInventoryPullToPlayer(PlayerId))
+                    {
+                        SendChatToPlayer(PlayerId, 0, "[bag] pull failed");
+                    }
+                    else
+                    {
+                        SendChatToPlayer(PlayerId, 0, "[bag] " + Inventory->BuildSummary());
+                    }
+                    return;
+                }
+
+                SendChatToPlayer(PlayerId, 0, "[bag] commands: /bag add|del|gold|show");
+                return;
+            }
+
             const SChatMessage OutgoingChat{PlayerId, ChatPayload.Message};
             const TArray ChatPayloadBytes = BuildPayload(OutgoingChat);
             TArray ChatPacket;
@@ -447,6 +772,60 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TArray& Data)
             LOG_DEBUG("Unknown message type: %d", (int)MsgType);
             break;
     }
+}
+
+bool MWorldServer::SendClientFunctionPacketToPlayer(uint64 PlayerId, const TArray& Packet)
+{
+    auto TargetIt = Players.find(PlayerId);
+    if (TargetIt == Players.end() || !TargetIt->second.bOnline || TargetIt->second.GatewayConnectionId == 0)
+    {
+        return false;
+    }
+
+    return SendServerMessage(
+        TargetIt->second.GatewayConnectionId,
+        EServerMessageType::MT_PlayerClientSync,
+        SPlayerClientSyncMessage{PlayerId, Packet});
+}
+
+bool MWorldServer::SendInventoryPullToPlayer(uint64 PlayerId)
+{
+    SPlayer* Player = GetPlayerById(PlayerId);
+    if (!Player || !Player->Avatar)
+    {
+        return false;
+    }
+
+    MInventoryMember* Inventory = Player->Avatar->GetRequiredMember<MInventoryMember>();
+    if (!Inventory)
+    {
+        return false;
+    }
+
+    SClientInventoryPullPayload Payload;
+    Payload.PlayerId = PlayerId;
+    Payload.Gold = Inventory->GetGold();
+    Payload.MaxSlots = Inventory->GetMaxSlots();
+    Payload.Items.reserve(Inventory->GetItems().size());
+    for (const SInventoryItem& Item : Inventory->GetItems())
+    {
+        Payload.Items.push_back(SClientInventoryItemPayload{
+            Item.InstanceId,
+            Item.ItemId,
+            Item.Count,
+            Item.bBound,
+            Item.ExpireAtUnixSeconds,
+            Item.Flags,
+        });
+    }
+
+    TArray Packet;
+    if (!BuildClientFunctionCallPacketForPayload(MClientDownlink::Id_OnInventoryPull(), Payload, Packet))
+    {
+        return false;
+    }
+
+    return SendClientFunctionPacketToPlayer(PlayerId, Packet);
 }
 
 void MWorldServer::AddPlayer(uint64 PlayerId, const FString& Name, uint64 GatewayConnectionId)
@@ -562,6 +941,15 @@ void MWorldServer::UpdateGameLogic(float DeltaTime)
         if (Player.Avatar)
         {
             static_cast<MActor*>(Player.Avatar)->Tick(DeltaTime);
+            PersistenceSubsystem.EnqueueIfDirty(Player.Avatar, Player.Avatar->GetClass());
+            for (const TUniquePtr<MAvatarMember>& Member : Player.Avatar->GetMembers())
+            {
+                if (!Member)
+                {
+                    continue;
+                }
+                PersistenceSubsystem.EnqueueIfDirty(Member.get(), Member->GetClass());
+            }
         }
     }
 }
@@ -813,16 +1201,29 @@ void MWorldServer::Rpc_OnRouterServerRegisterAck(uint8 Result)
 
 void MWorldServer::OnRouter_RouteResponse(const SRouteResponseMessage& Message)
 {
-    if (Message.PlayerId != 0 || Message.RequestedType != EServerType::Login || !Message.bFound)
+    if (Message.PlayerId != 0 || !Message.bFound)
     {
         return;
     }
 
-    ApplyLoginServerRoute(
-        Message.ServerInfo.ServerId,
-        Message.ServerInfo.ServerName,
-        Message.ServerInfo.Address,
-        Message.ServerInfo.Port);
+    if (Message.RequestedType == EServerType::Login)
+    {
+        ApplyLoginServerRoute(
+            Message.ServerInfo.ServerId,
+            Message.ServerInfo.ServerName,
+            Message.ServerInfo.Address,
+            Message.ServerInfo.Port);
+        return;
+    }
+
+    if (Message.RequestedType == EServerType::Mgo)
+    {
+        ApplyMgoServerRoute(
+            Message.ServerInfo.ServerId,
+            Message.ServerInfo.ServerName,
+            Message.ServerInfo.Address,
+            Message.ServerInfo.Port);
+    }
 }
 
 void MWorldServer::Rpc_OnRouterRouteResponse(
@@ -880,11 +1281,18 @@ void MWorldServer::OnLogin_SessionValidateResponse(uint64 ConnectionId, uint64 P
         return;
     }
 
-    AddPlayer(PlayerId, "Player" + MString::ToString(PlayerId), Pending.GatewayConnectionId);
-    auto* Player = GetPlayerById(PlayerId);
-    if (Player)
+    FinalizePlayerLogin(
+        PlayerId,
+        Pending.GatewayConnectionId,
+        Pending.SessionKey,
+        false,
+        0,
+        "",
+        "");
+
+    if (Config.EnableMgoPersistence && MgoServerConn && MgoServerConn->IsConnected())
     {
-        Player->SessionKey = Pending.SessionKey;
+        (void)RequestMgoLoad(PlayerId, Pending.GatewayConnectionId, Pending.SessionKey);
     }
 }
 
@@ -907,6 +1315,208 @@ void MWorldServer::Rpc_OnSessionValidateResponse(uint64 ValidationRequestId, uin
     OnLogin_SessionValidateResponse(ValidationRequestId, PlayerId, bValid);
 }
 
+void MWorldServer::Rpc_OnMgoLoadSnapshotResponse(
+    uint64 RequestId,
+    uint64 ObjectId,
+    bool bFound,
+    uint16 ClassId,
+    const FString& ClassName,
+    const FString& SnapshotHex)
+{
+    auto PendingIt = PendingMgoLoads.find(RequestId);
+    if (PendingIt == PendingMgoLoads.end())
+    {
+        return;
+    }
+
+    const SPendingMgoLoad Pending = PendingIt->second;
+    PendingMgoLoads.erase(PendingIt);
+
+    if (Pending.PlayerId != ObjectId)
+    {
+        LOG_WARN("Mgo load response mismatch: request=%llu expected_player=%llu got_object=%llu",
+                 static_cast<unsigned long long>(RequestId),
+                 static_cast<unsigned long long>(Pending.PlayerId),
+                 static_cast<unsigned long long>(ObjectId));
+        return;
+    }
+
+    if (!bFound)
+    {
+        return;
+    }
+
+    SPlayer* Player = GetPlayerById(Pending.PlayerId);
+    if (!Player || !Player->Avatar)
+    {
+        return;
+    }
+
+    if (!ApplyLoadedSnapshotToPlayer(*Player, ClassId, ClassName, SnapshotHex))
+    {
+        LOG_WARN("Apply async loaded snapshot failed for player %llu", static_cast<unsigned long long>(Pending.PlayerId));
+        return;
+    }
+
+    LOG_DEBUG("Applied async loaded snapshot: request=%llu player=%llu class=%s",
+              static_cast<unsigned long long>(RequestId),
+              static_cast<unsigned long long>(Pending.PlayerId),
+              ClassName.c_str());
+    (void)SendInventoryPullToPlayer(Pending.PlayerId);
+}
+
+void MWorldServer::Rpc_OnMgoPersistSnapshotResult(
+    uint32 OwnerWorldId,
+    uint64 RequestId,
+    uint64 ObjectId,
+    uint64 Version,
+    bool bSuccess,
+    const FString& Reason)
+{
+    if (OwnerWorldId != Config.OwnerServerId)
+    {
+        return;
+    }
+
+    auto It = PendingMgoPersists.find(RequestId);
+    if (It == PendingMgoPersists.end())
+    {
+        ++PersistAckUnmatchedCount;
+        return;
+    }
+
+    PendingMgoPersists.erase(It);
+    if (bSuccess)
+    {
+        ++PersistAckSuccessCount;
+        return;
+    }
+
+    ++PersistAckFailedCount;
+    LOG_WARN("Mgo persist ACK failed: request=%llu object=%llu version=%llu reason=%s",
+             static_cast<unsigned long long>(RequestId),
+             static_cast<unsigned long long>(ObjectId),
+             static_cast<unsigned long long>(Version),
+             Reason.c_str());
+}
+
+void MWorldServer::OnPersistRequestDispatched(uint64 RequestId, uint64 ObjectId, uint64 Version)
+{
+    PendingMgoPersists[RequestId] = SPendingMgoPersist{
+        RequestId,
+        ObjectId,
+        Version,
+        MTime::GetTimeSeconds(),
+    };
+}
+
+bool MWorldServer::RequestMgoLoad(uint64 PlayerId, uint64 GatewayConnectionId, uint32 SessionKey)
+{
+    if (!MgoServerConn || !MgoServerConn->IsConnected())
+    {
+        return false;
+    }
+
+    uint64 RequestId = NextMgoLoadRequestId++;
+    if (RequestId == 0)
+    {
+        RequestId = NextMgoLoadRequestId++;
+    }
+
+    PendingMgoLoads[RequestId] = SPendingMgoLoad{
+        RequestId,
+        GatewayConnectionId,
+        PlayerId,
+        SessionKey,
+    };
+
+    const bool bSent = MRpc::MMgoService::Rpc_OnLoadSnapshotRequest(
+        MgoServerConn,
+        RequestId,
+        PlayerId);
+    if (!bSent)
+    {
+        PendingMgoLoads.erase(RequestId);
+        LOG_WARN("World->Mgo load request send failed: request=%llu player=%llu",
+                 static_cast<unsigned long long>(RequestId),
+                 static_cast<unsigned long long>(PlayerId));
+        return false;
+    }
+
+    LOG_DEBUG("World requested Mgo load: request=%llu player=%llu",
+              static_cast<unsigned long long>(RequestId),
+              static_cast<unsigned long long>(PlayerId));
+    return true;
+}
+
+void MWorldServer::FinalizePlayerLogin(
+    uint64 PlayerId,
+    uint64 GatewayConnectionId,
+    uint32 SessionKey,
+    bool bApplyLoadedSnapshot,
+    uint16 LoadedClassId,
+    const FString& LoadedClassName,
+    const FString& LoadedSnapshotHex)
+{
+    AddPlayer(PlayerId, "Player" + MString::ToString(PlayerId), GatewayConnectionId);
+    auto* Player = GetPlayerById(PlayerId);
+    if (!Player)
+    {
+        return;
+    }
+
+    Player->SessionKey = SessionKey;
+
+    if (!bApplyLoadedSnapshot || !Player->Avatar)
+    {
+        (void)SendInventoryPullToPlayer(PlayerId);
+        return;
+    }
+
+    if (!ApplyLoadedSnapshotToPlayer(*Player, LoadedClassId, LoadedClassName, LoadedSnapshotHex))
+    {
+        LOG_WARN("Apply loaded snapshot failed for player %llu", static_cast<unsigned long long>(PlayerId));
+    }
+    (void)SendInventoryPullToPlayer(PlayerId);
+}
+
+bool MWorldServer::ApplyLoadedSnapshotToPlayer(SPlayer& Player, uint16 ClassId, const FString& ClassName, const FString& SnapshotHex)
+{
+    if (!Player.Avatar)
+    {
+        return false;
+    }
+
+    TArray SnapshotBytes;
+    if (!TryDecodeHex(SnapshotHex, SnapshotBytes))
+    {
+        LOG_WARN("Loaded snapshot decode failed: player=%llu invalid_hex", static_cast<unsigned long long>(Player.PlayerId));
+        return false;
+    }
+
+    MClass* ClassMeta = Player.Avatar->GetClass();
+    if (!ClassMeta)
+    {
+        return false;
+    }
+
+    if (!ClassName.empty() && ClassName != ClassMeta->GetName())
+    {
+        LOG_WARN("Loaded snapshot class mismatch: player=%llu avatar=%s snapshot=%s class_id=%u",
+                 static_cast<unsigned long long>(Player.PlayerId),
+                 ClassMeta->GetName().c_str(),
+                 ClassName.c_str(),
+                 static_cast<unsigned>(ClassId));
+        return false;
+    }
+
+    ClassMeta->ReadSnapshotByDomain(
+        Player.Avatar,
+        SnapshotBytes,
+        ToMask(EPropertyDomainFlags::Persistence));
+    return true;
+}
+
 void MWorldServer::SendRouterRegister()
 {
     if (!RouterServerConn || !RouterServerConn->IsConnected())
@@ -917,7 +1527,7 @@ void MWorldServer::SendRouterRegister()
     SendTypedServerMessage(
         RouterServerConn,
         EServerMessageType::MT_ServerRegister,
-        SServerRegisterMessage{3, EServerType::World, Config.ServerName, "127.0.0.1", Config.ListenPort, Config.ZoneId});
+        SServerRegisterMessage{Config.OwnerServerId, EServerType::World, Config.ServerName, "127.0.0.1", Config.ListenPort, Config.ZoneId});
 }
 
 void MWorldServer::QueryLoginServerRoute()
@@ -931,6 +1541,19 @@ void MWorldServer::QueryLoginServerRoute()
         RouterServerConn,
         EServerMessageType::MT_RouteQuery,
         SRouteQueryMessage{NextRouteRequestId++, EServerType::Login, 0, 0});
+}
+
+void MWorldServer::QueryMgoServerRoute()
+{
+    if (!RouterServerConn || !RouterServerConn->IsConnected())
+    {
+        return;
+    }
+
+    SendTypedServerMessage(
+        RouterServerConn,
+        EServerMessageType::MT_RouteQuery,
+        SRouteQueryMessage{NextRouteRequestId++, EServerType::Mgo, 0, 0});
 }
 
 void MWorldServer::SendLoadReport()
@@ -984,5 +1607,36 @@ void MWorldServer::ApplyLoginServerRoute(uint32 ServerId, const FString& ServerN
     if (!LoginServerConn->IsConnected() && !LoginServerConn->IsConnecting())
     {
         LoginServerConn->Connect();
+    }
+}
+
+void MWorldServer::ApplyMgoServerRoute(uint32 ServerId, const FString& ServerName, const FString& Address, uint16 Port)
+{
+    if (!MgoServerConn)
+    {
+        return;
+    }
+
+    const SServerConnectionConfig& CurrentConfig = MgoServerConn->GetConfig();
+    const bool bRouteChanged =
+        CurrentConfig.ServerId != ServerId ||
+        CurrentConfig.ServerName != ServerName ||
+        CurrentConfig.Address != Address ||
+        CurrentConfig.Port != Port;
+
+    if (bRouteChanged && (MgoServerConn->IsConnected() || MgoServerConn->IsConnecting()))
+    {
+        MgoServerConn->Disconnect();
+    }
+
+    SServerConnectionConfig NewConfig(ServerId, EServerType::Mgo, ServerName, Address, Port);
+    NewConfig.HeartbeatInterval = CurrentConfig.HeartbeatInterval;
+    NewConfig.ConnectTimeout = CurrentConfig.ConnectTimeout;
+    NewConfig.ReconnectInterval = CurrentConfig.ReconnectInterval;
+    MgoServerConn->SetConfig(NewConfig);
+
+    if (!MgoServerConn->IsConnected() && !MgoServerConn->IsConnecting())
+    {
+        MgoServerConn->Connect();
     }
 }

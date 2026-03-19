@@ -9,16 +9,16 @@ public:
     MGENERATED_BODY(MAttributeMember, MAvatarMember, 0)
 
 public:
-    MPROPERTY(Edit)
+    MPROPERTY(Edit | SaveGame)
     float Health = 100.0f;
 
-    MPROPERTY(Edit)
+    MPROPERTY(Edit | SaveGame)
     float MaxHealth = 100.0f;
 
-    MPROPERTY(Edit)
+    MPROPERTY(Edit | SaveGame)
     float MoveSpeed = 300.0f;
 
-    MPROPERTY(Edit)
+    MPROPERTY(Edit | SaveGame)
     bool bAlive = true;
 
     MFUNCTION()

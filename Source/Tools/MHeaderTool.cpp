@@ -1864,6 +1864,11 @@ std::string BuildPropertyRegistrationLine(const SParsedProperty& Property)
     return "    MREGISTER_PROPERTY(" + Property.Type + ", " + Property.PropertyKind + ", " + Property.Name + ", " + Property.FlagsExpr + ");";
 }
 
+std::string BuildPropertyAccessorFunctionName(const SParsedClass& ParsedClass, const SParsedProperty& Property)
+{
+    return "Prop_" + SanitizeIdentifier(ParsedClass.Name) + "_" + SanitizeIdentifier(Property.Name);
+}
+
 const char* GetTypeKindName(EParsedTypeKind Kind)
 {
     switch (Kind)
@@ -2045,6 +2050,24 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
         Out << "    return Struct;\n";
         Out << "}\n";
         return;
+    }
+
+    if (!ParsedClass.Properties.empty())
+    {
+        for (const SParsedProperty& Property : ParsedClass.Properties)
+        {
+            const std::string AccessorName = BuildPropertyAccessorFunctionName(ParsedClass, Property);
+            Out << "inline const MProperty* " << AccessorName << "()\n";
+            Out << "{\n";
+            Out << "    static const MProperty* Prop = []() -> const MProperty*\n";
+            Out << "    {\n";
+            Out << "        MClass* ClassMeta = " << ParsedClass.Name << "::StaticClass();\n";
+            Out << "        return ClassMeta ? ClassMeta->FindProperty(\"" << Property.Name << "\") : nullptr;\n";
+            Out << "    }();\n";
+            Out << "    return Prop;\n";
+            Out << "}\n";
+            Out << "\n";
+        }
     }
 
     for (const SParsedFunction& Function : ParsedClass.Functions)
@@ -2277,6 +2300,18 @@ void WriteGeneratedSource(std::ofstream& Out, const SParsedClass& ParsedClass)
     Out << "    }\n";
     Out << "    return Class;\n";
     Out << "}\n";
+    Out << "\n";
+    Out << "namespace\n";
+    Out << "{\n";
+    Out << "struct SAutoRegisterClass_" << ParsedClass.Name << "\n";
+    Out << "{\n";
+    Out << "    SAutoRegisterClass_" << ParsedClass.Name << "()\n";
+    Out << "    {\n";
+    Out << "        " << ParsedClass.Name << "::StaticClass();\n";
+    Out << "    }\n";
+    Out << "};\n\n";
+    Out << "SAutoRegisterClass_" << ParsedClass.Name << " GAutoRegisterClass_" << ParsedClass.Name << ";\n";
+    Out << "} // namespace\n";
 }
 
 bool WriteGeneratedFiles(const fs::path& OutputDir, const std::vector<SParsedClass>& Classes)

@@ -398,7 +398,7 @@ void MLoginServer::OnGateway_ServerHandshake(uint64 ConnectionId, const TArray& 
             const uint32 SessionKey = CreateSession(IdPayload.PlayerId, ConnectionId);
             TArray Packet;
             if (!BuildClientFunctionCallPacketForPayload(
-                    MClientDownlink::OnLoginResponse,
+                    MClientDownlink::Id_OnLoginResponse(),
                     SClientLoginResponsePayload{SessionKey, IdPayload.PlayerId},
                     Packet))
             {
