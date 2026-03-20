@@ -2,6 +2,7 @@
 
 #include "Common/MLib.h"
 #include "EventLoopStep.h"
+#include "Common/Socket/Socket.h"
 
 /** 单线程网络事件循环：仅负责监听 + 连接 poll，可读时 accept 或收包并回调；不包含任务队列。实现 IEventLoopStep。 */
 class MNetEventLoop : public IEventLoopStep

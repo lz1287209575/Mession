@@ -52,15 +52,13 @@ endfunction()
 
 # Core 库（基础设施：Core/*）
 set(MESSION_CORE_SOURCES
-    Source/Core/Net/NetCore.cpp
-    Source/Core/Net/SocketPlatform.cpp
-    Source/Core/Net/Socket.cpp
     Source/Core/Net/HttpDebugServer.cpp
-    Source/Core/Event/EventLoop.cpp
-    Source/Core/Event/MEventLoop.cpp
-    Source/Core/Event/TaskEventLoop.cpp
-    Source/Core/Concurrency/TaskQueue.cpp
-    Source/Core/Concurrency/ThreadPool.cpp
+    Source/Common/Socket/SocketPlatform.cpp
+    Source/Common/Socket/Socket.cpp
+    Source/Common/EventLoop/TaskEventLoop.cpp
+    Source/Common/EventLoop/NetEventLoop.cpp
+    Source/Common/Concurrency/TaskQueue.cpp
+    Source/Common/Concurrency/ThreadPool.cpp
 )
 
 add_library(mession_core STATIC
@@ -81,7 +79,9 @@ configure_mession_compile_options(mession_core)
 
 # Common 库（公共组件：Common/*）
 set(MESSION_COMMON_SOURCES
-    Source/Common/Logger.cpp
+    Source/Common/Log/Logger.cpp
+    Source/Common/Log/ConsoleLogSink.cpp
+    Source/Common/Log/FileLogSink.cpp
     Source/Common/NetServerBase.cpp
     Source/Common/ReflectionSmokeTypes.cpp
     Source/Common/ServerConnection.cpp

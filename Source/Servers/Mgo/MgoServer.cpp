@@ -2,9 +2,9 @@
 #include "Build/Generated/MWorldService.mgenerated.h"
 
 #include "Common/Config.h"
-#include "Core/Concurrency/Promise.h"
-#include "Core/Concurrency/ThreadPool.h"
-#include "Core/Json.h"
+#include "Common/Concurrency/Promise.h"
+#include "Common/Concurrency/ThreadPool.h"
+#include "Common/Json.h"
 #include "Gameplay/InventoryMember.h"
 
 #ifdef MESSION_USE_MONGOCXX
@@ -192,7 +192,7 @@ void AppendPropertyField(TSubDocument& InDoc, const MProperty* InProp, const voi
         }
         else
         {
-            InDoc.append(kvp(Key, MString::ToString(Value)));
+            InDoc.append(kvp(Key, MStringUtil::ToString(Value)));
         }
         return;
     }

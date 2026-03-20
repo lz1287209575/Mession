@@ -1,5 +1,5 @@
 #include "AOIComponent.h"
-#include "Common/Logger.h"
+#include "Common/Log/Logger.h"
 
 void MAOISystem::AddObject(uint64 ObjectId, const SVector& Position)
 {

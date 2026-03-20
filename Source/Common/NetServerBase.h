@@ -1,10 +1,10 @@
 #pragma once
 
 #include "Common/MLib.h"
-#include "Core/Event/MEventLoop.h"
-#include "Core/Event/EventLoop.h"
-#include "Core/Event/TaskEventLoop.h"
-#include "Core/Concurrency/ITaskRunner.h"
+#include "Common/EventLoop/EventLoop.h"
+#include "Common/EventLoop/TaskEventLoop.h"
+#include "Common/EventLoop/NetEventLoop.h"
+#include "Common/Concurrency/ITaskRunner.h"
 
 /**
  * 各服统一事件循环模板基类：

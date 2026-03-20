@@ -1,6 +1,6 @@
 #include "NetDriver/Reflection.h"
 #include "Common/HexUtils.h"
-#include "Common/Logger.h"
+#include "Common/Log/Logger.h"
 
 // MProperty 序列化实现（默认按基础类型 / 简单结构体处理）
 
@@ -9,16 +9,16 @@ namespace
 
 MString FormatVector(const SVector& Value)
 {
-    return "{X=" + MString::ToString(Value.X) +
-           ", Y=" + MString::ToString(Value.Y) +
-           ", Z=" + MString::ToString(Value.Z) + "}";
+    return "{X=" + MStringUtil::ToString(Value.X) +
+           ", Y=" + MStringUtil::ToString(Value.Y) +
+           ", Z=" + MStringUtil::ToString(Value.Z) + "}";
 }
 
 MString FormatRotator(const SRotator& Value)
 {
-    return "{Pitch=" + MString::ToString(Value.Pitch) +
-           ", Yaw=" + MString::ToString(Value.Yaw) +
-           ", Roll=" + MString::ToString(Value.Roll) + "}";
+    return "{Pitch=" + MStringUtil::ToString(Value.Pitch) +
+           ", Yaw=" + MStringUtil::ToString(Value.Yaw) +
+           ", Roll=" + MStringUtil::ToString(Value.Roll) + "}";
 }
 }
 
@@ -156,25 +156,25 @@ MString MProperty::ExportValueToString(const void* Object) const
     switch (Type)
     {
     case EPropertyType::Int8:
-        return MString::ToString(static_cast<int32>(*reinterpret_cast<const int8*>(FieldPtr)));
+        return MStringUtil::ToString(static_cast<int32>(*reinterpret_cast<const int8*>(FieldPtr)));
     case EPropertyType::Int16:
-        return MString::ToString(static_cast<int32>(*reinterpret_cast<const int16*>(FieldPtr)));
+        return MStringUtil::ToString(static_cast<int32>(*reinterpret_cast<const int16*>(FieldPtr)));
     case EPropertyType::Int32:
-        return MString::ToString(*reinterpret_cast<const int32*>(FieldPtr));
+        return MStringUtil::ToString(*reinterpret_cast<const int32*>(FieldPtr));
     case EPropertyType::Int64:
-        return MString::ToString(*reinterpret_cast<const int64*>(FieldPtr));
+        return MStringUtil::ToString(*reinterpret_cast<const int64*>(FieldPtr));
     case EPropertyType::UInt8:
-        return MString::ToString(static_cast<uint32>(*reinterpret_cast<const uint8*>(FieldPtr)));
+        return MStringUtil::ToString(static_cast<uint32>(*reinterpret_cast<const uint8*>(FieldPtr)));
     case EPropertyType::UInt16:
-        return MString::ToString(static_cast<uint32>(*reinterpret_cast<const uint16*>(FieldPtr)));
+        return MStringUtil::ToString(static_cast<uint32>(*reinterpret_cast<const uint16*>(FieldPtr)));
     case EPropertyType::UInt32:
-        return MString::ToString(*reinterpret_cast<const uint32*>(FieldPtr));
+        return MStringUtil::ToString(*reinterpret_cast<const uint32*>(FieldPtr));
     case EPropertyType::UInt64:
-        return MString::ToString(*reinterpret_cast<const uint64*>(FieldPtr));
+        return MStringUtil::ToString(*reinterpret_cast<const uint64*>(FieldPtr));
     case EPropertyType::Float:
-        return MString::ToString(*reinterpret_cast<const float*>(FieldPtr));
+        return MStringUtil::ToString(*reinterpret_cast<const float*>(FieldPtr));
     case EPropertyType::Double:
-        return MString::ToString(*reinterpret_cast<const double*>(FieldPtr));
+        return MStringUtil::ToString(*reinterpret_cast<const double*>(FieldPtr));
     case EPropertyType::Bool:
         return *reinterpret_cast<const bool*>(FieldPtr) ? "true" : "false";
     case EPropertyType::String:
@@ -201,14 +201,14 @@ MString MProperty::ExportValueToString(const void* Object) const
             {
                 return EnumMeta->GetName() + "::" + ValueMeta->Name;
             }
-            return EnumMeta->GetName() + "::" + MString::ToString(EnumValue);
+            return EnumMeta->GetName() + "::" + MStringUtil::ToString(EnumValue);
         }
         switch (Size)
         {
-        case 1: return MString::ToString(static_cast<uint32>(*reinterpret_cast<const uint8*>(FieldPtr)));
-        case 2: return MString::ToString(static_cast<uint32>(*reinterpret_cast<const uint16*>(FieldPtr)));
-        case 4: return MString::ToString(*reinterpret_cast<const uint32*>(FieldPtr));
-        case 8: return MString::ToString(*reinterpret_cast<const uint64*>(FieldPtr));
+        case 1: return MStringUtil::ToString(static_cast<uint32>(*reinterpret_cast<const uint8*>(FieldPtr)));
+        case 2: return MStringUtil::ToString(static_cast<uint32>(*reinterpret_cast<const uint16*>(FieldPtr)));
+        case 4: return MStringUtil::ToString(*reinterpret_cast<const uint32*>(FieldPtr));
+        case 8: return MStringUtil::ToString(*reinterpret_cast<const uint64*>(FieldPtr));
         default: return "<enum-size-unsupported>";
         }
     }
@@ -487,7 +487,7 @@ MString MReflectObject::ToString() const
     MClass* LocalClass = GetClass();
     if (!LocalClass)
     {
-        return "MReflectObject{Class=<null>, ObjectId=" + MString::ToString(ObjectId) + "}";
+        return "MReflectObject{Class=<null>, ObjectId=" + MStringUtil::ToString(ObjectId) + "}";
     }
 
     MString Body = LocalClass->ExportObjectToString(this);
@@ -495,7 +495,7 @@ MString MReflectObject::ToString() const
     {
         Body += " [Name=\"" + Name + "\"]";
     }
-    Body += " [ObjectId=" + MString::ToString(ObjectId) + "]";
+    Body += " [ObjectId=" + MStringUtil::ToString(ObjectId) + "]";
     return Body;
 }
 

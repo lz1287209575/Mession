@@ -1,5 +1,6 @@
 #include "MonoServer.h"
-#include "Common/Logger.h"
+#include "Common/Time.h"
+#include "Common/Log/Logger.h"
 #include "Common/MLib.h"
 
 int main(int argc, char* argv[])

@@ -1,5 +1,5 @@
 #include "NetServerBase.h"
-#include "Common/Logger.h"
+#include "Common/Log/Logger.h"
 
 void MNetServerBase::Run()
 {

@@ -1,6 +1,6 @@
 #include "Gameplay/InteractionMember.h"
 
-#include "Common/Logger.h"
+#include "Common/Log/Logger.h"
 #include "Gameplay/PlayerAvatar.h"
 
 bool MInteractionMember::Interact(uint64 TargetActorId)

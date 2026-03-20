@@ -1,6 +1,8 @@
 #include "NetEventLoop.h"
+#include "Common/Id.h"
 
 #include <algorithm>
+#include <poll.h>
 
 uint64 MNetEventLoop::RegisterListener(uint16 Port, TAcceptCallback OnAccept)
 {

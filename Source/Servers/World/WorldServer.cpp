@@ -5,9 +5,10 @@
 #include "Common/ServerRpcRuntime.h"
 #include "Common/StringUtils.h"
 #include "Common/HexUtils.h"
+#include "Common/Time.h"
 #include "Gameplay/InventoryMember.h"
 #include "Messages/NetMessages.h"
-#include "Core/Json.h"
+#include "Common/Json.h"
 #include <sstream>
 
 namespace
@@ -623,8 +624,8 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TByteArray& Data)
                     SendChatToPlayer(
                         PlayerId,
                         0,
-                        "[bag] add ok: item=" + MString::ToString(ItemId) +
-                        " count=" + MString::ToString(static_cast<uint64>(Inventory->GetItemCount(ItemId))));
+                        "[bag] add ok: item=" + MStringUtil::ToString(ItemId) +
+                        " count=" + MStringUtil::ToString(static_cast<uint64>(Inventory->GetItemCount(ItemId))));
                     return;
                 }
                 if (Action == "del")
@@ -643,8 +644,8 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TByteArray& Data)
                         (void)SendInventoryPullToPlayer(PlayerId);
                     }
                     SendChatToPlayer(PlayerId, 0, bRemoved
-                        ? ("[bag] del ok: item=" + MString::ToString(ItemId))
-                        : ("[bag] del miss: item=" + MString::ToString(ItemId)));
+                        ? ("[bag] del ok: item=" + MStringUtil::ToString(ItemId))
+                        : ("[bag] del miss: item=" + MStringUtil::ToString(ItemId)));
                     return;
                 }
                 if (Action == "gold")
@@ -661,7 +662,7 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TByteArray& Data)
                     }
                     PersistenceSubsystem.EnqueueIfDirty(Inventory, Inventory->GetClass());
                     (void)SendInventoryPullToPlayer(PlayerId);
-                    SendChatToPlayer(PlayerId, 0, "[bag] gold=" + MString::ToString(Inventory->GetGold()));
+                    SendChatToPlayer(PlayerId, 0, "[bag] gold=" + MStringUtil::ToString(Inventory->GetGold()));
                     return;
                 }
                 if (Action == "show")
@@ -1402,7 +1403,7 @@ void MWorldServer::FinalizePlayerLogin(
     const MString& LoadedClassName,
     const MString& LoadedSnapshotHex)
 {
-    AddPlayer(PlayerId, "Player" + MString::ToString(PlayerId), GatewayConnectionId);
+    AddPlayer(PlayerId, "Player" + MStringUtil::ToString(PlayerId), GatewayConnectionId);
     auto* Player = GetPlayerById(PlayerId);
     if (!Player)
     {
@@ -1432,7 +1433,7 @@ bool MWorldServer::ApplyLoadedSnapshotToPlayer(SPlayer& Player, uint16 ClassId, 
     }
 
     TByteArray SnapshotBytes;
-    if (!TryDecodeHex(SnapshotHex, SnapshotBytes))
+    if (!Hex::TryDecodeHex(SnapshotHex, SnapshotBytes))
     {
         LOG_WARN("Loaded snapshot decode failed: player=%llu invalid_hex", static_cast<unsigned long long>(Player.PlayerId));
         return false;

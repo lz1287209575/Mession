@@ -1,10 +1,10 @@
 #pragma once
 
 #include "Common/MLib.h"
-#include "Core/Net/Socket.h"
+#include "Common/Socket/Socket.h"
 #include "Core/Net/HttpDebugServer.h"
-#include "Core/Concurrency/ThreadPool.h"
-#include "Common/Logger.h"
+#include "Common/Concurrency/ThreadPool.h"
+#include "Common/Log/Logger.h"
 #include "Common/NetServerBase.h"
 #include "Common/ServerConnection.h"
 #include "Common/ServerMessages.h"

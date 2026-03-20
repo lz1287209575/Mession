@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Core/Concurrency/ITaskRunner.h"
-#include "Core/Event/IEventLoopStep.h"
+#include "Common/Concurrency/ITaskRunner.h"
+#include "Common/EventLoop/EventLoopStep.h"
 
 /** 纯任务事件循环：仅维护任务队列，RunOnce 只执行已投递的任务；实现 ITaskRunner、IEventLoopStep。 */
 class MTaskEventLoop : public ITaskRunner, public IEventLoopStep

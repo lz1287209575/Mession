@@ -1,7 +1,9 @@
 #pragma once
 
 #include "Common/MLib.h"
-#include "Common/Logger.h"
+#include "Common/Log/Logger.h"
+#include "Common/Math/Vector.h"
+#include "Common/Math/Rotator.h"
 #include "Common/StringUtils.h"
 #include "Common/ServerConnection.h"
 #include <typeinfo>
@@ -1788,15 +1790,15 @@ inline MString ReflectValueToString(const TValue& Value)
     }
     else if constexpr (std::is_same_v<TDecayed, SVector>)
     {
-        return "{X=" + MString::ToString(Value.X) +
-               ", Y=" + MString::ToString(Value.Y) +
-               ", Z=" + MString::ToString(Value.Z) + "}";
+        return "{X=" + MStringUtil::ToString(Value.X) +
+               ", Y=" + MStringUtil::ToString(Value.Y) +
+               ", Z=" + MStringUtil::ToString(Value.Z) + "}";
     }
     else if constexpr (std::is_same_v<TDecayed, SRotator>)
     {
-        return "{Pitch=" + MString::ToString(Value.Pitch) +
-               ", Yaw=" + MString::ToString(Value.Yaw) +
-               ", Roll=" + MString::ToString(Value.Roll) + "}";
+        return "{Pitch=" + MStringUtil::ToString(Value.Pitch) +
+               ", Yaw=" + MStringUtil::ToString(Value.Yaw) +
+               ", Roll=" + MStringUtil::ToString(Value.Roll) + "}";
     }
     else if constexpr (std::is_base_of_v<MReflectObject, TDecayed>)
     {
@@ -1812,24 +1814,24 @@ inline MString ReflectValueToString(const TValue& Value)
             {
                 return EnumMeta->GetName() + "::" + ValueMeta->Name;
             }
-            return EnumMeta->GetName() + "::" + MString::ToString(EnumValue);
+            return EnumMeta->GetName() + "::" + MStringUtil::ToString(EnumValue);
         }
-        return MString::ToString(static_cast<TUnderlying>(Value));
+        return MStringUtil::ToString(static_cast<TUnderlying>(Value));
     }
     else if constexpr (std::is_integral_v<TDecayed>)
     {
         if constexpr (std::is_signed_v<TDecayed>)
         {
-            return MString::ToString(static_cast<int64>(Value));
+            return MStringUtil::ToString(static_cast<int64>(Value));
         }
         else
         {
-            return MString::ToString(static_cast<uint64>(Value));
+            return MStringUtil::ToString(static_cast<uint64>(Value));
         }
     }
     else if constexpr (std::is_floating_point_v<TDecayed>)
     {
-        return MString::ToString(static_cast<double>(Value));
+        return MStringUtil::ToString(static_cast<double>(Value));
     }
     else if constexpr (std::is_trivially_copyable_v<TDecayed>)
     {

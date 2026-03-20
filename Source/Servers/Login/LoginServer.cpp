@@ -4,7 +4,7 @@
 #include "Common/Config.h"
 #include "Common/ServerRpcRuntime.h"
 #include "Messages/NetMessages.h"
-#include "Core/Json.h"
+#include "Common/Json.h"
 #include <time.h>
 
 namespace

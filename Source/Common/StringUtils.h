@@ -11,7 +11,7 @@
 #endif
 
 // 项目内字符串工具：统一入口，避免散落 std::to_string / 手写 trim
-namespace MString
+namespace MStringUtil
 {
 // 数值转 FString（项目封装，后续可统一字节序/格式）
 inline MString ToString(int32 Value)

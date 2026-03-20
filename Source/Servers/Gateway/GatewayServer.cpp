@@ -5,7 +5,7 @@
 #include "Common/ServerMessages.h"
 #include "Messages/NetMessages.h"
 #include "Core/Net/HttpDebugServer.h"
-#include "Core/Json.h"
+#include "Common/Json.h"
 
 #include <algorithm>
 

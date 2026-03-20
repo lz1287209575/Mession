@@ -1,7 +1,10 @@
 #pragma once
 
 #include "Common/MLib.h"
-#include "Common/Logger.h"
+#include "Common/Math/Vector.h"
+#include "Common/Math/Rotator.h"
+#include "Common/Id.h"
+#include "Common/Log/Logger.h"
 #include "Common/StringUtils.h"
 
 // 网络对象基类
@@ -29,7 +32,7 @@ public:
     
     virtual MString ToString() const
     {
-        return "MObject{ObjectId=" + MString::ToString(ObjectId) +
+        return "MObject{ObjectId=" + MStringUtil::ToString(ObjectId) +
                ", Replicated=" + MString(bReplicated ? "true" : "false") + "}";
     }
 };

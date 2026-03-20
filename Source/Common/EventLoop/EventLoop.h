@@ -30,3 +30,33 @@ private:
     TVector<SStep> Steps;
     bool bRunning = false;
 };
+
+inline void MEventLoop::AddStep(IEventLoopStep* Step, int TimeoutMs)
+{
+    if (!Step)
+    {
+        return;
+    }
+
+    Steps.push_back(SStep{Step, TimeoutMs});
+}
+
+inline void MEventLoop::RunOnce()
+{
+    for (const SStep& Step : Steps)
+    {
+        if (Step.Step)
+        {
+            Step.Step->RunOnce(Step.TimeoutMs);
+        }
+    }
+}
+
+inline void MEventLoop::Run()
+{
+    bRunning = true;
+    while (bRunning)
+    {
+        RunOnce();
+    }
+}

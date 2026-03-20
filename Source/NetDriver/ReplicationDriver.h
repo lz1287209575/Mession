@@ -1,7 +1,7 @@
 #pragma once
 
 #include "NetObject.h"
-#include "Core/Net/Socket.h"
+#include "Common/Socket/Socket.h"
 #include "Messages/NetMessages.h"
 
 // 连接通道

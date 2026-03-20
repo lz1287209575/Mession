@@ -4,7 +4,7 @@
 
 namespace Hex
 {
-MString BytesToHex(const TByteArray& InData)
+inline MString BytesToHex(const TByteArray& InData)
 {
     static const char* Digits = "0123456789ABCDEF";
     MString Out;
@@ -17,7 +17,7 @@ MString BytesToHex(const TByteArray& InData)
     return Out;
 }
 
-bool TryDecodeHex(const MString& InHex, TByteArray& OutBytes)
+inline bool TryDecodeHex(const MString& InHex, TByteArray& OutBytes)
 {
     OutBytes.clear();
     if (InHex.empty())
@@ -61,7 +61,7 @@ bool TryDecodeHex(const MString& InHex, TByteArray& OutBytes)
     return true;
 }
 
-MString BytesToHexString(const uint8* Data, size_t Size)
+inline MString BytesToHexString(const uint8* Data, size_t Size)
 {
     static const char* HexDigits = "0123456789ABCDEF";
     if (!Data || Size == 0)

@@ -1,9 +1,12 @@
 #pragma once
 
-#include "Common/MessageUtils.h"
+#include "Common/Message/MessageReader.h"
+#include "Common/Message/MessageWriter.h"
+#include "Common/Message/MessageUtils.h"
+#include "Common/Object/Result.h"
 #include "Common/ServerConnection.h"
 #include "Common/StringUtils.h"
-#include "Common/Logger.h"
+#include "Common/Log/Logger.h"
 
 struct SEmptyServerMessage
 {
@@ -682,20 +685,20 @@ inline TResult<void, MString> ParsePayload(const TByteArray& Data, TMessage& Out
     if (!Deserialize(Reader, OutMessage))
     {
         MString Err = (Context && Context[0]) ? (MString(Context) + ": ") : MString();
-        Err += "payload_size=" + MString::ToString(static_cast<uint64>(PayloadSize)) + ", deserialize_failed";
+        Err += "payload_size=" + MStringUtil::ToString(static_cast<uint64>(PayloadSize)) + ", deserialize_failed";
         return TResult<void, MString>::Err(std::move(Err));
     }
     if (!Reader.IsValid())
     {
         MString Err = (Context && Context[0]) ? (MString(Context) + ": ") : MString();
-        Err += "payload_size=" + MString::ToString(static_cast<uint64>(PayloadSize)) + ", read_overflow";
+        Err += "payload_size=" + MStringUtil::ToString(static_cast<uint64>(PayloadSize)) + ", read_overflow";
         return TResult<void, MString>::Err(std::move(Err));
     }
     const size_t Trailing = Reader.GetRemainingSize();
     if (Trailing != 0)
     {
         MString Err = (Context && Context[0]) ? (MString(Context) + ": ") : MString();
-        Err += "payload_size=" + MString::ToString(static_cast<uint64>(PayloadSize)) + ", trailing_bytes=" + MString::ToString(static_cast<uint64>(Trailing));
+        Err += "payload_size=" + MStringUtil::ToString(static_cast<uint64>(PayloadSize)) + ", trailing_bytes=" + MStringUtil::ToString(static_cast<uint64>(Trailing));
         return TResult<void, MString>::Err(std::move(Err));
     }
     return TResult<void, MString>::Ok();

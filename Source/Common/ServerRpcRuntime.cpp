@@ -2,8 +2,8 @@
 
 #include "Build/Generated/MClientManifest.mgenerated.h"
 #include "Build/Generated/MRpcManifest.mgenerated.h"
-#include "Core/Json.h"
-#include "Common/Logger.h"
+#include "Common/Json.h"
+#include "Common/Log/Logger.h"
 
 #include <mutex>
 

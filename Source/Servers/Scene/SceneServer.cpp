@@ -1,7 +1,7 @@
 #include "SceneServer.h"
 #include "Common/Config.h"
 #include "Common/ServerMessages.h"
-#include "Core/Json.h"
+#include "Common/Json.h"
 
 namespace
 {

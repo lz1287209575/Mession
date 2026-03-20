@@ -1,5 +1,5 @@
 #include "Common/MLib.h"
-#include "Core/Net/SocketPlatform.h"
+#include "Common/Socket/SocketPlatform.h"
 #include "NetDriver/Reflection.h"
 #include <atomic>
 #include <cstring>

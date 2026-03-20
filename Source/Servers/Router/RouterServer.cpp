@@ -2,9 +2,9 @@
 #include "Build/Generated/MRpcManifest.mgenerated.h"
 #include "Common/Config.h"
 #include "Common/ServerRpcRuntime.h"
-#include "Core/Net/Socket.h"
+#include "Common/Socket/Socket.h"
 #include "Core/Net/HttpDebugServer.h"
-#include "Core/Json.h"
+#include "Common/Json.h"
 
 namespace
 {

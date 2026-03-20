@@ -1,6 +1,6 @@
 #include "ConsoleLogSink.h"
 
-#include "StringUtils.h"
+#include "Common/StringUtils.h"
 
 #include <iostream>
 

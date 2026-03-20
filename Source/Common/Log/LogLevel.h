@@ -36,7 +36,7 @@ inline bool LogLevelFromInt(int Value, ELogLevel& OutLevel)
     return false;
 }
 
-ELogLevel LegacyIntToLevel(int Value)
+inline ELogLevel LegacyIntToLevel(int Value)
 {
     if (Value <= 0)
     {

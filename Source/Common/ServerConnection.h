@@ -1,8 +1,8 @@
 #pragma once
 
 #include "Common/MLib.h"
-#include "Core/Net/Socket.h"
-#include "Common/Logger.h"
+#include "Common/Socket/Socket.h"
+#include "Common/Log/Logger.h"
 #include <thread>
 #include <chrono>
 

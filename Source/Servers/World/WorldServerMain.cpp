@@ -1,4 +1,5 @@
 #include "WorldServer.h"
+#include "Common/Time.h"
 #include "Common/ParseArgs.h"
 #include <csignal>
 #if defined(_WIN32) || defined(_WIN64)

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Common/Logger.h"
+#include "Common/Log/Logger.h"
 #include "Common/ServerRpcRuntime.h"
 
 MCLASS()
