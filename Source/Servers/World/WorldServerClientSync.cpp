@@ -1,6 +1,6 @@
 #include "WorldServer.h"
-#include "Gameplay/InventoryMember.h"
-#include "Gameplay/PlayerAvatar.h"
+#include "Servers/World/Avatar/InventoryMember.h"
+#include "Servers/World/Avatar/PlayerAvatar.h"
 
 bool MWorldServer::SendClientFunctionPacketToPlayer(uint64 PlayerId, const TByteArray& Packet)
 {

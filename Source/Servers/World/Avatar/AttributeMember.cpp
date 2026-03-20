@@ -1,4 +1,4 @@
-#include "Gameplay/AttributeMember.h"
+#include "Servers/World/Avatar/AttributeMember.h"
 #include "MAttributeMember.mgenerated.h"
 
 void MAttributeMember::ApplyDamage(float Damage)

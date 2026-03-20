@@ -1,4 +1,4 @@
-#include "Gameplay/InventoryMember.h"
+#include "Servers/World/Avatar/InventoryMember.h"
 #include "MInventoryMember.mgenerated.h"
 
 #include <algorithm>

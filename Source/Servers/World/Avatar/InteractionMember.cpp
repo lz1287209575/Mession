@@ -1,7 +1,7 @@
-#include "Gameplay/InteractionMember.h"
+#include "Servers/World/Avatar/InteractionMember.h"
 
 #include "Common/Runtime/Log/Logger.h"
-#include "Gameplay/PlayerAvatar.h"
+#include "Servers/World/Avatar/PlayerAvatar.h"
 
 bool MInteractionMember::Interact(uint64 TargetActorId)
 {

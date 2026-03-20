@@ -1,6 +1,6 @@
 #include "WorldServer.h"
-#include "Gameplay/InventoryMember.h"
-#include "Gameplay/PlayerAvatar.h"
+#include "Servers/World/Avatar/InventoryMember.h"
+#include "Servers/World/Avatar/PlayerAvatar.h"
 #include "Common/Net/NetMessages.h"
 #include <sstream>
 

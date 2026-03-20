@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Gameplay/AvatarMember.h"
+#include "Servers/World/Avatar/AvatarMember.h"
 #include "Common/Runtime/MLib.h"
 
 MCLASS()

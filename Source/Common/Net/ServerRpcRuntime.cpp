@@ -282,7 +282,7 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientEntry(
 
     if (!Entry.Function->RouteName.empty())
     {
-        auto* RouteTarget = dynamic_cast<IGeneratedClientRouteTarget*>(TargetInstance);
+        auto* RouteTarget = TargetInstance->GetGeneratedClientRouteTarget();
         if (!RouteTarget)
         {
             LOG_WARN("Generated client route target unsupported: class=%s function=%s route=%s",

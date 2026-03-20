@@ -115,6 +115,7 @@ private:
 public:
     MGatewayServer() {}
     ~MGatewayServer() { Shutdown(); }
+    IGeneratedClientRouteTarget* GetGeneratedClientRouteTarget() override { return this; }
     
     bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);

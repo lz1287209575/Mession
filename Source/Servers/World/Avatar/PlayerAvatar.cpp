@@ -1,10 +1,10 @@
-#include "Gameplay/PlayerAvatar.h"
+#include "Servers/World/Avatar/PlayerAvatar.h"
 
-#include "Gameplay/AttributeMember.h"
+#include "Servers/World/Avatar/AttributeMember.h"
 #include "MPlayerAvatar.mgenerated.h"
-#include "Gameplay/InventoryMember.h"
-#include "Gameplay/InteractionMember.h"
-#include "Gameplay/MovementMember.h"
+#include "Servers/World/Avatar/InventoryMember.h"
+#include "Servers/World/Avatar/InteractionMember.h"
+#include "Servers/World/Avatar/MovementMember.h"
 
 MPlayerAvatar::MPlayerAvatar()
 {

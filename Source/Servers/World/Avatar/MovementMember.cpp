@@ -1,6 +1,6 @@
-#include "Gameplay/MovementMember.h"
+#include "Servers/World/Avatar/MovementMember.h"
 
-#include "Gameplay/PlayerAvatar.h"
+#include "Servers/World/Avatar/PlayerAvatar.h"
 
 void MMovementMember::MoveTo(const SVector& NewLocation)
 {

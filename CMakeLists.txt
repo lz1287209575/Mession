@@ -105,12 +105,12 @@ configure_mession_compile_options(mession_common)
 
 # NetDriver 库（游戏侧复制与对象能力，物理文件已迁入 Common/Runtime/*）
 set(MESSION_NETDRIVER_SOURCES
-    Source/Gameplay/AvatarMember.cpp
-    Source/Gameplay/AttributeMember.cpp
-    Source/Gameplay/InventoryMember.cpp
-    Source/Gameplay/InteractionMember.cpp
-    Source/Gameplay/MovementMember.cpp
-    Source/Gameplay/PlayerAvatar.cpp
+    Source/Servers/World/Avatar/AvatarMember.cpp
+    Source/Servers/World/Avatar/AttributeMember.cpp
+    Source/Servers/World/Avatar/InventoryMember.cpp
+    Source/Servers/World/Avatar/InteractionMember.cpp
+    Source/Servers/World/Avatar/MovementMember.cpp
+    Source/Servers/World/Avatar/PlayerAvatar.cpp
     Source/Common/Runtime/Object/NetObject.cpp
     Source/Common/Runtime/Persistence/MongoPersistenceSink.cpp
     Source/Common/Runtime/Replication/ReplicationDriver.cpp

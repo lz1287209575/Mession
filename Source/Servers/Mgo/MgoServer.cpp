@@ -4,7 +4,7 @@
 #include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Concurrency/ThreadPool.h"
 #include "Common/Runtime/Json.h"
-#include "Gameplay/InventoryMember.h"
+#include "Servers/World/Avatar/InventoryMember.h"
 
 #ifdef MESSION_USE_MONGOCXX
 #include <bsoncxx/builder/basic/document.hpp>

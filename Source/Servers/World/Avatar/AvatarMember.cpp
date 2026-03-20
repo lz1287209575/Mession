@@ -1,4 +1,4 @@
-#include "Gameplay/AvatarMember.h"
+#include "Servers/World/Avatar/AvatarMember.h"
 #include "MAvatarMember.mgenerated.h"
 
 void MAvatarMember::SetOwnerPlayerId(uint64 InOwnerPlayerId)

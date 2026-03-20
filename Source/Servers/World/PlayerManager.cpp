@@ -1,5 +1,5 @@
 #include "WorldServer.h"
-#include "Gameplay/PlayerAvatar.h"
+#include "Servers/World/Avatar/PlayerAvatar.h"
 
 namespace
 {

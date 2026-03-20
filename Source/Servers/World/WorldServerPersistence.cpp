@@ -1,7 +1,7 @@
 #include "WorldServer.h"
 #include "Common/Runtime/HexUtils.h"
 #include "Common/Runtime/Time.h"
-#include "Gameplay/PlayerAvatar.h"
+#include "Servers/World/Avatar/PlayerAvatar.h"
 
 void MWorldServer::Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey)
 {

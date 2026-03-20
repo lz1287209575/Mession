@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
-#include "Gameplay/AvatarMember.h"
+#include "Servers/World/Avatar/AvatarMember.h"
 #include "Common/Runtime/Object/NetObject.h"
 
 #include <memory>
