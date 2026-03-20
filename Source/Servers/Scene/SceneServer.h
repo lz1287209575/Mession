@@ -1,13 +1,13 @@
 #pragma once
 
-#include "Common/MLib.h"
-#include "Common/Socket/Socket.h"
-#include "Core/Net/HttpDebugServer.h"
-#include "Common/Log/Logger.h"
-#include "Common/NetServerBase.h"
-#include "Common/ServerConnection.h"
-#include "Common/ServerMessages.h"
-#include "NetDriver/Reflection.h"
+#include "Common/Runtime/MLib.h"
+#include "Common/IO/Socket/Socket.h"
+#include "Common/Net/HttpDebugServer.h"
+#include "Common/Runtime/Log/Logger.h"
+#include "Common/Net/NetServerBase.h"
+#include "Common/Net/ServerConnection.h"
+#include "Protocol/ServerMessages.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 #include <thread>
 #include <chrono>
 
@@ -116,7 +116,7 @@ private:
     void InitRouterMessageHandlers();
     void InitWorldMessageHandlers();
 
-    void OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& Message);
+    void OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& Message);
     void OnRouter_RouteResponse(const SRouteResponseMessage& Message);
 
     void OnWorld_PlayerSwitchServer(const SPlayerSceneStateMessage& Message);

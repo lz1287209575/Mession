@@ -1,13 +1,13 @@
 #pragma once
 
-#include "Common/MLib.h"
-#include "Common/Socket/Socket.h"
-#include "Core/Net/HttpDebugServer.h"
-#include "Common/Log/Logger.h"
-#include "Common/NetServerBase.h"
-#include "Common/ServerConnection.h"
-#include "Common/ServerMessages.h"
-#include "Messages/NetMessages.h"
+#include "Common/Runtime/MLib.h"
+#include "Common/IO/Socket/Socket.h"
+#include "Common/Net/HttpDebugServer.h"
+#include "Common/Runtime/Log/Logger.h"
+#include "Common/Net/NetServerBase.h"
+#include "Common/Net/ServerConnection.h"
+#include "Protocol/ServerMessages.h"
+#include "Common/Net/NetMessages.h"
 #include "Servers/Gateway/GatewayRpcService.h"
 #include "Servers/Login/LoginRpcService.h"
 #include "Servers/World/WorldRpcService.h"
@@ -65,10 +65,10 @@ struct SPendingResolvedClientRoute
 
 // 网关服务器
 MCLASS()
-class MGatewayServer : public MNetServerBase, public MReflectObject, public IGeneratedClientRouteTarget
+class MGatewayServer : public MNetServerBase, public MObject, public IGeneratedClientRouteTarget
 {
 public:
-    MGENERATED_BODY(MGatewayServer, MReflectObject, 0)
+    MGENERATED_BODY(MGatewayServer, MObject, 0)
 
 private:
     SGatewayConfig Config;
@@ -133,7 +133,7 @@ public:
     MFUNCTION(Client, Message=MT_PlayerMove, Reliable=false, Route=RouterResolved, Target=World, Auth=Required, Wrap=PlayerClientSync)
     void Client_PlayerMove(uint64 ClientConnectionId, const SPlayerMovePayload& MovePayload);
     MFUNCTION(Client, Message=MT_Chat, Reliable=true, Route=RouterResolved, Target=World, Auth=Required, Wrap=PlayerClientSync)
-    void Client_Chat(uint64 ClientConnectionId, const SClientChatPayload& ChatPayload);
+    void Client_Chat(uint64 ClientConnectionId, const SChatBroadcastPayload& ChatPayload);
     MFUNCTION(Client, Message=MT_Heartbeat, Reliable=false)
     void Client_Heartbeat(uint64 ClientConnectionId, const SHeartbeatMessage& Heartbeat);
     void Rpc_OnPlayerLoginResponse(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey);
@@ -178,7 +178,7 @@ private:
     void OnLogin_PlayerLogin(const SPlayerLoginResponseMessage& Message);
     void OnWorld_PlayerLogout(const SPlayerLogoutMessage& Message);
     void OnWorld_PlayerClientSync(const SPlayerClientSyncMessage& Message);
-    void OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& Message);
+    void OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& Message);
     void OnRouter_RouteResponse(const SRouteResponseMessage& Message);
     void SendRouterRegister();
     uint64 QueryRoute(EServerType ServerType, uint64 PlayerId = 0);

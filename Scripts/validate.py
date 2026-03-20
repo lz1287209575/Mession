@@ -37,7 +37,7 @@ import sys
 import time
 from pathlib import Path
 
-# 协议常量（与 Source/Messages/NetMessages.h、Source/Common/ServerMessages.h 一致）
+# 协议常量（与 Source/Common/Net/NetMessages.h、Source/Common/Net/ServerMessages.h 一致）
 MT_LOGIN = 1
 MT_LOGIN_RESPONSE = 2
 MT_HANDSHAKE = 3
@@ -419,7 +419,7 @@ def send_function_login(
 
 def send_function_chat(sock: socket.socket, message: str) -> bool:
     encoded = message.encode("utf-8")
-    payload = struct.pack("<H", len(encoded)) + encoded
+    payload = struct.pack("<I", len(encoded)) + encoded
     return send_function_call(sock, "MGatewayServer", "Client_Chat", payload)
 
 
@@ -595,14 +595,14 @@ def collect_replication_packets(
 
 
 def parse_chat_payload(payload: bytes) -> Optional[tuple[int, str]]:
-    if len(payload) < 8 + 2:
+    if len(payload) < 8 + 4:
         return None
     from_player_id = struct.unpack("<Q", payload[:8])[0]
-    message_len = struct.unpack("<H", payload[8:10])[0]
-    if 10 + message_len > len(payload):
+    message_len = struct.unpack("<I", payload[8:12])[0]
+    if 12 + message_len > len(payload):
         return None
     try:
-        message = payload[10:10 + message_len].decode("utf-8")
+        message = payload[12:12 + message_len].decode("utf-8")
     except UnicodeDecodeError:
         return None
     return from_player_id, message

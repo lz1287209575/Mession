@@ -1,13 +1,13 @@
 #pragma once
 
-#include "Common/Log/Logger.h"
-#include "Common/ServerRpcRuntime.h"
+#include "Common/Runtime/Log/Logger.h"
+#include "Common/Net/ServerRpcRuntime.h"
 
 MCLASS()
-class MMgoService : public MReflectObject
+class MMgoService : public MObject
 {
 public:
-    MGENERATED_BODY(MMgoService, MReflectObject, 0)
+    MGENERATED_BODY(MMgoService, MObject, 0)
     public:
 
     using FHandler_Rpc_OnPersistSnapshot =

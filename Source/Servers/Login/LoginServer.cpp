@@ -1,10 +1,8 @@
 #include "LoginServer.h"
-#include "Build/Generated/MGatewayService.mgenerated.h"
-#include "Build/Generated/MWorldService.mgenerated.h"
-#include "Common/Config.h"
-#include "Common/ServerRpcRuntime.h"
-#include "Messages/NetMessages.h"
-#include "Common/Json.h"
+#include "Common/Runtime/Config.h"
+#include "Common/Net/ServerRpcRuntime.h"
+#include "Common/Net/NetMessages.h"
+#include "Common/Runtime/Json.h"
 #include <time.h>
 
 namespace
@@ -368,7 +366,7 @@ void MLoginServer::SendRouterRegister()
     SendTypedServerMessage(
         RouterServerConn,
         EServerMessageType::MT_ServerRegister,
-        SServerRegisterMessage{2, EServerType::Login, "Login01", "127.0.0.1", Config.ListenPort});
+        SNodeRegisterMessage{2, EServerType::Login, "Login01", "127.0.0.1", Config.ListenPort});
 }
 
 void MLoginServer::InitRouterMessageHandlers()
@@ -399,7 +397,7 @@ void MLoginServer::OnGateway_ServerHandshake(uint64 ConnectionId, const TByteArr
             TByteArray Packet;
             if (!BuildClientFunctionCallPacketForPayload(
                     MClientDownlink::Id_OnLoginResponse(),
-                    SClientLoginResponsePayload{SessionKey, IdPayload.PlayerId},
+                    SAuthLoginResultPayload{SessionKey, IdPayload.PlayerId},
                     Packet))
             {
                 LOG_WARN("Failed to build unified login response packet for player %llu",
@@ -415,7 +413,7 @@ void MLoginServer::OnGateway_ServerHandshake(uint64 ConnectionId, const TByteArr
         }
     }
 
-    SServerHandshakeMessage Message;
+    SNodeHandshakeMessage Message;
     auto ParseResult = ParsePayload(Payload, Message, "handshake");
     if (!ParseResult.IsOk())
     {
@@ -458,8 +456,10 @@ void MLoginServer::OnGateway_PlayerLogin(uint64 ClientConnectionId, const SPlaye
     MRpc::TryRpcOrTypedLegacy(
         [&]()
         {
-            return MRpc::MGatewayService::Rpc_OnPlayerLoginResponse(
+            return MRpc::Call(
                 GatewayPeerIt->second.Connection,
+                EServerType::Gateway,
+                "Rpc_OnPlayerLoginResponse",
                 ClientConnectionId,
                 Request.PlayerId,
                 SessionKey);
@@ -499,8 +499,10 @@ void MLoginServer::OnGateway_SessionValidateRequest(uint64 ValidationRequestId, 
     MRpc::TryRpcOrTypedLegacy(
         [&]()
         {
-            return MRpc::MWorldService::Rpc_OnSessionValidateResponse(
+            return MRpc::Call(
                 WorldPeerIt->second.Connection,
+                EServerType::World,
+                "Rpc_OnSessionValidateResponse",
                 ValidationRequestId,
                 Request.PlayerId,
                 bValid);
@@ -522,12 +524,12 @@ void MLoginServer::Rpc_OnSessionValidateRequest(uint64 ValidationRequestId, uint
         SSessionValidateRequestMessage{ValidationRequestId, PlayerId, SessionKey});
 }
 
-void MLoginServer::OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& /*Message*/)
+void MLoginServer::OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& /*Message*/)
 {
     LOG_INFO("Login server registered to RouterServer");
 }
 
 void MLoginServer::Rpc_OnRouterServerRegisterAck(uint8 Result)
 {
-    OnRouter_ServerRegisterAck(SServerRegisterAckMessage{Result});
+    OnRouter_ServerRegisterAck(SNodeRegisterAckMessage{Result});
 }

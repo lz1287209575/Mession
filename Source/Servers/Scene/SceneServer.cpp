@@ -1,7 +1,7 @@
 #include "SceneServer.h"
-#include "Common/Config.h"
-#include "Common/ServerMessages.h"
-#include "Common/Json.h"
+#include "Common/Runtime/Config.h"
+#include "Protocol/ServerMessages.h"
+#include "Common/Runtime/Json.h"
 
 namespace
 {
@@ -228,7 +228,7 @@ void MSceneServer::SendRouterRegister()
     SendTypedServerMessage(
         RouterServerConn,
         EServerMessageType::MT_ServerRegister,
-        SServerRegisterMessage{
+        SNodeRegisterMessage{
             static_cast<uint32>(Config.SceneId),
             EServerType::Scene,
             Config.SceneName,
@@ -259,7 +259,7 @@ void MSceneServer::SendLoadReport()
     SendTypedServerMessage(
         RouterServerConn,
         EServerMessageType::MT_ServerLoadReport,
-        SServerLoadReportMessage{EntityCount, MaxSceneEntities});
+        SNodeLoadReportMessage{EntityCount, MaxSceneEntities});
 }
 
 void MSceneServer::QueryWorldServerRoute()
@@ -359,7 +359,7 @@ void MSceneServer::InitWorldMessageHandlers()
         "MT_PlayerDataSync");
 }
 
-void MSceneServer::OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& /*Message*/)
+void MSceneServer::OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& /*Message*/)
 {
     LOG_INFO("Scene server registered to RouterServer");
 }

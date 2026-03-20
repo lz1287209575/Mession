@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Gameplay/AvatarMember.h"
-#include "Common/MLib.h"
+#include "Common/Runtime/MLib.h"
 
 MCLASS()
 class MMovementMember : public MAvatarMember

@@ -1,5 +1,5 @@
 #include "Gameplay/AttributeMember.h"
-#include "Build/Generated/MAttributeMember.mgenerated.h"
+#include "MAttributeMember.mgenerated.h"
 
 void MAttributeMember::ApplyDamage(float Damage)
 {

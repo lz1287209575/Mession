@@ -1,6 +1,6 @@
 #include "RouterServer.h"
-#include "Common/Time.h"
-#include "Common/ParseArgs.h"
+#include "Common/Runtime/Time.h"
+#include "Common/Runtime/ParseArgs.h"
 #include <csignal>
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>

@@ -1,5 +1,5 @@
 #include "Gameplay/InventoryMember.h"
-#include "Build/Generated/MInventoryMember.mgenerated.h"
+#include "MInventoryMember.mgenerated.h"
 
 #include <algorithm>
 

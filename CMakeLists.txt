@@ -11,6 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/Bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/Bin/Lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/Bin/Lib)
+set(MESSION_GENERATED_DIR "${CMAKE_SOURCE_DIR}/Build/Generated")
 
 # Keep multi-config generators (Visual Studio/Xcode) from adding per-config
 # subdirectories so custom tools can be referenced from a stable Bin path.
@@ -50,15 +51,15 @@ function(configure_mession_compile_options TargetName)
     endif()
 endfunction()
 
-# Core 库（基础设施：Core/*）
+# Core 库（底层运行时：Common 下的网络/并发/事件循环基础能力）
 set(MESSION_CORE_SOURCES
-    Source/Core/Net/HttpDebugServer.cpp
-    Source/Common/Socket/SocketPlatform.cpp
-    Source/Common/Socket/Socket.cpp
-    Source/Common/EventLoop/TaskEventLoop.cpp
-    Source/Common/EventLoop/NetEventLoop.cpp
-    Source/Common/Concurrency/TaskQueue.cpp
-    Source/Common/Concurrency/ThreadPool.cpp
+    Source/Common/Net/HttpDebugServer.cpp
+    Source/Common/IO/Socket/SocketPlatform.cpp
+    Source/Common/IO/Socket/Socket.cpp
+    Source/Common/Runtime/EventLoop/TaskEventLoop.cpp
+    Source/Common/Runtime/EventLoop/NetEventLoop.cpp
+    Source/Common/Runtime/Concurrency/TaskQueue.cpp
+    Source/Common/Runtime/Concurrency/ThreadPool.cpp
 )
 
 add_library(mession_core STATIC
@@ -77,15 +78,14 @@ if(WIN32)
 endif()
 configure_mession_compile_options(mession_core)
 
-# Common 库（公共组件：Common/*）
+# Common 库（公共组件：日志/RPC/连接等中层能力）
 set(MESSION_COMMON_SOURCES
-    Source/Common/Log/Logger.cpp
-    Source/Common/Log/ConsoleLogSink.cpp
-    Source/Common/Log/FileLogSink.cpp
-    Source/Common/NetServerBase.cpp
-    Source/Common/ReflectionSmokeTypes.cpp
-    Source/Common/ServerConnection.cpp
-    Source/Common/ServerRpcRuntime.cpp
+    Source/Common/Runtime/Log/Logger.cpp
+    Source/Common/Runtime/Log/ConsoleLogSink.cpp
+    Source/Common/Runtime/Log/FileLogSink.cpp
+    Source/Common/Net/NetServerBase.cpp
+    Source/Common/Net/ServerConnection.cpp
+    Source/Common/Net/ServerRpcRuntime.cpp
 )
 
 add_library(mession_common STATIC
@@ -95,6 +95,7 @@ target_include_directories(mession_common
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${MESSION_GENERATED_DIR}
 )
 target_link_libraries(mession_common
     PUBLIC
@@ -102,7 +103,7 @@ target_link_libraries(mession_common
 )
 configure_mession_compile_options(mession_common)
 
-# NetDriver 库（复制与网络对象：NetDriver/*）
+# NetDriver 库（游戏侧复制与对象能力，物理文件已迁入 Common/Runtime/*）
 set(MESSION_NETDRIVER_SOURCES
     Source/Gameplay/AvatarMember.cpp
     Source/Gameplay/AttributeMember.cpp
@@ -110,10 +111,12 @@ set(MESSION_NETDRIVER_SOURCES
     Source/Gameplay/InteractionMember.cpp
     Source/Gameplay/MovementMember.cpp
     Source/Gameplay/PlayerAvatar.cpp
-    Source/NetDriver/NetObject.cpp
-    Source/NetDriver/MongoPersistenceSink.cpp
-    Source/NetDriver/ReplicationDriver.cpp
-    Source/NetDriver/Reflection.cpp
+    Source/Common/Runtime/Object/NetObject.cpp
+    Source/Common/Runtime/Persistence/MongoPersistenceSink.cpp
+    Source/Common/Runtime/Replication/ReplicationDriver.cpp
+    Source/Common/Runtime/Reflect/Class.cpp
+    Source/Common/Runtime/Reflect/Property.cpp
+    Source/Common/Runtime/Reflect/Reflection.cpp
 )
 
 add_library(mession_netdriver STATIC
@@ -123,6 +126,7 @@ target_include_directories(mession_netdriver
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${MESSION_GENERATED_DIR}
 )
 target_link_libraries(mession_netdriver
     PUBLIC
@@ -140,7 +144,6 @@ target_link_libraries(MHeaderTool
 )
 configure_mession_compile_options(MHeaderTool)
 
-set(MESSION_GENERATED_DIR "${CMAKE_SOURCE_DIR}/Build/Generated")
 set(MESSION_HEADERTOOL_MANIFEST "${MESSION_GENERATED_DIR}/MHeaderToolTargets.cmake")
 file(MAKE_DIRECTORY "${MESSION_GENERATED_DIR}")
 
@@ -258,6 +261,7 @@ function(configure_mession_target TargetName)
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/Source
+            ${MESSION_GENERATED_DIR}
     )
     target_link_libraries(${TargetName}
         PRIVATE
@@ -308,6 +312,12 @@ mession_attach_generated_groups(LoginServer shared login)
 add_executable(WorldServer 
     Source/Servers/World/WorldServer.h
     Source/Servers/World/WorldServer.cpp
+    Source/Servers/World/PlayerSession.cpp
+    Source/Servers/World/WorldServerGameplay.cpp
+    Source/Servers/World/WorldServerClientSync.cpp
+    Source/Servers/World/PlayerManager.cpp
+    Source/Servers/World/WorldServerBackend.cpp
+    Source/Servers/World/WorldServerPersistence.cpp
     Source/Servers/World/WorldServerMain.cpp
 )
 target_link_libraries(WorldServer
@@ -373,19 +383,6 @@ target_link_libraries(NetBench
 )
 configure_mession_compile_options(NetBench)
 
-# 7. Mono Server - 单机测试服务器（用于反射等功能验证）
-add_executable(MonoServer
-    Source/Servers/Mono/MonoServer.h
-    Source/Servers/Mono/MonoServer.cpp
-    Source/Servers/Mono/MonoServerMain.cpp
-)
-target_link_libraries(MonoServer
-    PRIVATE
-        mession_netdriver
-)
-configure_mession_target(MonoServer)
-mession_attach_generated_groups(MonoServer shared mono)
-
 # 安装目标
 install(TARGETS 
     GatewayServer 
@@ -394,7 +391,6 @@ install(TARGETS
     SceneServer 
     RouterServer
     MgoServer
-    MonoServer
     DESTINATION bin
 )
 

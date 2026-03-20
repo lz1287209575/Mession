@@ -1,7 +1,7 @@
 #include "Gameplay/PlayerAvatar.h"
 
 #include "Gameplay/AttributeMember.h"
-#include "Build/Generated/MPlayerAvatar.mgenerated.h"
+#include "MPlayerAvatar.mgenerated.h"
 #include "Gameplay/InventoryMember.h"
 #include "Gameplay/InteractionMember.h"
 #include "Gameplay/MovementMember.h"

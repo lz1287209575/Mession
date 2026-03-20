@@ -1,12 +1,12 @@
 #pragma once
 
-#include "Common/MLib.h"
-#include "Common/Socket/Socket.h"
-#include "Core/Net/HttpDebugServer.h"
-#include "Common/Log/Logger.h"
-#include "Common/NetServerBase.h"
-#include "Common/ServerConnection.h"
-#include "Common/ServerMessages.h"
+#include "Common/Runtime/MLib.h"
+#include "Common/IO/Socket/Socket.h"
+#include "Common/Net/HttpDebugServer.h"
+#include "Common/Runtime/Log/Logger.h"
+#include "Common/Net/NetServerBase.h"
+#include "Common/Net/ServerConnection.h"
+#include "Protocol/ServerMessages.h"
 #include "Servers/Gateway/GatewayRpcService.h"
 #include "Servers/Login/LoginRpcService.h"
 #include "Servers/World/WorldRpcService.h"
@@ -45,10 +45,10 @@ struct SGatewayPeer
 
 // 登录服务器
 MCLASS()
-class MLoginServer : public MNetServerBase, public MReflectObject
+class MLoginServer : public MNetServerBase, public MObject
 {
 public:
-    MGENERATED_BODY(MLoginServer, MReflectObject, 0)
+    MGENERATED_BODY(MLoginServer, MObject, 0)
 
 private:
     SLoginConfig Config;
@@ -112,5 +112,5 @@ private:
     void OnGateway_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& Message);
     void OnGateway_PlayerLogin(uint64 ConnectionId, const SPlayerLoginRequestMessage& Request);
     void OnGateway_SessionValidateRequest(uint64 ConnectionId, const SSessionValidateRequestMessage& Request);
-    void OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& Message);
+    void OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& Message);
 };

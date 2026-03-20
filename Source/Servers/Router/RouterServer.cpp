@@ -1,10 +1,9 @@
 #include "RouterServer.h"
-#include "Build/Generated/MRpcManifest.mgenerated.h"
-#include "Common/Config.h"
-#include "Common/ServerRpcRuntime.h"
-#include "Common/Socket/Socket.h"
-#include "Core/Net/HttpDebugServer.h"
-#include "Common/Json.h"
+#include "Common/Runtime/Config.h"
+#include "Common/Net/ServerRpcRuntime.h"
+#include "Common/IO/Socket/Socket.h"
+#include "Common/Net/HttpDebugServer.h"
+#include "Common/Runtime/Json.h"
 
 namespace
 {
@@ -135,7 +134,7 @@ MString MRouterServer::BuildDebugStatusJson() const
     W.Key("server"); W.Value("Router");
     W.Key("peers"); W.Value(static_cast<uint64>(Peers.size()));
     W.Key("registeredPeers"); W.Value(static_cast<uint64>(RegisteredCount));
-    W.Key("rpcManifestEntries"); W.Value(static_cast<uint64>(MRpcManifest::GetEntryCount()));
+    W.Key("rpcManifestEntries"); W.Value(static_cast<uint64>(GetGeneratedRpcEntryCount()));
     W.Key("rpcSupport");
     W.BeginObject();
     for (EServerType ServerType : {EServerType::Gateway, EServerType::Login, EServerType::World})
@@ -215,7 +214,7 @@ void MRouterServer::InitPeerMessageHandlers()
         "MT_RouteQuery");
 }
 
-void MRouterServer::OnPeer_ServerHandshake(uint64 ConnectionId, const SServerHandshakeMessage& Message)
+void MRouterServer::OnPeer_ServerHandshake(uint64 ConnectionId, const SNodeHandshakeMessage& Message)
 {
     auto PeerIt = Peers.find(ConnectionId);
     if (PeerIt == Peers.end())
@@ -239,7 +238,7 @@ void MRouterServer::OnPeer_Heartbeat(uint64 ConnectionId, const SHeartbeatMessag
     SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
 }
 
-void MRouterServer::OnPeer_ServerRegister(uint64 ConnectionId, const SServerRegisterMessage& Message)
+void MRouterServer::OnPeer_ServerRegister(uint64 ConnectionId, const SNodeRegisterMessage& Message)
 {
     auto PeerIt = Peers.find(ConnectionId);
     if (PeerIt == Peers.end() || !PeerIt->second.bAuthenticated)
@@ -259,14 +258,15 @@ void MRouterServer::OnPeer_ServerRegister(uint64 ConnectionId, const SServerRegi
     MRpc::TryRpcOrTypedLegacy(
         [&]()
         {
-            return MRpc::Call<MRpcManifest::EFunction::Rpc_OnRouterServerRegisterAck>(
+            return MRpc::Call(
                 Peer.Connection,
                 Peer.ServerType,
+                "Rpc_OnRouterServerRegisterAck",
                 static_cast<uint8>(1));
         },
         Peer.Connection,
         EServerMessageType::MT_ServerRegisterAck,
-        SServerRegisterAckMessage{1});
+        SNodeRegisterAckMessage{1});
 
     LOG_INFO("Registered server %s (id=%u type=%d addr=%s:%u)",
              Peer.ServerName.c_str(),
@@ -276,7 +276,7 @@ void MRouterServer::OnPeer_ServerRegister(uint64 ConnectionId, const SServerRegi
              Peer.Port);
 }
 
-void MRouterServer::OnPeer_ServerLoadReport(uint64 ConnectionId, const SServerLoadReportMessage& Message)
+void MRouterServer::OnPeer_ServerLoadReport(uint64 ConnectionId, const SNodeLoadReportMessage& Message)
 {
     auto PeerIt = Peers.find(ConnectionId);
     if (PeerIt == Peers.end() || !PeerIt->second.bAuthenticated)
@@ -313,9 +313,10 @@ void MRouterServer::OnPeer_RouteQuery(uint64 ConnectionId, const SRouteQueryMess
     MRpc::TryRpcOrTypedLegacy(
         [&]()
         {
-            return MRpc::Call<MRpcManifest::EFunction::Rpc_OnRouterRouteResponse>(
+            return MRpc::Call(
                 Peer.Connection,
                 Peer.ServerType,
+                "Rpc_OnRouterRouteResponse",
                 Response.RequestId,
                 static_cast<uint8>(Response.RequestedType),
                 Response.PlayerId,

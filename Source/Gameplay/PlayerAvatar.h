@@ -1,18 +1,20 @@
 #pragma once
 
-#include "Common/MLib.h"
+#include "Common/Runtime/MLib.h"
 #include "Gameplay/AvatarMember.h"
-#include "NetDriver/NetObject.h"
+#include "Common/Runtime/Object/NetObject.h"
 
 #include <memory>
 #include <type_traits>
 #include <utility>
 
+class MPlayerSession;
+
 MCLASS()
-class MPlayerAvatar : public MActor, public MReflectObject
+class MPlayerAvatar : public MActor
 {
 public:
-    MGENERATED_BODY(MPlayerAvatar, MReflectObject, 0)
+    MGENERATED_BODY(MPlayerAvatar, MActor, 0)
 
 public:
     MPlayerAvatar();
@@ -30,6 +32,8 @@ public:
 
     void SetAlive(bool bInAlive);
     bool IsAlive() const { return bAlive; }
+    void SetPlayerSession(MPlayerSession* InPlayerSession) { PlayerSession = InPlayerSession; }
+    MPlayerSession* GetPlayerSession() const { return PlayerSession; }
 
     template<typename TMember, typename... TArgs>
     TMember* AddMember(TArgs&&... Args)
@@ -94,5 +98,6 @@ private:
     MPROPERTY(Edit | RepToClient | SaveGame)
     bool bAlive = true;
 
+    MPlayerSession* PlayerSession = nullptr;
     TVector<TUniquePtr<MAvatarMember>> Members;
 };

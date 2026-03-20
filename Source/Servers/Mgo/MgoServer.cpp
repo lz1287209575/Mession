@@ -1,10 +1,9 @@
 #include "MgoServer.h"
-#include "Build/Generated/MWorldService.mgenerated.h"
 
-#include "Common/Config.h"
-#include "Common/Concurrency/Promise.h"
-#include "Common/Concurrency/ThreadPool.h"
-#include "Common/Json.h"
+#include "Common/Runtime/Config.h"
+#include "Common/Runtime/Concurrency/Promise.h"
+#include "Common/Runtime/Concurrency/ThreadPool.h"
+#include "Common/Runtime/Json.h"
 #include "Gameplay/InventoryMember.h"
 
 #ifdef MESSION_USE_MONGOCXX
@@ -222,7 +221,7 @@ void AppendPropertyField(TSubDocument& InDoc, const MProperty* InProp, const voi
             InDoc.append(kvp(Key, "<null-struct>"));
             return;
         }
-        if (MClass* StructMeta = MReflectObject::FindStruct(InProp->CppTypeIndex))
+        if (MClass* StructMeta = MObject::FindStruct(InProp->CppTypeIndex))
         {
             InDoc.append(kvp(Key, [&](bsoncxx::builder::basic::sub_document InSubDoc)
             {
@@ -386,10 +385,10 @@ bool PersistSnapshotToMongo(
 
     TByteArray SnapshotBytes;
     const bool bHexDecoded = TryDecodeHex(SnapshotHex, SnapshotBytes);
-    MClass* ClassMeta = MReflectObject::FindClass(ClassName);
+    MClass* ClassMeta = MObject::FindClass(ClassName);
     if (!ClassMeta && ClassId != 0)
     {
-        ClassMeta = MReflectObject::FindClass(ClassId);
+        ClassMeta = MObject::FindClass(ClassId);
     }
     if (!bHexDecoded)
     {
@@ -403,13 +402,13 @@ bool PersistSnapshotToMongo(
                  ClassName.c_str());
     }
 
-    std::unique_ptr<MReflectObject> DecodedObject;
+    std::unique_ptr<MObject> DecodedObject;
     if (bHexDecoded && ClassMeta)
     {
         void* InstanceRaw = ClassMeta->CreateInstance();
         if (InstanceRaw)
         {
-            DecodedObject.reset(static_cast<MReflectObject*>(InstanceRaw));
+            DecodedObject.reset(static_cast<MObject*>(InstanceRaw));
             ClassMeta->ReadSnapshotByDomain(
                 DecodedObject.get(),
                 SnapshotBytes,
@@ -916,7 +915,7 @@ void MMgoServer::SendRouterRegister()
     SendTypedServerMessage(
         RouterServerConn,
         EServerMessageType::MT_ServerRegister,
-        SServerRegisterMessage{6, EServerType::Mgo, Config.ServerName, "127.0.0.1", Config.ListenPort, Config.ZoneId});
+        SNodeRegisterMessage{6, EServerType::Mgo, Config.ServerName, "127.0.0.1", Config.ListenPort, Config.ZoneId});
 }
 
 void MMgoServer::InitBackendMessageHandlers()
@@ -943,7 +942,7 @@ void MMgoServer::InitRouterMessageHandlers()
         "MT_ServerRegisterAck");
 }
 
-void MMgoServer::OnBackend_ServerHandshake(uint64 ConnectionId, const SServerHandshakeMessage& Message)
+void MMgoServer::OnBackend_ServerHandshake(uint64 ConnectionId, const SNodeHandshakeMessage& Message)
 {
     auto PeerIt = BackendConnections.find(ConnectionId);
     if (PeerIt == BackendConnections.end())
@@ -966,14 +965,14 @@ void MMgoServer::OnBackend_Heartbeat(uint64 ConnectionId, const SHeartbeatMessag
     SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
 }
 
-void MMgoServer::OnRouter_ServerRegisterAck(const SServerRegisterAckMessage&)
+void MMgoServer::OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage&)
 {
     LOG_INFO("Mgo server registered to RouterServer");
 }
 
 void MMgoServer::Rpc_OnRouterServerRegisterAck(uint8 Result)
 {
-    OnRouter_ServerRegisterAck(SServerRegisterAckMessage{Result});
+    OnRouter_ServerRegisterAck(SNodeRegisterAckMessage{Result});
 }
 
 void MMgoServer::Rpc_OnPersistSnapshot(
@@ -1197,8 +1196,10 @@ void MMgoServer::SendLoadSnapshotResponseToWorlds(
             continue;
         }
 
-        const bool bSent = MRpc::MWorldService::Rpc_OnMgoLoadSnapshotResponse(
+        const bool bSent = MRpc::Call(
             Peer.Connection,
+            EServerType::World,
+            "Rpc_OnMgoLoadSnapshotResponse",
             RequestId,
             ObjectId,
             bFound,
@@ -1235,8 +1236,10 @@ void MMgoServer::SendPersistSnapshotResultToWorlds(
             continue;
         }
 
-        const bool bSent = MRpc::MWorldService::Rpc_OnMgoPersistSnapshotResult(
+        const bool bSent = MRpc::Call(
             Peer.Connection,
+            EServerType::World,
+            "Rpc_OnMgoPersistSnapshotResult",
             OwnerWorldId,
             RequestId,
             ObjectId,

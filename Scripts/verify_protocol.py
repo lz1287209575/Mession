@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ServerMessages 协议组包/解包小验证（与 Common/ServerMessages.h + MessageUtils.h 约定一致）。
+ServerMessages 协议组包/解包小验证（与 Common/Net/ServerMessages.h + MessageUtils.h 约定一致）。
 
 约定：
 - 本脚本覆盖的首批跨服消息整数载荷使用网络字节序（大端）

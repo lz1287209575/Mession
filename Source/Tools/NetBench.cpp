@@ -1,6 +1,6 @@
-#include "Common/MLib.h"
-#include "Common/Socket/SocketPlatform.h"
-#include "NetDriver/Reflection.h"
+#include "Common/Runtime/MLib.h"
+#include "Common/IO/Socket/SocketPlatform.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 #include <atomic>
 #include <cstring>
 

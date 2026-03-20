@@ -1,5 +1,5 @@
 #include "Gameplay/AvatarMember.h"
-#include "Build/Generated/MAvatarMember.mgenerated.h"
+#include "MAvatarMember.mgenerated.h"
 
 void MAvatarMember::SetOwnerPlayerId(uint64 InOwnerPlayerId)
 {

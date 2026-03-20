@@ -1,6 +1,6 @@
 #include "MgoServer.h"
-#include "Common/Time.h"
-#include "Common/ParseArgs.h"
+#include "Common/Runtime/Time.h"
+#include "Common/Runtime/ParseArgs.h"
 #include <csignal>
 
 static MMgoServer* GMgoServer = nullptr;

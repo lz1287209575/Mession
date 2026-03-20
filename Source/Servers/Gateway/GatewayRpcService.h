@@ -1,13 +1,13 @@
 #pragma once
 
-#include "Common/Log/Logger.h"
-#include "Common/ServerRpcRuntime.h"
+#include "Common/Runtime/Log/Logger.h"
+#include "Common/Net/ServerRpcRuntime.h"
 
 MCLASS()
-class MGatewayService : public MReflectObject
+class MGatewayService : public MObject
 {
 public:
-    MGENERATED_BODY(MGatewayService, MReflectObject, 0)
+    MGENERATED_BODY(MGatewayService, MObject, 0)
     public:
 
     using FHandler_Rpc_OnPlayerLoginResponse = TFunction<void(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey)>;

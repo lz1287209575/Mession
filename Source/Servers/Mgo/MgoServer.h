@@ -1,13 +1,13 @@
 #pragma once
 
-#include "Common/MLib.h"
-#include "Common/Socket/Socket.h"
-#include "Core/Net/HttpDebugServer.h"
-#include "Common/Concurrency/ThreadPool.h"
-#include "Common/Log/Logger.h"
-#include "Common/NetServerBase.h"
-#include "Common/ServerConnection.h"
-#include "Common/ServerMessages.h"
+#include "Common/Runtime/MLib.h"
+#include "Common/IO/Socket/Socket.h"
+#include "Common/Net/HttpDebugServer.h"
+#include "Common/Runtime/Concurrency/ThreadPool.h"
+#include "Common/Runtime/Log/Logger.h"
+#include "Common/Net/NetServerBase.h"
+#include "Common/Net/ServerConnection.h"
+#include "Protocol/ServerMessages.h"
 #include "Servers/Mgo/MgoRpcService.h"
 
 struct SMgoConfig
@@ -35,10 +35,10 @@ struct SMgoPeer
 };
 
 MCLASS()
-class MMgoServer : public MNetServerBase, public MReflectObject
+class MMgoServer : public MNetServerBase, public MObject
 {
 public:
-    MGENERATED_BODY(MMgoServer, MReflectObject, 0)
+    MGENERATED_BODY(MMgoServer, MObject, 0)
 
 private:
     SMgoConfig Config;
@@ -91,9 +91,9 @@ private:
     MString BuildDebugStatusJson() const;
     void InitBackendMessageHandlers();
     void InitRouterMessageHandlers();
-    void OnBackend_ServerHandshake(uint64 ConnectionId, const SServerHandshakeMessage& Message);
+    void OnBackend_ServerHandshake(uint64 ConnectionId, const SNodeHandshakeMessage& Message);
     void OnBackend_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& Message);
-    void OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& Message);
+    void OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& Message);
     void SendPersistSnapshotResultToWorlds(uint32 OwnerWorldId, uint64 RequestId, uint64 ObjectId, uint64 Version, bool bSuccess, const MString& Reason);
     void SendLoadSnapshotResponseToWorlds(uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const MString& ClassName, const MString& SnapshotHex);
 };

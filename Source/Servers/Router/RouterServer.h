@@ -1,13 +1,13 @@
 #pragma once
 
-#include "Common/MLib.h"
-#include "Common/Socket/Socket.h"
-#include "Core/Net/HttpDebugServer.h"
-#include "Common/Log/Logger.h"
-#include "Common/NetServerBase.h"
-#include "Common/ServerConnection.h"
-#include "Common/ServerMessages.h"
-#include "NetDriver/Reflection.h"
+#include "Common/Runtime/MLib.h"
+#include "Common/IO/Socket/Socket.h"
+#include "Common/Net/HttpDebugServer.h"
+#include "Common/Runtime/Log/Logger.h"
+#include "Common/Net/NetServerBase.h"
+#include "Common/Net/ServerConnection.h"
+#include "Protocol/ServerMessages.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 #include <thread>
 #include <chrono>
 
@@ -82,9 +82,9 @@ private:
     void RemovePeer(uint64 ConnectionId);
     MString BuildDebugStatusJson() const;
     void InitPeerMessageHandlers();
-    void OnPeer_ServerHandshake(uint64 ConnectionId, const SServerHandshakeMessage& Message);
+    void OnPeer_ServerHandshake(uint64 ConnectionId, const SNodeHandshakeMessage& Message);
     void OnPeer_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& Message);
-    void OnPeer_ServerRegister(uint64 ConnectionId, const SServerRegisterMessage& Message);
-    void OnPeer_ServerLoadReport(uint64 ConnectionId, const SServerLoadReportMessage& Message);
+    void OnPeer_ServerRegister(uint64 ConnectionId, const SNodeRegisterMessage& Message);
+    void OnPeer_ServerLoadReport(uint64 ConnectionId, const SNodeLoadReportMessage& Message);
     void OnPeer_RouteQuery(uint64 ConnectionId, const SRouteQueryMessage& Query);
 };

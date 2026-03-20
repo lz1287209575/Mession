@@ -1,14 +1,14 @@
 #pragma once
 
-#include "NetDriver/Reflection.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 
 class MPlayerAvatar;
 
 MCLASS()
-class MAvatarMember : public MReflectObject
+class MAvatarMember : public MObject
 {
 public:
-    MGENERATED_BODY(MAvatarMember, MReflectObject, 0)
+    MGENERATED_BODY(MAvatarMember, MObject, 0)
 
 public:
     virtual ~MAvatarMember() = default;

@@ -1,11 +1,9 @@
 #include "GatewayServer.h"
-#include "Build/Generated/MLoginService.mgenerated.h"
-#include "Build/Generated/MWorldService.mgenerated.h"
-#include "Common/Config.h"
-#include "Common/ServerMessages.h"
-#include "Messages/NetMessages.h"
-#include "Core/Net/HttpDebugServer.h"
-#include "Common/Json.h"
+#include "Common/Runtime/Config.h"
+#include "Protocol/ServerMessages.h"
+#include "Common/Net/NetMessages.h"
+#include "Common/Net/HttpDebugServer.h"
+#include "Common/Runtime/Json.h"
 
 #include <algorithm>
 
@@ -62,9 +60,9 @@ struct SGeneratedRouteExecutorEntry
     FGeneratedRouteExecutor Execute = nullptr;
 };
 
-MString DescribeClientLoginResponsePayload(const SClientLoginResponsePayload& Payload)
+MString DescribeClientLoginResponsePayload(const SAuthLoginResultPayload& Payload)
 {
-    return "SClientLoginResponsePayload{SessionKey=" + std::to_string(static_cast<unsigned>(Payload.SessionKey)) +
+    return "SAuthLoginResultPayload{SessionKey=" + std::to_string(static_cast<unsigned>(Payload.SessionKey)) +
            ", PlayerId=" + std::to_string(static_cast<unsigned long long>(Payload.PlayerId)) + "}";
 }
 
@@ -753,8 +751,10 @@ EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteLoginRpcOrLe
     const bool bRpcSent = MRpc::TryRpcOrTypedLegacy(
         [&]()
         {
-            return MRpc::MLoginService::Rpc_OnPlayerLoginRequest(
+            return MRpc::Call(
                 LoginServerConn,
+                EServerType::Login,
+                "Rpc_OnPlayerLoginRequest",
                 Request.ConnectionId,
                 RequestPayload.PlayerId);
         },
@@ -1081,7 +1081,7 @@ void MGatewayServer::OnLogin_PlayerLogin(const SPlayerLoginResponseMessage& Mess
         Client->Connection->SetPlayerId(Message.PlayerId);
     }
 
-    const SClientLoginResponsePayload ResponsePayload{Message.SessionKey, Message.PlayerId};
+    const SAuthLoginResultPayload ResponsePayload{Message.SessionKey, Message.PlayerId};
     LOG_INFO("Preparing client login response: ConnectionId=%llu, Response=%s",
              static_cast<unsigned long long>(Message.ConnectionId),
              DescribeClientLoginResponsePayload(ResponsePayload).c_str());
@@ -1143,14 +1143,14 @@ void MGatewayServer::OnWorld_PlayerClientSync(const SPlayerClientSyncMessage& Me
     }
 }
 
-void MGatewayServer::OnRouter_ServerRegisterAck(const SServerRegisterAckMessage& /*Message*/)
+void MGatewayServer::OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& /*Message*/)
 {
     LOG_INFO("Gateway registered to RouterServer");
 }
 
 void MGatewayServer::Rpc_OnRouterServerRegisterAck(uint8 Result)
 {
-    OnRouter_ServerRegisterAck(SServerRegisterAckMessage{Result});
+    OnRouter_ServerRegisterAck(SNodeRegisterAckMessage{Result});
 }
 
 void MGatewayServer::OnRouter_RouteResponse(const SRouteResponseMessage& Message)
@@ -1240,7 +1240,7 @@ void MGatewayServer::SendRouterRegister()
     SendTypedServerMessage(
         RouterServerConn,
         EServerMessageType::MT_ServerRegister,
-        SServerRegisterMessage{1, EServerType::Gateway, "Gateway01", "127.0.0.1", Config.ListenPort});
+        SNodeRegisterMessage{1, EServerType::Gateway, "Gateway01", "127.0.0.1", Config.ListenPort});
 }
 
 uint64 MGatewayServer::QueryRoute(EServerType ServerType, uint64 PlayerId)
@@ -1323,8 +1323,10 @@ void MGatewayServer::FlushPendingWorldLogins()
         MRpc::TryRpcOrTypedLegacy(
             [&]()
             {
-                return MRpc::MWorldService::Rpc_OnPlayerLoginRequest(
+                return MRpc::Call(
                     WorldServerConn,
+                    EServerType::World,
+                    "Rpc_OnPlayerLoginRequest",
                     Pending.ConnectionId,
                     Pending.PlayerId,
                     Pending.SessionKey);
