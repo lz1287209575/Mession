@@ -1,4 +1,5 @@
 #include "Common/Net/ServerConnection.h"
+#include "Common/Net/ServerRpcRuntime.h"
 #include "Protocol/ServerMessages.h"
 
 // MTcpMessageChannel implementation
@@ -111,7 +112,7 @@ void MServerConnection::Disconnect()
     }
 }
 
-bool MServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
+bool MServerConnection::SendPacket(uint8 PacketType, const void* Data, uint32 Size)
 {
     if (State != EConnectionState::Connected && State != EConnectionState::Authenticated)
     {
@@ -120,16 +121,16 @@ bool MServerConnection::Send(uint8 Type, const void* Data, uint32 Size)
     
     TByteArray Payload;
     Payload.resize(1 + Size);
-    Payload[0] = Type;
+    Payload[0] = PacketType;
     if (Size > 0 && Data)
     {
         memcpy(Payload.data() + 1, Data, Size);
     }
 
-    return SendRaw(Payload);
+    return SendPacketRaw(Payload);
 }
 
-bool MServerConnection::SendRaw(const TByteArray& Data)
+bool MServerConnection::SendPacketRaw(const TByteArray& Data)
 {
     if (!Transport || !Transport->IsConnected() || Data.empty())
     {
@@ -196,9 +197,9 @@ void MServerConnection::ProcessRecv()
         if (!Packet.empty())
         {
             BytesReceived += static_cast<uint64>(Packet.size());
-            const uint8 Type = Packet[0];
+            const uint8 PacketType = Packet[0];
             TByteArray Payload(Packet.begin() + 1, Packet.end());
-            HandleMessage(Type, Payload);
+            HandlePacket(PacketType, Payload);
         }
     }
 
@@ -209,50 +210,16 @@ void MServerConnection::ProcessRecv()
     }
 }
 
-void MServerConnection::HandleMessage(uint8 Type, const TByteArray& Data)
+void MServerConnection::HandlePacket(uint8 PacketType, const TByteArray& Data)
 {
-    switch (Type)
+    switch (PacketType)
     {
-        case (uint8)EServerMessageType::MT_ServerHandshake:
-        {
-            LOG_INFO("%s Received handshake", LogPrefix.c_str());
-            SendHandshakeAck();
-            break;
-        }
-        
-        case (uint8)EServerMessageType::MT_ServerHandshakeAck:
-        {
-            State = EConnectionState::Authenticated;
-            LOG_INFO("%s Authentication successful!", LogPrefix.c_str());
-            
-            // 获取远程服务器信息
-            SServerInfo RemoteInfo = GetRemoteServerInfo();
-            if (OnServerAuthenticatedCallback)
-            {
-                OnServerAuthenticatedCallback(shared_from_this(), RemoteInfo);
-            }
-            break;
-        }
-        
-        case (uint8)EServerMessageType::MT_Heartbeat:
-        {
-            SendHeartbeatAck();
-            break;
-        }
-        
-        case (uint8)EServerMessageType::MT_HeartbeatAck:
-        {
-            LastHeartbeatTime = 0;
-            LOG_DEBUG("%s Heartbeat OK", LogPrefix.c_str());
-            break;
-        }
-        
         default:
         {
             // 转发给应用层
             if (OnMessageCallback)
             {
-                OnMessageCallback(shared_from_this(), Type, Data);
+                OnMessageCallback(shared_from_this(), PacketType, Data);
             }
             break;
         }
@@ -261,59 +228,40 @@ void MServerConnection::HandleMessage(uint8 Type, const TByteArray& Data)
 
 void MServerConnection::SendHandshake()
 {
-    const SNodeHandshakeMessage Message{
-        LocalServerInfo.ServerId,
-        LocalServerInfo.ServerType,
-        LocalServerInfo.ServerName
-    };
-    TByteArray Data = BuildPayload(Message);
-    Send((uint8)EServerMessageType::MT_ServerHandshake, Data.data(), Data.size());
-    
-    LOG_INFO("%s Sent handshake to %s:%d", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
-}
+    const char* ClassName = GetServerEndpointClassName(Config.ServerType);
+    if (!ClassName)
+    {
+        LOG_WARN("%s No RPC handshake endpoint for server type %d", LogPrefix.c_str(), static_cast<int>(Config.ServerType));
+        return;
+    }
 
-void MServerConnection::SendHandshakeAck()
-{
-    Send((uint8)EServerMessageType::MT_ServerHandshakeAck, nullptr, 0);
+    if (!MRpc::CallRemote(
+            *this,
+            ClassName,
+            "Rpc_OnServerHandshake",
+            LocalServerInfo.ServerId,
+            static_cast<uint8>(LocalServerInfo.ServerType),
+            LocalServerInfo.ServerName))
+    {
+        LOG_WARN("%s Handshake RPC send failed", LogPrefix.c_str());
+        return;
+    }
+
     State = EConnectionState::Authenticated;
-    LOG_INFO("%s Sent handshake ack", LogPrefix.c_str());
+    LOG_INFO("%s Authentication successful!", LogPrefix.c_str());
+    if (OnServerAuthenticatedCallback)
+    {
+        OnServerAuthenticatedCallback(shared_from_this(), GetRemoteServerInfo());
+    }
 }
 
 void MServerConnection::SendHeartbeat()
 {
-    const SHeartbeatMessage Message{++HeartbeatSeq};
-    TByteArray Data = BuildPayload(Message);
-    Send((uint8)EServerMessageType::MT_Heartbeat, Data.data(), Data.size());
-}
+    const char* ClassName = GetServerEndpointClassName(Config.ServerType);
+    if (!ClassName)
+    {
+        return;
+    }
 
-void MServerConnection::SendHeartbeatAck()
-{
-    Send((uint8)EServerMessageType::MT_HeartbeatAck, nullptr, 0);
-}
-
-// 便捷发送方法
-bool MServerConnection::SendPlayerLogin(uint64 PlayerId, uint32 SessionKey)
-{
-    const SPlayerLoginResponseMessage Message{0, PlayerId, SessionKey};
-    TByteArray Data = BuildPayload(Message);
-    return Send((uint8)EServerMessageType::MT_PlayerLogin, Data.data(), Data.size());
-}
-
-bool MServerConnection::SendPlayerLogout(uint64 PlayerId)
-{
-    const SPlayerLogoutMessage Message{PlayerId};
-    TByteArray Data = BuildPayload(Message);
-    return Send((uint8)EServerMessageType::MT_PlayerLogout, Data.data(), Data.size());
-}
-
-bool MServerConnection::SendChatMessage(uint64 FromPlayerId, const MString& Message)
-{
-    const SChatMessage ChatMessage{FromPlayerId, Message};
-    TByteArray Data = BuildPayload(ChatMessage);
-    return Send((uint8)EServerMessageType::MT_ChatMessage, Data.data(), Data.size());
-}
-
-bool MServerConnection::Broadcast(uint8 Type, const void* Data, uint32 Size)
-{
-    return Send(Type, Data, Size);
+    MRpc::CallRemote(*this, ClassName, "Rpc_OnHeartbeat", ++HeartbeatSeq);
 }

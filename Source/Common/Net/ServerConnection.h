@@ -21,26 +21,7 @@ enum class EServerType : uint8
 // 服务器间消息类型
 enum class EServerMessageType : uint8
 {
-    MT_ServerHandshake = 1,      // 服务器握手
-    MT_ServerHandshakeAck = 2,   // 握手响应
-    MT_Heartbeat = 10,           // 心跳
-    MT_HeartbeatAck = 11,        // 心跳响应
-    MT_PlayerLogin = 20,          // 玩家登录通知
-    MT_PlayerLogout = 21,         // 玩家登出通知
-    MT_PlayerSwitchServer = 22,   // 玩家切换服务器
-    MT_PlayerDataSync = 23,       // 玩家数据同步
-    MT_SessionValidateRequest = 24, // Session 校验请求
-    MT_SessionValidateResponse = 25, // Session 校验响应
-    MT_PlayerClientSync = 26,     // 按 PlayerId 路由的客户端数据
     MT_RPC = 27,                  // 服务器间 RPC 调用
-    MT_ServerRegister = 50,       // 服务注册
-    MT_ServerRegisterAck = 51,    // 服务注册响应
-    MT_ServerUnregister = 52,     // 服务注销
-    MT_ServerLoadReport = 53,     // 服务负载上报
-    MT_RouteQuery = 54,           // 路由查询
-    MT_RouteResponse = 55,        // 路由查询结果
-    MT_ChatMessage = 30,         // 聊天消息
-    MT_Broadcast = 40,            // 广播消息
 };
 
 // 服务器信息
@@ -145,7 +126,6 @@ private:
     float HeartbeatTimer = 0.0f;
     float HeartbeatInterval = 5.0f;
     uint32 HeartbeatSeq = 0;
-    float LastHeartbeatTime = 0.0f;
     
     // 重连
     float ReconnectTimer = 0.0f;
@@ -209,15 +189,9 @@ public:
     uint64 GetBytesReceived() const { return BytesReceived; }
     uint32 GetReconnectAttempts() const { return ReconnectAttempts; }
     
-    // 发送消息
-    bool Send(uint8 Type, const void* Data, uint32 Size);
-    bool SendRaw(const TByteArray& Data);
-    
-    // 便捷发送方法
-    bool SendPlayerLogin(uint64 PlayerId, uint32 SessionKey);
-    bool SendPlayerLogout(uint64 PlayerId);
-    bool SendChatMessage(uint64 FromPlayerId, const MString& Message);
-    bool Broadcast(uint8 Type, const void* Data, uint32 Size);
+    // 发送底层包
+    bool SendPacket(uint8 PacketType, const void* Data, uint32 Size);
+    bool SendPacketRaw(const TByteArray& Data);
     
     // 更新（主循环调用）
     void Tick(float DeltaTime);
@@ -238,11 +212,9 @@ private:
     void UpdateLogPrefix();
     bool TryConnect();
     void ProcessRecv();
-    void HandleMessage(uint8 Type, const TByteArray& Data);
+    void HandlePacket(uint8 PacketType, const TByteArray& Data);
     void SendHandshake();
-    void SendHandshakeAck();
     void SendHeartbeat();
-    void SendHeartbeatAck();
 };
 
 // 服务器连接管理统计
@@ -312,24 +284,24 @@ public:
     }
     
     // 向指定服务器发送消息
-    bool SendToServer(uint32 ServerId, uint8 Type, const void* Data, uint32 Size)
+    bool SendPacketToServer(uint32 ServerId, uint8 PacketType, const void* Data, uint32 Size)
     {
         auto Conn = GetConnection(ServerId);
         if (Conn && Conn->IsConnected())
         {
-            return Conn->Send(Type, Data, Size);
+            return Conn->SendPacket(PacketType, Data, Size);
         }
         return false;
     }
     
     // 向所有服务器广播
-    void Broadcast(uint8 Type, const void* Data, uint32 Size)
+    void BroadcastPacket(uint8 PacketType, const void* Data, uint32 Size)
     {
         for (auto& [Id, Conn] : Connections)
         {
             if (Conn->IsConnected())
             {
-                Conn->Send(Type, Data, Size);
+                Conn->SendPacket(PacketType, Data, Size);
             }
         }
     }

@@ -1,4 +1,5 @@
 #include "WorldServer.h"
+#include "Servers/World/Avatar/PlayerAvatar.h"
 #include "Common/Runtime/Config.h"
 #include "Common/Net/ServerRpcRuntime.h"
 #include "Common/Runtime/StringUtils.h"
@@ -90,6 +91,7 @@ private:
 
 MWorldServer::MWorldServer()
 {
+    AddToRoot();
     ReplicationDriver = new MReplicationDriver();
     PersistenceSubsystem.SetSink(TUniquePtr<IPersistenceSink>(new MWorldPersistenceLogSink()));
 }
@@ -139,13 +141,7 @@ bool MWorldServer::Init(int InPort)
         LOG_INFO("World persistence sink: Log");
     }
 
-    // 初始化服务器消息分发器
-    InitBackendMessageHandlers();
-    InitRouterMessageHandlers();
-    InitLoginMessageHandlers();
-
-    MWorldService::BindHandlers(this);
-
+    
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = BackendConnectionManager.AddServer(RouterConfig);
     RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
@@ -157,8 +153,8 @@ bool MWorldServer::Init(int InPort)
             QueryMgoServerRoute();
         }
     });
-    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
-        HandleRouterServerMessage(Type, Data);
+    RouterServerConn->SetOnMessage([this](auto, uint8 PacketType, const TByteArray& Data) {
+        HandleRouterServerPacket(PacketType, Data);
     });
     RouterServerConn->Connect();
 
@@ -182,8 +178,8 @@ bool MWorldServer::Init(int InPort)
     LoginServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Login server authenticated: %s", Info.ServerName.c_str());
     });
-    LoginServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
-        HandleLoginServerMessage(Type, Data);
+    LoginServerConn->SetOnMessage([this](auto, uint8 PacketType, const TByteArray& Data) {
+        HandleLoginServerPacket(PacketType, Data);
     });
 
     if (MgoServerConn)
@@ -191,11 +187,17 @@ bool MWorldServer::Init(int InPort)
         MgoServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
             LOG_INFO("Mgo server authenticated: %s", Info.ServerName.c_str());
         });
-        MgoServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
-            if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
+        MgoServerConn->SetOnMessage([this](auto, uint8 PacketType, const TByteArray& Data) {
+            if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
             {
-                LOG_DEBUG("World received MT_RPC from Mgo (%llu bytes)", static_cast<unsigned long long>(Data.size()));
+                if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer))
+                {
+                    LOG_WARN("WorldServer Mgo MT_RPC packet could not be handled via reflection");
+                }
+                return;
             }
+
+            LOG_WARN("Unexpected non-RPC mgo server message type %u", static_cast<unsigned>(PacketType));
         });
         PersistenceSubsystem.SetSink(TUniquePtr<IPersistenceSink>(new MWorldMgoRpcSink(&MgoServerConn, this)));
         LOG_INFO("World persistence sink: Mgo RPC");
@@ -224,9 +226,10 @@ void MWorldServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
         [this](uint64 Id)
         {
             TVector<uint64> PlayerIdsToRemove;
-            for (const auto& [PlayerId, Player] : Players)
+            for (const auto& [PlayerId, Avatar] : Players)
             {
-                if (Player.GatewayConnectionId == Id)
+                MPlayerSession* Player = Avatar ? Avatar->GetPlayerSession() : nullptr;
+                if (Player && Player->GetGatewayConnectionId() == Id)
                 {
                     PlayerIdsToRemove.push_back(PlayerId);
                 }
@@ -255,6 +258,17 @@ void MWorldServer::ShutdownConnections()
     LoginServerConn.reset();
     MgoServerConn.reset();
     PendingSessionValidations.clear();
+    TVector<uint64> PlayerIds;
+    PlayerIds.reserve(Players.size());
+    for (const auto& [PlayerId, Avatar] : Players)
+    {
+        (void)Avatar;
+        PlayerIds.push_back(PlayerId);
+    }
+    for (uint64 PlayerId : PlayerIds)
+    {
+        RemovePlayer(PlayerId);
+    }
     Players.clear();
     delete ReplicationDriver;
     ReplicationDriver = nullptr;
@@ -420,17 +434,28 @@ void MWorldServer::HandlePacket(uint64 ConnectionId, const TByteArray& Data)
         return;
     }
 
-    const uint8 MsgType = Data[0];
+    const uint8 PacketType = Data[0];
     const TByteArray Payload(Data.begin() + 1, Data.end());
 
-    if (MsgType == static_cast<uint8>(EServerMessageType::MT_RPC))
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
-        if (!TryInvokeServerRpc(&WorldService, Payload, ERpcType::ServerToServer))
+        const uint16 HandshakeFunctionId = MGET_STABLE_RPC_FUNCTION_ID("MWorldServer", "Rpc_OnServerHandshake");
+        const bool bAuthenticated = PeerIt->second.bAuthenticated;
+        if (!bAuthenticated && PeekServerRpcFunctionId(Payload) != HandshakeFunctionId)
+        {
+            LOG_WARN("WorldServer rejecting non-handshake MT_RPC from unauthenticated connection %llu",
+                     static_cast<unsigned long long>(ConnectionId));
+            return;
+        }
+
+        if (!TryInvokeServerRpc(this, ConnectionId, Payload, ERpcType::ServerToServer))
         {
             LOG_WARN("WorldServer backend MT_RPC packet could not be handled via reflection");
         }
         return;
     }
 
-    BackendMessageDispatcher.Dispatch(ConnectionId, MsgType, Payload);
+    LOG_WARN("WorldServer received unexpected non-RPC backend message type %u from connection %llu",
+             static_cast<unsigned>(PacketType),
+             static_cast<unsigned long long>(ConnectionId));
 }

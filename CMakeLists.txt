@@ -333,6 +333,10 @@ add_executable(SceneServer
     Source/Servers/Scene/SceneServer.cpp
     Source/Servers/Scene/SceneServerMain.cpp
 )
+target_link_libraries(SceneServer
+    PRIVATE
+        mession_netdriver
+)
 configure_mession_target(SceneServer)
 mession_attach_generated_groups(SceneServer scene)
 

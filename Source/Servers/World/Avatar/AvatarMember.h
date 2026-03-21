@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Common/Runtime/Reflect/Reflection.h"
+#include "Common/Runtime/Object/Object.h"
 
 class MPlayerAvatar;
 

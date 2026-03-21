@@ -41,8 +41,11 @@ struct SPlayerRouteBinding
 };
 
 MCLASS()
-class MRouterServer : public MNetServerBase
+class MRouterServer : public MNetServerBase, public MObject
 {
+public:
+    MGENERATED_BODY(MRouterServer, MObject, 0)
+
 private:
     SRouterConfig Config;
     TMap<uint64, SRouterPeer> Peers;
@@ -52,11 +55,10 @@ private:
     // 调试 HTTP 服务器
     TUniquePtr<MHttpDebugServer> DebugServer;
 
-    MServerMessageDispatcher PeerMessageDispatcher;
-
 public:
     MRouterServer() = default;
     ~MRouterServer() { Shutdown(); }
+    using MObject::Tick;
 
     bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
@@ -68,23 +70,27 @@ public:
     void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Router)
+    void Rpc_OnServerHandshake(uint32 ServerId, uint8 ServerTypeValue, const MString& ServerName);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Router)
+    void Rpc_OnHeartbeat(uint32 Sequence);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Router)
+    void Rpc_OnPeerServerRegister(uint32 ServerId, uint8 ServerTypeValue, const MString& ServerName, const MString& Address, uint16 Port, uint16 ZoneId);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Router)
+    void Rpc_OnPeerServerLoadReport(uint32 ServerId, uint32 CurrentLoad, uint32 Capacity);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Router)
+    void Rpc_OnPeerRouteQuery(uint32 ServerId, uint64 RequestId, uint8 RequestedTypeValue, uint64 PlayerId, uint16 ZoneId);
 
 private:
     void HandlePacket(uint64 ConnectionId, const TByteArray& Data);
-    bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload);
+    bool SendServerPacket(uint64 ConnectionId, uint8 PacketType, const TByteArray& Payload);
     template<typename TMessage>
-    bool SendServerMessage(uint64 ConnectionId, EServerMessageType Type, const TMessage& Message)
+    bool SendServerPacket(uint64 ConnectionId, EServerMessageType PacketType, const TMessage& Message)
     {
-        return SendServerMessage(ConnectionId, static_cast<uint8>(Type), BuildPayload(Message));
+        return SendServerPacket(ConnectionId, static_cast<uint8>(PacketType), BuildPayload(Message));
     }
     const SRouterPeer* SelectRouteTarget(EServerType RequestedType, uint64 PlayerId, uint16 ZoneId = 0);
     const SRouterPeer* FindRegisteredServerById(uint32 ServerId) const;
     void RemovePeer(uint64 ConnectionId);
     MString BuildDebugStatusJson() const;
-    void InitPeerMessageHandlers();
-    void OnPeer_ServerHandshake(uint64 ConnectionId, const SNodeHandshakeMessage& Message);
-    void OnPeer_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& Message);
-    void OnPeer_ServerRegister(uint64 ConnectionId, const SNodeRegisterMessage& Message);
-    void OnPeer_ServerLoadReport(uint64 ConnectionId, const SNodeLoadReportMessage& Message);
-    void OnPeer_RouteQuery(uint64 ConnectionId, const SRouteQueryMessage& Query);
 };

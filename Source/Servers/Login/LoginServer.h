@@ -7,9 +7,6 @@
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
 #include "Protocol/ServerMessages.h"
-#include "Servers/Gateway/GatewayRpcService.h"
-#include "Servers/Login/LoginRpcService.h"
-#include "Servers/World/WorldRpcService.h"
 #include <random>
 #include <thread>
 #include <chrono>
@@ -61,16 +58,10 @@ private:
     // 调试 HTTP 服务器
     TUniquePtr<MHttpDebugServer> DebugServer;
 
-    // Login 级 RPC Service（处理跨服务器 RPC）
-    MLoginService LoginService;
-
-    // 服务器消息分发器
-    MServerMessageDispatcher GatewayMessageDispatcher;
-    MServerMessageDispatcher RouterMessageDispatcher;
-
 public:
     MLoginServer();
     ~MLoginServer() { Shutdown(); }
+    using MObject::Tick;
 
     bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
@@ -82,35 +73,35 @@ public:
     void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Login)
+    void Rpc_OnServerHandshake(uint32 ServerId, uint8 ServerTypeValue, const MString& ServerName);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Login)
+    void Rpc_OnHeartbeat(uint32 Sequence);
 
     uint32 CreateSession(uint64 PlayerId, uint64 ConnectionId);
     bool ValidateSession(uint32 SessionKey, uint64& OutPlayerId);
     void RemoveSession(uint32 SessionKey);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Login)
     void Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Login)
     void Rpc_OnSessionValidateRequest(uint64 ValidationRequestId, uint64 PlayerId, uint32 SessionKey);
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Login)
     void Rpc_OnRouterServerRegisterAck(uint8 Result);
 
 private:
     void HandleGatewayPacket(uint64 ConnectionId, const TByteArray& Data);
-    bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload);
+    bool SendServerPacket(uint64 ConnectionId, uint8 PacketType, const TByteArray& Payload);
     template<typename TMessage>
-    bool SendServerMessage(uint64 ConnectionId, EServerMessageType Type, const TMessage& Message)
+    bool SendServerPacket(uint64 ConnectionId, EServerMessageType PacketType, const TMessage& Message)
     {
-        return SendServerMessage(ConnectionId, static_cast<uint8>(Type), BuildPayload(Message));
+        return SendServerPacket(ConnectionId, static_cast<uint8>(PacketType), BuildPayload(Message));
     }
-    void HandleRouterServerMessage(uint8 Type, const TByteArray& Data);
+    void HandleRouterServerPacket(uint8 PacketType, const TByteArray& Data);
     void SendRouterRegister();
     uint32 GenerateSessionKey();
     uint64 FindAuthenticatedPeerConnectionId(EServerType ServerType) const;
     MString BuildDebugStatusJson() const;
 
-    // 分发器注册与具体处理函数
-    void InitGatewayMessageHandlers();
-    void InitRouterMessageHandlers();
-    void OnGateway_ServerHandshake(uint64 ConnectionId, const TByteArray& Payload);
-    void OnGateway_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& Message);
-    void OnGateway_PlayerLogin(uint64 ConnectionId, const SPlayerLoginRequestMessage& Request);
     void OnGateway_SessionValidateRequest(uint64 ConnectionId, const SSessionValidateRequestMessage& Request);
     void OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& Message);
 };

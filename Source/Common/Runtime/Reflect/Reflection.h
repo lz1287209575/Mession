@@ -31,6 +31,12 @@ using TReflectStorage = std::remove_cv_t<std::remove_reference_t<T>>;
 class MObject
 {
 private:
+    enum : uint64
+    {
+        ObjectFlag_RootSet = 1ull << 0,
+        ObjectFlag_DefaultSubObject = 1ull << 1,
+    };
+
     inline static TMap<MString, MClass*>& GetClassMap()
     {
         static TMap<MString, MClass*> Map;
@@ -85,6 +91,8 @@ protected:
     MClass* Class = nullptr;
     uint64 ObjectFlags = 0;
     MString Name;
+    MObject* Outer = nullptr;
+    TVector<MObject*> Children;
     uint64 DirtyDomainFlags = ToMask(EPropertyDomainFlags::None);
     TSet<uint16> DirtyPropertyIds;
     
@@ -93,7 +101,11 @@ public:
         : ObjectId(MUniqueIdGenerator::Generate())
     {
     }
-    virtual ~MObject() = default;
+    MObject(const MObject&) = delete;
+    MObject& operator=(const MObject&) = delete;
+    MObject(MObject&&) = delete;
+    MObject& operator=(MObject&&) = delete;
+    virtual ~MObject();
     
     uint64 GetObjectId() const { return ObjectId; }
     void SetObjectId(uint64 InId) { ObjectId = InId; }
@@ -104,6 +116,11 @@ public:
     virtual MClass* GetClass() const { return Class; }
     uint64 GetId() const { return GetObjectId(); }
     const MString& GetName() const { return Name; }
+    void SetName(const MString& InName) { Name = InName; }
+    MObject* GetOuter() const { return Outer; }
+    const TVector<MObject*>& GetChildren() const { return Children; }
+    bool IsRooted() const { return (ObjectFlags & ObjectFlag_RootSet) != 0; }
+    bool IsDefaultSubObject() const { return (ObjectFlags & ObjectFlag_DefaultSubObject) != 0; }
     
     // 虚函数
     virtual void BeginPlay() {}
@@ -111,6 +128,7 @@ public:
     virtual void Destroy() {}
     virtual MString ToString() const;
     virtual IGeneratedClientRouteTarget* GetGeneratedClientRouteTarget() { return nullptr; }
+    virtual void VisitReferencedObjects(const TFunction<void(MObject*)>& Visitor) const;
     
     // 反射方法
     template<typename T>
@@ -267,6 +285,14 @@ public:
         Class = InClass;
     }
 
+    void SetOuter(MObject* InOuter);
+    void AddToRoot();
+    void RemoveFromRoot();
+    void SetObjectFlags(uint64 InFlags) { ObjectFlags = InFlags; }
+    void AddObjectFlags(uint64 InFlags) { ObjectFlags |= InFlags; }
+    void RemoveObjectFlags(uint64 InFlags) { ObjectFlags &= ~InFlags; }
+    uint64 GetObjectFlags() const { return ObjectFlags; }
+
     void MarkPropertyDirty(const MString& InName)
     {
         if (!Class)
@@ -367,6 +393,10 @@ public:
     }
     
 private:
+    static TSet<MObject*>& GetRootSet();
+    void AddChildObject(MObject* Child);
+    void RemoveChildObject(MObject* Child);
+
     template<typename TReturn, typename... TArgs>
     bool InvokeFunction(const MString& InName, TReturn* OutReturn, TArgs&&... Args);
 

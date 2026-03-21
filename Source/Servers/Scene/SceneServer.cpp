@@ -1,4 +1,5 @@
 #include "SceneServer.h"
+#include "Common/Net/ServerRpcRuntime.h"
 #include "Common/Runtime/Config.h"
 #include "Protocol/ServerMessages.h"
 #include "Common/Runtime/Json.h"
@@ -16,9 +17,7 @@ const TMap<MString, const char*> SceneEnvMap = {
 
 MSceneServer::MSceneServer()
 {
-    InitRouterMessageHandlers();
-    InitWorldMessageHandlers();
-}
+    }
 
 bool MSceneServer::LoadConfig(const MString& ConfigPath)
 {
@@ -182,8 +181,8 @@ void MSceneServer::ConnectToRouterServer()
         SendRouterRegister();
         QueryWorldServerRoute();
     });
-    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
-        HandleRouterServerMessage(Type, Data);
+    RouterServerConn->SetOnMessage([this](auto, uint8 PacketType, const TByteArray& Data) {
+        HandleRouterServerPacket(PacketType, Data);
     });
     RouterServerConn->Connect();
 
@@ -202,8 +201,8 @@ void MSceneServer::ConnectToWorldServer()
     WorldServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Connected to world server: %s", Info.ServerName.c_str());
     });
-    WorldServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
-        HandleWorldPacket(Type, Data);
+    WorldServerConn->SetOnMessage([this](auto, uint8 PacketType, const TByteArray& Data) {
+        HandleWorldPacket(PacketType, Data);
     });
     if (!WorldServerConn->IsConnected() && !WorldServerConn->IsConnecting())
     {
@@ -213,9 +212,18 @@ void MSceneServer::ConnectToWorldServer()
     LOG_INFO("Connecting to world server...");
 }
 
-void MSceneServer::HandleRouterServerMessage(uint8 Type, const TByteArray& Data)
+void MSceneServer::HandleRouterServerPacket(uint8 PacketType, const TByteArray& Data)
 {
-    RouterMessageDispatcher.Dispatch(Type, Data);
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
+    {
+        if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer))
+        {
+            LOG_WARN("SceneServer router MT_RPC packet could not be handled via reflection");
+        }
+        return;
+    }
+
+    LOG_WARN("Unexpected non-RPC router message type %u", static_cast<unsigned>(PacketType));
 }
 
 void MSceneServer::SendRouterRegister()
@@ -225,17 +233,19 @@ void MSceneServer::SendRouterRegister()
         return;
     }
 
-    SendTypedServerMessage(
-        RouterServerConn,
-        EServerMessageType::MT_ServerRegister,
-        SNodeRegisterMessage{
+    if (!MRpc::CallRemote(
+            RouterServerConn,
+            "MRouterServer",
+            "Rpc_OnPeerServerRegister",
             static_cast<uint32>(Config.SceneId),
-            EServerType::Scene,
+            static_cast<uint8>(EServerType::Scene),
             Config.SceneName,
-            "127.0.0.1",
+            MString("127.0.0.1"),
             Config.ListenPort,
-            Config.ZoneId
-        });
+            Config.ZoneId))
+    {
+        LOG_WARN("Scene->Router register RPC send failed");
+    }
 }
 
 void MSceneServer::SendLoadReport()
@@ -256,10 +266,16 @@ void MSceneServer::SendLoadReport()
     }
 
     constexpr uint32 MaxSceneEntities = 10000;
-    SendTypedServerMessage(
-        RouterServerConn,
-        EServerMessageType::MT_ServerLoadReport,
-        SNodeLoadReportMessage{EntityCount, MaxSceneEntities});
+    if (!MRpc::CallRemote(
+            RouterServerConn,
+            "MRouterServer",
+            "Rpc_OnPeerServerLoadReport",
+            static_cast<uint32>(Config.SceneId),
+            EntityCount,
+            MaxSceneEntities))
+    {
+        LOG_WARN("Scene->Router load report RPC send failed");
+    }
 }
 
 void MSceneServer::QueryWorldServerRoute()
@@ -269,10 +285,20 @@ void MSceneServer::QueryWorldServerRoute()
         return;
     }
 
-    SendTypedServerMessage(
-        RouterServerConn,
-        EServerMessageType::MT_RouteQuery,
-        SRouteQueryMessage{NextRouteRequestId++, EServerType::World, 0, 0});
+    const uint64 RequestId = NextRouteRequestId++;
+    if (!MRpc::CallRemote(
+            RouterServerConn,
+            "MRouterServer",
+            "Rpc_OnPeerRouteQuery",
+            static_cast<uint32>(Config.SceneId),
+            RequestId,
+            static_cast<uint8>(EServerType::World),
+            static_cast<uint64>(0),
+            static_cast<uint16>(0)))
+    {
+        LOG_WARN("Scene->Router route query RPC send failed (request=%llu)",
+                 static_cast<unsigned long long>(RequestId));
+    }
 }
 
 void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const MString& ServerName, const MString& Address, uint16 Port)
@@ -303,9 +329,18 @@ void MSceneServer::ApplyWorldServerRoute(uint32 ServerId, const MString& ServerN
     ConnectToWorldServer();
 }
 
-void MSceneServer::HandleWorldPacket(uint8 Type, const TByteArray& Data)
+void MSceneServer::HandleWorldPacket(uint8 PacketType, const TByteArray& Data)
 {
-    WorldMessageDispatcher.Dispatch(Type, Data);
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
+    {
+        if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer))
+        {
+            LOG_WARN("SceneServer world MT_RPC packet could not be handled via reflection");
+        }
+        return;
+    }
+
+    LOG_WARN("Unexpected non-RPC world server message type %u", static_cast<unsigned>(PacketType));
 }
 
 void MSceneServer::CreateDefaultScenes()
@@ -321,42 +356,6 @@ TSharedPtr<MScene> MSceneServer::GetScene(uint16 SceneId)
 {
     auto It = Scenes.find(SceneId);
     return (It != Scenes.end()) ? It->second : nullptr;
-}
-
-void MSceneServer::InitRouterMessageHandlers()
-{
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        RouterMessageDispatcher,
-        EServerMessageType::MT_ServerRegisterAck,
-        &MSceneServer::OnRouter_ServerRegisterAck,
-        "MT_ServerRegisterAck");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        RouterMessageDispatcher,
-        EServerMessageType::MT_RouteResponse,
-        &MSceneServer::OnRouter_RouteResponse,
-        "MT_RouteResponse");
-}
-
-void MSceneServer::InitWorldMessageHandlers()
-{
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        WorldMessageDispatcher,
-        EServerMessageType::MT_PlayerSwitchServer,
-        &MSceneServer::OnWorld_PlayerSwitchServer,
-        "MT_PlayerSwitchServer");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        WorldMessageDispatcher,
-        EServerMessageType::MT_PlayerLogout,
-        &MSceneServer::OnWorld_PlayerLogout,
-        "MT_PlayerLogout");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        WorldMessageDispatcher,
-        EServerMessageType::MT_PlayerDataSync,
-        &MSceneServer::OnWorld_PlayerDataSync,
-        "MT_PlayerDataSync");
 }
 
 void MSceneServer::OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& /*Message*/)
@@ -378,43 +377,79 @@ void MSceneServer::OnRouter_RouteResponse(const SRouteResponseMessage& Message)
         Message.ServerInfo.Port);
 }
 
-void MSceneServer::OnWorld_PlayerSwitchServer(const SPlayerSceneStateMessage& Message)
+void MSceneServer::Rpc_OnRouterServerRegisterAck(uint8 Result)
 {
-    auto Scene = GetScene(Message.SceneId);
+    OnRouter_ServerRegisterAck(SNodeRegisterAckMessage{Result});
+}
+
+void MSceneServer::Rpc_OnRouterRouteResponse(
+    uint64 RequestId,
+    uint8 RequestedTypeValue,
+    uint64 PlayerId,
+    bool bFound,
+    uint32 ServerId,
+    uint8 ServerTypeValue,
+    const MString& ServerName,
+    const MString& Address,
+    uint16 Port,
+    uint16 ZoneId)
+{
+    SRouteResponseMessage Message;
+    Message.RequestId = RequestId;
+    Message.RequestedType = static_cast<EServerType>(RequestedTypeValue);
+    Message.PlayerId = PlayerId;
+    Message.bFound = bFound;
+    if (bFound)
+    {
+        Message.ServerInfo = SServerInfo(
+            ServerId,
+            static_cast<EServerType>(ServerTypeValue),
+            ServerName,
+            Address,
+            Port,
+            ZoneId);
+    }
+
+    OnRouter_RouteResponse(Message);
+}
+
+void MSceneServer::Rpc_OnPlayerSwitchServer(uint64 PlayerId, uint16 SceneId, float X, float Y, float Z)
+{
+    auto Scene = GetScene(SceneId);
     if (Scene)
     {
         SSceneEntity Entity;
-        Entity.EntityId = Message.PlayerId;
-        Entity.Position = SVector(Message.X, Message.Y, Message.Z);
+        Entity.EntityId = PlayerId;
+        Entity.Position = SVector(X, Y, Z);
         Scene->AddEntity(Entity);
 
         LOG_INFO("Player %llu entered scene %d at (%.2f, %.2f, %.2f)",
-                 (unsigned long long)Message.PlayerId,
-                 Message.SceneId,
-                 Message.X,
-                 Message.Y,
-                 Message.Z);
+                 (unsigned long long)PlayerId,
+                 SceneId,
+                 X,
+                 Y,
+                 Z);
     }
 }
 
-void MSceneServer::OnWorld_PlayerLogout(const SPlayerSceneLeaveMessage& Message)
+void MSceneServer::Rpc_OnPlayerLogout(uint64 PlayerId, uint16 SceneId)
 {
-    auto Scene = GetScene(Message.SceneId);
+    auto Scene = GetScene(SceneId);
     if (Scene)
     {
-        Scene->RemoveEntity(Message.PlayerId);
+        Scene->RemoveEntity(PlayerId);
 
         LOG_INFO("Player %llu left scene %d",
-                 (unsigned long long)Message.PlayerId, Message.SceneId);
+                 (unsigned long long)PlayerId, SceneId);
     }
 }
 
-void MSceneServer::OnWorld_PlayerDataSync(const SPlayerSceneStateMessage& Message)
+void MSceneServer::Rpc_OnPlayerDataSync(uint64 PlayerId, uint16 SceneId, float X, float Y, float Z)
 {
-    auto Scene = GetScene(Message.SceneId);
+    auto Scene = GetScene(SceneId);
     if (Scene)
     {
-        Scene->UpdateEntityPosition(Message.PlayerId, SVector(Message.X, Message.Y, Message.Z));
+        Scene->UpdateEntityPosition(PlayerId, SVector(X, Y, Z));
     }
 }
 

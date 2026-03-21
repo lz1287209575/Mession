@@ -5,12 +5,10 @@
 #include "Common/Net/HttpDebugServer.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Common/Net/NetServerBase.h"
+#include "Common/Net/ServerRpcRuntime.h"
 #include "Common/Net/ServerConnection.h"
 #include "Protocol/ServerMessages.h"
 #include "Common/Net/NetMessages.h"
-#include "Servers/Gateway/GatewayRpcService.h"
-#include "Servers/Login/LoginRpcService.h"
-#include "Servers/World/WorldRpcService.h"
 #include <thread>
 #include <chrono>
 
@@ -105,17 +103,11 @@ private:
     MString LastClientFunctionName;
     MString LastClientFunctionError;
 
-    MGatewayService GatewayService;
-
-    // 服务器消息分发器
-    MServerMessageDispatcher LoginMessageDispatcher;
-    MServerMessageDispatcher WorldMessageDispatcher;
-    MServerMessageDispatcher RouterMessageDispatcher;
-    
 public:
     MGatewayServer() {}
     ~MGatewayServer() { Shutdown(); }
     IGeneratedClientRouteTarget* GetGeneratedClientRouteTarget() override { return this; }
+    using MObject::Tick;
     
     bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
@@ -137,7 +129,12 @@ public:
     void Client_Chat(uint64 ClientConnectionId, const SChatBroadcastPayload& ChatPayload);
     MFUNCTION(Client, Message=MT_Heartbeat, Reliable=false)
     void Client_Heartbeat(uint64 ClientConnectionId, const SHeartbeatMessage& Heartbeat);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Gateway)
     void Rpc_OnPlayerLoginResponse(uint64 ClientConnectionId, uint64 PlayerId, uint32 SessionKey);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Gateway)
+    void Rpc_OnPlayerLogout(uint64 PlayerId);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Gateway)
+    void Rpc_OnPlayerClientSync(uint64 PlayerId, const MString& PacketHex);
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Gateway)
     void Rpc_OnRouterServerRegisterAck(uint8 Result);
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Gateway)
@@ -167,18 +164,11 @@ private:
     EGeneratedClientDispatchResult HandleGeneratedClientRoute(const SGeneratedClientRouteRequest& Request) override;
     void HandleClientPacket(uint64 ConnectionId, const TByteArray& Data);
     bool HandleClientFunctionCall(uint64 ConnectionId, const TByteArray& Data);
-    void HandleLoginServerMessage(uint8 Type, const TByteArray& Data);
-    void HandleWorldServerMessage(uint8 Type, const TByteArray& Data);
-    void HandleRouterServerMessage(uint8 Type, const TByteArray& Data);
-
-    // 使用分发器注册 / 处理具体消息
-    void InitLoginMessageHandlers();
-    void InitWorldMessageHandlers();
-    void InitRouterMessageHandlers();
+    void HandleLoginServerPacket(uint8 PacketType, const TByteArray& Data);
+    void HandleWorldServerPacket(uint8 PacketType, const TByteArray& Data);
+    void HandleRouterServerPacket(uint8 PacketType, const TByteArray& Data);
 
     void OnLogin_PlayerLogin(const SPlayerLoginResponseMessage& Message);
-    void OnWorld_PlayerLogout(const SPlayerLogoutMessage& Message);
-    void OnWorld_PlayerClientSync(const SPlayerClientSyncMessage& Message);
     void OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& Message);
     void OnRouter_RouteResponse(const SRouteResponseMessage& Message);
     void SendRouterRegister();

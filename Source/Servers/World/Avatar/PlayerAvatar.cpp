@@ -5,6 +5,7 @@
 #include "Servers/World/Avatar/InventoryMember.h"
 #include "Servers/World/Avatar/InteractionMember.h"
 #include "Servers/World/Avatar/MovementMember.h"
+#include "Servers/World/PlayerSession.h"
 
 MPlayerAvatar::MPlayerAvatar()
 {
@@ -15,12 +16,13 @@ MPlayerAvatar::MPlayerAvatar()
     ReplicatedLocation = MActor::GetLocation();
     ReplicatedRotation = MActor::GetRotation();
     ReplicatedScale = MActor::GetScale();
+    PlayerSession = CreateDefaultSubObject<MPlayerSession>(this, "PlayerSession");
     InitializeDefaultMembers();
 }
 
 MPlayerAvatar::~MPlayerAvatar()
 {
-    for (const TUniquePtr<MAvatarMember>& Member : Members)
+    for (MAvatarMember* Member : Members)
     {
         if (Member)
         {
@@ -59,7 +61,7 @@ void MPlayerAvatar::SetOwnerPlayerId(uint64 InOwnerPlayerId)
 
     OwnerPlayerId = InOwnerPlayerId;
     SetPropertyDirty(Prop_MPlayerAvatar_OwnerPlayerId());
-    for (const TUniquePtr<MAvatarMember>& Member : Members)
+    for (MAvatarMember* Member : Members)
     {
         if (Member)
         {
@@ -92,8 +94,8 @@ void MPlayerAvatar::SetAlive(bool bInAlive)
 
 void MPlayerAvatar::InitializeDefaultMembers()
 {
-    AddMember<MMovementMember>();
-    AddMember<MAttributeMember>();
-    AddMember<MInventoryMember>();
-    AddMember<MInteractionMember>();
+    AddMember<MMovementMember>("MovementMember");
+    AddMember<MAttributeMember>("AttributeMember");
+    AddMember<MInventoryMember>("InventoryMember");
+    AddMember<MInteractionMember>("InteractionMember");
 }

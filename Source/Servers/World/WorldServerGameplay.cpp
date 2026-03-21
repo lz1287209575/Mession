@@ -1,4 +1,6 @@
 #include "WorldServer.h"
+#include "Common/Net/ServerRpcRuntime.h"
+#include "Common/Runtime/HexUtils.h"
 #include "Servers/World/Avatar/InventoryMember.h"
 #include "Servers/World/Avatar/PlayerAvatar.h"
 #include "Common/Net/NetMessages.h"
@@ -27,22 +29,45 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TByteArray& Data)
             }
 
             auto* Player = GetPlayerById(PlayerId);
-            if (!Player || !Player->Avatar)
+            MPlayerAvatar* Avatar = GetPlayerAvatarById(PlayerId);
+            if (!Player || !Avatar)
             {
                 return;
             }
 
             const SVector NewPos(MovePayload.X, MovePayload.Y, MovePayload.Z);
-            Player->Avatar->SetLocation(NewPos);
+            Avatar->SetLocation(NewPos);
 
             const SPlayerSceneStateMessage Message{
                 Player->PlayerId,
-                static_cast<uint16>(Player->CurrentSceneId),
+                static_cast<uint16>(Player->GetCurrentSceneId()),
                 NewPos.X,
                 NewPos.Y,
                 NewPos.Z
             };
-            BroadcastToScenes((uint8)EServerMessageType::MT_PlayerDataSync, BuildPayload(Message));
+            for (auto& [ConnectionId, Peer] : BackendConnections)
+            {
+                (void)ConnectionId;
+                if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Scene || !Peer.Connection)
+                {
+                    continue;
+                }
+
+                if (!MRpc::CallRemote(
+                        Peer.Connection,
+                        "MSceneServer",
+                        "Rpc_OnPlayerDataSync",
+                        Message.PlayerId,
+                        Message.SceneId,
+                        Message.X,
+                        Message.Y,
+                        Message.Z))
+                {
+                    LOG_WARN("World->Scene player data sync RPC send failed (player=%llu scene=%u)",
+                             static_cast<unsigned long long>(Message.PlayerId),
+                             static_cast<unsigned>(Message.SceneId));
+                }
+            }
 
             LOG_DEBUG("Player %llu moved to (%.2f, %.2f, %.2f)",
                      (unsigned long long)Player->PlayerId, NewPos.X, NewPos.Y, NewPos.Z);
@@ -67,8 +92,8 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TByteArray& Data)
 
             auto SendChatToPlayer = [this](uint64 InTargetPlayerId, uint64 InFromPlayerId, const MString& InMessage)
             {
-                auto TargetIt = Players.find(InTargetPlayerId);
-                if (TargetIt == Players.end() || !TargetIt->second.bOnline || TargetIt->second.GatewayConnectionId == 0)
+                MPlayerSession* TargetPlayer = GetPlayerById(InTargetPlayerId);
+                if (!TargetPlayer || !TargetPlayer->IsOnline() || TargetPlayer->GetGatewayConnectionId() == 0)
                 {
                     return;
                 }
@@ -78,21 +103,30 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TByteArray& Data)
                 ChatPacket.reserve(1 + ChatPayloadBytes.size());
                 ChatPacket.push_back(static_cast<uint8>(EClientMessageType::MT_Chat));
                 ChatPacket.insert(ChatPacket.end(), ChatPayloadBytes.begin(), ChatPayloadBytes.end());
-                SendServerMessage(
-                    TargetIt->second.GatewayConnectionId,
-                    EServerMessageType::MT_PlayerClientSync,
-                    SPlayerClientSyncMessage{InTargetPlayerId, ChatPacket});
+                auto GatewayIt = BackendConnections.find(TargetPlayer->GetGatewayConnectionId());
+                if (GatewayIt == BackendConnections.end() || !GatewayIt->second.Connection)
+                {
+                    return;
+                }
+
+                MRpc::CallRemote(
+                    GatewayIt->second.Connection,
+                    "MGatewayServer",
+                    "Rpc_OnPlayerClientSync",
+                    InTargetPlayerId,
+                    Hex::BytesToHex(ChatPacket));
             };
 
             if (ChatPayload.Message.rfind("/bag", 0) == 0)
             {
                 MPlayerSession* Player = GetPlayerById(PlayerId);
-                if (!Player || !Player->Avatar)
+                MPlayerAvatar* Avatar = GetPlayerAvatarById(PlayerId);
+                if (!Player || !Avatar)
                 {
                     return;
                 }
 
-                MInventoryMember* Inventory = Player->Avatar->GetRequiredMember<MInventoryMember>();
+                MInventoryMember* Inventory = Avatar->GetRequiredMember<MInventoryMember>();
                 if (!Inventory)
                 {
                     SendChatToPlayer(PlayerId, 0, "[bag] inventory member missing");
@@ -190,17 +224,24 @@ void MWorldServer::HandleGameplayPacket(uint64 PlayerId, const TByteArray& Data)
             ChatPacket.insert(ChatPacket.end(), ChatPayloadBytes.begin(), ChatPayloadBytes.end());
 
             uint32 DeliveredCount = 0;
-            for (const auto& [TargetPlayerId, TargetPlayer] : Players)
+            for (const auto& [TargetPlayerId, Avatar] : Players)
             {
-                if (!TargetPlayer.bOnline || TargetPlayer.GatewayConnectionId == 0)
+                MPlayerSession* TargetPlayer = Avatar ? Avatar->GetPlayerSession() : nullptr;
+                if (!TargetPlayer || !TargetPlayer->IsOnline() || TargetPlayer->GetGatewayConnectionId() == 0)
                 {
                     continue;
                 }
 
-                const bool bSent = SendServerMessage(
-                    TargetPlayer.GatewayConnectionId,
-                    EServerMessageType::MT_PlayerClientSync,
-                    SPlayerClientSyncMessage{TargetPlayerId, ChatPacket});
+                auto GatewayIt = BackendConnections.find(TargetPlayer->GetGatewayConnectionId());
+                const bool bSent =
+                    GatewayIt != BackendConnections.end() &&
+                    GatewayIt->second.Connection &&
+                    MRpc::CallRemote(
+                        GatewayIt->second.Connection,
+                        "MGatewayServer",
+                        "Rpc_OnPlayerClientSync",
+                        TargetPlayerId,
+                        Hex::BytesToHex(ChatPacket));
                 if (bSent)
                 {
                     ++DeliveredCount;

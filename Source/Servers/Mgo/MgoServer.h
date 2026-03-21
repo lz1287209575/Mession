@@ -8,7 +8,6 @@
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
 #include "Protocol/ServerMessages.h"
-#include "Servers/Mgo/MgoRpcService.h"
 
 struct SMgoConfig
 {
@@ -44,9 +43,6 @@ private:
     SMgoConfig Config;
     TMap<uint64, SMgoPeer> BackendConnections;
     TSharedPtr<MServerConnection> RouterServerConn;
-    MMgoService MgoService;
-    MServerMessageDispatcher BackendMessageDispatcher;
-    MServerMessageDispatcher RouterMessageDispatcher;
     TUniquePtr<MHttpDebugServer> DebugServer;
     TUniquePtr<MThreadPool> DbThreadPool;
     uint64 PersistRequestCount = 0;
@@ -60,6 +56,7 @@ private:
 public:
     MMgoServer() = default;
     ~MMgoServer() { Shutdown(); }
+    using MObject::Tick;
 
     bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
@@ -71,28 +68,30 @@ public:
     void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Mgo)
+    void Rpc_OnServerHandshake(uint32 ServerId, uint8 ServerTypeValue, const MString& ServerName);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Mgo)
+    void Rpc_OnHeartbeat(uint32 Sequence);
 
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Mgo)
     void Rpc_OnPersistSnapshot(uint64 ObjectId, uint16 ClassId, uint32 OwnerWorldId, uint64 RequestId, uint64 Version, const MString& ClassName, const MString& SnapshotHex);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Mgo)
     void Rpc_OnLoadSnapshotRequest(uint64 RequestId, uint64 ObjectId);
     MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true)
     void Rpc_OnRouterServerRegisterAck(uint8 Result);
 
 private:
     void HandleBackendPacket(uint64 ConnectionId, const TByteArray& Data);
-    bool SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload);
+    bool SendServerPacket(uint64 ConnectionId, uint8 PacketType, const TByteArray& Payload);
     template<typename TMessage>
-    bool SendServerMessage(uint64 ConnectionId, EServerMessageType Type, const TMessage& Message)
+    bool SendServerPacket(uint64 ConnectionId, EServerMessageType PacketType, const TMessage& Message)
     {
-        return SendServerMessage(ConnectionId, static_cast<uint8>(Type), BuildPayload(Message));
+        return SendServerPacket(ConnectionId, static_cast<uint8>(PacketType), BuildPayload(Message));
     }
 
-    void HandleRouterServerMessage(uint8 Type, const TByteArray& Data);
+    void HandleRouterServerPacket(uint8 PacketType, const TByteArray& Data);
     void SendRouterRegister();
     MString BuildDebugStatusJson() const;
-    void InitBackendMessageHandlers();
-    void InitRouterMessageHandlers();
-    void OnBackend_ServerHandshake(uint64 ConnectionId, const SNodeHandshakeMessage& Message);
-    void OnBackend_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& Message);
     void OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& Message);
     void SendPersistSnapshotResultToWorlds(uint32 OwnerWorldId, uint64 RequestId, uint64 ObjectId, uint64 Version, bool bSuccess, const MString& Reason);
     void SendLoadSnapshotResponseToWorlds(uint64 RequestId, uint64 ObjectId, bool bFound, uint16 ClassId, const MString& ClassName, const MString& SnapshotHex);

@@ -1,4 +1,5 @@
 #include "WorldServer.h"
+#include "Common/Net/ServerRpcRuntime.h"
 #include "Common/Runtime/HexUtils.h"
 #include "Common/Runtime/Time.h"
 #include "Servers/World/Avatar/PlayerAvatar.h"
@@ -48,28 +49,22 @@ void MWorldServer::Rpc_OnMgoLoadSnapshotResponse(
         return;
     }
 
-    if (!bFound)
-    {
-        return;
-    }
+    CompletePlayerLogin(
+        Pending.PlayerId,
+        Pending.GatewayConnectionId,
+        Pending.SessionKey,
+        bFound,
+        ClassId,
+        ClassName,
+        SnapshotHex);
 
-    MPlayerSession* Player = GetPlayerById(Pending.PlayerId);
-    if (!Player || !Player->Avatar)
+    if (bFound)
     {
-        return;
+        LOG_DEBUG("Loaded player state before enter world: request=%llu player=%llu class=%s",
+                  static_cast<unsigned long long>(RequestId),
+                  static_cast<unsigned long long>(Pending.PlayerId),
+                  ClassName.c_str());
     }
-
-    if (!ApplyLoadedSnapshotToPlayer(*Player, ClassId, ClassName, SnapshotHex))
-    {
-        LOG_WARN("Apply async loaded snapshot failed for player %llu", static_cast<unsigned long long>(Pending.PlayerId));
-        return;
-    }
-
-    LOG_DEBUG("Applied async loaded snapshot: request=%llu player=%llu class=%s",
-              static_cast<unsigned long long>(RequestId),
-              static_cast<unsigned long long>(Pending.PlayerId),
-              ClassName.c_str());
-    (void)SendInventoryPullToPlayer(Pending.PlayerId);
 }
 
 void MWorldServer::Rpc_OnMgoPersistSnapshotResult(
@@ -158,7 +153,27 @@ bool MWorldServer::RequestMgoLoad(uint64 PlayerId, uint64 GatewayConnectionId, u
     return true;
 }
 
-void MWorldServer::FinalizePlayerLogin(
+void MWorldServer::BeginLoadPlayerState(uint64 PlayerId, uint64 GatewayConnectionId, uint32 SessionKey)
+{
+    if (Config.EnableMgoPersistence && MgoServerConn && MgoServerConn->IsConnected())
+    {
+        if (RequestMgoLoad(PlayerId, GatewayConnectionId, SessionKey))
+        {
+            return;
+        }
+    }
+
+    CompletePlayerLogin(
+        PlayerId,
+        GatewayConnectionId,
+        SessionKey,
+        false,
+        0,
+        "",
+        "");
+}
+
+void MWorldServer::CompletePlayerLogin(
     uint64 PlayerId,
     uint64 GatewayConnectionId,
     uint32 SessionKey,
@@ -167,31 +182,34 @@ void MWorldServer::FinalizePlayerLogin(
     const MString& LoadedClassName,
     const MString& LoadedSnapshotHex)
 {
-    AddPlayer(PlayerId, "Player" + MStringUtil::ToString(PlayerId), GatewayConnectionId);
-    auto* Player = GetPlayerById(PlayerId);
-    if (!Player)
+    MPlayerAvatar* Avatar = CreateRuntimePlayer(
+        PlayerId,
+        GatewayConnectionId,
+        SessionKey);
+    if (!Avatar)
     {
         return;
     }
 
-    Player->SessionKey = SessionKey;
-
-    if (!bApplyLoadedSnapshot || !Player->Avatar)
-    {
-        (void)SendInventoryPullToPlayer(PlayerId);
-        return;
-    }
-
-    if (!ApplyLoadedSnapshotToPlayer(*Player, LoadedClassId, LoadedClassName, LoadedSnapshotHex))
+    if (bApplyLoadedSnapshot &&
+        !ApplyLoadedSnapshotToPlayer(Avatar, LoadedClassId, LoadedClassName, LoadedSnapshotHex))
     {
         LOG_WARN("Apply loaded snapshot failed for player %llu", static_cast<unsigned long long>(PlayerId));
     }
+
+    EnterWorld(Avatar);
     (void)SendInventoryPullToPlayer(PlayerId);
 }
 
-bool MWorldServer::ApplyLoadedSnapshotToPlayer(MPlayerSession& Player, uint16 ClassId, const MString& ClassName, const MString& SnapshotHex)
+bool MWorldServer::ApplyLoadedSnapshotToPlayer(MPlayerAvatar* PlayerAvatar, uint16 ClassId, const MString& ClassName, const MString& SnapshotHex)
 {
-    if (!Player.Avatar)
+    if (!PlayerAvatar)
+    {
+        return false;
+    }
+
+    MPlayerSession* Player = PlayerAvatar->GetPlayerSession();
+    if (!Player)
     {
         return false;
     }
@@ -199,11 +217,11 @@ bool MWorldServer::ApplyLoadedSnapshotToPlayer(MPlayerSession& Player, uint16 Cl
     TByteArray SnapshotBytes;
     if (!Hex::TryDecodeHex(SnapshotHex, SnapshotBytes))
     {
-        LOG_WARN("Loaded snapshot decode failed: player=%llu invalid_hex", static_cast<unsigned long long>(Player.PlayerId));
+        LOG_WARN("Loaded snapshot decode failed: player=%llu invalid_hex", static_cast<unsigned long long>(Player->PlayerId));
         return false;
     }
 
-    MClass* ClassMeta = Player.Avatar->GetClass();
+    MClass* ClassMeta = PlayerAvatar->GetClass();
     if (!ClassMeta)
     {
         return false;
@@ -212,7 +230,7 @@ bool MWorldServer::ApplyLoadedSnapshotToPlayer(MPlayerSession& Player, uint16 Cl
     if (!ClassName.empty() && ClassName != ClassMeta->GetName())
     {
         LOG_WARN("Loaded snapshot class mismatch: player=%llu avatar=%s snapshot=%s class_id=%u",
-                 static_cast<unsigned long long>(Player.PlayerId),
+                 static_cast<unsigned long long>(Player->PlayerId),
                  ClassMeta->GetName().c_str(),
                  ClassName.c_str(),
                  static_cast<unsigned>(ClassId));
@@ -220,7 +238,7 @@ bool MWorldServer::ApplyLoadedSnapshotToPlayer(MPlayerSession& Player, uint16 Cl
     }
 
     ClassMeta->ReadSnapshotByDomain(
-        Player.Avatar,
+        PlayerAvatar,
         SnapshotBytes,
         ToMask(EPropertyDomainFlags::Persistence));
     return true;
@@ -233,10 +251,19 @@ void MWorldServer::SendRouterRegister()
         return;
     }
 
-    SendTypedServerMessage(
-        RouterServerConn,
-        EServerMessageType::MT_ServerRegister,
-        SNodeRegisterMessage{Config.OwnerServerId, EServerType::World, Config.ServerName, "127.0.0.1", Config.ListenPort, Config.ZoneId});
+    if (!MRpc::CallRemote(
+            RouterServerConn,
+            "MRouterServer",
+            "Rpc_OnPeerServerRegister",
+            Config.OwnerServerId,
+            static_cast<uint8>(EServerType::World),
+            Config.ServerName,
+            MString("127.0.0.1"),
+            Config.ListenPort,
+            Config.ZoneId))
+    {
+        LOG_WARN("World->Router register RPC send failed");
+    }
 }
 
 void MWorldServer::QueryLoginServerRoute()
@@ -246,10 +273,20 @@ void MWorldServer::QueryLoginServerRoute()
         return;
     }
 
-    SendTypedServerMessage(
-        RouterServerConn,
-        EServerMessageType::MT_RouteQuery,
-        SRouteQueryMessage{NextRouteRequestId++, EServerType::Login, 0, 0});
+    const uint64 RequestId = NextRouteRequestId++;
+    if (!MRpc::CallRemote(
+            RouterServerConn,
+            "MRouterServer",
+            "Rpc_OnPeerRouteQuery",
+            Config.OwnerServerId,
+            RequestId,
+            static_cast<uint8>(EServerType::Login),
+            static_cast<uint64>(0),
+            static_cast<uint16>(0)))
+    {
+        LOG_WARN("World->Router login route query RPC send failed (request=%llu)",
+                 static_cast<unsigned long long>(RequestId));
+    }
 }
 
 void MWorldServer::QueryMgoServerRoute()
@@ -259,10 +296,20 @@ void MWorldServer::QueryMgoServerRoute()
         return;
     }
 
-    SendTypedServerMessage(
-        RouterServerConn,
-        EServerMessageType::MT_RouteQuery,
-        SRouteQueryMessage{NextRouteRequestId++, EServerType::Mgo, 0, 0});
+    const uint64 RequestId = NextRouteRequestId++;
+    if (!MRpc::CallRemote(
+            RouterServerConn,
+            "MRouterServer",
+            "Rpc_OnPeerRouteQuery",
+            Config.OwnerServerId,
+            RequestId,
+            static_cast<uint8>(EServerType::Mgo),
+            static_cast<uint64>(0),
+            static_cast<uint16>(0)))
+    {
+        LOG_WARN("World->Router mgo route query RPC send failed (request=%llu)",
+                 static_cast<unsigned long long>(RequestId));
+    }
 }
 
 void MWorldServer::SendLoadReport()
@@ -273,19 +320,26 @@ void MWorldServer::SendLoadReport()
     }
 
     uint32 OnlineCount = 0;
-    for (const auto& [PlayerId, Player] : Players)
+    for (const auto& [PlayerId, Avatar] : Players)
     {
         (void)PlayerId;
-        if (Player.bOnline)
+        MPlayerSession* Player = Avatar ? Avatar->GetPlayerSession() : nullptr;
+        if (Player && Player->IsOnline())
         {
             ++OnlineCount;
         }
     }
 
-    SendTypedServerMessage(
-        RouterServerConn,
-        EServerMessageType::MT_ServerLoadReport,
-        SNodeLoadReportMessage{OnlineCount, Config.MaxPlayers});
+    if (!MRpc::CallRemote(
+            RouterServerConn,
+            "MRouterServer",
+            "Rpc_OnPeerServerLoadReport",
+            Config.OwnerServerId,
+            OnlineCount,
+            Config.MaxPlayers))
+    {
+        LOG_WARN("World->Router load report RPC send failed");
+    }
 }
 
 void MWorldServer::ApplyLoginServerRoute(uint32 ServerId, const MString& ServerName, const MString& Address, uint16 Port)

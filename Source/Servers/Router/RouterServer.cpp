@@ -5,6 +5,8 @@
 #include "Common/Net/HttpDebugServer.h"
 #include "Common/Runtime/Json.h"
 
+#include <algorithm>
+
 namespace
 {
 const TMap<MString, const char*> RouterEnvMap = {
@@ -38,7 +40,6 @@ bool MRouterServer::Init(int InPort)
     bRunning = true;
 
     MLogger::LogStartupBanner("RouterServer", Config.ListenPort, 0);
-    InitPeerMessageHandlers();
     
     // 启动调试 HTTP 服务器（仅当配置端口 > 0 时）
     if (Config.DebugHttpPort > 0)
@@ -176,46 +177,35 @@ void MRouterServer::HandlePacket(uint64 ConnectionId, const TByteArray& Data)
         return;
     }
 
-    const uint8 MsgType = Data[0];
+    const uint8 PacketType = Data[0];
     const TByteArray Payload(Data.begin() + 1, Data.end());
-    PeerMessageDispatcher.Dispatch(ConnectionId, MsgType, Payload);
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
+    {
+        const uint16 HandshakeFunctionId = MGET_STABLE_RPC_FUNCTION_ID("MRouterServer", "Rpc_OnServerHandshake");
+        const bool bAuthenticated = PeerIt->second.bAuthenticated;
+        if (!bAuthenticated && PeekServerRpcFunctionId(Payload) != HandshakeFunctionId)
+        {
+            LOG_WARN("Router rejecting non-handshake MT_RPC from unauthenticated connection %llu",
+                     static_cast<unsigned long long>(ConnectionId));
+            return;
+        }
+
+        if (!TryInvokeServerRpc(this, ConnectionId, Payload, ERpcType::ServerToServer))
+        {
+            LOG_WARN("Router MT_RPC packet could not be handled via reflection (connection=%llu)",
+                     static_cast<unsigned long long>(ConnectionId));
+        }
+        return;
+    }
+
+    LOG_WARN("Router received unexpected non-RPC peer message type %u from connection %llu",
+             static_cast<unsigned>(PacketType),
+             static_cast<unsigned long long>(ConnectionId));
 }
 
-void MRouterServer::InitPeerMessageHandlers()
+void MRouterServer::Rpc_OnServerHandshake(uint32 ServerId, uint8 ServerTypeValue, const MString& ServerName)
 {
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        PeerMessageDispatcher,
-        EServerMessageType::MT_ServerHandshake,
-        &MRouterServer::OnPeer_ServerHandshake,
-        "MT_ServerHandshake");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        PeerMessageDispatcher,
-        EServerMessageType::MT_Heartbeat,
-        &MRouterServer::OnPeer_Heartbeat,
-        "MT_Heartbeat");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        PeerMessageDispatcher,
-        EServerMessageType::MT_ServerRegister,
-        &MRouterServer::OnPeer_ServerRegister,
-        "MT_ServerRegister");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        PeerMessageDispatcher,
-        EServerMessageType::MT_ServerLoadReport,
-        &MRouterServer::OnPeer_ServerLoadReport,
-        "MT_ServerLoadReport");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        PeerMessageDispatcher,
-        EServerMessageType::MT_RouteQuery,
-        &MRouterServer::OnPeer_RouteQuery,
-        "MT_RouteQuery");
-}
-
-void MRouterServer::OnPeer_ServerHandshake(uint64 ConnectionId, const SNodeHandshakeMessage& Message)
-{
+    const uint64 ConnectionId = GetCurrentServerRpcConnectionId();
     auto PeerIt = Peers.find(ConnectionId);
     if (PeerIt == Peers.end())
     {
@@ -223,50 +213,64 @@ void MRouterServer::OnPeer_ServerHandshake(uint64 ConnectionId, const SNodeHands
     }
 
     SRouterPeer& Peer = PeerIt->second;
-    Peer.ServerId = Message.ServerId;
-    Peer.ServerType = Message.ServerType;
-    Peer.ServerName = Message.ServerName;
+    Peer.ServerId = ServerId;
+    Peer.ServerType = static_cast<EServerType>(ServerTypeValue);
+    Peer.ServerName = ServerName;
     Peer.bAuthenticated = true;
 
-    SendServerMessage(ConnectionId, EServerMessageType::MT_ServerHandshakeAck, SEmptyServerMessage{});
     LOG_INFO("Router authenticated %s (id=%u type=%d)",
              Peer.ServerName.c_str(), Peer.ServerId, (int)Peer.ServerType);
 }
 
-void MRouterServer::OnPeer_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& /*Message*/)
+void MRouterServer::Rpc_OnHeartbeat(uint32 Sequence)
 {
-    SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
+    LOG_DEBUG("Router heartbeat received (connection=%llu seq=%u)",
+              static_cast<unsigned long long>(GetCurrentServerRpcConnectionId()),
+              static_cast<unsigned>(Sequence));
 }
 
-void MRouterServer::OnPeer_ServerRegister(uint64 ConnectionId, const SNodeRegisterMessage& Message)
+void MRouterServer::Rpc_OnPeerServerRegister(
+    uint32 ServerId,
+    uint8 ServerTypeValue,
+    const MString& ServerName,
+    const MString& Address,
+    uint16 Port,
+    uint16 ZoneId)
 {
-    auto PeerIt = Peers.find(ConnectionId);
-    if (PeerIt == Peers.end() || !PeerIt->second.bAuthenticated)
+    const EServerType ServerType = static_cast<EServerType>(ServerTypeValue);
+    auto PeerIt = std::find_if(
+        Peers.begin(),
+        Peers.end(),
+        [ServerId, ServerType](auto& Entry)
+        {
+            return Entry.second.bAuthenticated &&
+                   Entry.second.ServerId == ServerId &&
+                   Entry.second.ServerType == ServerType;
+        });
+    if (PeerIt == Peers.end())
     {
         return;
     }
 
     SRouterPeer& Peer = PeerIt->second;
-    Peer.ServerId = Message.ServerId;
-    Peer.ServerType = Message.ServerType;
-    Peer.ServerName = Message.ServerName;
-    Peer.Address = Message.Address;
-    Peer.Port = Message.Port;
-    Peer.ZoneId = Message.ZoneId;
+    Peer.ServerId = ServerId;
+    Peer.ServerType = ServerType;
+    Peer.ServerName = ServerName;
+    Peer.Address = Address;
+    Peer.Port = Port;
+    Peer.ZoneId = ZoneId;
     Peer.bRegistered = true;
 
-    MRpc::TryRpcOrTypedLegacy(
-        [&]()
-        {
-            return MRpc::Call(
-                Peer.Connection,
-                Peer.ServerType,
-                "Rpc_OnRouterServerRegisterAck",
-                static_cast<uint8>(1));
-        },
-        Peer.Connection,
-        EServerMessageType::MT_ServerRegisterAck,
-        SNodeRegisterAckMessage{1});
+    if (!MRpc::Call(
+            Peer.Connection,
+            Peer.ServerType,
+            "Rpc_OnRouterServerRegisterAck",
+            static_cast<uint8>(1)))
+    {
+        LOG_WARN("Router->%s register ack RPC send failed (server=%u)",
+                 Peer.ServerName.c_str(),
+                 Peer.ServerId);
+    }
 
     LOG_INFO("Registered server %s (id=%u type=%d addr=%s:%u)",
              Peer.ServerName.c_str(),
@@ -276,70 +280,100 @@ void MRouterServer::OnPeer_ServerRegister(uint64 ConnectionId, const SNodeRegist
              Peer.Port);
 }
 
-void MRouterServer::OnPeer_ServerLoadReport(uint64 ConnectionId, const SNodeLoadReportMessage& Message)
+void MRouterServer::Rpc_OnPeerServerLoadReport(uint32 ServerId, uint32 CurrentLoad, uint32 Capacity)
 {
+    const uint64 ConnectionId = GetCurrentServerRpcConnectionId();
     auto PeerIt = Peers.find(ConnectionId);
-    if (PeerIt == Peers.end() || !PeerIt->second.bAuthenticated)
+    if (PeerIt == Peers.end())
     {
         return;
     }
 
     SRouterPeer& Peer = PeerIt->second;
-    Peer.CurrentLoad = Message.CurrentLoad;
-    Peer.Capacity = (Message.Capacity > 0) ? Message.Capacity : 1;
+    if (!Peer.bAuthenticated || !Peer.bRegistered)
+    {
+        return;
+    }
+    if (Peer.ServerId != ServerId)
+    {
+        LOG_WARN("Router load report server id mismatch: conn=%llu expected=%u got=%u",
+                 static_cast<unsigned long long>(ConnectionId),
+                 Peer.ServerId,
+                 ServerId);
+        return;
+    }
+    Peer.CurrentLoad = CurrentLoad;
+    Peer.Capacity = (Capacity > 0) ? Capacity : 1;
 }
 
-void MRouterServer::OnPeer_RouteQuery(uint64 ConnectionId, const SRouteQueryMessage& Query)
+void MRouterServer::Rpc_OnPeerRouteQuery(
+    uint32 ServerId,
+    uint64 RequestId,
+    uint8 RequestedTypeValue,
+    uint64 PlayerId,
+    uint16 ZoneId)
 {
+    const uint64 ConnectionId = GetCurrentServerRpcConnectionId();
     auto PeerIt = Peers.find(ConnectionId);
-    if (PeerIt == Peers.end() || !PeerIt->second.bAuthenticated)
+    if (PeerIt == Peers.end())
     {
         return;
     }
 
     const SRouterPeer& Peer = PeerIt->second;
-    const SRouterPeer* Target = SelectRouteTarget(Query.RequestedType, Query.PlayerId, Query.ZoneId);
+    if (!Peer.bAuthenticated || !Peer.bRegistered)
+    {
+        return;
+    }
+    if (Peer.ServerId != ServerId)
+    {
+        LOG_WARN("Router route query server id mismatch: conn=%llu expected=%u got=%u",
+                 static_cast<unsigned long long>(ConnectionId),
+                 Peer.ServerId,
+                 ServerId);
+        return;
+    }
+    const EServerType RequestedType = static_cast<EServerType>(RequestedTypeValue);
+    const SRouterPeer* Target = SelectRouteTarget(RequestedType, PlayerId, ZoneId);
 
     SRouteResponseMessage Response;
-    Response.RequestId = Query.RequestId;
-    Response.RequestedType = Query.RequestedType;
-    Response.PlayerId = Query.PlayerId;
+    Response.RequestId = RequestId;
+    Response.RequestedType = RequestedType;
+    Response.PlayerId = PlayerId;
     Response.bFound = (Target != nullptr);
     if (Target)
     {
         Response.ServerInfo = SServerInfo(Target->ServerId, Target->ServerType, Target->ServerName, Target->Address, Target->Port, Target->ZoneId);
     }
 
-    MRpc::TryRpcOrTypedLegacy(
-        [&]()
-        {
-            return MRpc::Call(
-                Peer.Connection,
-                Peer.ServerType,
-                "Rpc_OnRouterRouteResponse",
-                Response.RequestId,
-                static_cast<uint8>(Response.RequestedType),
-                Response.PlayerId,
-                Response.bFound,
-                Response.ServerInfo.ServerId,
-                static_cast<uint8>(Response.ServerInfo.ServerType),
-                Response.ServerInfo.ServerName,
-                Response.ServerInfo.Address,
-                Response.ServerInfo.Port,
-                Response.ServerInfo.ZoneId);
-        },
-        Peer.Connection,
-        EServerMessageType::MT_RouteResponse,
-        Response);
+    if (!MRpc::Call(
+            Peer.Connection,
+            Peer.ServerType,
+            "Rpc_OnRouterRouteResponse",
+            Response.RequestId,
+            static_cast<uint8>(Response.RequestedType),
+            Response.PlayerId,
+            Response.bFound,
+            Response.ServerInfo.ServerId,
+            static_cast<uint8>(Response.ServerInfo.ServerType),
+            Response.ServerInfo.ServerName,
+            Response.ServerInfo.Address,
+            Response.ServerInfo.Port,
+            Response.ServerInfo.ZoneId))
+    {
+        LOG_WARN("Router->%s route response RPC send failed (request=%llu)",
+                 Peer.ServerName.c_str(),
+                 static_cast<unsigned long long>(Response.RequestId));
+    }
 
     LOG_INFO("Route query from %s for type=%d player=%llu result=%s",
              Peer.ServerName.c_str(),
-             (int)Query.RequestedType,
-             (unsigned long long)Query.PlayerId,
+             (int)RequestedType,
+             (unsigned long long)PlayerId,
              Target ? Target->ServerName.c_str() : "none");
 }
 
-bool MRouterServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload)
+bool MRouterServer::SendServerPacket(uint64 ConnectionId, uint8 PacketType, const TByteArray& Payload)
 {
     auto It = Peers.find(ConnectionId);
     if (It == Peers.end() || !It->second.Connection)
@@ -349,7 +383,7 @@ bool MRouterServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TBy
 
     TByteArray Packet;
     Packet.reserve(1 + Payload.size());
-    Packet.push_back(Type);
+    Packet.push_back(PacketType);
     Packet.insert(Packet.end(), Payload.begin(), Payload.end());
     return It->second.Connection->Send(Packet.data(), Packet.size());
 }

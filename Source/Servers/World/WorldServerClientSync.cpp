@@ -1,30 +1,41 @@
 #include "WorldServer.h"
+#include "Common/Net/ServerRpcRuntime.h"
+#include "Common/Runtime/HexUtils.h"
 #include "Servers/World/Avatar/InventoryMember.h"
 #include "Servers/World/Avatar/PlayerAvatar.h"
 
 bool MWorldServer::SendClientFunctionPacketToPlayer(uint64 PlayerId, const TByteArray& Packet)
 {
-    auto TargetIt = Players.find(PlayerId);
-    if (TargetIt == Players.end() || !TargetIt->second.bOnline || TargetIt->second.GatewayConnectionId == 0)
+    MPlayerSession* Player = GetPlayerById(PlayerId);
+    if (!Player || !Player->IsOnline() || Player->GetGatewayConnectionId() == 0)
     {
         return false;
     }
 
-    return SendServerMessage(
-        TargetIt->second.GatewayConnectionId,
-        EServerMessageType::MT_PlayerClientSync,
-        SPlayerClientSyncMessage{PlayerId, Packet});
+    auto GatewayIt = BackendConnections.find(Player->GetGatewayConnectionId());
+    if (GatewayIt == BackendConnections.end() || !GatewayIt->second.Connection)
+    {
+        return false;
+    }
+
+    return MRpc::CallRemote(
+        GatewayIt->second.Connection,
+        "MGatewayServer",
+        "Rpc_OnPlayerClientSync",
+        PlayerId,
+        Hex::BytesToHex(Packet));
 }
 
 bool MWorldServer::SendInventoryPullToPlayer(uint64 PlayerId)
 {
     MPlayerSession* Player = GetPlayerById(PlayerId);
-    if (!Player || !Player->Avatar)
+    MPlayerAvatar* Avatar = GetPlayerAvatarById(PlayerId);
+    if (!Player || !Avatar)
     {
         return false;
     }
 
-    MInventoryMember* Inventory = Player->Avatar->GetRequiredMember<MInventoryMember>();
+    MInventoryMember* Inventory = Avatar->GetRequiredMember<MInventoryMember>();
     if (!Inventory)
     {
         return false;

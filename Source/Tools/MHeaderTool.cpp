@@ -1595,7 +1595,30 @@ std::string BuildFunctionRegistrationBlock(const SParsedClass& ParsedClass, cons
     if (Function.Transport == "Client" && !Function.Route.empty())
     {
         Out << "    do {\n";
-        Out << "        (void)InClass;\n";
+        Out << "        auto* Func = new MFunction();\n";
+        Out << "        Func->Name = \"" << Function.Name << "\";\n";
+        Out << "        Func->Flags = " << BuildFunctionFlagsExpr(Function) << ";\n";
+        Out << "        Func->ParamSize = sizeof(" << ParamStructName << ");\n";
+        for (const auto& Param : Function.Params)
+        {
+            Out << "        Func->Params.push_back(CreateOffsetProperty<" << Param.StorageType << ">(\""
+                << Param.Name << "\", EPropertyType::" << Param.PropertyKind << ", offsetof("
+                << ParamStructName << ", " << Param.Name << ")));\n";
+        }
+        if (Function.ReturnStorageType != "void")
+        {
+            Out << "        Func->ReturnProperty = CreateOffsetProperty<" << Function.ReturnStorageType
+                << ">(\"ReturnValue\", EPropertyType::" << Function.ReturnPropertyKind << ", offsetof("
+                << ParamStructName << ", ReturnValue));\n";
+        }
+        Out << "        Func->Transport = \"" << EscapeCppStringLiteral(Function.Transport) << "\";\n";
+        Out << "        Func->MessageName = \"" << EscapeCppStringLiteral(Function.MessageName) << "\";\n";
+        Out << "        Func->RouteName = \"" << EscapeCppStringLiteral(Function.Route) << "\";\n";
+        Out << "        Func->TargetName = \"" << EscapeCppStringLiteral(Function.Target) << "\";\n";
+        Out << "        Func->AuthMode = \"" << EscapeCppStringLiteral(Function.Auth) << "\";\n";
+        Out << "        Func->WrapMode = \"" << EscapeCppStringLiteral(Function.Wrap) << "\";\n";
+        Out << "        Func->ClientParamBinder = &" << BinderFunctionName << ";\n";
+        Out << "        InClass->RegisterFunction(Func);\n";
         Out << "    } while (0);";
         return Out.str();
     }

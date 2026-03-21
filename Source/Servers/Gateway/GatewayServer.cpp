@@ -1,5 +1,7 @@
 #include "GatewayServer.h"
+#include "Common/Net/ServerRpcRuntime.h"
 #include "Common/Runtime/Config.h"
+#include "Common/Runtime/HexUtils.h"
 #include "Protocol/ServerMessages.h"
 #include "Common/Net/NetMessages.h"
 #include "Common/Net/HttpDebugServer.h"
@@ -188,12 +190,7 @@ bool MGatewayServer::Init(int InPort)
     // 设置本服务器信息
     MServerConnection::SetLocalInfo(1, EServerType::Gateway, "Gateway01");
     
-    // 初始化消息分发器
-    InitLoginMessageHandlers();
-    InitWorldMessageHandlers();
-    InitRouterMessageHandlers();
-    MGatewayService::BindHandlers(this);
-
+    
     // 初始化控制面连接（通过统一连接管理器）
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = BackendConnectionManager.AddServer(RouterConfig);
@@ -207,8 +204,8 @@ bool MGatewayServer::Init(int InPort)
         QueryRoute(EServerType::Login);
         QueryRoute(EServerType::World);
     });
-    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
-        HandleRouterServerMessage(Type, Data);
+    RouterServerConn->SetOnMessage([this](auto, uint8 PacketType, const TByteArray& Data) {
+        HandleRouterServerPacket(PacketType, Data);
     });
 
     // 初始化后端长连接（通过统一连接管理器）
@@ -225,8 +222,8 @@ bool MGatewayServer::Init(int InPort)
     LoginServerConn->SetOnAuthenticated([](auto, const SServerInfo& Info) {
         LOG_INFO("Login Server authenticated: %s", Info.ServerName.c_str());
     });
-    LoginServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
-        HandleLoginServerMessage(Type, Data);
+    LoginServerConn->SetOnMessage([this](auto, uint8 PacketType, const TByteArray& Data) {
+        HandleLoginServerPacket(PacketType, Data);
     });
     
     WorldServerConn->SetOnConnect([](auto) {
@@ -237,8 +234,8 @@ bool MGatewayServer::Init(int InPort)
         FlushPendingWorldLogins();
         FlushPendingResolvedClientRoutes(EServerType::World);
     });
-    WorldServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
-        HandleWorldServerMessage(Type, Data);
+    WorldServerConn->SetOnMessage([this](auto, uint8 PacketType, const TByteArray& Data) {
+        HandleWorldServerPacket(PacketType, Data);
     });
     
     // 优先连接 Router，由 Router 返回当前可用后端地址
@@ -287,10 +284,15 @@ void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
                 if (Client && Client->bAuthenticated && Client->PlayerId != 0 &&
                     WorldServerConn && WorldServerConn->IsConnected())
                 {
-                    SendTypedServerMessage(
-                        WorldServerConn,
-                        EServerMessageType::MT_PlayerLogout,
-                        SPlayerLogoutMessage{Client->PlayerId});
+                    if (!MRpc::CallRemote(
+                            WorldServerConn,
+                            "MWorldServer",
+                            "Rpc_OnPlayerLogout",
+                            Client->PlayerId))
+                    {
+                        LOG_WARN("Gateway->World logout RPC send failed (player=%llu)",
+                                 static_cast<unsigned long long>(Client->PlayerId));
+                    }
                 }
                 if (Client)
                 {
@@ -696,7 +698,7 @@ EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteRawToConnect
         return EGeneratedClientDispatchResult::BackendUnavailable;
     }
 
-    Connection->SendRaw(Packet);
+    Connection->SendPacketRaw(Packet);
     return EGeneratedClientDispatchResult::Routed;
 }
 
@@ -722,10 +724,18 @@ EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRoutePlayerClient
         return EGeneratedClientDispatchResult::BackendUnavailable;
     }
 
-    SendTypedServerMessage(
-        WorldServerConn,
-        EServerMessageType::MT_PlayerClientSync,
-        SPlayerClientSyncMessage{Client ? Client->PlayerId : 0, Packet});
+    const uint64 PlayerId = Client ? Client->PlayerId : 0;
+    if (!MRpc::CallRemote(
+            WorldServerConn,
+            "MWorldServer",
+            "Rpc_OnPlayerClientSync",
+            PlayerId,
+            Hex::BytesToHex(Packet)))
+    {
+        LOG_WARN("Gateway->World client sync RPC send failed (player=%llu)",
+                 static_cast<unsigned long long>(PlayerId));
+        return EGeneratedClientDispatchResult::InvokeFailed;
+    }
     return EGeneratedClientDispatchResult::Routed;
 }
 
@@ -748,25 +758,18 @@ EGeneratedClientDispatchResult MGatewayServer::ExecuteGeneratedRouteLoginRpcOrLe
         return EGeneratedClientDispatchResult::ParamBindingFailed;
     }
 
-    const bool bRpcSent = MRpc::TryRpcOrTypedLegacy(
-        [&]()
-        {
-            return MRpc::Call(
-                LoginServerConn,
-                EServerType::Login,
-                "Rpc_OnPlayerLoginRequest",
-                Request.ConnectionId,
-                RequestPayload.PlayerId);
-        },
+    const bool bRpcSent = MRpc::Call(
         LoginServerConn,
-        EServerMessageType::MT_PlayerLogin,
-        SPlayerLoginRequestMessage{Request.ConnectionId, RequestPayload.PlayerId});
+        EServerType::Login,
+        "Rpc_OnPlayerLoginRequest",
+        Request.ConnectionId,
+        RequestPayload.PlayerId);
     if (!bRpcSent)
     {
-        LOG_INFO("Generated login route forwarded via legacy path: ConnectionId=%llu, PlayerId=%llu",
+        LOG_WARN("Generated login route RPC send failed: ConnectionId=%llu, PlayerId=%llu",
                  static_cast<unsigned long long>(Request.ConnectionId),
                  static_cast<unsigned long long>(RequestPayload.PlayerId));
-        return EGeneratedClientDispatchResult::Routed;
+        return EGeneratedClientDispatchResult::BackendUnavailable;
     }
 
     LOG_INFO("Generated login route forwarded via generated RPC: ConnectionId=%llu, PlayerId=%llu",
@@ -990,77 +993,46 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
     LOG_WARN("Rejected non-function client message type %d: MT_FunctionCall is the only supported ingress", (int)MsgType);
 }
 
-void MGatewayServer::HandleLoginServerMessage(uint8 Type, const TByteArray& Data)
+void MGatewayServer::HandleLoginServerPacket(uint8 PacketType, const TByteArray& Data)
 {
-    if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
-        if (!TryInvokeServerRpc(&GatewayService, Data, ERpcType::ServerToServer))
+        if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer))
         {
             LOG_WARN("GatewayServer MT_RPC packet could not be handled via reflection");
         }
         return;
     }
 
-    LoginMessageDispatcher.Dispatch(Type, Data);
+    LOG_WARN("Unexpected non-RPC login server message type %u", static_cast<unsigned>(PacketType));
 }
 
-void MGatewayServer::HandleWorldServerMessage(uint8 Type, const TByteArray& Data)
+void MGatewayServer::HandleWorldServerPacket(uint8 PacketType, const TByteArray& Data)
 {
-    WorldMessageDispatcher.Dispatch(Type, Data);
-}
-
-void MGatewayServer::HandleRouterServerMessage(uint8 Type, const TByteArray& Data)
-{
-    if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
-        if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer) &&
-            !TryInvokeServerRpc(&GatewayService, Data, ERpcType::ServerToServer))
+        if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer))
+        {
+            LOG_WARN("GatewayServer world MT_RPC packet could not be handled via reflection");
+        }
+        return;
+    }
+
+    LOG_WARN("Unexpected non-RPC world server message type %u", static_cast<unsigned>(PacketType));
+}
+
+void MGatewayServer::HandleRouterServerPacket(uint8 PacketType, const TByteArray& Data)
+{
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
+    {
+        if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer))
         {
             LOG_WARN("GatewayServer router MT_RPC packet could not be handled via reflection");
         }
         return;
     }
 
-    RouterMessageDispatcher.Dispatch(Type, Data);
-}
-
-void MGatewayServer::InitLoginMessageHandlers()
-{
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        LoginMessageDispatcher,
-        EServerMessageType::MT_PlayerLogin,
-        &MGatewayServer::OnLogin_PlayerLogin,
-        "MT_PlayerLogin");
-}
-
-void MGatewayServer::InitWorldMessageHandlers()
-{
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        WorldMessageDispatcher,
-        EServerMessageType::MT_PlayerLogout,
-        &MGatewayServer::OnWorld_PlayerLogout,
-        "MT_PlayerLogout");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        WorldMessageDispatcher,
-        EServerMessageType::MT_PlayerClientSync,
-        &MGatewayServer::OnWorld_PlayerClientSync,
-        "MT_PlayerClientSync");
-}
-
-void MGatewayServer::InitRouterMessageHandlers()
-{
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        RouterMessageDispatcher,
-        EServerMessageType::MT_ServerRegisterAck,
-        &MGatewayServer::OnRouter_ServerRegisterAck,
-        "MT_ServerRegisterAck");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        RouterMessageDispatcher,
-        EServerMessageType::MT_RouteResponse,
-        &MGatewayServer::OnRouter_RouteResponse,
-        "MT_RouteResponse");
+    LOG_WARN("Unexpected non-RPC router message type %u", static_cast<unsigned>(PacketType));
 }
 
 void MGatewayServer::OnLogin_PlayerLogin(const SPlayerLoginResponseMessage& Message)
@@ -1110,36 +1082,43 @@ void MGatewayServer::Rpc_OnPlayerLoginResponse(uint64 ClientConnectionId, uint64
     OnLogin_PlayerLogin(SPlayerLoginResponseMessage{ClientConnectionId, PlayerId, SessionKey});
 }
 
-void MGatewayServer::OnWorld_PlayerLogout(const SPlayerLogoutMessage& Message)
+void MGatewayServer::Rpc_OnPlayerLogout(uint64 PlayerId)
 {
-    TSharedPtr<MClientConnection> Client = FindClientByPlayerId(Message.PlayerId);
+    TSharedPtr<MClientConnection> Client = FindClientByPlayerId(PlayerId);
     if (Client)
     {
         ResetClientAuthState(Client);
     }
 }
 
-void MGatewayServer::OnWorld_PlayerClientSync(const SPlayerClientSyncMessage& Message)
+void MGatewayServer::Rpc_OnPlayerClientSync(uint64 PlayerId, const MString& PacketHex)
 {
-    TSharedPtr<MClientConnection> Client = FindClientByPlayerId(Message.PlayerId);
+    TByteArray Data;
+    if (!Hex::TryDecodeHex(PacketHex, Data))
+    {
+        LOG_WARN("World sync hex decode failed for player %llu", (unsigned long long)PlayerId);
+        return;
+    }
+
+    TSharedPtr<MClientConnection> Client = FindClientByPlayerId(PlayerId);
     if (!Client || !Client->Connection)
     {
-        LOG_WARN("World sync for unknown player %llu", (unsigned long long)Message.PlayerId);
+        LOG_WARN("World sync for unknown player %llu", (unsigned long long)PlayerId);
         return;
     }
 
     LOG_INFO("Outbound client packet: connection_id=%llu player=%llu type=%s bytes=%zu",
              static_cast<unsigned long long>(Client->ConnectionId),
-             static_cast<unsigned long long>(Message.PlayerId),
-             GetClientPacketLogName(Message.Data),
-             Message.Data.size());
-    if (!Client->Connection->Send(Message.Data.data(), Message.Data.size()))
+             static_cast<unsigned long long>(PlayerId),
+             GetClientPacketLogName(Data),
+             Data.size());
+    if (!Client->Connection->Send(Data.data(), Data.size()))
     {
         LOG_WARN("Failed to forward world sync to player %llu (connection_id=%llu, connected=%s, bytes=%zu)",
-                 (unsigned long long)Message.PlayerId,
+                 (unsigned long long)PlayerId,
                  (unsigned long long)Client->ConnectionId,
                  Client->Connection->IsConnected() ? "true" : "false",
-                 Message.Data.size());
+                 Data.size());
     }
 }
 
@@ -1237,10 +1216,19 @@ void MGatewayServer::SendRouterRegister()
         return;
     }
 
-    SendTypedServerMessage(
-        RouterServerConn,
-        EServerMessageType::MT_ServerRegister,
-        SNodeRegisterMessage{1, EServerType::Gateway, "Gateway01", "127.0.0.1", Config.ListenPort});
+    if (!MRpc::CallRemote(
+            RouterServerConn,
+            "MRouterServer",
+            "Rpc_OnPeerServerRegister",
+            static_cast<uint32>(1),
+            static_cast<uint8>(EServerType::Gateway),
+            MString("Gateway01"),
+            MString("127.0.0.1"),
+            Config.ListenPort,
+            Config.ZoneId))
+    {
+        LOG_WARN("Gateway->Router register RPC send failed");
+    }
 }
 
 uint64 MGatewayServer::QueryRoute(EServerType ServerType, uint64 PlayerId)
@@ -1251,10 +1239,22 @@ uint64 MGatewayServer::QueryRoute(EServerType ServerType, uint64 PlayerId)
     }
 
     const uint64 RequestId = NextRouteRequestId++;
-    SendTypedServerMessage(
-        RouterServerConn,
-        EServerMessageType::MT_RouteQuery,
-        SRouteQueryMessage{RequestId, ServerType, PlayerId, Config.ZoneId});
+    if (!MRpc::CallRemote(
+            RouterServerConn,
+            "MRouterServer",
+            "Rpc_OnPeerRouteQuery",
+            static_cast<uint32>(1),
+            RequestId,
+            static_cast<uint8>(ServerType),
+            PlayerId,
+            Config.ZoneId))
+    {
+        LOG_WARN("Gateway->Router route query RPC send failed (request=%llu type=%d player=%llu)",
+                 static_cast<unsigned long long>(RequestId),
+                 static_cast<int>(ServerType),
+                 static_cast<unsigned long long>(PlayerId));
+        return 0;
+    }
     return RequestId;
 }
 
@@ -1320,20 +1320,19 @@ void MGatewayServer::FlushPendingWorldLogins()
     TVector<uint64> CompletedRequests;
     for (const auto& [RequestId, Pending] : PendingWorldLoginRoutes)
     {
-        MRpc::TryRpcOrTypedLegacy(
-            [&]()
-            {
-                return MRpc::Call(
-                    WorldServerConn,
-                    EServerType::World,
-                    "Rpc_OnPlayerLoginRequest",
-                    Pending.ConnectionId,
-                    Pending.PlayerId,
-                    Pending.SessionKey);
-            },
-            WorldServerConn,
-            EServerMessageType::MT_PlayerLogin,
-            SPlayerLoginResponseMessage{Pending.ConnectionId, Pending.PlayerId, Pending.SessionKey});
+        if (!MRpc::Call(
+                WorldServerConn,
+                EServerType::World,
+                "Rpc_OnPlayerLoginRequest",
+                Pending.ConnectionId,
+                Pending.PlayerId,
+                Pending.SessionKey))
+        {
+            LOG_WARN("Gateway->World login RPC send failed: request=%llu player=%llu",
+                     static_cast<unsigned long long>(RequestId),
+                     static_cast<unsigned long long>(Pending.PlayerId));
+            continue;
+        }
 
         CompletedRequests.push_back(RequestId);
     }

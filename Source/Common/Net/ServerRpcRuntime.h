@@ -139,6 +139,9 @@ inline const SRpcEndpointBinding* FindRpcEndpointByServerType(
 
 bool BuildRpcPayloadForEndpoint(const SRpcEndpointBinding& Binding, const TByteArray& InPayload, TByteArray& OutData);
 bool TryInvokeServerRpc(MObject* ServiceInstance, const TByteArray& Data, ERpcType ExpectedType);
+bool TryInvokeServerRpc(MObject* ServiceInstance, uint64 ConnectionId, const TByteArray& Data, ERpcType ExpectedType);
+uint16 PeekServerRpcFunctionId(const TByteArray& Data);
+uint64 GetCurrentServerRpcConnectionId();
 bool TryDispatchGeneratedClientMessage(
     MObject* TargetInstance,
     uint64 ConnectionId,
@@ -155,6 +158,26 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientFunction(
     uint16 FunctionId,
     const TByteArray& Payload);
 const char* GetServerTypeDisplayName(EServerType ServerType);
+inline const char* GetServerEndpointClassName(EServerType ServerType)
+{
+    switch (ServerType)
+    {
+    case EServerType::Gateway:
+        return "MGatewayServer";
+    case EServerType::Login:
+        return "MLoginServer";
+    case EServerType::World:
+        return "MWorldServer";
+    case EServerType::Scene:
+        return "MSceneServer";
+    case EServerType::Router:
+        return "MRouterServer";
+    case EServerType::Mgo:
+        return "MMgoServer";
+    default:
+        return nullptr;
+    }
+}
 bool FindGeneratedRpcEndpoint(EServerType ServerType, const char* FunctionName, SRpcEndpointBinding& OutBinding);
 bool ServerSupportsGeneratedRpc(EServerType ServerType, const char* FunctionName);
 size_t GetGeneratedRpcEntryCount();
@@ -227,8 +250,16 @@ inline bool BuildGeneratedRpcPayloadForServer(EServerType ServerType, const char
     SRpcEndpointBinding Binding;
     if (!FindGeneratedRpcEndpoint(ServerType, FunctionName, Binding))
     {
-        ReportUnsupportedGeneratedRpcEndpoint(ServerType, FunctionName);
-        return false;
+        const char* ClassName = GetServerEndpointClassName(ServerType);
+        if (!ClassName || !FunctionName)
+        {
+            ReportUnsupportedGeneratedRpcEndpoint(ServerType, FunctionName);
+            return false;
+        }
+
+        Binding.ServerType = ServerType;
+        Binding.ClassName = ClassName;
+        Binding.FunctionName = FunctionName;
     }
 
     return BuildRpcPayloadForEndpointCall(Binding, OutData, std::forward<TArgs>(Args)...);
@@ -236,33 +267,6 @@ inline bool BuildGeneratedRpcPayloadForServer(EServerType ServerType, const char
 
 namespace MRpc
 {
-template<typename TRpcCall, typename TLegacyCall>
-inline bool TryRpcOrLegacy(TRpcCall&& RpcCall, TLegacyCall&& LegacyCall)
-{
-    if (std::forward<TRpcCall>(RpcCall)())
-    {
-        return true;
-    }
-
-    std::forward<TLegacyCall>(LegacyCall)();
-    return false;
-}
-
-template<typename TRpcCall, typename TConnection, typename TMessage>
-inline bool TryRpcOrTypedLegacy(
-    TRpcCall&& RpcCall,
-    TConnection&& Connection,
-    EServerMessageType LegacyType,
-    const TMessage& LegacyMessage)
-{
-    return TryRpcOrLegacy(
-        std::forward<TRpcCall>(RpcCall),
-        [&]()
-        {
-            SendTypedServerMessage(std::forward<TConnection>(Connection), LegacyType, LegacyMessage);
-        });
-}
-
 template<typename... TArgs>
 inline bool Call(MServerConnection& Connection, EServerType ServerType, const char* FunctionName, TArgs&&... Args)
 {

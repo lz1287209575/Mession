@@ -7,6 +7,26 @@
 
 namespace
 {
+thread_local uint64 GCurrentServerRpcConnectionId = 0;
+
+class FScopedServerRpcConnectionContext
+{
+public:
+    explicit FScopedServerRpcConnectionContext(uint64 InConnectionId)
+        : PreviousConnectionId(GCurrentServerRpcConnectionId)
+    {
+        GCurrentServerRpcConnectionId = InConnectionId;
+    }
+
+    ~FScopedServerRpcConnectionContext()
+    {
+        GCurrentServerRpcConnectionId = PreviousConnectionId;
+    }
+
+private:
+    uint64 PreviousConnectionId = 0;
+};
+
 struct SGeneratedRpcUnsupportedKey
 {
     EServerType ServerType = EServerType::Unknown;
@@ -416,7 +436,7 @@ bool BuildServerRpcMessage(const TByteArray& RpcPayload, TByteArray& OutPacket)
 
 bool SendServerRpcMessage(MServerConnection& Connection, const TByteArray& RpcPayload)
 {
-    return Connection.Send(
+    return Connection.SendPacket(
         static_cast<uint8>(EServerMessageType::MT_RPC),
         RpcPayload.empty() ? nullptr : RpcPayload.data(),
         static_cast<uint32>(RpcPayload.size()));
@@ -674,6 +694,23 @@ MString BuildGeneratedRpcUnsupportedStatsJson(EServerType ServerType)
     return W.ToString();
 }
 
+uint16 PeekServerRpcFunctionId(const TByteArray& Data)
+{
+    if (Data.size() < sizeof(uint16))
+    {
+        return 0;
+    }
+
+    uint16 FunctionId = 0;
+    std::memcpy(&FunctionId, Data.data(), sizeof(FunctionId));
+    return FunctionId;
+}
+
+uint64 GetCurrentServerRpcConnectionId()
+{
+    return GCurrentServerRpcConnectionId;
+}
+
 bool TryInvokeServerRpc(MObject* ServiceInstance, const TByteArray& Data, ERpcType ExpectedType)
 {
     if (!ServiceInstance)
@@ -739,6 +776,12 @@ bool TryInvokeServerRpc(MObject* ServiceInstance, const TByteArray& Data, ERpcTy
 
     MReflectArchive Ar(Payload);
     return ServiceInstance->InvokeSerializedFunction(FuncMeta, Ar);
+}
+
+bool TryInvokeServerRpc(MObject* ServiceInstance, uint64 ConnectionId, const TByteArray& Data, ERpcType ExpectedType)
+{
+    FScopedServerRpcConnectionContext Scope(ConnectionId);
+    return TryInvokeServerRpc(ServiceInstance, Data, ExpectedType);
 }
 
 bool TryDispatchGeneratedClientMessage(

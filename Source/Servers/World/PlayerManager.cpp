@@ -1,4 +1,6 @@
 #include "WorldServer.h"
+#include "Common/Net/ServerRpcRuntime.h"
+#include "Common/Runtime/HexUtils.h"
 #include "Servers/World/Avatar/PlayerAvatar.h"
 
 namespace
@@ -70,29 +72,46 @@ private:
 };
 }
 
-void MWorldServer::AddPlayer(uint64 PlayerId, const MString& Name, uint64 GatewayConnectionId)
+MPlayerAvatar* MWorldServer::CreateRuntimePlayer(uint64 PlayerId, uint64 GatewayConnectionId, uint32 SessionKey)
 {
     if (Players.find(PlayerId) != Players.end())
+    {
+        return nullptr;
+    }
+
+    MPlayerAvatar* Avatar = NewMObject<MPlayerAvatar>(this, "PlayerAvatar");
+    Avatar->SetOwnerPlayerId(PlayerId);
+    Avatar->SetLocation(SVector(-1040, 0, 90));
+
+    MPlayerSession* Player = Avatar->GetPlayerSession();
+    if (Player)
+    {
+        Player->PlayerId = PlayerId;
+        Player->SetGatewayConnectionId(GatewayConnectionId);
+        Player->SetSessionKey(SessionKey);
+        Player->SetCurrentSceneId(1);
+        Player->SetOnline(true);
+    }
+
+    Players[PlayerId] = Avatar;
+    return Avatar;
+}
+
+void MWorldServer::EnterWorld(MPlayerAvatar* Avatar)
+{
+    if (!Avatar)
     {
         return;
     }
 
-    MPlayerSession Player;
-    Player.PlayerId = PlayerId;
-    Player.Name = Name;
-    Player.GatewayConnectionId = GatewayConnectionId;
-    Player.CurrentSceneId = 1;
-    Player.bOnline = true;
+    MPlayerSession* Player = Avatar->GetPlayerSession();
+    if (!Player)
+    {
+        return;
+    }
 
-    MPlayerAvatar* Avatar = new MPlayerAvatar();
-    Avatar->SetOwnerPlayerId(PlayerId);
-    Avatar->SetDisplayName(Name);
-    Avatar->SetLocation(SVector(-1040, 0, 90));
-
-    Player.Avatar = Avatar;
-    Players[PlayerId] = Player;
-    MPlayerSession& StoredSession = Players[PlayerId];
-    Avatar->SetPlayerSession(&StoredSession);
+    const uint64 PlayerId = Player->PlayerId;
+    const uint64 GatewayConnectionId = Player->GetGatewayConnectionId();
 
     TSharedPtr<INetConnection> ReplicationConnection = MakeShared<MGatewayClientTunnelConnection>(
         [this, GatewayConnectionId, PlayerId](const void* Data, uint32 Size) -> bool
@@ -100,10 +119,16 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const MString& Name, uint64 Gatewa
             TByteArray PacketBytes;
             const uint8* ByteData = static_cast<const uint8*>(Data);
             PacketBytes.insert(PacketBytes.end(), ByteData, ByteData + Size);
-            const bool bOk = SendServerMessage(
-                GatewayConnectionId,
-                EServerMessageType::MT_PlayerClientSync,
-                SPlayerClientSyncMessage{PlayerId, PacketBytes});
+            auto GatewayIt = BackendConnections.find(GatewayConnectionId);
+            const bool bOk =
+                GatewayIt != BackendConnections.end() &&
+                GatewayIt->second.Connection &&
+                MRpc::CallRemote(
+                    GatewayIt->second.Connection,
+                    "MGatewayServer",
+                    "Rpc_OnPlayerClientSync",
+                    PlayerId,
+                    Hex::BytesToHex(PacketBytes));
             if (!bOk)
             {
                 LOG_WARN("Tunnel send to gateway conn %llu for player %llu failed",
@@ -128,17 +153,40 @@ void MWorldServer::AddPlayer(uint64 PlayerId, const MString& Name, uint64 Gatewa
     ReplicationDriver->AddRelevantActor(PlayerId, Avatar->GetObjectId());
     ReplicationDriver->BroadcastActorCreate(Avatar);
 
+    const uint16 SceneId = static_cast<uint16>(Player ? Player->GetCurrentSceneId() : 0u);
     const SPlayerSceneStateMessage Message{
-        Player.PlayerId,
-        static_cast<uint16>(Player.CurrentSceneId),
-        Player.Avatar->GetLocation().X,
-        Player.Avatar->GetLocation().Y,
-        Player.Avatar->GetLocation().Z
+        PlayerId,
+        SceneId,
+        Avatar->GetLocation().X,
+        Avatar->GetLocation().Y,
+        Avatar->GetLocation().Z
     };
-    BroadcastToScenes((uint8)EServerMessageType::MT_PlayerSwitchServer, BuildPayload(Message));
+    for (auto& [ConnectionId, Peer] : BackendConnections)
+    {
+        (void)ConnectionId;
+        if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Scene || !Peer.Connection)
+        {
+            continue;
+        }
+
+        if (!MRpc::CallRemote(
+                Peer.Connection,
+                "MSceneServer",
+                "Rpc_OnPlayerSwitchServer",
+                Message.PlayerId,
+                Message.SceneId,
+                Message.X,
+                Message.Y,
+                Message.Z))
+        {
+            LOG_WARN("World->Scene player switch RPC send failed (player=%llu scene=%u)",
+                     static_cast<unsigned long long>(Message.PlayerId),
+                     static_cast<unsigned>(Message.SceneId));
+        }
+    }
 
     LOG_INFO("Player %s (id=%llu) added to world",
-             Name.c_str(),
+             Avatar->GetDisplayName().empty() ? "<unset>" : Avatar->GetDisplayName().c_str(),
              (unsigned long long)PlayerId);
 }
 
@@ -150,19 +198,36 @@ void MWorldServer::RemovePlayer(uint64 PlayerId)
         return;
     }
 
-    MPlayerSession& Player = It->second;
+    MPlayerAvatar* Avatar = It->second;
+    MPlayerSession* Player = Avatar ? Avatar->GetPlayerSession() : nullptr;
 
-    ReplicationDriver->RemoveConnection(Player.PlayerId);
-    if (Player.Avatar)
+    ReplicationDriver->RemoveConnection(PlayerId);
+    if (Avatar)
     {
-        Player.Avatar->SetPlayerSession(nullptr);
-        ReplicationDriver->BroadcastActorDestroy(Player.Avatar->GetObjectId());
-        delete Player.Avatar;
-        Player.Avatar = nullptr;
+        ReplicationDriver->BroadcastActorDestroy(Avatar->GetObjectId());
+        delete Avatar;
     }
-    BroadcastToScenes(
-        (uint8)EServerMessageType::MT_PlayerLogout,
-        BuildPayload(SPlayerSceneLeaveMessage{Player.PlayerId, static_cast<uint16>(Player.CurrentSceneId)}));
+    const uint16 SceneId = static_cast<uint16>(Player ? Player->GetCurrentSceneId() : 0u);
+    for (auto& [ConnectionId, Peer] : BackendConnections)
+    {
+        (void)ConnectionId;
+        if (!Peer.bAuthenticated || Peer.ServerType != EServerType::Scene || !Peer.Connection)
+        {
+            continue;
+        }
+
+        if (!MRpc::CallRemote(
+                Peer.Connection,
+                "MSceneServer",
+                "Rpc_OnPlayerLogout",
+                PlayerId,
+                SceneId))
+        {
+            LOG_WARN("World->Scene player logout RPC send failed (player=%llu scene=%u)",
+                     static_cast<unsigned long long>(PlayerId),
+                     static_cast<unsigned>(SceneId));
+        }
+    }
 
     Players.erase(It);
 
@@ -171,26 +236,32 @@ void MWorldServer::RemovePlayer(uint64 PlayerId)
 
 MPlayerSession* MWorldServer::GetPlayerById(uint64 PlayerId)
 {
+    MPlayerAvatar* Avatar = GetPlayerAvatarById(PlayerId);
+    return Avatar ? Avatar->GetPlayerSession() : nullptr;
+}
+
+MPlayerAvatar* MWorldServer::GetPlayerAvatarById(uint64 PlayerId)
+{
     auto It = Players.find(PlayerId);
-    return (It != Players.end()) ? &It->second : nullptr;
+    return (It != Players.end()) ? It->second : nullptr;
 }
 
 void MWorldServer::UpdateGameLogic(float DeltaTime)
 {
-    for (auto& [PlayerId, Player] : Players)
+    for (auto& [PlayerId, Avatar] : Players)
     {
         (void)PlayerId;
-        if (Player.Avatar)
+        if (Avatar)
         {
-            static_cast<MActor*>(Player.Avatar)->Tick(DeltaTime);
-            PersistenceSubsystem.EnqueueIfDirty(Player.Avatar, Player.Avatar->GetClass());
-            for (const TUniquePtr<MAvatarMember>& Member : Player.Avatar->GetMembers())
+            static_cast<MActor*>(Avatar)->Tick(DeltaTime);
+            PersistenceSubsystem.EnqueueIfDirty(Avatar, Avatar->GetClass());
+            for (MAvatarMember* Member : Avatar->GetMembers())
             {
                 if (!Member)
                 {
                     continue;
                 }
-                PersistenceSubsystem.EnqueueIfDirty(Member.get(), Member->GetClass());
+                PersistenceSubsystem.EnqueueIfDirty(Member, Member->GetClass());
             }
         }
     }

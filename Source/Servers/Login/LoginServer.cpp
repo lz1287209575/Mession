@@ -50,20 +50,15 @@ bool MLoginServer::Init(int InPort)
 
     MLogger::LogStartupBanner("LoginServer", Config.ListenPort, 0);
 
-    // 初始化服务器消息分发器
-    InitGatewayMessageHandlers();
-    InitRouterMessageHandlers();
-
-    MLoginService::BindHandlers(this);
-
+    
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
     RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
         LOG_INFO("Router server authenticated: %s", Info.ServerName.c_str());
         SendRouterRegister();
     });
-    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
-        HandleRouterServerMessage(Type, Data);
+    RouterServerConn->SetOnMessage([this](auto, uint8 PacketType, const TByteArray& Data) {
+        HandleRouterServerPacket(PacketType, Data);
     });
     RouterServerConn->Connect();
 
@@ -212,29 +207,33 @@ void MLoginServer::HandleGatewayPacket(uint64 ConnectionId, const TByteArray& Da
         return;
     }
 
-    const uint8 MsgType = Data[0];
+    const uint8 PacketType = Data[0];
     const TByteArray Payload(Data.begin() + 1, Data.end());
 
-    if (MsgType == static_cast<uint8>(EServerMessageType::MT_RPC))
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
-        if (!PeerIt->second.bAuthenticated)
+        const uint16 HandshakeFunctionId = MGET_STABLE_RPC_FUNCTION_ID("MLoginServer", "Rpc_OnServerHandshake");
+        const bool bAuthenticated = PeerIt->second.bAuthenticated;
+        if (!bAuthenticated && PeekServerRpcFunctionId(Payload) != HandshakeFunctionId)
         {
-            LOG_WARN("Rejecting MT_RPC from unauthenticated backend connection %llu",
+            LOG_WARN("Rejecting non-handshake MT_RPC from unauthenticated backend connection %llu",
                      (unsigned long long)ConnectionId);
             return;
         }
 
-        if (!TryInvokeServerRpc(&LoginService, Payload, ERpcType::ServerToServer))
+        if (!TryInvokeServerRpc(this, ConnectionId, Payload, ERpcType::ServerToServer))
         {
             LOG_WARN("LoginServer MT_RPC packet could not be handled via reflection");
         }
         return;
     }
 
-    GatewayMessageDispatcher.Dispatch(ConnectionId, MsgType, Payload);
+    LOG_WARN("LoginServer received unexpected non-RPC gateway message type %u from connection %llu",
+             static_cast<unsigned>(PacketType),
+             static_cast<unsigned long long>(ConnectionId));
 }
 
-bool MLoginServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload)
+bool MLoginServer::SendServerPacket(uint64 ConnectionId, uint8 PacketType, const TByteArray& Payload)
 {
     auto It = GatewayConnections.find(ConnectionId);
     if (It == GatewayConnections.end() || !It->second.Connection)
@@ -244,7 +243,7 @@ bool MLoginServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TByt
 
     TByteArray Packet;
     Packet.reserve(1 + Payload.size());
-    Packet.push_back(Type);
+    Packet.push_back(PacketType);
     Packet.insert(Packet.end(), Payload.begin(), Payload.end());
     return It->second.Connection->Send(Packet.data(), Packet.size());
 }
@@ -314,46 +313,18 @@ uint64 MLoginServer::FindAuthenticatedPeerConnectionId(EServerType ServerType) c
     return 0;
 }
 
-void MLoginServer::HandleRouterServerMessage(uint8 Type, const TByteArray& Data)
+void MLoginServer::HandleRouterServerPacket(uint8 PacketType, const TByteArray& Data)
 {
-    if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
-        if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer) &&
-            !TryInvokeServerRpc(&LoginService, Data, ERpcType::ServerToServer))
+        if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer))
         {
             LOG_WARN("LoginServer router MT_RPC packet could not be handled via reflection");
         }
         return;
     }
 
-    RouterMessageDispatcher.Dispatch(Type, Data);
-}
-
-void MLoginServer::InitGatewayMessageHandlers()
-{
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        GatewayMessageDispatcher,
-        EServerMessageType::MT_ServerHandshake,
-        &MLoginServer::OnGateway_ServerHandshake,
-        "MT_ServerHandshake");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        GatewayMessageDispatcher,
-        EServerMessageType::MT_Heartbeat,
-        &MLoginServer::OnGateway_Heartbeat,
-        "MT_Heartbeat");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        GatewayMessageDispatcher,
-        EServerMessageType::MT_PlayerLogin,
-        &MLoginServer::OnGateway_PlayerLogin,
-        "MT_PlayerLogin");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        GatewayMessageDispatcher,
-        EServerMessageType::MT_SessionValidateRequest,
-        &MLoginServer::OnGateway_SessionValidateRequest,
-        "MT_SessionValidateRequest");
+    LOG_WARN("Unexpected non-RPC router message type %u", static_cast<unsigned>(PacketType));
 }
 
 void MLoginServer::SendRouterRegister()
@@ -363,23 +334,24 @@ void MLoginServer::SendRouterRegister()
         return;
     }
 
-    SendTypedServerMessage(
-        RouterServerConn,
-        EServerMessageType::MT_ServerRegister,
-        SNodeRegisterMessage{2, EServerType::Login, "Login01", "127.0.0.1", Config.ListenPort});
+    if (!MRpc::CallRemote(
+            RouterServerConn,
+            "MRouterServer",
+            "Rpc_OnPeerServerRegister",
+            static_cast<uint32>(2),
+            static_cast<uint8>(EServerType::Login),
+            MString("Login01"),
+            MString("127.0.0.1"),
+            Config.ListenPort,
+            static_cast<uint16>(0)))
+    {
+        LOG_WARN("Login->Router register RPC send failed");
+    }
 }
 
-void MLoginServer::InitRouterMessageHandlers()
+void MLoginServer::Rpc_OnServerHandshake(uint32 ServerId, uint8 ServerTypeValue, const MString& ServerName)
 {
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        RouterMessageDispatcher,
-        EServerMessageType::MT_ServerRegisterAck,
-        &MLoginServer::OnRouter_ServerRegisterAck,
-        "MT_ServerRegisterAck");
-}
-
-void MLoginServer::OnGateway_ServerHandshake(uint64 ConnectionId, const TByteArray& Payload)
-{
+    const uint64 ConnectionId = GetCurrentServerRpcConnectionId();
     auto PeerIt = GatewayConnections.find(ConnectionId);
     if (PeerIt == GatewayConnections.end())
     {
@@ -387,96 +359,52 @@ void MLoginServer::OnGateway_ServerHandshake(uint64 ConnectionId, const TByteArr
     }
 
     SGatewayPeer& Peer = PeerIt->second;
-    if (!Peer.bAuthenticated)
-    {
-        SPlayerIdPayload IdPayload;
-        auto ParseResult = ParsePayload(Payload, IdPayload, "handshake_minimal");
-        if (ParseResult.IsOk() && IdPayload.PlayerId != 0)
-        {
-            const uint32 SessionKey = CreateSession(IdPayload.PlayerId, ConnectionId);
-            TByteArray Packet;
-            if (!BuildClientFunctionCallPacketForPayload(
-                    MClientDownlink::Id_OnLoginResponse(),
-                    SAuthLoginResultPayload{SessionKey, IdPayload.PlayerId},
-                    Packet))
-            {
-                LOG_WARN("Failed to build unified login response packet for player %llu",
-                         (unsigned long long)IdPayload.PlayerId);
-                return;
-            }
-            Peer.Connection->Send(Packet.data(), static_cast<uint32>(Packet.size()));
-
-            LOG_INFO("Player %llu logged in, session key: %u",
-                     (unsigned long long)IdPayload.PlayerId,
-                     SessionKey);
-            return;
-        }
-    }
-
-    SNodeHandshakeMessage Message;
-    auto ParseResult = ParsePayload(Payload, Message, "handshake");
-    if (!ParseResult.IsOk())
-    {
-        LOG_WARN("ParsePayload failed: %s (connection %llu)", ParseResult.GetError().c_str(), (unsigned long long)ConnectionId);
-        return;
-    }
-
-    Peer.ServerId = Message.ServerId;
-    Peer.ServerType = Message.ServerType;
-    Peer.ServerName = Message.ServerName;
+    Peer.ServerId = ServerId;
+    Peer.ServerType = static_cast<EServerType>(ServerTypeValue);
+    Peer.ServerName = ServerName;
     Peer.bAuthenticated = true;
-
-    SendServerMessage(ConnectionId, EServerMessageType::MT_ServerHandshakeAck, SEmptyServerMessage{});
     LOG_INFO("Gateway %s authenticated (id=%u)",
              Peer.ServerName.c_str(),
              Peer.ServerId);
 }
 
-void MLoginServer::OnGateway_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage& /*Message*/)
+void MLoginServer::Rpc_OnHeartbeat(uint32 Sequence)
 {
-    SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
+    LOG_DEBUG("LoginServer heartbeat received (connection=%llu seq=%u)",
+              static_cast<unsigned long long>(GetCurrentServerRpcConnectionId()),
+              static_cast<unsigned>(Sequence));
 }
 
-void MLoginServer::OnGateway_PlayerLogin(uint64 ClientConnectionId, const SPlayerLoginRequestMessage& Request)
+void MLoginServer::Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId)
 {
-    // Service RPC reaches this handler only after arriving on an authenticated backend connection.
-    // Here ClientConnectionId is the gateway-side client connection id carried as business data,
-    // not the LoginServer socket id of the backend peer.
     const uint64 GatewayPeerConnectionId = FindAuthenticatedPeerConnectionId(EServerType::Gateway);
     auto GatewayPeerIt = GatewayConnections.find(GatewayPeerConnectionId);
     if (GatewayPeerConnectionId == 0 || GatewayPeerIt == GatewayConnections.end() || !GatewayPeerIt->second.Connection)
     {
         LOG_WARN("No authenticated Gateway peer available for player login response (ClientConnId=%llu, PlayerId=%llu)",
-                 (unsigned long long)Request.ConnectionId,
-                 (unsigned long long)Request.PlayerId);
+                 (unsigned long long)ClientConnectionId,
+                 (unsigned long long)PlayerId);
         return;
     }
 
-    const uint32 SessionKey = CreateSession(Request.PlayerId, ClientConnectionId);
-    MRpc::TryRpcOrTypedLegacy(
-        [&]()
-        {
-            return MRpc::Call(
-                GatewayPeerIt->second.Connection,
-                EServerType::Gateway,
-                "Rpc_OnPlayerLoginResponse",
-                ClientConnectionId,
-                Request.PlayerId,
-                SessionKey);
-        },
-        GatewayPeerIt->second.Connection,
-        EServerMessageType::MT_PlayerLogin,
-        SPlayerLoginResponseMessage{ClientConnectionId, Request.PlayerId, SessionKey});
+    const uint32 SessionKey = CreateSession(PlayerId, ClientConnectionId);
+    if (!MRpc::Call(
+            GatewayPeerIt->second.Connection,
+            EServerType::Gateway,
+            "Rpc_OnPlayerLoginResponse",
+            ClientConnectionId,
+            PlayerId,
+            SessionKey))
+    {
+        LOG_WARN("Login->Gateway player login response RPC send failed: client=%llu player=%llu",
+                 static_cast<unsigned long long>(ClientConnectionId),
+                 static_cast<unsigned long long>(PlayerId));
+        return;
+    }
 
     LOG_INFO("Player %llu logged in, session key: %u",
-             (unsigned long long)Request.PlayerId, SessionKey);
-}
-
-void MLoginServer::Rpc_OnPlayerLoginRequest(uint64 ClientConnectionId, uint64 PlayerId)
-{
-    OnGateway_PlayerLogin(
-        ClientConnectionId,
-        SPlayerLoginRequestMessage{ClientConnectionId, PlayerId});
+             (unsigned long long)PlayerId,
+             SessionKey);
 }
 
 void MLoginServer::OnGateway_SessionValidateRequest(uint64 ValidationRequestId, const SSessionValidateRequestMessage& Request)
@@ -496,20 +424,20 @@ void MLoginServer::OnGateway_SessionValidateRequest(uint64 ValidationRequestId, 
     uint64 ValidatedPlayerId = 0;
     const bool bValid = ValidateSession(Request.SessionKey, ValidatedPlayerId) && ValidatedPlayerId == Request.PlayerId;
 
-    MRpc::TryRpcOrTypedLegacy(
-        [&]()
-        {
-            return MRpc::Call(
-                WorldPeerIt->second.Connection,
-                EServerType::World,
-                "Rpc_OnSessionValidateResponse",
-                ValidationRequestId,
-                Request.PlayerId,
-                bValid);
-        },
+    const bool bSent = MRpc::Call(
         WorldPeerIt->second.Connection,
-        EServerMessageType::MT_SessionValidateResponse,
-        SSessionValidateResponseMessage{ValidationRequestId, Request.PlayerId, bValid});
+        EServerType::World,
+        "Rpc_OnSessionValidateResponse",
+        ValidationRequestId,
+        Request.PlayerId,
+        bValid);
+    if (!bSent)
+    {
+        LOG_WARN("Login->World session validate response RPC send failed: request=%llu player=%llu",
+                 static_cast<unsigned long long>(ValidationRequestId),
+                 static_cast<unsigned long long>(Request.PlayerId));
+        return;
+    }
 
     LOG_INFO("Session validation for player %llu on connection %llu: %s",
              (unsigned long long)Request.PlayerId,

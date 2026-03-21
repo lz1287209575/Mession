@@ -1,5 +1,6 @@
 #include "MgoServer.h"
 
+#include "Common/Net/ServerRpcRuntime.h"
 #include "Common/Runtime/Config.h"
 #include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Concurrency/ThreadPool.h"
@@ -695,18 +696,15 @@ bool MMgoServer::Init(int InPort)
     bRunning = true;
     MLogger::LogStartupBanner("MgoServer", Config.ListenPort, 0);
 
-    InitBackendMessageHandlers();
-    InitRouterMessageHandlers();
-    MMgoService::BindHandlers(this);
-
+    
     SServerConnectionConfig RouterConfig(100, EServerType::Router, "Router01", Config.RouterServerAddr, Config.RouterServerPort);
     RouterServerConn = MakeShared<MServerConnection>(RouterConfig);
     RouterServerConn->SetOnAuthenticated([this](auto, const SServerInfo& Info) {
         LOG_INFO("Router server authenticated: %s", Info.ServerName.c_str());
         SendRouterRegister();
     });
-    RouterServerConn->SetOnMessage([this](auto, uint8 Type, const TByteArray& Data) {
-        HandleRouterServerMessage(Type, Data);
+    RouterServerConn->SetOnMessage([this](auto, uint8 PacketType, const TByteArray& Data) {
+        HandleRouterServerPacket(PacketType, Data);
     });
     RouterServerConn->Connect();
 
@@ -854,29 +852,33 @@ void MMgoServer::HandleBackendPacket(uint64 ConnectionId, const TByteArray& Data
         return;
     }
 
-    const uint8 MsgType = Data[0];
+    const uint8 PacketType = Data[0];
     const TByteArray Payload(Data.begin() + 1, Data.end());
 
-    if (MsgType == static_cast<uint8>(EServerMessageType::MT_RPC))
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
-        if (!PeerIt->second.bAuthenticated)
+        const uint16 HandshakeFunctionId = MGET_STABLE_RPC_FUNCTION_ID("MMgoServer", "Rpc_OnServerHandshake");
+        const bool bAuthenticated = PeerIt->second.bAuthenticated;
+        if (!bAuthenticated && PeekServerRpcFunctionId(Payload) != HandshakeFunctionId)
         {
-            LOG_WARN("Rejecting MT_RPC from unauthenticated backend connection %llu",
+            LOG_WARN("Rejecting non-handshake MT_RPC from unauthenticated backend connection %llu",
                      static_cast<unsigned long long>(ConnectionId));
             return;
         }
 
-        if (!TryInvokeServerRpc(&MgoService, Payload, ERpcType::ServerToServer))
+        if (!TryInvokeServerRpc(this, ConnectionId, Payload, ERpcType::ServerToServer))
         {
             LOG_WARN("MgoServer MT_RPC packet could not be handled via reflection");
         }
         return;
     }
 
-    BackendMessageDispatcher.Dispatch(ConnectionId, MsgType, Payload);
+    LOG_WARN("MgoServer received unexpected non-RPC backend message type %u from connection %llu",
+             static_cast<unsigned>(PacketType),
+             static_cast<unsigned long long>(ConnectionId));
 }
 
-bool MMgoServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteArray& Payload)
+bool MMgoServer::SendServerPacket(uint64 ConnectionId, uint8 PacketType, const TByteArray& Payload)
 {
     auto It = BackendConnections.find(ConnectionId);
     if (It == BackendConnections.end() || !It->second.Connection)
@@ -886,14 +888,14 @@ bool MMgoServer::SendServerMessage(uint64 ConnectionId, uint8 Type, const TByteA
 
     TByteArray Packet;
     Packet.reserve(1 + Payload.size());
-    Packet.push_back(Type);
+    Packet.push_back(PacketType);
     Packet.insert(Packet.end(), Payload.begin(), Payload.end());
     return It->second.Connection->Send(Packet.data(), Packet.size());
 }
 
-void MMgoServer::HandleRouterServerMessage(uint8 Type, const TByteArray& Data)
+void MMgoServer::HandleRouterServerPacket(uint8 PacketType, const TByteArray& Data)
 {
-    if (Type == static_cast<uint8>(EServerMessageType::MT_RPC))
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_RPC))
     {
         if (!TryInvokeServerRpc(this, Data, ERpcType::ServerToServer))
         {
@@ -902,7 +904,7 @@ void MMgoServer::HandleRouterServerMessage(uint8 Type, const TByteArray& Data)
         return;
     }
 
-    RouterMessageDispatcher.Dispatch(Type, Data);
+    LOG_WARN("Unexpected non-RPC router message type %u", static_cast<unsigned>(PacketType));
 }
 
 void MMgoServer::SendRouterRegister()
@@ -912,38 +914,24 @@ void MMgoServer::SendRouterRegister()
         return;
     }
 
-    SendTypedServerMessage(
-        RouterServerConn,
-        EServerMessageType::MT_ServerRegister,
-        SNodeRegisterMessage{6, EServerType::Mgo, Config.ServerName, "127.0.0.1", Config.ListenPort, Config.ZoneId});
+    if (!MRpc::CallRemote(
+            RouterServerConn,
+            "MRouterServer",
+            "Rpc_OnPeerServerRegister",
+            static_cast<uint32>(6),
+            static_cast<uint8>(EServerType::Mgo),
+            Config.ServerName,
+            MString("127.0.0.1"),
+            Config.ListenPort,
+            Config.ZoneId))
+    {
+        LOG_WARN("Mgo->Router register RPC send failed");
+    }
 }
 
-void MMgoServer::InitBackendMessageHandlers()
+void MMgoServer::Rpc_OnServerHandshake(uint32 ServerId, uint8 ServerTypeValue, const MString& ServerName)
 {
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        BackendMessageDispatcher,
-        EServerMessageType::MT_ServerHandshake,
-        &MMgoServer::OnBackend_ServerHandshake,
-        "MT_ServerHandshake");
-
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        BackendMessageDispatcher,
-        EServerMessageType::MT_Heartbeat,
-        &MMgoServer::OnBackend_Heartbeat,
-        "MT_Heartbeat");
-}
-
-void MMgoServer::InitRouterMessageHandlers()
-{
-    MREGISTER_SERVER_MESSAGE_HANDLER(
-        RouterMessageDispatcher,
-        EServerMessageType::MT_ServerRegisterAck,
-        &MMgoServer::OnRouter_ServerRegisterAck,
-        "MT_ServerRegisterAck");
-}
-
-void MMgoServer::OnBackend_ServerHandshake(uint64 ConnectionId, const SNodeHandshakeMessage& Message)
-{
+    const uint64 ConnectionId = GetCurrentServerRpcConnectionId();
     auto PeerIt = BackendConnections.find(ConnectionId);
     if (PeerIt == BackendConnections.end())
     {
@@ -951,18 +939,19 @@ void MMgoServer::OnBackend_ServerHandshake(uint64 ConnectionId, const SNodeHands
     }
 
     SMgoPeer& Peer = PeerIt->second;
-    Peer.ServerId = Message.ServerId;
-    Peer.ServerType = Message.ServerType;
-    Peer.ServerName = Message.ServerName;
+    Peer.ServerId = ServerId;
+    Peer.ServerType = static_cast<EServerType>(ServerTypeValue);
+    Peer.ServerName = ServerName;
     Peer.bAuthenticated = true;
 
-    SendServerMessage(ConnectionId, EServerMessageType::MT_ServerHandshakeAck, SEmptyServerMessage{});
     LOG_INFO("%s authenticated as %d", Peer.ServerName.c_str(), static_cast<int>(Peer.ServerType));
 }
 
-void MMgoServer::OnBackend_Heartbeat(uint64 ConnectionId, const SHeartbeatMessage&)
+void MMgoServer::Rpc_OnHeartbeat(uint32 Sequence)
 {
-    SendServerMessage(ConnectionId, EServerMessageType::MT_HeartbeatAck, SEmptyServerMessage{});
+    LOG_DEBUG("MgoServer heartbeat received (connection=%llu seq=%u)",
+              static_cast<unsigned long long>(GetCurrentServerRpcConnectionId()),
+              static_cast<unsigned>(Sequence));
 }
 
 void MMgoServer::OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage&)

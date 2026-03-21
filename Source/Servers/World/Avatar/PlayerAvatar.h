@@ -2,9 +2,9 @@
 
 #include "Common/Runtime/MLib.h"
 #include "Servers/World/Avatar/AvatarMember.h"
+#include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Object/NetObject.h"
 
-#include <memory>
 #include <type_traits>
 #include <utility>
 
@@ -32,7 +32,6 @@ public:
 
     void SetAlive(bool bInAlive);
     bool IsAlive() const { return bAlive; }
-    void SetPlayerSession(MPlayerSession* InPlayerSession) { PlayerSession = InPlayerSession; }
     MPlayerSession* GetPlayerSession() const { return PlayerSession; }
 
     template<typename TMember, typename... TArgs>
@@ -40,13 +39,11 @@ public:
     {
         static_assert(std::is_base_of_v<MAvatarMember, TMember>, "TMember must derive from MAvatarMember");
 
-        TUniquePtr<TMember> Member = std::make_unique<TMember>(std::forward<TArgs>(Args)...);
-        TMember* RawMember = Member.get();
-        RawMember->SetClass(TMember::StaticClass());
+        TMember* RawMember = CreateDefaultSubObject<TMember>(this, std::forward<TArgs>(Args)...);
         RawMember->SetOwnerAvatar(this);
         RawMember->SetOwnerPlayerId(OwnerPlayerId);
         RawMember->Initialize();
-        Members.push_back(std::move(Member));
+        Members.push_back(RawMember);
         return RawMember;
     }
 
@@ -55,9 +52,9 @@ public:
     {
         static_assert(std::is_base_of_v<MAvatarMember, TMember>, "TMember must derive from MAvatarMember");
 
-        for (const TUniquePtr<MAvatarMember>& Member : Members)
+        for (MAvatarMember* Member : Members)
         {
-            if (auto* TypedMember = dynamic_cast<TMember*>(Member.get()))
+            if (auto* TypedMember = dynamic_cast<TMember*>(Member))
             {
                 return TypedMember;
             }
@@ -71,7 +68,7 @@ public:
         return FindMember<TMember>();
     }
 
-    const TVector<TUniquePtr<MAvatarMember>>& GetMembers() const
+    const TVector<MAvatarMember*>& GetMembers() const
     {
         return Members;
     }
@@ -99,5 +96,5 @@ private:
     bool bAlive = true;
 
     MPlayerSession* PlayerSession = nullptr;
-    TVector<TUniquePtr<MAvatarMember>> Members;
+    TVector<MAvatarMember*> Members;
 };

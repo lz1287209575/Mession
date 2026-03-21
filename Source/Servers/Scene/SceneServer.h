@@ -6,6 +6,7 @@
 #include "Common/Runtime/Log/Logger.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
+#include "Common/Runtime/Object/Object.h"
 #include "Protocol/ServerMessages.h"
 #include "Common/Runtime/Reflect/Reflection.h"
 #include <thread>
@@ -64,8 +65,11 @@ public:
 
 // 场景服务器
 MCLASS()
-class MSceneServer : public MNetServerBase
+class MSceneServer : public MNetServerBase, public MObject
 {
+public:
+    MGENERATED_BODY(MSceneServer, MObject, 0)
+
 private:
     SSceneConfig Config;
     // 后端服务器连接管理器（Router/World 等）
@@ -80,13 +84,10 @@ private:
     // 调试 HTTP 服务器
     TUniquePtr<MHttpDebugServer> DebugServer;
 
-    // 服务器消息分发器
-    MServerMessageDispatcher RouterMessageDispatcher;
-    MServerMessageDispatcher WorldMessageDispatcher;
-
 public:
     MSceneServer();
     ~MSceneServer() { Shutdown(); }
+    using MObject::Tick;
 
     bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
@@ -98,28 +99,31 @@ public:
     void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Scene)
+    void Rpc_OnRouterServerRegisterAck(uint8 Result);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Scene)
+    void Rpc_OnRouterRouteResponse(uint64 RequestId, uint8 RequestedTypeValue, uint64 PlayerId, bool bFound, uint32 ServerId, uint8 ServerTypeValue, const MString& ServerName, const MString& Address, uint16 Port, uint16 ZoneId);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Scene)
+    void Rpc_OnPlayerSwitchServer(uint64 PlayerId, uint16 SceneId, float X, float Y, float Z);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Scene)
+    void Rpc_OnPlayerLogout(uint64 PlayerId, uint16 SceneId);
+    MFUNCTION(NetServer, Rpc=ServerToServer, Reliable=true, Endpoint=Scene)
+    void Rpc_OnPlayerDataSync(uint64 PlayerId, uint16 SceneId, float X, float Y, float Z);
 
 private:
     void ConnectToRouterServer();
     void ConnectToWorldServer();
-    void HandleRouterServerMessage(uint8 Type, const TByteArray& Data);
+    void HandleRouterServerPacket(uint8 PacketType, const TByteArray& Data);
     void SendRouterRegister();
     void QueryWorldServerRoute();
     void SendLoadReport();
     void ApplyWorldServerRoute(uint32 ServerId, const MString& ServerName, const MString& Address, uint16 Port);
-    void HandleWorldPacket(uint8 Type, const TByteArray& Data);
+    void HandleWorldPacket(uint8 PacketType, const TByteArray& Data);
     void CreateDefaultScenes();
     TSharedPtr<MScene> GetScene(uint16 SceneId);
     MString BuildDebugStatusJson() const;
 
-    // 分发器注册与具体处理函数
-    void InitRouterMessageHandlers();
-    void InitWorldMessageHandlers();
-
     void OnRouter_ServerRegisterAck(const SNodeRegisterAckMessage& Message);
     void OnRouter_RouteResponse(const SRouteResponseMessage& Message);
 
-    void OnWorld_PlayerSwitchServer(const SPlayerSceneStateMessage& Message);
-    void OnWorld_PlayerLogout(const SPlayerSceneLeaveMessage& Message);
-    void OnWorld_PlayerDataSync(const SPlayerSceneStateMessage& Message);
 };
