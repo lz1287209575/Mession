@@ -160,6 +160,100 @@ inline TByteArray BuildRpcArgsPayload(TArgs&&... Args)
     return std::move(Ar.Data);
 }
 
+inline bool SerializeArchiveValue(MReflectArchive& Ar, MString& Value)
+{
+    Ar << Value;
+    return !Ar.bReadOverflow;
+}
+
+inline bool SerializeArchiveValue(MReflectArchive& Ar, SVector& Value)
+{
+    Ar << Value;
+    return !Ar.bReadOverflow;
+}
+
+inline bool SerializeArchiveValue(MReflectArchive& Ar, SRotator& Value)
+{
+    Ar << Value;
+    return !Ar.bReadOverflow;
+}
+
+template<typename TValue, std::enable_if_t<std::is_arithmetic_v<TValue> || std::is_enum_v<TValue>, int> = 0>
+inline bool SerializeArchiveValue(MReflectArchive& Ar, TValue& Value)
+{
+    Ar << Value;
+    return !Ar.bReadOverflow;
+}
+
+template<typename TValue,
+         std::enable_if_t<
+             std::is_trivially_copyable_v<TValue> &&
+             !std::is_arithmetic_v<TValue> &&
+             !std::is_enum_v<TValue> &&
+             !std::is_same_v<TValue, MString> &&
+             !std::is_same_v<TValue, SVector> &&
+             !std::is_same_v<TValue, SRotator>, int> = 0>
+inline bool SerializeArchiveValue(MReflectArchive& Ar, TValue& Value)
+{
+    Ar << Value;
+    return !Ar.bReadOverflow;
+}
+
+template<typename TElement>
+inline bool SerializeArchiveValue(MReflectArchive& Ar, TVector<TElement>& Values)
+{
+    uint32 Count = static_cast<uint32>(Values.size());
+    Ar << Count;
+    if (Ar.bReadOverflow)
+    {
+        return false;
+    }
+
+    if (Ar.bWriting)
+    {
+        for (TElement& Value : Values)
+        {
+            if (!SerializeArchiveValue(Ar, Value))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    Values.clear();
+    Values.reserve(Count);
+    for (uint32 Index = 0; Index < Count; ++Index)
+    {
+        TElement Value{};
+        if (!SerializeArchiveValue(Ar, Value))
+        {
+            return false;
+        }
+        Values.push_back(std::move(Value));
+    }
+    return true;
+}
+
+template<typename TValue,
+         std::enable_if_t<
+             !std::is_arithmetic_v<TValue> &&
+             !std::is_enum_v<TValue> &&
+             !std::is_same_v<TValue, MString> &&
+             !std::is_same_v<TValue, SVector> &&
+             !std::is_same_v<TValue, SRotator> &&
+             !std::is_trivially_copyable_v<TValue>, int> = 0>
+inline bool SerializeArchiveValue(MReflectArchive& Ar, TValue& Value)
+{
+    if (MClass* StructMeta = MObject::FindStruct(std::type_index(typeid(TValue))))
+    {
+        StructMeta->WriteSnapshot(&Value, Ar);
+        return !Ar.bReadOverflow;
+    }
+
+    return false;
+}
+
 template<typename TArg>
 inline bool SerializeFunctionArgByMeta(MReflectArchive& Ar, const MProperty* Prop, TArg&& Arg)
 {
@@ -175,8 +269,7 @@ inline bool SerializeFunctionArgByMeta(MReflectArchive& Ar, const MProperty* Pro
     }
 
     TStorage Copy = static_cast<TStorage>(Arg);
-    Ar << Copy;
-    return true;
+    return SerializeArchiveValue(Ar, Copy);
 }
 
 inline bool SerializeFunctionArgsByMeta(const MFunction* Func, MReflectArchive&)

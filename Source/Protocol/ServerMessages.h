@@ -1,10 +1,13 @@
 #pragma once
 
 #include "Protocol/Messages/ControlPlaneMessages.h"
+#include "Protocol/Messages/AppMessages.h"
 #include "Protocol/Messages/AuthSessionMessages.h"
 #include "Protocol/Messages/SceneSyncMessages.h"
 #include "Protocol/Messages/InventoryMessages.h"
 #include "Protocol/Messages/ChatMessages.h"
+#include "Protocol/Messages/ClientCallMessages.h"
+#include "Protocol/Messages/WorldPlayerMessages.h"
 #include "Common/Serialization/MessageReader.h"
 #include "Common/Serialization/MessageWriter.h"
 #include "Common/Runtime/Object/Result.h"

@@ -6,6 +6,9 @@ MSTRUCT()
 struct SPlayerLoginRequestMessage
 {
     MPROPERTY()
+    uint64 RequestId = 0;
+
+    MPROPERTY()
     uint64 ConnectionId = 0;
 
     MPROPERTY()
@@ -15,6 +18,9 @@ struct SPlayerLoginRequestMessage
 MSTRUCT()
 struct SPlayerLoginResponseMessage
 {
+    MPROPERTY()
+    uint64 RequestId = 0;
+
     MPROPERTY()
     uint64 ConnectionId = 0;
 
@@ -66,11 +72,41 @@ struct SPlayerIdPayload
 };
 
 MSTRUCT()
-struct SAuthLoginResultPayload
+struct FLoginIssueSessionRequest
 {
     MPROPERTY()
-    uint32 SessionKey = 0;
+    uint64 PlayerId = 0;
 
     MPROPERTY()
+    uint64 GatewayConnectionId = 0;
+};
+
+MSTRUCT()
+struct FLoginIssueSessionResponse
+{
+    MPROPERTY()
     uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint32 SessionKey = 0;
+};
+
+MSTRUCT()
+struct FLoginValidateSessionRequest
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint32 SessionKey = 0;
+};
+
+MSTRUCT()
+struct FLoginValidateSessionResponse
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    bool bValid = false;
 };

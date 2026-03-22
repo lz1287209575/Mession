@@ -1,13 +1,20 @@
 #include "Common/Net/ServerRpcRuntime.h"
 
+#include "Common/Net/ClientDownlink.h"
 #include "Common/Runtime/Json.h"
 #include "Common/Runtime/Log/Logger.h"
 
+#include <atomic>
+#include <cstring>
 #include <mutex>
 
 namespace
 {
 thread_local uint64 GCurrentServerRpcConnectionId = 0;
+thread_local uint64 GCurrentClientConnectionId = 0;
+thread_local SGeneratedClientCallContext GCurrentClientCallContext;
+thread_local bool GCurrentClientCallDeferred = false;
+thread_local SGeneratedServerCallContext GCurrentServerCallContext;
 
 class FScopedServerRpcConnectionContext
 {
@@ -25,6 +32,64 @@ public:
 
 private:
     uint64 PreviousConnectionId = 0;
+};
+
+class FScopedClientConnectionContext
+{
+public:
+    explicit FScopedClientConnectionContext(uint64 InConnectionId)
+        : PreviousConnectionId(GCurrentClientConnectionId)
+    {
+        GCurrentClientConnectionId = InConnectionId;
+    }
+
+    ~FScopedClientConnectionContext()
+    {
+        GCurrentClientConnectionId = PreviousConnectionId;
+    }
+
+private:
+    uint64 PreviousConnectionId = 0;
+};
+
+class FScopedClientCallContext
+{
+public:
+    explicit FScopedClientCallContext(const SGeneratedClientCallContext& InContext)
+        : PreviousContext(GCurrentClientCallContext)
+        , PreviousDeferred(GCurrentClientCallDeferred)
+    {
+        GCurrentClientCallContext = InContext;
+        GCurrentClientCallDeferred = false;
+    }
+
+    ~FScopedClientCallContext()
+    {
+        GCurrentClientCallContext = PreviousContext;
+        GCurrentClientCallDeferred = PreviousDeferred;
+    }
+
+private:
+    SGeneratedClientCallContext PreviousContext;
+    bool PreviousDeferred = false;
+};
+
+class FScopedServerCallContext
+{
+public:
+    explicit FScopedServerCallContext(const SGeneratedServerCallContext& InContext)
+        : PreviousContext(GCurrentServerCallContext)
+    {
+        GCurrentServerCallContext = InContext;
+    }
+
+    ~FScopedServerCallContext()
+    {
+        GCurrentServerCallContext = PreviousContext;
+    }
+
+private:
+    SGeneratedServerCallContext PreviousContext;
 };
 
 struct SGeneratedRpcUnsupportedKey
@@ -45,6 +110,10 @@ struct SGeneratedRpcUnsupportedKey
 
 std::mutex GGeneratedRpcUnsupportedMutex;
 TMap<SGeneratedRpcUnsupportedKey, uint64> GGeneratedRpcUnsupportedCounts;
+
+std::atomic<uint64> GNextGeneratedServerCallId{1};
+std::mutex GGeneratedServerCallMutex;
+TMap<uint64, TFunction<void(const SGeneratedServerCallResponse&)>> GPendingGeneratedServerCalls;
 
 struct SGeneratedClientEntry
 {
@@ -90,32 +159,6 @@ const char* GetClientMessageTypeName(EClientMessageType MessageType)
     default:
         return "Unknown";
     }
-}
-
-const char* ResolveClientDownlinkFunctionName(uint16 FunctionId)
-{
-    if (FunctionId == MClientDownlink::Id_OnLoginResponse())
-    {
-        return MClientDownlink::OnLoginResponse;
-    }
-    if (FunctionId == MClientDownlink::Id_OnActorCreate())
-    {
-        return MClientDownlink::OnActorCreate;
-    }
-    if (FunctionId == MClientDownlink::Id_OnActorUpdate())
-    {
-        return MClientDownlink::OnActorUpdate;
-    }
-    if (FunctionId == MClientDownlink::Id_OnActorDestroy())
-    {
-        return MClientDownlink::OnActorDestroy;
-    }
-    if (FunctionId == MClientDownlink::Id_OnInventoryPull())
-    {
-        return MClientDownlink::OnInventoryPull;
-    }
-
-    return nullptr;
 }
 
 SGeneratedClientRouteRequest::ERouteKind ParseGeneratedClientRouteKind(const char* RouteName)
@@ -217,6 +260,11 @@ EServerType ParseGeneratedClientTargetServerType(const char* TargetName)
     return EServerType::Unknown;
 }
 
+bool IsGeneratedServerCallFunction(const MFunction* Function)
+{
+    return Function && Function->Transport == "ServerCall";
+}
+
 bool FindGeneratedClientEntryByMessage(
     const MClass* TargetClass,
     EClientMessageType MessageType,
@@ -282,6 +330,7 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientEntry(
     MObject* TargetInstance,
     uint64 ConnectionId,
     const SGeneratedClientEntry& Entry,
+    uint64 CallId,
     EClientMessageType MessageType,
     const TByteArray& Payload)
 {
@@ -290,6 +339,8 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientEntry(
     {
         return Outcome;
     }
+
+    FScopedClientConnectionContext Scope(ConnectionId);
 
     Outcome.OwnerType = Entry.OwnerClass ? Entry.OwnerClass->GetName().c_str() : nullptr;
     Outcome.FunctionName = Entry.Function->Name.c_str();
@@ -348,6 +399,58 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientEntry(
         return Outcome;
     }
 
+    if (Entry.Function->ClientCallHandler)
+    {
+        auto* ResponseTarget = TargetInstance->GetGeneratedClientResponseTarget();
+        if (!ResponseTarget)
+        {
+            LOG_WARN("Generated client call response target unsupported: class=%s function=%s",
+                     TargetClass->GetName().c_str(),
+                     Entry.Function->Name.c_str());
+            Outcome.Result = EGeneratedClientDispatchResult::RouteTargetUnsupported;
+            return Outcome;
+        }
+
+        const SGeneratedClientCallContext ClientCallContext{
+            ConnectionId,
+            Entry.Function->FunctionId,
+            CallId,
+            ResponseTarget,
+        };
+        FScopedClientCallContext ClientCallScope(ClientCallContext);
+
+        TByteArray ResponsePayload;
+        const EGeneratedClientCallHandlerResult HandlerResult =
+            Entry.Function->ClientCallHandler(TargetInstance, ConnectionId, Payload, ResponsePayload);
+        if (HandlerResult == EGeneratedClientCallHandlerResult::Failed)
+        {
+            LOG_WARN("Generated client call invoke failed: class=%s function=%s",
+                     TargetClass->GetName().c_str(),
+                     Entry.Function->Name.c_str());
+            Outcome.Result = EGeneratedClientDispatchResult::InvokeFailed;
+            return Outcome;
+        }
+
+        if (HandlerResult == EGeneratedClientCallHandlerResult::Deferred)
+        {
+            Outcome.Result = EGeneratedClientDispatchResult::Handled;
+            return Outcome;
+        }
+
+        if (!ResponseTarget->SendGeneratedClientResponse(ConnectionId, Entry.Function->FunctionId, CallId, ResponsePayload))
+        {
+            LOG_WARN("Generated client call response send failed: class=%s function=%s connection=%llu",
+                     TargetClass->GetName().c_str(),
+                     Entry.Function->Name.c_str(),
+                     static_cast<unsigned long long>(ConnectionId));
+            Outcome.Result = EGeneratedClientDispatchResult::InvokeFailed;
+            return Outcome;
+        }
+
+        Outcome.Result = EGeneratedClientDispatchResult::Handled;
+        return Outcome;
+    }
+
     if (!Entry.Function->ClientParamBinder)
     {
         LOG_WARN("Generated client manifest entry missing binder: class=%s function=%s",
@@ -381,6 +484,11 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientEntry(
     Outcome.Result = EGeneratedClientDispatchResult::Handled;
     return Outcome;
 }
+}
+
+EServerType ParseGeneratedServerTargetType(const char* TargetName)
+{
+    return ParseGeneratedClientTargetServerType(TargetName);
 }
 
 const char* GetServerTypeDisplayName(EServerType ServerType)
@@ -711,6 +819,77 @@ uint64 GetCurrentServerRpcConnectionId()
     return GCurrentServerRpcConnectionId;
 }
 
+uint64 GetCurrentClientConnectionId()
+{
+    return GCurrentClientConnectionId;
+}
+
+uint64 GetCurrentClientCallId()
+{
+    return GCurrentClientCallContext.CallId;
+}
+
+SGeneratedClientCallContext CaptureCurrentClientCallContext()
+{
+    return GCurrentClientCallContext;
+}
+
+void MarkCurrentClientCallDeferred()
+{
+    if (GCurrentClientCallContext.IsValid())
+    {
+        GCurrentClientCallDeferred = true;
+    }
+}
+
+bool IsCurrentClientCallDeferred()
+{
+    return GCurrentClientCallDeferred;
+}
+
+bool SendDeferredClientCallResponse(const SGeneratedClientCallContext& Context, const TByteArray& Payload)
+{
+    if (!Context.IsValid())
+    {
+        return false;
+    }
+
+    return Context.ResponseTarget->SendGeneratedClientResponse(
+        Context.ConnectionId,
+        Context.FunctionId,
+        Context.CallId,
+        Payload);
+}
+
+SGeneratedServerCallContext CaptureCurrentServerCallContext()
+{
+    return GCurrentServerCallContext;
+}
+
+bool SendDeferredServerCallResponse(const SGeneratedServerCallContext& Context, bool bSuccess, const TByteArray& Payload)
+{
+    if (!Context.IsValid())
+    {
+        return false;
+    }
+
+    return Context.ResponseTarget->SendGeneratedServerCallResponse(
+        Context.FunctionId,
+        Context.CallId,
+        bSuccess,
+        Payload);
+}
+
+bool SendDeferredServerCallSuccessResponse(const SGeneratedServerCallContext& Context, const TByteArray& Payload)
+{
+    return SendDeferredServerCallResponse(Context, true, Payload);
+}
+
+bool SendDeferredServerCallErrorResponse(const SGeneratedServerCallContext& Context, const FAppError& Error)
+{
+    return SendDeferredServerCallResponse(Context, false, BuildPayload(Error));
+}
+
 bool TryInvokeServerRpc(MObject* ServiceInstance, const TByteArray& Data, ERpcType ExpectedType)
 {
     if (!ServiceInstance)
@@ -812,13 +991,14 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientMessage(
         return Outcome;
     }
 
-    return DispatchGeneratedClientEntry(TargetInstance, ConnectionId, Entry, MessageType, Payload);
+    return DispatchGeneratedClientEntry(TargetInstance, ConnectionId, Entry, 0, MessageType, Payload);
 }
 
 SGeneratedClientDispatchOutcome DispatchGeneratedClientFunction(
     MObject* TargetInstance,
     uint64 ConnectionId,
     uint16 FunctionId,
+    uint64 CallId,
     const TByteArray& Payload)
 {
     SGeneratedClientDispatchOutcome Outcome;
@@ -837,26 +1017,79 @@ SGeneratedClientDispatchOutcome DispatchGeneratedClientFunction(
         TargetInstance,
         ConnectionId,
         Entry,
+        CallId,
         EClientMessageType::MT_FunctionCall,
         Payload);
 }
 
-uint16 GetClientDownlinkFunctionId(const char* FunctionName)
+const MFunction* FindGeneratedClientFunctionById(const MClass* TargetClass, uint16 FunctionId)
 {
-    if (!FunctionName || FunctionName[0] == '\0')
+    SGeneratedClientEntry Entry;
+    if (!FindGeneratedClientEntryByFunctionId(TargetClass, FunctionId, Entry))
     {
-        return 0;
+        return nullptr;
     }
 
-    return ComputeStableReflectId(MClientDownlink::ScopeName, FunctionName);
+    return Entry.Function;
+}
+
+const MFunction* FindGeneratedServerCallFunctionByName(const MClass* TargetClass, const char* FunctionName)
+{
+    if (!TargetClass || !FunctionName || FunctionName[0] == '\0')
+    {
+        return nullptr;
+    }
+
+    const MFunction* Function = const_cast<MClass*>(TargetClass)->FindFunction(FunctionName);
+    return IsGeneratedServerCallFunction(Function) ? Function : nullptr;
+}
+
+const MFunction* FindGeneratedServerCallFunctionById(const MClass* TargetClass, uint16 FunctionId)
+{
+    if (!TargetClass || FunctionId == 0)
+    {
+        return nullptr;
+    }
+
+    const MFunction* Function = const_cast<MClass*>(TargetClass)->FindFunctionById(FunctionId);
+    return IsGeneratedServerCallFunction(Function) ? Function : nullptr;
+}
+
+uint16 GetClientDownlinkFunctionId(const char* FunctionName)
+{
+    const MFunction* Function = FindClientDownlinkFunctionByName(FunctionName);
+    return Function ? Function->FunctionId : 0;
 }
 
 const char* GetClientDownlinkFunctionName(uint16 FunctionId)
 {
-    return ResolveClientDownlinkFunctionName(FunctionId);
+    const MFunction* Function = FindClientDownlinkFunctionById(FunctionId);
+    return Function ? Function->Name.c_str() : nullptr;
 }
 
-bool BuildClientFunctionCallPacket(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutPacket)
+const MFunction* FindClientDownlinkFunctionById(uint16 FunctionId)
+{
+    if (FunctionId == 0)
+    {
+        return nullptr;
+    }
+
+    MClass* DownlinkClass = MClientDownlink::StaticClass();
+    return DownlinkClass ? DownlinkClass->FindFunctionById(FunctionId) : nullptr;
+}
+
+const MFunction* FindClientDownlinkFunctionByName(const char* FunctionName)
+{
+    if (!FunctionName || FunctionName[0] == '\0')
+    {
+        return nullptr;
+    }
+
+    MClass* DownlinkClass = MClientDownlink::StaticClass();
+    return DownlinkClass ? DownlinkClass->FindFunction(FunctionName) : nullptr;
+}
+
+bool BuildClientFunctionPacket(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutPacket)
 {
     if (FunctionId == 0)
     {
@@ -869,5 +1102,308 @@ bool BuildClientFunctionCallPacket(uint16 FunctionId, const TByteArray& InPayloa
     AppendValue(OutPacket, FunctionId);
     AppendValue(OutPacket, static_cast<uint32>(InPayload.size()));
     OutPacket.insert(OutPacket.end(), InPayload.begin(), InPayload.end());
+    return true;
+}
+
+bool BuildClientCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& InPayload, TByteArray& OutPacket)
+{
+    if (FunctionId == 0)
+    {
+        return false;
+    }
+
+    OutPacket.clear();
+    OutPacket.reserve(1 + sizeof(FunctionId) + sizeof(CallId) + sizeof(uint32) + InPayload.size());
+    OutPacket.push_back(static_cast<uint8>(EClientMessageType::MT_FunctionCall));
+    AppendValue(OutPacket, FunctionId);
+    AppendValue(OutPacket, CallId);
+    AppendValue(OutPacket, static_cast<uint32>(InPayload.size()));
+    OutPacket.insert(OutPacket.end(), InPayload.begin(), InPayload.end());
+    return true;
+}
+
+bool ParseClientFunctionPacket(const TByteArray& Data, uint16& OutFunctionId, uint32& OutPayloadSize, size_t& OutPayloadOffset)
+{
+    const size_t HeaderSize = 1 + sizeof(uint16) + sizeof(uint32);
+    if (Data.size() < HeaderSize)
+    {
+        return false;
+    }
+
+    std::memcpy(&OutFunctionId, Data.data() + 1, sizeof(OutFunctionId));
+    std::memcpy(&OutPayloadSize, Data.data() + 1 + sizeof(uint16), sizeof(OutPayloadSize));
+    OutPayloadOffset = HeaderSize;
+    return Data.size() >= OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
+}
+
+bool ParseClientCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutCallId, uint32& OutPayloadSize, size_t& OutPayloadOffset)
+{
+    const size_t HeaderSize = 1 + sizeof(uint16) + sizeof(uint64) + sizeof(uint32);
+    if (Data.size() < HeaderSize)
+    {
+        return false;
+    }
+
+    std::memcpy(&OutFunctionId, Data.data() + 1, sizeof(OutFunctionId));
+    std::memcpy(&OutCallId, Data.data() + 1 + sizeof(uint16), sizeof(OutCallId));
+    std::memcpy(&OutPayloadSize, Data.data() + 1 + sizeof(uint16) + sizeof(uint64), sizeof(OutPayloadSize));
+    OutPayloadOffset = HeaderSize;
+    return Data.size() >= OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
+}
+
+bool BuildServerCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& InPayload, TByteArray& OutPayload)
+{
+    if (FunctionId == 0 || CallId == 0)
+    {
+        return false;
+    }
+
+    OutPayload.clear();
+    OutPayload.reserve(sizeof(FunctionId) + sizeof(CallId) + sizeof(uint32) + InPayload.size());
+    AppendValue(OutPayload, FunctionId);
+    AppendValue(OutPayload, CallId);
+    AppendValue(OutPayload, static_cast<uint32>(InPayload.size()));
+    OutPayload.insert(OutPayload.end(), InPayload.begin(), InPayload.end());
+    return true;
+}
+
+bool BuildServerCallResponsePacket(uint16 FunctionId, uint64 CallId, bool bSuccess, const TByteArray& InPayload, TByteArray& OutPayload)
+{
+    if (FunctionId == 0 || CallId == 0)
+    {
+        return false;
+    }
+
+    OutPayload.clear();
+    OutPayload.reserve(sizeof(FunctionId) + sizeof(CallId) + sizeof(uint8) + sizeof(uint32) + InPayload.size());
+    AppendValue(OutPayload, FunctionId);
+    AppendValue(OutPayload, CallId);
+    AppendValue(OutPayload, static_cast<uint8>(bSuccess ? 1 : 0));
+    AppendValue(OutPayload, static_cast<uint32>(InPayload.size()));
+    OutPayload.insert(OutPayload.end(), InPayload.begin(), InPayload.end());
+    return true;
+}
+
+bool ParseServerCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutCallId, uint32& OutPayloadSize, size_t& OutPayloadOffset)
+{
+    const size_t HeaderSize = sizeof(uint16) + sizeof(uint64) + sizeof(uint32);
+    if (Data.size() < HeaderSize)
+    {
+        return false;
+    }
+
+    size_t Offset = 0;
+    std::memcpy(&OutFunctionId, Data.data() + Offset, sizeof(OutFunctionId));
+    Offset += sizeof(OutFunctionId);
+    std::memcpy(&OutCallId, Data.data() + Offset, sizeof(OutCallId));
+    Offset += sizeof(OutCallId);
+    std::memcpy(&OutPayloadSize, Data.data() + Offset, sizeof(OutPayloadSize));
+    Offset += sizeof(OutPayloadSize);
+    OutPayloadOffset = Offset;
+    return Data.size() >= OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
+}
+
+bool ParseServerCallResponsePacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutCallId, bool& OutSuccess, uint32& OutPayloadSize, size_t& OutPayloadOffset)
+{
+    const size_t HeaderSize = sizeof(uint16) + sizeof(uint64) + sizeof(uint8) + sizeof(uint32);
+    if (Data.size() < HeaderSize)
+    {
+        return false;
+    }
+
+    size_t Offset = 0;
+    uint8 SuccessByte = 0;
+    std::memcpy(&OutFunctionId, Data.data() + Offset, sizeof(OutFunctionId));
+    Offset += sizeof(OutFunctionId);
+    std::memcpy(&OutCallId, Data.data() + Offset, sizeof(OutCallId));
+    Offset += sizeof(OutCallId);
+    std::memcpy(&SuccessByte, Data.data() + Offset, sizeof(SuccessByte));
+    Offset += sizeof(SuccessByte);
+    std::memcpy(&OutPayloadSize, Data.data() + Offset, sizeof(OutPayloadSize));
+    Offset += sizeof(OutPayloadSize);
+    OutSuccess = SuccessByte != 0;
+    OutPayloadOffset = Offset;
+    return Data.size() >= OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
+}
+
+bool SendServerCallMessage(MServerConnection& Connection, const TByteArray& PacketPayload)
+{
+    return Connection.SendPacket(
+        static_cast<uint8>(EServerMessageType::MT_FunctionCall),
+        PacketPayload.empty() ? nullptr : PacketPayload.data(),
+        static_cast<uint32>(PacketPayload.size()));
+}
+
+bool SendServerCallMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& PacketPayload)
+{
+    return Connection ? SendServerCallMessage(*Connection, PacketPayload) : false;
+}
+
+bool SendServerCallMessage(INetConnection& Connection, const TByteArray& PacketPayload)
+{
+    TByteArray Packet;
+    Packet.reserve(1 + PacketPayload.size());
+    Packet.push_back(static_cast<uint8>(EServerMessageType::MT_FunctionCall));
+    Packet.insert(Packet.end(), PacketPayload.begin(), PacketPayload.end());
+    return Connection.Send(Packet.data(), static_cast<uint32>(Packet.size()));
+}
+
+bool SendServerCallMessage(const TSharedPtr<INetConnection>& Connection, const TByteArray& PacketPayload)
+{
+    return Connection ? SendServerCallMessage(*Connection, PacketPayload) : false;
+}
+
+bool SendServerCallResponseMessage(MServerConnection& Connection, const TByteArray& PacketPayload)
+{
+    return Connection.SendPacket(
+        static_cast<uint8>(EServerMessageType::MT_FunctionResponse),
+        PacketPayload.empty() ? nullptr : PacketPayload.data(),
+        static_cast<uint32>(PacketPayload.size()));
+}
+
+bool SendServerCallResponseMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& PacketPayload)
+{
+    return Connection ? SendServerCallResponseMessage(*Connection, PacketPayload) : false;
+}
+
+bool SendServerCallResponseMessage(INetConnection& Connection, const TByteArray& PacketPayload)
+{
+    TByteArray Packet;
+    Packet.reserve(1 + PacketPayload.size());
+    Packet.push_back(static_cast<uint8>(EServerMessageType::MT_FunctionResponse));
+    Packet.insert(Packet.end(), PacketPayload.begin(), PacketPayload.end());
+    return Connection.Send(Packet.data(), static_cast<uint32>(Packet.size()));
+}
+
+bool SendServerCallResponseMessage(const TSharedPtr<INetConnection>& Connection, const TByteArray& PacketPayload)
+{
+    return Connection ? SendServerCallResponseMessage(*Connection, PacketPayload) : false;
+}
+
+bool DispatchGeneratedServerCall(
+    MObject* TargetInstance,
+    uint16 FunctionId,
+    uint64 CallId,
+    const TByteArray& Payload,
+    IGeneratedServerCallResponseTarget& ResponseTarget)
+{
+    if (!TargetInstance || FunctionId == 0 || CallId == 0)
+    {
+        return false;
+    }
+
+    MClass* TargetClass = TargetInstance->GetClass();
+    if (!TargetClass)
+    {
+        (void)ResponseTarget.SendGeneratedServerCallResponse(
+            FunctionId,
+            CallId,
+            false,
+            BuildPayload(FAppError::Make("server_call_missing_class")));
+        return false;
+    }
+
+    const MFunction* Function = FindGeneratedServerCallFunctionById(TargetClass, FunctionId);
+    if (!Function || !Function->ServerCallHandler)
+    {
+        (void)ResponseTarget.SendGeneratedServerCallResponse(
+            FunctionId,
+            CallId,
+            false,
+            BuildPayload(FAppError::Make("server_call_missing_handler", std::to_string(FunctionId))));
+        LOG_WARN("Generated server call dispatch failed: class=%s function_id=%u",
+                 TargetClass->GetName().c_str(),
+                 static_cast<unsigned>(FunctionId));
+        return false;
+    }
+
+    const SGeneratedServerCallContext Context{
+        FunctionId,
+        CallId,
+        &ResponseTarget,
+    };
+    FScopedServerCallContext Scope(Context);
+    if (!Function->ServerCallHandler(TargetInstance, Payload))
+    {
+        (void)ResponseTarget.SendGeneratedServerCallResponse(
+            FunctionId,
+            CallId,
+            false,
+            BuildPayload(FAppError::Make("server_call_invoke_failed", Function->Name)));
+        return false;
+    }
+
+    return true;
+}
+
+uint64 RegisterGeneratedServerCall(TFunction<void(const SGeneratedServerCallResponse&)> Completion)
+{
+    if (!Completion)
+    {
+        return 0;
+    }
+
+    const uint64 CallId = GNextGeneratedServerCallId.fetch_add(1);
+    std::lock_guard<std::mutex> Lock(GGeneratedServerCallMutex);
+    GPendingGeneratedServerCalls[CallId] = std::move(Completion);
+    return CallId;
+}
+
+bool ConsumeGeneratedServerCall(uint64 CallId, const SGeneratedServerCallResponse* Response)
+{
+    TFunction<void(const SGeneratedServerCallResponse&)> Completion;
+    {
+        std::lock_guard<std::mutex> Lock(GGeneratedServerCallMutex);
+        auto It = GPendingGeneratedServerCalls.find(CallId);
+        if (It == GPendingGeneratedServerCalls.end())
+        {
+            return false;
+        }
+
+        Completion = std::move(It->second);
+        GPendingGeneratedServerCalls.erase(It);
+    }
+
+    if (Completion && Response)
+    {
+        Completion(*Response);
+    }
+
+    return true;
+}
+
+bool HandleGeneratedServerCallResponse(const TByteArray& Data)
+{
+    uint16 FunctionId = 0;
+    uint64 CallId = 0;
+    bool bSuccess = false;
+    uint32 PayloadSize = 0;
+    size_t PayloadOffset = 0;
+    if (!ParseServerCallResponsePacket(Data, FunctionId, CallId, bSuccess, PayloadSize, PayloadOffset))
+    {
+        return false;
+    }
+
+    TByteArray Payload;
+    if (PayloadSize > 0)
+    {
+        Payload.insert(
+            Payload.end(),
+            Data.begin() + static_cast<TByteArray::difference_type>(PayloadOffset),
+            Data.begin() + static_cast<TByteArray::difference_type>(PayloadOffset + PayloadSize));
+    }
+
+    const SGeneratedServerCallResponse Response{bSuccess, std::move(Payload)};
+    return ConsumeGeneratedServerCall(CallId, &Response);
+}
+
+bool BuildGeneratedServerCallPayload(const MFunction* Function, const TByteArray& RequestPayload, TByteArray& OutData)
+{
+    if (!IsGeneratedServerCallFunction(Function))
+    {
+        return false;
+    }
+
+    OutData = RequestPayload;
     return true;
 }

@@ -22,6 +22,8 @@ enum class EServerType : uint8
 enum class EServerMessageType : uint8
 {
     MT_RPC = 27,                  // 服务器间 RPC 调用
+    MT_FunctionCall = 28,         // 服务器间反射函数调用请求
+    MT_FunctionResponse = 29,     // 服务器间反射函数调用响应
 };
 
 // 服务器信息

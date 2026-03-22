@@ -58,3 +58,9 @@ struct TResult<void, E>
     E& GetError() { return *Error; }
     const E& GetError() const { return *Error; }
 };
+
+template<typename TResponse, typename TError>
+inline TResult<TResponse, TError> MakeErrorResult(TError Error)
+{
+    return TResult<TResponse, TError>::Err(std::move(Error));
+}

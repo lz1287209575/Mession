@@ -5,6 +5,7 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <cctype>
@@ -102,6 +103,7 @@ std::optional<std::string> ExtractMacroValue(const std::string& MacroArgs, std::
 std::string DetermineOwnerFromHeaderPath(const fs::path& HeaderPath);
 std::string NormalizeReflectionType(std::string TypeName);
 std::string InferPropertyKind(const std::string& TypeName);
+std::optional<std::string> ExtractServerCallResponseType(const SParsedFunction& Function);
 std::vector<SParsedFunction::SParsedParameter> ParseFunctionParameters(const std::string& Signature);
 std::map<std::string, std::string> ParseTypeAliasesInBody(const std::string& ClassBody);
 
@@ -494,6 +496,14 @@ void ApplyFunctionMetadataFromMacroArgs(SParsedFunction& Parsed)
             {
                 Parsed.Transport = "Client";
             }
+            else if (Part == "ClientCall")
+            {
+                Parsed.Transport = "ClientCall";
+            }
+            else if (Part == "ServerCall")
+            {
+                Parsed.Transport = "ServerCall";
+            }
             else if (Part == "RPC")
             {
                 Parsed.bIsRpc = true;
@@ -738,7 +748,7 @@ std::string BuildFunctionFlagsExpr(const SParsedFunction& Function)
         for (const std::string& FlagToken : FlagTokens)
         {
             if (FlagToken.empty() || FlagToken == "NetServer" || FlagToken == "NetClient" ||
-                FlagToken == "Client" || FlagToken == "RPC")
+                FlagToken == "Client" || FlagToken == "ClientCall" || FlagToken == "ServerCall" || FlagToken == "RPC")
             {
                 continue;
             }
@@ -882,6 +892,80 @@ std::string ResolveAliasedType(const std::map<std::string, std::string>& TypeAli
         Resolved = NormalizeReflectionType(It->second);
     }
     return Resolved;
+}
+
+bool IsNonConstLValueReferenceParameter(const SParsedFunction::SParsedParameter& Param)
+{
+    const std::string Type = Trim(Param.Type);
+    return Type.find('&') != std::string::npos && !StartsWith(Type, "const ");
+}
+
+bool IsReflectedStructLikeType(const std::vector<SParsedClass>& Classes, const std::string& TypeName)
+{
+    const std::string NormalizedType = NormalizeReflectionType(TypeName);
+    for (const SParsedClass& ParsedClass : Classes)
+    {
+        if (ParsedClass.Name == NormalizedType)
+        {
+            return ParsedClass.Kind == EParsedTypeKind::Struct || ParsedClass.Kind == EParsedTypeKind::Class;
+        }
+    }
+
+    return InferPropertyKind(NormalizedType) == "Struct";
+}
+
+void ValidateClientCallFunction(const std::vector<SParsedClass>& Classes, const SParsedClass& ParsedClass, const SParsedFunction& Function)
+{
+    if (Function.ReturnStorageType != "void")
+    {
+        throw std::runtime_error("ClientCall function must return void: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (Function.Params.size() != 2)
+    {
+        throw std::runtime_error("ClientCall function must declare exactly request/response params: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    const auto& RequestParam = Function.Params[0];
+    const auto& ResponseParam = Function.Params[1];
+    if (!IsNonConstLValueReferenceParameter(RequestParam) || !IsNonConstLValueReferenceParameter(ResponseParam))
+    {
+        throw std::runtime_error("ClientCall params must be non-const lvalue refs: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (!IsReflectedStructLikeType(Classes, RequestParam.StorageType) || !IsReflectedStructLikeType(Classes, ResponseParam.StorageType))
+    {
+        throw std::runtime_error("ClientCall request/response must use reflected struct types: " + ParsedClass.Name + "::" + Function.Name);
+    }
+}
+
+void ValidateServerCallFunction(const std::vector<SParsedClass>& Classes, const SParsedClass& ParsedClass, const SParsedFunction& Function)
+{
+    if (Function.Params.size() != 1)
+    {
+        throw std::runtime_error("ServerCall function must declare exactly one request param: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (Function.Target.empty())
+    {
+        throw std::runtime_error("ServerCall function must declare Target=...: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (!IsReflectedStructLikeType(Classes, Function.Params[0].StorageType))
+    {
+        throw std::runtime_error("ServerCall request must use reflected struct type: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    const std::optional<std::string> ResponseType = ExtractServerCallResponseType(Function);
+    if (!ResponseType.has_value())
+    {
+        throw std::runtime_error("ServerCall function must return MFuture<TResult<Response, FAppError>>: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (!IsReflectedStructLikeType(Classes, *ResponseType))
+    {
+        throw std::runtime_error("ServerCall response must use reflected struct type: " + ParsedClass.Name + "::" + Function.Name);
+    }
 }
 
 std::vector<SParsedFunction::SParsedParameter> ParseFunctionParameters(const std::string& Signature)
@@ -1586,11 +1670,52 @@ std::string BuildClientBinderFunctionName(const SParsedClass& ParsedClass, const
     return "MHeaderTool_BindClientParams_" + SanitizeIdentifier(ParsedClass.Name) + "_" + SanitizeIdentifier(Function.Name);
 }
 
+std::string BuildClientCallHandlerFunctionName(const SParsedClass& ParsedClass, const SParsedFunction& Function)
+{
+    return "MHeaderTool_HandleClientCall_" + SanitizeIdentifier(ParsedClass.Name) + "_" + SanitizeIdentifier(Function.Name);
+}
+
+std::string BuildServerCallHandlerFunctionName(const SParsedClass& ParsedClass, const SParsedFunction& Function)
+{
+    return "MHeaderTool_HandleServerCall_" + SanitizeIdentifier(ParsedClass.Name) + "_" + SanitizeIdentifier(Function.Name);
+}
+
+std::optional<std::string> ExtractServerCallResponseType(const SParsedFunction& Function)
+{
+    const std::string ReturnType = NormalizeReflectionType(Function.ReturnStorageType);
+    if (!StartsWith(ReturnType, "MFuture<") || ReturnType.back() != '>')
+    {
+        return std::nullopt;
+    }
+
+    const std::string FutureInner = Trim(ReturnType.substr(8, ReturnType.size() - 9));
+    if (!StartsWith(FutureInner, "TResult<") || FutureInner.back() != '>')
+    {
+        return std::nullopt;
+    }
+
+    const std::string ResultInner = Trim(FutureInner.substr(8, FutureInner.size() - 9));
+    const std::vector<std::string> ResultArgs = SplitTopLevelArgs(ResultInner);
+    if (ResultArgs.size() != 2)
+    {
+        return std::nullopt;
+    }
+
+    if (NormalizeReflectionType(ResultArgs[1]) != "FAppError")
+    {
+        return std::nullopt;
+    }
+
+    return NormalizeReflectionType(ResultArgs[0]);
+}
+
 std::string BuildFunctionRegistrationBlock(const SParsedClass& ParsedClass, const SParsedFunction& Function)
 {
     const std::string ReliableValue = Function.bReliable ? "true" : "false";
     const std::string ParamStructName = BuildFunctionParamStructName(ParsedClass, Function);
     const std::string BinderFunctionName = BuildClientBinderFunctionName(ParsedClass, Function);
+    const std::string ClientCallHandlerFunctionName = BuildClientCallHandlerFunctionName(ParsedClass, Function);
+    const std::string ServerCallHandlerFunctionName = BuildServerCallHandlerFunctionName(ParsedClass, Function);
     std::ostringstream Out;
     if (Function.Transport == "Client" && !Function.Route.empty())
     {
@@ -1624,7 +1749,13 @@ std::string BuildFunctionRegistrationBlock(const SParsedClass& ParsedClass, cons
     }
 
     Out << "    do {\n";
-    if (Function.bIsRpc)
+    if (Function.Transport == "ClientCall" || Function.Transport == "ServerCall")
+    {
+        Out << "        auto* Func = new MFunction();\n";
+        Out << "        Func->Name = \"" << Function.Name << "\";\n";
+        Out << "        Func->Flags = " << BuildFunctionFlagsExpr(Function) << ";\n";
+    }
+    else if (Function.bIsRpc)
     {
         const std::string RpcKind = Function.RpcKind.empty() ? "Server" : Function.RpcKind;
         Out << "        auto* Func = ";
@@ -1658,13 +1789,13 @@ std::string BuildFunctionRegistrationBlock(const SParsedClass& ParsedClass, cons
             << Param.Name << "\", EPropertyType::" << Param.PropertyKind << ", offsetof("
             << ParamStructName << ", " << Param.Name << ")));\n";
     }
-    if (Function.ReturnStorageType != "void")
+    if (Function.ReturnStorageType != "void" && Function.Transport != "ServerCall")
     {
         Out << "        Func->ReturnProperty = CreateOffsetProperty<" << Function.ReturnStorageType
             << ">(\"ReturnValue\", EPropertyType::" << Function.ReturnPropertyKind << ", offsetof("
             << ParamStructName << ", ReturnValue));\n";
     }
-    if (Function.Transport == "Client" || !Function.MessageName.empty())
+    if (Function.Transport == "Client" || Function.Transport == "ClientCall" || Function.Transport == "ServerCall" || !Function.MessageName.empty())
     {
         Out << "        Func->Transport = \"" << EscapeCppStringLiteral(Function.Transport) << "\";\n";
         Out << "        Func->MessageName = \"" << EscapeCppStringLiteral(Function.MessageName) << "\";\n";
@@ -1672,7 +1803,18 @@ std::string BuildFunctionRegistrationBlock(const SParsedClass& ParsedClass, cons
         Out << "        Func->TargetName = \"" << EscapeCppStringLiteral(Function.Target) << "\";\n";
         Out << "        Func->AuthMode = \"" << EscapeCppStringLiteral(Function.Auth) << "\";\n";
         Out << "        Func->WrapMode = \"" << EscapeCppStringLiteral(Function.Wrap) << "\";\n";
-        Out << "        Func->ClientParamBinder = &" << BinderFunctionName << ";\n";
+        if (Function.Transport == "ClientCall")
+        {
+            Out << "        Func->ClientCallHandler = &" << ClientCallHandlerFunctionName << ";\n";
+        }
+        else if (Function.Transport == "ServerCall")
+        {
+            Out << "        Func->ServerCallHandler = &" << ServerCallHandlerFunctionName << ";\n";
+        }
+        else
+        {
+            Out << "        Func->ClientParamBinder = &" << BinderFunctionName << ";\n";
+        }
     }
     Out << "        InClass->RegisterFunction(Func);\n";
     Out << "    } while (0);";
@@ -1755,6 +1897,21 @@ std::vector<SParsedClass> ParseReflectedClassesInHeader(
             }
         }
         Classes.push_back(std::move(Parsed));
+    }
+
+    for (const SParsedClass& Parsed : Classes)
+    {
+        for (const SParsedFunction& Function : Parsed.Functions)
+        {
+            if (Function.Transport == "ClientCall")
+            {
+                ValidateClientCallFunction(Classes, Parsed, Function);
+            }
+            if (Function.Transport == "ServerCall")
+            {
+                ValidateServerCallFunction(Classes, Parsed, Function);
+            }
+        }
     }
 
     return Classes;
@@ -2112,7 +2269,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
         {
             Out << "    " << Param.StorageType << " " << Param.Name << " {};\n";
         }
-        if (Function.ReturnStorageType != "void")
+        if (Function.ReturnStorageType != "void" && Function.Transport != "ServerCall")
         {
             Out << "    " << Function.ReturnStorageType << " ReturnValue {};\n";
         }
@@ -2180,6 +2337,100 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
                 Out << "    LOG_WARN(\"Generated client binder unsupported multi-param payload: function=%s count=%llu\", \"" << Function.Name << "\", static_cast<unsigned long long>(" << PayloadParamCount << "));\n";
                 Out << "    return false;\n";
             }
+            Out << "    return true;\n";
+            Out << "}\n";
+            Out << "\n";
+        }
+
+        if (Function.Transport == "ClientCall")
+        {
+            const std::string ClientCallHandlerFunctionName = BuildClientCallHandlerFunctionName(ParsedClass, Function);
+            const auto& RequestParam = Function.Params.at(0);
+            const auto& ResponseParam = Function.Params.at(1);
+            Out << "inline EGeneratedClientCallHandlerResult " << ClientCallHandlerFunctionName
+                << "(MObject* Object, uint64 /*ConnectionId*/, const TByteArray& Payload, TByteArray& OutResponsePayload)\n";
+            Out << "{\n";
+            Out << "    auto* TypedObject = static_cast<" << ParsedClass.Name << "*>(Object);\n";
+            Out << "    if (!TypedObject)\n";
+            Out << "    {\n";
+            Out << "        return EGeneratedClientCallHandlerResult::Failed;\n";
+            Out << "    }\n";
+            Out << "    " << RequestParam.StorageType << " RequestValue {};\n";
+            Out << "    auto ParseResult = ParsePayload(Payload, RequestValue, \"" << Function.Name << "\");\n";
+            Out << "    if (!ParseResult.IsOk())\n";
+            Out << "    {\n";
+            Out << "        LOG_WARN(\"ParsePayload failed: %s\", ParseResult.GetError().c_str());\n";
+            Out << "        return EGeneratedClientCallHandlerResult::Failed;\n";
+            Out << "    }\n";
+            Out << "    " << ResponseParam.StorageType << " ResponseValue {};\n";
+            Out << "    TypedObject->" << Function.Name << "(RequestValue, ResponseValue);\n";
+            Out << "    if (IsCurrentClientCallDeferred())\n";
+            Out << "    {\n";
+            Out << "        return EGeneratedClientCallHandlerResult::Deferred;\n";
+            Out << "    }\n";
+            Out << "    OutResponsePayload = BuildPayload(ResponseValue);\n";
+            Out << "    return EGeneratedClientCallHandlerResult::Responded;\n";
+            Out << "}\n";
+            Out << "\n";
+        }
+
+        if (Function.Transport == "ServerCall")
+        {
+            const std::string ServerCallHandlerFunctionName = BuildServerCallHandlerFunctionName(ParsedClass, Function);
+            const auto& RequestParam = Function.Params.at(0);
+            const std::optional<std::string> ResponseType = ExtractServerCallResponseType(Function);
+            if (!ResponseType.has_value())
+            {
+                throw std::runtime_error("Codegen failed to extract ServerCall response type: " + ParsedClass.Name + "::" + Function.Name);
+            }
+
+            Out << "inline bool " << ServerCallHandlerFunctionName
+                << "(MObject* Object, const TByteArray& Payload)\n";
+            Out << "{\n";
+            Out << "    auto* TypedObject = static_cast<" << ParsedClass.Name << "*>(Object);\n";
+            Out << "    if (!TypedObject)\n";
+            Out << "    {\n";
+            Out << "        return false;\n";
+            Out << "    }\n";
+            Out << "    " << RequestParam.StorageType << " RequestValue {};\n";
+            Out << "    auto ParseResult = ParsePayload(Payload, RequestValue, \"" << Function.Name << "\");\n";
+            Out << "    if (!ParseResult.IsOk())\n";
+            Out << "    {\n";
+            Out << "        LOG_WARN(\"ParsePayload failed: %s\", ParseResult.GetError().c_str());\n";
+            Out << "        return false;\n";
+            Out << "    }\n";
+            Out << "    const SGeneratedServerCallContext Context = CaptureCurrentServerCallContext();\n";
+            Out << "    if (!Context.IsValid())\n";
+            Out << "    {\n";
+            Out << "        return false;\n";
+            Out << "    }\n";
+            Out << "    auto Future = TypedObject->" << Function.Name << "(RequestValue);\n";
+            Out << "    if (!Future.Valid())\n";
+            Out << "    {\n";
+            Out << "        return SendDeferredServerCallErrorResponse(Context, FAppError::Make(\"server_call_invalid_future\", \"" << Function.Name << "\"));\n";
+            Out << "    }\n";
+            Out << "    Future.Then([Context](auto InFuture) mutable\n";
+            Out << "    {\n";
+            Out << "        try\n";
+            Out << "        {\n";
+            Out << "            auto Result = InFuture.Get();\n";
+            Out << "            if (Result.IsOk())\n";
+            Out << "            {\n";
+            Out << "                const TByteArray ResponsePayload = BuildPayload(Result.GetValue());\n";
+            Out << "                (void)SendDeferredServerCallSuccessResponse(Context, ResponsePayload);\n";
+            Out << "                return;\n";
+            Out << "            }\n";
+            Out << "            (void)SendDeferredServerCallErrorResponse(Context, Result.GetError());\n";
+            Out << "        }\n";
+            Out << "        catch (const std::exception& Ex)\n";
+            Out << "        {\n";
+            Out << "            (void)SendDeferredServerCallErrorResponse(Context, FAppError::Make(\"server_call_exception\", Ex.what()));\n";
+            Out << "        }\n";
+            Out << "        catch (...)\n";
+            Out << "        {\n";
+            Out << "            (void)SendDeferredServerCallErrorResponse(Context, FAppError::Make(\"server_call_exception\", \"unknown\"));\n";
+            Out << "        }\n";
+            Out << "    });\n";
             Out << "    return true;\n";
             Out << "}\n";
             Out << "\n";
@@ -2800,7 +3051,7 @@ bool WriteGeneratedClientManifest(const fs::path& OutputDir, const std::vector<S
     {
         for (const SParsedFunction& Function : ParsedClass.Functions)
         {
-            if (Function.Transport != "Client" && Function.MessageName.empty())
+            if (Function.Transport != "Client" && Function.Transport != "ClientCall" && Function.MessageName.empty())
             {
                 continue;
             }
@@ -3044,42 +3295,50 @@ bool WriteCMakeManifest(const fs::path& ManifestPath, const fs::path& OutputDir,
 
 int main(int Argc, char** Argv)
 {
-    SOptions Options;
-    if (!ParseArgs(Argc, Argv, Options))
+    try
     {
-        std::cerr << "Usage: MHeaderTool [--source-root=Source] [--output-dir=Build/Generated] [--verbose]\n";
-        return 1;
-    }
-
-    const std::vector<fs::path> Headers = DiscoverHeaders(Options.SourceRoot);
-    const std::vector<SParsedClass> Classes = DiscoverReflectedClasses(Headers);
-
-    if (Options.bVerbose)
-    {
-        std::cout << "MHeaderTool source root: " << Options.SourceRoot << "\n";
-        std::cout << "MHeaderTool output dir: " << Options.OutputDir << "\n";
-        std::cout << "Headers discovered: " << Headers.size() << "\n";
-        std::cout << "Reflected types discovered: " << Classes.size() << "\n";
-        for (const SParsedClass& ParsedClass : Classes)
+        SOptions Options;
+        if (!ParseArgs(Argc, Argv, Options))
         {
-            std::cout << "  " << ParsedClass.Name
-                      << " (" << ParsedClass.HeaderPath << ")"
-                      << " kind=" << GetTypeKindName(ParsedClass.Kind)
-                      << " properties=" << ParsedClass.Properties.size()
-                      << " functions=" << ParsedClass.Functions.size() << "\n";
+            std::cerr << "Usage: MHeaderTool [--source-root=Source] [--output-dir=Build/Generated] [--verbose]\n";
+            return 1;
         }
-    }
 
-    if (!WriteGeneratedFiles(Options.OutputDir, Classes))
+        const std::vector<fs::path> Headers = DiscoverHeaders(Options.SourceRoot);
+        const std::vector<SParsedClass> Classes = DiscoverReflectedClasses(Headers);
+
+        if (Options.bVerbose)
+        {
+            std::cout << "MHeaderTool source root: " << Options.SourceRoot << "\n";
+            std::cout << "MHeaderTool output dir: " << Options.OutputDir << "\n";
+            std::cout << "Headers discovered: " << Headers.size() << "\n";
+            std::cout << "Reflected types discovered: " << Classes.size() << "\n";
+            for (const SParsedClass& ParsedClass : Classes)
+            {
+                std::cout << "  " << ParsedClass.Name
+                          << " (" << ParsedClass.HeaderPath << ")"
+                          << " kind=" << GetTypeKindName(ParsedClass.Kind)
+                          << " properties=" << ParsedClass.Properties.size()
+                          << " functions=" << ParsedClass.Functions.size() << "\n";
+            }
+        }
+
+        if (!WriteGeneratedFiles(Options.OutputDir, Classes))
+        {
+            return 1;
+        }
+
+        if (!WriteCMakeManifest(Options.CMakeManifestPath, Options.OutputDir, Classes))
+        {
+            return 1;
+        }
+
+        std::cout << "MHeaderTool discovered " << Classes.size() << " reflected classes.\n";
+        return 0;
+    }
+    catch (const std::exception& Ex)
     {
+        std::cerr << "MHeaderTool error: " << Ex.what() << "\n";
         return 1;
     }
-
-    if (!WriteCMakeManifest(Options.CMakeManifestPath, Options.OutputDir, Classes))
-    {
-        return 1;
-    }
-
-    std::cout << "MHeaderTool discovered " << Classes.size() << " reflected classes.\n";
-    return 0;
 }

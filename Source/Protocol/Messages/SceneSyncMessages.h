@@ -52,33 +52,6 @@ struct SPlayerClientSyncMessage
 };
 
 MSTRUCT()
-struct SActorSpawnPayload
-{
-    MPROPERTY()
-    uint64 ActorId = 0;
-
-    MPROPERTY()
-    TVector<uint8> Data;
-};
-
-MSTRUCT()
-struct SActorReplicatePayload
-{
-    MPROPERTY()
-    uint64 ActorId = 0;
-
-    MPROPERTY()
-    TVector<uint8> Data;
-};
-
-MSTRUCT()
-struct SActorDespawnPayload
-{
-    MPROPERTY()
-    uint64 ActorId = 0;
-};
-
-MSTRUCT()
 struct SPlayerMovePayload
 {
     MPROPERTY()

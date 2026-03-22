@@ -23,19 +23,3 @@ struct SInventoryItemPayload
     MPROPERTY()
     uint32 Flags = 0;
 };
-
-MSTRUCT()
-struct SInventorySnapshotPayload
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-
-    MPROPERTY()
-    int32 Gold = 0;
-
-    MPROPERTY()
-    uint32 MaxSlots = 0;
-
-    MPROPERTY()
-    TVector<SInventoryItemPayload> Items;
-};

@@ -128,10 +128,19 @@ public:
     }
 };
 
+enum class EGeneratedClientCallHandlerResult : uint8
+{
+    Failed = 0,
+    Responded = 1,
+    Deferred = 2,
+};
+
 class MFunction
 {
 public:
     using FClientParamBinder = bool(*)(uint64 ConnectionId, const TByteArray& Payload, TByteArray& OutParamStorage);
+    using FClientCallHandler = EGeneratedClientCallHandlerResult(*)(MObject* Object, uint64 ConnectionId, const TByteArray& Payload, TByteArray& OutResponsePayload);
+    using FServerCallHandler = bool(*)(MObject* Object, const TByteArray& Payload);
 
     MString Name;
     EFunctionFlags Flags = EFunctionFlags::None;
@@ -145,6 +154,8 @@ public:
     MString AuthMode;
     MString WrapMode;
     FClientParamBinder ClientParamBinder = nullptr;
+    FClientCallHandler ClientCallHandler = nullptr;
+    FServerCallHandler ServerCallHandler = nullptr;
 
     using FunctionPtr = void(*)(void*);
     FunctionPtr NativeFunc = nullptr;

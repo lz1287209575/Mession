@@ -16,6 +16,7 @@
 class MReflectArchive;
 class MObject;
 class IGeneratedClientRouteTarget;
+class IGeneratedClientResponseTarget;
 bool BuildServerRpcPayload(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutData);
 
 template<typename T>
@@ -128,6 +129,7 @@ public:
     virtual void Destroy() {}
     virtual MString ToString() const;
     virtual IGeneratedClientRouteTarget* GetGeneratedClientRouteTarget() { return nullptr; }
+    virtual IGeneratedClientResponseTarget* GetGeneratedClientResponseTarget() { return nullptr; }
     virtual void VisitReferencedObjects(const TFunction<void(MObject*)>& Visitor) const;
     
     // 反射方法

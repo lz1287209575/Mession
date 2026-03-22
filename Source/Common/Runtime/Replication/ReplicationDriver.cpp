@@ -55,10 +55,7 @@ bool ClassHasDomainProperties(const MClass* InClass, EPropertyDomainFlags InDoma
 TByteArray BuildActorUpdatePacket(uint64 ActorId, const TByteArray& Data)
 {
     TByteArray Packet;
-    BuildClientFunctionCallPacketForPayload(
-        MClientDownlink::Id_OnActorUpdate(),
-        SActorReplicatePayload{ActorId, Data},
-        Packet);
+    (void)BuildClientFunctionCallPacketByName("Client_OnActorUpdate", Packet, ActorId, Data);
     return Packet;
 }
 
@@ -76,20 +73,18 @@ TByteArray BuildActorCreatePacket(MActor* Actor)
         return Packet;
     }
 
-    BuildClientFunctionCallPacketForPayload(
-        MClientDownlink::Id_OnActorCreate(),
-        SActorSpawnPayload{Actor->GetObjectId(), SnapshotData},
-        Packet);
+    (void)BuildClientFunctionCallPacketByName(
+        "Client_OnActorCreate",
+        Packet,
+        Actor->GetObjectId(),
+        SnapshotData);
     return Packet;
 }
 
 TByteArray BuildActorDestroyPacket(uint64 ActorId)
 {
     TByteArray Packet;
-    BuildClientFunctionCallPacketForPayload(
-        MClientDownlink::Id_OnActorDestroy(),
-        SActorDespawnPayload{ActorId},
-        Packet);
+    (void)BuildClientFunctionCallPacketByName("Client_OnActorDestroy", Packet, ActorId);
     return Packet;
 }
 }

@@ -105,12 +105,6 @@ configure_mession_compile_options(mession_common)
 
 # NetDriver 库（游戏侧复制与对象能力，物理文件已迁入 Common/Runtime/*）
 set(MESSION_NETDRIVER_SOURCES
-    Source/Servers/World/Avatar/AvatarMember.cpp
-    Source/Servers/World/Avatar/AttributeMember.cpp
-    Source/Servers/World/Avatar/InventoryMember.cpp
-    Source/Servers/World/Avatar/InteractionMember.cpp
-    Source/Servers/World/Avatar/MovementMember.cpp
-    Source/Servers/World/Avatar/PlayerAvatar.cpp
     Source/Common/Runtime/Object/NetObject.cpp
     Source/Common/Runtime/Persistence/MongoPersistenceSink.cpp
     Source/Common/Runtime/Replication/ReplicationDriver.cpp
@@ -310,14 +304,9 @@ mession_attach_generated_groups(LoginServer shared login)
 
 # 3. World Server - 世界服务器
 add_executable(WorldServer 
+    Source/Servers/App/WorldPlayerService.cpp
     Source/Servers/World/WorldServer.h
     Source/Servers/World/WorldServer.cpp
-    Source/Servers/World/PlayerSession.cpp
-    Source/Servers/World/WorldServerGameplay.cpp
-    Source/Servers/World/WorldServerClientSync.cpp
-    Source/Servers/World/PlayerManager.cpp
-    Source/Servers/World/WorldServerBackend.cpp
-    Source/Servers/World/WorldServerPersistence.cpp
     Source/Servers/World/WorldServerMain.cpp
 )
 target_link_libraries(WorldServer
@@ -338,7 +327,7 @@ target_link_libraries(SceneServer
         mession_netdriver
 )
 configure_mession_target(SceneServer)
-mession_attach_generated_groups(SceneServer scene)
+mession_attach_generated_groups(SceneServer shared scene)
 
 # 5. Router Server - 控制面路由服务器
 add_executable(RouterServer
