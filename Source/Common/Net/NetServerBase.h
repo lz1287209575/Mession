@@ -11,7 +11,7 @@
  * - 持有一个主事件循环 MEventLoop（MasterLoop），其内注册若干子循环：MTaskEventLoop（任务）、MNetEventLoop（网络 poll）
  * - Run()：RegisterListener → 注册子循环 → while(bRunning){ MasterLoop.RunOnce(); TickBackends(); } → UnregisterListener
  * - 子类实现：GetListenPort()、OnAccept()、ShutdownConnections()，可选覆盖 TickBackends()
- * - 异步（Yield/Sequence）使用 GetTaskRunner() 投递任务
+ * - 异步（MAsync::Yield/Post）使用 GetTaskRunner() 投递任务
  */
 class MNetServerBase
 {
@@ -24,7 +24,7 @@ public:
     /** 关闭连接并释放监听；子类通过 ShutdownConnections() 做具体清理 */
     void Shutdown();
 
-    /** 供异步（MAsync::Yield、MSequence）投递任务用 */
+    /** 供异步（MAsync::Yield、MAsync::Post）投递任务用 */
     ITaskRunner* GetTaskRunner() { return &TaskLoop; }
 
 protected:

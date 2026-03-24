@@ -116,6 +116,13 @@ inline TFunction<bool()> BuildServerCallLivenessProbe(const TConnection&)
 template<typename TResponse, typename TRequest, typename TConnection>
 inline MFuture<TResult<TResponse, FAppError>> CallServerFunction(
     TConnection&& Connection,
+    const MFunction* Function,
+    const TRequest& Request,
+    const char* MissingFunctionName = nullptr);
+
+template<typename TResponse, typename TRequest, typename TConnection>
+inline MFuture<TResult<TResponse, FAppError>> CallServerFunction(
+    TConnection&& Connection,
     const MClass* TargetClass,
     const char* FunctionName,
     const TRequest& Request);
@@ -160,17 +167,17 @@ inline bool BuildServerCallPayloadByName(const MClass* TargetClass, const char* 
 template<typename TResponse, typename TRequest, typename TConnection>
 inline MFuture<TResult<TResponse, FAppError>> CallServerFunction(
     TConnection&& Connection,
-    const MClass* TargetClass,
-    const char* FunctionName,
-    const TRequest& Request)
+    const MFunction* Function,
+    const TRequest& Request,
+    const char* MissingFunctionName)
 {
     MPromise<TResult<TResponse, FAppError>> Promise;
     MFuture<TResult<TResponse, FAppError>> Future = Promise.GetFuture();
 
-    const MFunction* Function = FindServerCallFunctionByName(TargetClass, FunctionName);
     if (!Function)
     {
-        Promise.SetValue(MakeRpcErrorResult<TResponse>("server_call_missing_function", FunctionName ? FunctionName : ""));
+        Promise.SetValue(
+            MakeRpcErrorResult<TResponse>("server_call_missing_function", MissingFunctionName ? MissingFunctionName : ""));
         return Future;
     }
 
@@ -221,18 +228,33 @@ inline MFuture<TResult<TResponse, FAppError>> CallServerFunction(
     TByteArray PacketPayload;
     if (!BuildServerCallPacket(Function->FunctionId, CallId, RequestPacket, PacketPayload))
     {
-        ConsumeServerCall(CallId, nullptr);
+        CancelServerCall(CallId);
         Promise.SetValue(MakeRpcErrorResult<TResponse>("server_call_packet_build_failed", Function->Name.c_str()));
         return Future;
     }
 
     if (!SendServerCallMessage(std::forward<TConnection>(Connection), PacketPayload))
     {
-        ConsumeServerCall(CallId, nullptr);
+        CancelServerCall(CallId);
         Promise.SetValue(MakeRpcErrorResult<TResponse>("server_call_send_failed", Function->Name.c_str()));
     }
 
     return Future;
+}
+
+template<typename TResponse, typename TRequest, typename TConnection>
+inline MFuture<TResult<TResponse, FAppError>> CallServerFunction(
+    TConnection&& Connection,
+    const MClass* TargetClass,
+    const char* FunctionName,
+    const TRequest& Request)
+{
+    const MFunction* Function = FindServerCallFunctionByName(TargetClass, FunctionName);
+    return CallServerFunction<TResponse>(
+        std::forward<TConnection>(Connection),
+        Function,
+        Request,
+        FunctionName);
 }
 
 template<typename TResponse, typename TRequest, typename TConnection>

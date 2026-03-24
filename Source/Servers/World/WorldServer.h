@@ -4,6 +4,7 @@
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
+#include "Common/Net/Rpc/RpcRuntimeContext.h"
 #include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Common/Runtime/Object/Object.h"
@@ -33,7 +34,7 @@ struct SWorldConfig
 };
 
 MCLASS(Type=Server)
-class MWorldServer : public MNetServerBase, public MObject
+class MWorldServer : public MNetServerBase, public MObject, public MServerRuntimeContext
 {
 public:
     MGENERATED_BODY(MWorldServer, MObject, 0)
@@ -50,6 +51,21 @@ public:
     void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> PlayerEnterWorld(const FPlayerEnterWorldRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerFindResponse, FAppError>> PlayerFind(const FPlayerFindRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> PlayerUpdateRoute(const FPlayerUpdateRouteRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerLogoutResponse, FAppError>> PlayerLogout(const FPlayerLogoutRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> PlayerSwitchScene(const FPlayerSwitchSceneRequest& Request);
 
 private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);

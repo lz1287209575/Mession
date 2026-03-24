@@ -53,6 +53,7 @@ void MSceneServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 
 void MSceneServer::ShutdownConnections()
 {
+    ClearRpcTransports();
     for (auto& [ConnId, Conn] : PeerConnections)
     {
         (void)ConnId;
@@ -69,7 +70,31 @@ void MSceneServer::OnRunStarted()
     LOG_INFO("Scene skeleton running on port %u", static_cast<unsigned>(Config.ListenPort));
 }
 
+MFuture<TResult<FSceneEnterResponse, FAppError>> MSceneServer::EnterScene(const FSceneEnterRequest& Request)
+{
+    if (!SceneService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FSceneEnterResponse>(
+            "scene_service_missing",
+            "EnterScene");
+    }
+
+    return SceneService->EnterScene(Request);
+}
+
+MFuture<TResult<FSceneLeaveResponse, FAppError>> MSceneServer::LeaveScene(const FSceneLeaveRequest& Request)
+{
+    if (!SceneService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FSceneLeaveResponse>(
+            "scene_service_missing",
+            "LeaveScene");
+    }
+
+    return SceneService->LeaveScene(Request);
+}
+
 void MSceneServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
-    (void)MServerRpcSupport::DispatchServerCallPacket(SceneService, Connection, Data);
+    (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
 }

@@ -53,6 +53,7 @@ void MMgoServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 
 void MMgoServer::ShutdownConnections()
 {
+    ClearRpcTransports();
     for (auto& [ConnId, Conn] : PeerConnections)
     {
         (void)ConnId;
@@ -69,7 +70,31 @@ void MMgoServer::OnRunStarted()
     LOG_INFO("Mgo skeleton running on port %u", static_cast<unsigned>(Config.ListenPort));
 }
 
+MFuture<TResult<FMgoLoadPlayerResponse, FAppError>> MMgoServer::LoadPlayer(const FMgoLoadPlayerRequest& Request)
+{
+    if (!PlayerStateService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FMgoLoadPlayerResponse>(
+            "mgo_service_missing",
+            "LoadPlayer");
+    }
+
+    return PlayerStateService->LoadPlayer(Request);
+}
+
+MFuture<TResult<FMgoSavePlayerResponse, FAppError>> MMgoServer::SavePlayer(const FMgoSavePlayerRequest& Request)
+{
+    if (!PlayerStateService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FMgoSavePlayerResponse>(
+            "mgo_service_missing",
+            "SavePlayer");
+    }
+
+    return PlayerStateService->SavePlayer(Request);
+}
+
 void MMgoServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
-    (void)MServerRpcSupport::DispatchServerCallPacket(PlayerStateService, Connection, Data);
+    (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
 }

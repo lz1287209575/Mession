@@ -1,13 +1,11 @@
 #include "ReplicationDriver.h"
-#include "Protocol/ServerMessages.h"
 #include "Common/Net/Rpc/RpcClientCall.h"
-#include "Common/Runtime/Reflect/Reflection.h"
+#include "Common/Net/Rpc/RpcPayload.h"
+#include "Common/Runtime/Object/ObjectDomainUtils.h"
 
 namespace
 {
-bool ClassHasDomainProperties(const MClass* InClass, EPropertyDomainFlags InDomain);
-
-bool BuildReflectedObjectSnapshot(MObject* Object, TByteArray& OutData)
+bool BuildActorFallbackSnapshot(MObject* Object, TByteArray& OutData)
 {
     OutData.clear();
     if (!Object)
@@ -29,6 +27,42 @@ bool BuildReflectedObjectSnapshot(MObject* Object, TByteArray& OutData)
     return true;
 }
 
+bool BuildObjectReplicationSnapshot(MObject* Object, TByteArray& OutData, bool bOnlyDirty = false)
+{
+    OutData.clear();
+    if (!Object)
+    {
+        return false;
+    }
+
+    MClass* ObjectClass = Object->GetClass();
+    if (!ObjectClass)
+    {
+        LOG_WARN("Replication missing class metadata: object_id=%llu",
+                 static_cast<unsigned long long>(Object->GetObjectId()));
+        return false;
+    }
+
+    if (MObjectDomainUtils::ClassHasDomainProperties(ObjectClass, EPropertyDomainFlags::Replication))
+    {
+        return MObjectDomainUtils::BuildObjectDomainSnapshot(
+            Object,
+            EPropertyDomainFlags::Replication,
+            OutData,
+            bOnlyDirty);
+    }
+
+    if (MActor* Actor = dynamic_cast<MActor*>(Object))
+    {
+        if (Actor->DoesActorReplicate())
+        {
+            return BuildActorFallbackSnapshot(Object, OutData);
+        }
+    }
+
+    return false;
+}
+
 bool SupportsObjectReplication(MObject* Object)
 {
     if (!Object)
@@ -45,24 +79,7 @@ bool SupportsObjectReplication(MObject* Object)
     }
 
     MClass* ObjectClass = Object->GetClass();
-    return ClassHasDomainProperties(ObjectClass, EPropertyDomainFlags::Replication);
-}
-
-bool ClassHasDomainProperties(const MClass* InClass, EPropertyDomainFlags InDomain)
-{
-    if (!InClass)
-    {
-        return false;
-    }
-
-    for (const MProperty* Prop : InClass->GetProperties())
-    {
-        if (Prop && Prop->HasAnyDomains(InDomain))
-        {
-            return true;
-        }
-    }
-    return false;
+    return MObjectDomainUtils::ClassHasDomainProperties(ObjectClass, EPropertyDomainFlags::Replication);
 }
 
 TByteArray BuildObjectUpdatePacket(uint64 ObjectId, const TByteArray& Data)
@@ -81,7 +98,7 @@ TByteArray BuildObjectCreatePacket(MObject* Object)
     }
 
     TByteArray SnapshotData;
-    if (!BuildReflectedObjectSnapshot(Object, SnapshotData))
+    if (!BuildObjectReplicationSnapshot(Object, SnapshotData, false))
     {
         return Packet;
     }
@@ -120,11 +137,6 @@ void MReplicationDriver::RegisterObject(MObject* Object)
         {
             Actor->SetActorActive(true);
         }
-        TByteArray SnapshotData;
-        if (BuildReflectedObjectSnapshot(Object, SnapshotData))
-        {
-            LastSerializedSnapshots[Object->GetObjectId()] = SnapshotData;
-        }
         LOG_DEBUG("Registered object %llu for replication",
                   static_cast<unsigned long long>(Object->GetObjectId()));
     }
@@ -141,7 +153,6 @@ void MReplicationDriver::UnregisterObject(uint64 ObjectId)
         }
         ReplicationMap.erase(It);
     }
-    LastSerializedSnapshots.erase(ObjectId);
 }
 
 void MReplicationDriver::RegisterActor(MActor* Actor)
@@ -222,7 +233,8 @@ void MReplicationDriver::Tick(float DeltaTime)
 
         MClass* ObjectClass = Object->GetClass();
         const bool bUseReplicationDirtyDomain =
-            Object && ObjectClass && ClassHasDomainProperties(ObjectClass, EPropertyDomainFlags::Replication);
+            Object && ObjectClass &&
+            MObjectDomainUtils::ClassHasDomainProperties(ObjectClass, EPropertyDomainFlags::Replication);
 
         if (bUseReplicationDirtyDomain &&
             !Object->HasAnyDirtyPropertyForDomain(EPropertyDomainFlags::Replication))
@@ -235,22 +247,8 @@ void MReplicationDriver::Tick(float DeltaTime)
         }
 
         TByteArray SnapshotData;
-        if (!BuildReflectedObjectSnapshot(Object, SnapshotData) || SnapshotData.empty())
+        if (!BuildObjectReplicationSnapshot(Object, SnapshotData, bUseReplicationDirtyDomain) || SnapshotData.empty())
         {
-            continue;
-        }
-
-        TByteArray& LastSnapshot = LastSerializedSnapshots[ObjectId];
-        if (SnapshotData == LastSnapshot)
-        {
-            if (bUseReplicationDirtyDomain)
-            {
-                Object->ClearDirtyDomain(EPropertyDomainFlags::Replication);
-            }
-            if (Actor)
-            {
-                Actor->MarkNetUpdateSent();
-            }
             continue;
         }
 
@@ -266,7 +264,6 @@ void MReplicationDriver::Tick(float DeltaTime)
             }
         }
 
-        LastSnapshot = SnapshotData;
         if (bUseReplicationDirtyDomain)
         {
             Object->ClearDirtyDomain(EPropertyDomainFlags::Replication);

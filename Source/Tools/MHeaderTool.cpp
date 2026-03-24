@@ -105,6 +105,7 @@ std::string DetermineOwnerFromHeaderPath(const fs::path& HeaderPath);
 std::string NormalizeReflectionType(std::string TypeName);
 std::string InferPropertyKind(const std::string& TypeName);
 std::optional<std::string> ExtractServerCallResponseType(const SParsedFunction& Function);
+std::optional<std::string> ExtractRpcClassTarget(const SParsedClass& ParsedClass);
 std::vector<SParsedFunction::SParsedParameter> ParseFunctionParameters(const std::string& Signature);
 std::map<std::string, std::string> ParseTypeAliasesInBody(const std::string& ClassBody);
 std::string BuildClassKindExpr(const SParsedClass& ParsedClass);
@@ -1731,6 +1732,38 @@ std::optional<std::string> ExtractServerCallResponseType(const SParsedFunction& 
     return NormalizeReflectionType(ResultArgs[0]);
 }
 
+std::optional<std::string> ExtractRpcClassTarget(const SParsedClass& ParsedClass)
+{
+    if (ParsedClass.ReflectionType != "Rpc")
+    {
+        return std::nullopt;
+    }
+
+    std::optional<std::string> ClassTarget;
+    for (const SParsedFunction& Function : ParsedClass.Functions)
+    {
+        if (Function.Transport != "ServerCall")
+        {
+            continue;
+        }
+
+        if (!ClassTarget.has_value())
+        {
+            ClassTarget = Function.Target;
+            continue;
+        }
+
+        if (*ClassTarget != Function.Target)
+        {
+            throw std::runtime_error(
+                "Rpc class must use a single Target across all ServerCall methods: " +
+                ParsedClass.Name + " (" + *ClassTarget + " vs " + Function.Target + ")");
+        }
+    }
+
+    return ClassTarget;
+}
+
 std::string BuildClassKindExpr(const SParsedClass& ParsedClass)
 {
     if (ParsedClass.Kind == EParsedTypeKind::Struct)
@@ -1944,6 +1977,7 @@ std::vector<SParsedClass> ParseReflectedClassesInHeader(
 
     for (const SParsedClass& Parsed : Classes)
     {
+        ExtractRpcClassTarget(Parsed);
         for (const SParsedFunction& Function : Parsed.Functions)
         {
             if (Function.Transport == "ClientCall")
@@ -2449,34 +2483,8 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
             Out << "    {\n";
             Out << "        return false;\n";
             Out << "    }\n";
-            Out << "    auto Future = TypedObject->" << Function.Name << "(RequestValue);\n";
-            Out << "    if (!Future.Valid())\n";
-            Out << "    {\n";
-            Out << "        return SendDeferredServerCallErrorResponse(Context, FAppError::Make(\"server_call_invalid_future\", \"" << Function.Name << "\"));\n";
-            Out << "    }\n";
-            Out << "    Future.Then([Context](auto InFuture) mutable\n";
-            Out << "    {\n";
-            Out << "        try\n";
-            Out << "        {\n";
-            Out << "            auto Result = InFuture.Get();\n";
-            Out << "            if (Result.IsOk())\n";
-            Out << "            {\n";
-            Out << "                const TByteArray ResponsePayload = BuildPayload(Result.GetValue());\n";
-            Out << "                (void)SendDeferredServerCallSuccessResponse(Context, ResponsePayload);\n";
-            Out << "                return;\n";
-            Out << "            }\n";
-            Out << "            (void)SendDeferredServerCallErrorResponse(Context, Result.GetError());\n";
-            Out << "        }\n";
-            Out << "        catch (const std::exception& Ex)\n";
-            Out << "        {\n";
-            Out << "            (void)SendDeferredServerCallErrorResponse(Context, FAppError::Make(\"server_call_exception\", Ex.what()));\n";
-            Out << "        }\n";
-            Out << "        catch (...)\n";
-            Out << "        {\n";
-            Out << "            (void)SendDeferredServerCallErrorResponse(Context, FAppError::Make(\"server_call_exception\", \"unknown\"));\n";
-            Out << "        }\n";
-            Out << "    });\n";
-            Out << "    return true;\n";
+            Out << "    return MServerCallAsyncSupport::StartDeferredServerCall(Context, TypedObject->" << Function.Name
+                << "(RequestValue), \"" << Function.Name << "\");\n";
             Out << "}\n";
             Out << "\n";
         }
@@ -2604,6 +2612,46 @@ void WriteGeneratedSource(std::ofstream& Out, const SParsedClass& ParsedClass)
         Out << "SAutoRegisterStruct_" << ParsedClass.Name << " GAutoRegisterStruct_" << ParsedClass.Name << ";\n";
         Out << "} // namespace\n";
         return;
+    }
+
+    if (ParsedClass.ReflectionType == "Rpc")
+    {
+        for (const SParsedFunction& Function : ParsedClass.Functions)
+        {
+            if (Function.Transport != "ServerCall" || Function.Params.size() != 1)
+            {
+                continue;
+            }
+
+            const std::optional<std::string> ResponseType = ExtractServerCallResponseType(Function);
+            if (!ResponseType.has_value())
+            {
+                throw std::runtime_error(
+                    "Codegen failed to extract Rpc response type: " + ParsedClass.Name + "::" + Function.Name);
+            }
+
+            const auto& RequestParam = Function.Params.front();
+            Out << Function.ReturnType << " " << ParsedClass.Name << "::" << Function.Name
+                << "(" << RequestParam.Type << " " << RequestParam.Name << ")\n";
+            Out << "{\n";
+            Out << "    return CallRemoteByName<" << *ResponseType << ">(\"" << Function.Name << "\", " << RequestParam.Name << ");\n";
+            Out << "}\n";
+            Out << "\n";
+        }
+
+        const std::optional<std::string> RpcTarget = ExtractRpcClassTarget(ParsedClass);
+        Out << "EServerType " << ParsedClass.Name << "::GetTargetServerType() const\n";
+        Out << "{\n";
+        if (RpcTarget.has_value())
+        {
+            Out << "    return EServerType::" << *RpcTarget << ";\n";
+        }
+        else
+        {
+            Out << "    return EServerType::Unknown;\n";
+        }
+        Out << "}\n";
+        Out << "\n";
     }
 
     Out << "void " << ParsedClass.Name << "::RegisterAllProperties(MClass* InClass)\n";

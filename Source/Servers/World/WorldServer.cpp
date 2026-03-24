@@ -71,11 +71,11 @@ bool MWorldServer::Init(int InPort)
         PlayerService = NewMObject<MWorldPlayerServiceEndpoint>(this, "PlayerService");
     }
 
-    LoginRpc->SetConnection(LoginServerConn);
-    MgoRpc->SetConnection(MgoServerConn);
-    SceneRpc->SetConnection(SceneServerConn);
-    RouterRpc->SetConnection(RouterServerConn);
-    PlayerService->Initialize(&OnlinePlayers, LoginRpc, MgoRpc, SceneRpc, RouterRpc);
+    RegisterRpcTransport(EServerType::Login, LoginServerConn);
+    RegisterRpcTransport(EServerType::Mgo, MgoServerConn);
+    RegisterRpcTransport(EServerType::Scene, SceneServerConn);
+    RegisterRpcTransport(EServerType::Router, RouterServerConn);
+    PlayerService->Initialize(&OnlinePlayers, &PersistenceSubsystem, LoginRpc, MgoRpc, SceneRpc, RouterRpc);
 
     return true;
 }
@@ -85,10 +85,7 @@ void MWorldServer::Tick()
     for (const auto& [PlayerId, Session] : OnlinePlayers)
     {
         (void)PlayerId;
-        ForEachObjectInSubtree(Session, [this](MObject* Object)
-        {
-            (void)PersistenceSubsystem.EnqueueIfDirty(Object);
-        });
+        (void)PersistenceSubsystem.EnqueueRootIfDirty(Session);
     }
 
     (void)PersistenceSubsystem.Flush(64);
@@ -141,6 +138,7 @@ void MWorldServer::ShutdownConnections()
     OnlinePlayers.clear();
 
     BackendConnectionManager.DisconnectAll();
+    ClearRpcTransports();
     LoginServerConn.reset();
     SceneServerConn.reset();
     RouterServerConn.reset();
@@ -152,9 +150,72 @@ void MWorldServer::OnRunStarted()
     LOG_INFO("World skeleton running on port %u", static_cast<unsigned>(Config.ListenPort));
 }
 
+MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> MWorldServer::PlayerEnterWorld(
+    const FPlayerEnterWorldRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerEnterWorldResponse>(
+            "world_player_service_missing",
+            "PlayerEnterWorld");
+    }
+
+    return PlayerService->PlayerEnterWorld(Request);
+}
+
+MFuture<TResult<FPlayerFindResponse, FAppError>> MWorldServer::PlayerFind(const FPlayerFindRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerFindResponse>(
+            "world_player_service_missing",
+            "PlayerFind");
+    }
+
+    return PlayerService->PlayerFind(Request);
+}
+
+MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MWorldServer::PlayerUpdateRoute(
+    const FPlayerUpdateRouteRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerUpdateRouteResponse>(
+            "world_player_service_missing",
+            "PlayerUpdateRoute");
+    }
+
+    return PlayerService->PlayerUpdateRoute(Request);
+}
+
+MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldServer::PlayerLogout(const FPlayerLogoutRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerLogoutResponse>(
+            "world_player_service_missing",
+            "PlayerLogout");
+    }
+
+    return PlayerService->PlayerLogout(Request);
+}
+
+MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> MWorldServer::PlayerSwitchScene(
+    const FPlayerSwitchSceneRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>(
+            "world_player_service_missing",
+            "PlayerSwitchScene");
+    }
+
+    return PlayerService->PlayerSwitchScene(Request);
+}
+
 void MWorldServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
-    (void)MServerRpcSupport::DispatchServerCallPacket(PlayerService, Connection, Data);
+    (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
 }
 
 void MWorldServer::HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName)

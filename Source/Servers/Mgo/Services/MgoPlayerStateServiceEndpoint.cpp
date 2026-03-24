@@ -1,6 +1,6 @@
 #include "Servers/Mgo/Services/MgoPlayerStateServiceEndpoint.h"
 
-void MMgoPlayerStateServiceEndpoint::Initialize(TMap<uint64, TVector<FMgoPersistenceRecord>>* InPlayerRecords)
+void MMgoPlayerStateServiceEndpoint::Initialize(TMap<uint64, TVector<FObjectPersistenceRecord>>* InPlayerRecords)
 {
     PlayerRecords = InPlayerRecords;
 }

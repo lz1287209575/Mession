@@ -285,7 +285,6 @@ add_executable(GatewayServer
     Source/Servers/Gateway/GatewayServer.h
     Source/Servers/Gateway/GatewayServer.cpp
     Source/Servers/Gateway/GatewayServerMain.cpp
-    Source/Servers/Gateway/Rpc/GatewayBackendRpc.cpp
     Source/Servers/Gateway/Services/GatewayClientServiceEndpoint.cpp
 )
 target_link_libraries(GatewayServer
@@ -318,7 +317,6 @@ add_executable(WorldServer
     Source/Servers/World/Domain/InventoryComponent.cpp
     Source/Servers/World/Domain/PlayerAvatar.cpp
     Source/Servers/World/Domain/PlayerSession.cpp
-    Source/Servers/World/Rpc/WorldBackendRpc.cpp
     Source/Servers/World/Services/WorldPlayerServiceEndpoint.cpp
 )
 target_link_libraries(WorldServer

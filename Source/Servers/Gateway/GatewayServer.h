@@ -4,6 +4,7 @@
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
+#include "Common/Net/Rpc/RpcRuntimeContext.h"
 #include "Common/Net/Rpc/RpcDispatch.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Protocol/Messages/Common/AppMessages.h"
@@ -20,7 +21,7 @@ struct SGatewayConfig
 };
 
 MCLASS(Type=Server)
-class MGatewayServer : public MNetServerBase, public MObject
+class MGatewayServer : public MNetServerBase, public MObject, public MServerRuntimeContext
 {
 public:
     MGENERATED_BODY(MGatewayServer, MObject, 0)
@@ -37,6 +38,21 @@ public:
     void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
+
+    MFUNCTION(ClientCall)
+    void Client_Echo(FClientEchoRequest& Request, FClientEchoResponse& Response);
+
+    MFUNCTION(ClientCall)
+    void Client_Login(FClientLoginRequest& Request, FClientLoginResponse& Response);
+
+    MFUNCTION(ClientCall)
+    void Client_FindPlayer(FClientFindPlayerRequest& Request, FClientFindPlayerResponse& Response);
+
+    MFUNCTION(ClientCall)
+    void Client_Logout(FClientLogoutRequest& Request, FClientLogoutResponse& Response);
+
+    MFUNCTION(ClientCall)
+    void Client_SwitchScene(FClientSwitchSceneRequest& Request, FClientSwitchSceneResponse& Response);
 
 private:
     void HandleClientPacket(uint64 ConnectionId, const TByteArray& Data);

@@ -45,8 +45,8 @@ bool MGatewayServer::Init(int InPort)
     {
         WorldRpc = NewMObject<MGatewayWorldRpc>(this, "WorldRpc");
     }
-    LoginRpc->SetConnection(LoginServerConn);
-    WorldRpc->SetConnection(WorldServerConn);
+    RegisterRpcTransport(EServerType::Login, LoginServerConn);
+    RegisterRpcTransport(EServerType::World, WorldServerConn);
     if (!ClientService)
     {
         ClientService = NewMObject<MGatewayClientServiceEndpoint>(this, "ClientService");
@@ -99,6 +99,7 @@ void MGatewayServer::ShutdownConnections()
     }
     ClientConnections.clear();
     BackendConnectionManager.DisconnectAll();
+    ClearRpcTransports();
     LoginServerConn.reset();
     WorldServerConn.reset();
 }
@@ -106,6 +107,61 @@ void MGatewayServer::ShutdownConnections()
 void MGatewayServer::OnRunStarted()
 {
     LOG_INFO("Gateway skeleton running on port %u", static_cast<unsigned>(Config.ListenPort));
+}
+
+void MGatewayServer::Client_Echo(FClientEchoRequest& Request, FClientEchoResponse& Response)
+{
+    if (!ClientService)
+    {
+        Response.Message = "client_service_missing";
+        return;
+    }
+
+    ClientService->Client_Echo(Request, Response);
+}
+
+void MGatewayServer::Client_Login(FClientLoginRequest& Request, FClientLoginResponse& Response)
+{
+    if (!ClientService)
+    {
+        Response.Error = "client_service_missing";
+        return;
+    }
+
+    ClientService->Client_Login(Request, Response);
+}
+
+void MGatewayServer::Client_FindPlayer(FClientFindPlayerRequest& Request, FClientFindPlayerResponse& Response)
+{
+    if (!ClientService)
+    {
+        Response.Error = "client_service_missing";
+        return;
+    }
+
+    ClientService->Client_FindPlayer(Request, Response);
+}
+
+void MGatewayServer::Client_Logout(FClientLogoutRequest& Request, FClientLogoutResponse& Response)
+{
+    if (!ClientService)
+    {
+        Response.Error = "client_service_missing";
+        return;
+    }
+
+    ClientService->Client_Logout(Request, Response);
+}
+
+void MGatewayServer::Client_SwitchScene(FClientSwitchSceneRequest& Request, FClientSwitchSceneResponse& Response)
+{
+    if (!ClientService)
+    {
+        Response.Error = "client_service_missing";
+        return;
+    }
+
+    ClientService->Client_SwitchScene(Request, Response);
 }
 
 void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& Data)
@@ -157,14 +213,7 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
                 return ClientConnection->Send(Packet.data(), static_cast<uint32>(Packet.size()));
             });
 
-    if (!ClientService)
-    {
-        LOG_WARN("Gateway client service missing for client call dispatch: connection=%llu",
-                 static_cast<unsigned long long>(ConnectionId));
-        return;
-    }
-
-    (void)DispatchClientFunction(ClientService, ConnectionId, FunctionId, CallId, Payload, ResponseTarget);
+    (void)DispatchClientFunction(this, ConnectionId, FunctionId, CallId, Payload, ResponseTarget);
 }
 
 void MGatewayServer::HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName)

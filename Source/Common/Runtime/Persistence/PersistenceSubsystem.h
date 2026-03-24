@@ -1,14 +1,16 @@
 #pragma once
 
-#include "Common/Runtime/Reflect/Reflection.h"
+#include "Common/Runtime/Object/ObjectDomainUtils.h"
 
 struct SPersistenceRecord
 {
+    uint64 RootObjectId = 0;
     uint64 ObjectId = 0;
     uint16 ClassId = 0;
     uint32 OwnerServerId = 0;
     uint64 RequestId = 0;
     uint64 Version = 0;
+    MString ObjectPath;
     MString ClassName;
     TByteArray SnapshotData;
 };
@@ -50,56 +52,73 @@ public:
         OwnerServerId = InOwnerServerId;
     }
 
-    bool EnqueueIfDirty(MObject* InObject, MClass* InClass = nullptr)
+    TVector<SPersistenceRecord> BuildRecordsForRoot(MObject* InRoot, bool bOnlyDirty = false)
     {
-        if (!InObject)
+        TVector<SPersistenceRecord> Records;
+        if (!InRoot)
         {
-            return false;
+            return Records;
         }
 
-        MClass* LocalClass = InClass ? InClass : InObject->GetClass();
-        if (!LocalClass)
+        const TVector<SObjectDomainSnapshotRecord> SnapshotRecords =
+            MObjectDomainUtils::BuildObjectDomainSnapshotRecords(
+                InRoot,
+                EPropertyDomainFlags::Persistence,
+                bOnlyDirty);
+
+        Records.reserve(SnapshotRecords.size());
+        for (const SObjectDomainSnapshotRecord& SnapshotRecord : SnapshotRecords)
         {
-            return false;
+            SPersistenceRecord Record;
+            Record.RootObjectId = SnapshotRecord.RootObjectId;
+            Record.ObjectId = SnapshotRecord.ObjectId;
+            Record.ClassId = SnapshotRecord.ClassId;
+            Record.OwnerServerId = OwnerServerId;
+            Record.ObjectPath = SnapshotRecord.ObjectPath;
+            Record.ClassName = SnapshotRecord.ClassName;
+            Record.SnapshotData = SnapshotRecord.SnapshotData;
+            Records.push_back(std::move(Record));
         }
 
-        if (!InObject->HasAnyDirtyPropertyForDomain(EPropertyDomainFlags::Persistence))
-        {
-            return false;
-        }
+        return Records;
+    }
 
-        MReflectArchive Ar;
-        LocalClass->WriteSnapshotByDomain(InObject, Ar, ToMask(EPropertyDomainFlags::Persistence));
-
-        SPersistenceRecord Record;
-        Record.ObjectId = InObject->GetId();
-        Record.ClassId = LocalClass->GetId();
-        Record.OwnerServerId = OwnerServerId;
-        uint64& ObjectVersion = ObjectVersions[Record.ObjectId];
-        ++ObjectVersion;
-        Record.Version = ObjectVersion;
-        Record.RequestId = NextRequestId++;
-        if (Record.RequestId == 0)
+    bool EnqueueRootIfDirty(MObject* InRoot)
+    {
+        bool bEnqueuedAny = false;
+        for (SPersistenceRecord& Record : BuildRecordsForRoot(InRoot, true))
         {
+            uint64& ObjectVersion = ObjectVersions[Record.ObjectId];
+            ++ObjectVersion;
+            Record.Version = ObjectVersion;
             Record.RequestId = NextRequestId++;
-        }
-        Record.ClassName = LocalClass->GetName();
-        Record.SnapshotData = std::move(Ar.Data);
-        auto ExistingIt = PendingRecords.find(Record.ObjectId);
-        if (ExistingIt == PendingRecords.end())
-        {
-            PendingRecords[Record.ObjectId] = std::move(Record);
-            PendingOrder.push_back(InObject->GetId());
-        }
-        else
-        {
-            ExistingIt->second = std::move(Record);
-            ++MergedCount;
-        }
-        ++EnqueuedCount;
+            if (Record.RequestId == 0)
+            {
+                Record.RequestId = NextRequestId++;
+            }
 
-        InObject->ClearDirtyDomain(EPropertyDomainFlags::Persistence);
-        return true;
+            auto ExistingIt = PendingRecords.find(Record.ObjectId);
+            if (ExistingIt == PendingRecords.end())
+            {
+                PendingRecords[Record.ObjectId] = Record;
+                PendingOrder.push_back(Record.ObjectId);
+            }
+            else
+            {
+                ExistingIt->second = Record;
+                ++MergedCount;
+            }
+
+            ++EnqueuedCount;
+            bEnqueuedAny = true;
+
+            if (MObject* PendingObject = MObject::FindObject(Record.ObjectId))
+            {
+                PendingObject->ClearDirtyDomain(EPropertyDomainFlags::Persistence);
+            }
+        }
+
+        return bEnqueuedAny;
     }
 
     uint32 Flush(uint32 InMaxRecords = 64)

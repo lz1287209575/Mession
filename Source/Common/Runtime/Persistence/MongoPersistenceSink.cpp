@@ -24,9 +24,11 @@ bool MMongoPersistenceSink::Persist(const SPersistenceRecord& InRecord)
     }
 
     LOG_DEBUG(
-        "MongoSink doc {object_id:%llu,class_id:%u,class:%s,snapshot_hex:%s}",
+        "MongoSink doc {root_object_id:%llu,object_id:%llu,class_id:%u,path:%s,class:%s,snapshot_hex:%s}",
+        static_cast<unsigned long long>(InRecord.RootObjectId),
         static_cast<unsigned long long>(InRecord.ObjectId),
         static_cast<unsigned>(InRecord.ClassId),
+        InRecord.ObjectPath.c_str(),
         InRecord.ClassName.c_str(),
         Hex::BytesToHex(InRecord.SnapshotData).c_str());
     return true;

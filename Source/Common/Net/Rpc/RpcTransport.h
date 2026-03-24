@@ -2,7 +2,8 @@
 
 #include "Common/Net/NetMessages.h"
 #include "Common/Net/ServerConnection.h"
-#include "Protocol/ServerMessages.h"
+#include "Common/Serialization/MessageUtils.h"
+#include "Common/Net/Rpc/RpcPayload.h"
 
 #include <cstddef>
 

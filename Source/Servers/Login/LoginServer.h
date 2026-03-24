@@ -3,6 +3,7 @@
 #include "Common/Runtime/MLib.h"
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
+#include "Common/Net/Rpc/RpcRuntimeContext.h"
 #include "Common/Net/ServerConnection.h"
 #include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Log/Logger.h"
@@ -17,7 +18,7 @@ struct SLoginConfig
 };
 
 MCLASS(Type=Server)
-class MLoginServer : public MNetServerBase, public MObject
+class MLoginServer : public MNetServerBase, public MObject, public MServerRuntimeContext
 {
 public:
     MGENERATED_BODY(MLoginServer, MObject, 0)
@@ -33,6 +34,12 @@ public:
     void OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FLoginIssueSessionResponse, FAppError>> IssueSession(const FLoginIssueSessionRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FLoginValidateSessionResponse, FAppError>> ValidateSessionCall(const FLoginValidateSessionRequest& Request);
 
 private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);

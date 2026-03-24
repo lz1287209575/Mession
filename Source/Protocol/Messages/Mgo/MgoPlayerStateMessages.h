@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Protocol/Messages/Common/ObjectStateMessages.h"
 
 MSTRUCT()
 struct FMgoLoadPlayerRequest
@@ -10,26 +11,13 @@ struct FMgoLoadPlayerRequest
 };
 
 MSTRUCT()
-struct FMgoPersistenceRecord
-{
-    MPROPERTY()
-    MString ObjectPath;
-
-    MPROPERTY()
-    MString ClassName;
-
-    MPROPERTY()
-    TByteArray SnapshotData;
-};
-
-MSTRUCT()
 struct FMgoLoadPlayerResponse
 {
     MPROPERTY()
     uint64 PlayerId = 0;
 
     MPROPERTY()
-    TVector<FMgoPersistenceRecord> Records;
+    TVector<FObjectPersistenceRecord> Records;
 };
 
 MSTRUCT()
@@ -39,7 +27,7 @@ struct FMgoSavePlayerRequest
     uint64 PlayerId = 0;
 
     MPROPERTY()
-    TVector<FMgoPersistenceRecord> Records;
+    TVector<FObjectPersistenceRecord> Records;
 };
 
 MSTRUCT()

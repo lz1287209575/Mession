@@ -4,6 +4,7 @@
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
+#include "Common/Net/Rpc/RpcRuntimeContext.h"
 #include "Common/Net/ServerConnection.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Protocol/Messages/Common/AppMessages.h"
@@ -16,7 +17,7 @@ struct SSceneConfig
 };
 
 MCLASS(Type=Server)
-class MSceneServer : public MNetServerBase, public MObject
+class MSceneServer : public MNetServerBase, public MObject, public MServerRuntimeContext
 {
 public:
     MGENERATED_BODY(MSceneServer, MObject, 0)
@@ -32,6 +33,12 @@ public:
     void OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FSceneEnterResponse, FAppError>> EnterScene(const FSceneEnterRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FSceneLeaveResponse, FAppError>> LeaveScene(const FSceneLeaveRequest& Request);
 
 private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);

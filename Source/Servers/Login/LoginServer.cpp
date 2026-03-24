@@ -54,6 +54,7 @@ void MLoginServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 
 void MLoginServer::ShutdownConnections()
 {
+    ClearRpcTransports();
     for (auto& [ConnId, Conn] : PeerConnections)
     {
         (void)ConnId;
@@ -70,6 +71,32 @@ void MLoginServer::OnRunStarted()
     LOG_INFO("Login skeleton running on port %u", static_cast<unsigned>(Config.ListenPort));
 }
 
+MFuture<TResult<FLoginIssueSessionResponse, FAppError>> MLoginServer::IssueSession(
+    const FLoginIssueSessionRequest& Request)
+{
+    if (!SessionService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FLoginIssueSessionResponse>(
+            "login_service_missing",
+            "IssueSession");
+    }
+
+    return SessionService->IssueSession(Request);
+}
+
+MFuture<TResult<FLoginValidateSessionResponse, FAppError>> MLoginServer::ValidateSessionCall(
+    const FLoginValidateSessionRequest& Request)
+{
+    if (!SessionService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FLoginValidateSessionResponse>(
+            "login_service_missing",
+            "ValidateSessionCall");
+    }
+
+    return SessionService->ValidateSessionCall(Request);
+}
+
 uint32 MLoginServer::AllocateSessionKey()
 {
     return NextSessionKey++;
@@ -77,5 +104,5 @@ uint32 MLoginServer::AllocateSessionKey()
 
 void MLoginServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
-    (void)MServerRpcSupport::DispatchServerCallPacket(SessionService, Connection, Data);
+    (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
 }

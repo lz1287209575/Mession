@@ -1,6 +1,5 @@
 #include "Common/Net/ServerConnection.h"
 #include "Common/Net/Rpc/RpcManifest.h"
-#include "Protocol/ServerMessages.h"
 
 // MTcpMessageChannel implementation
 bool MTcpMessageChannel::Send(const void* Data, uint32 Size)

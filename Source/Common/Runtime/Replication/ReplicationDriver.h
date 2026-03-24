@@ -68,7 +68,5 @@ public:
     size_t GetObjectCount() const { return ReplicationMap.size(); }
 
 private:
-    TMap<uint64, TByteArray> LastSerializedSnapshots;
-
     void ProcessPendingUpdates();
 };

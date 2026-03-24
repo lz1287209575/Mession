@@ -53,6 +53,7 @@ void MRouterServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 
 void MRouterServer::ShutdownConnections()
 {
+    ClearRpcTransports();
     for (auto& [ConnId, Conn] : PeerConnections)
     {
         (void)ConnId;
@@ -69,7 +70,33 @@ void MRouterServer::OnRunStarted()
     LOG_INFO("Router skeleton running on port %u", static_cast<unsigned>(Config.ListenPort));
 }
 
+MFuture<TResult<FRouterResolvePlayerRouteResponse, FAppError>> MRouterServer::ResolvePlayerRoute(
+    const FRouterResolvePlayerRouteRequest& Request)
+{
+    if (!RegistryService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FRouterResolvePlayerRouteResponse>(
+            "router_service_missing",
+            "ResolvePlayerRoute");
+    }
+
+    return RegistryService->ResolvePlayerRoute(Request);
+}
+
+MFuture<TResult<FRouterUpsertPlayerRouteResponse, FAppError>> MRouterServer::UpsertPlayerRoute(
+    const FRouterUpsertPlayerRouteRequest& Request)
+{
+    if (!RegistryService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FRouterUpsertPlayerRouteResponse>(
+            "router_service_missing",
+            "UpsertPlayerRoute");
+    }
+
+    return RegistryService->UpsertPlayerRoute(Request);
+}
+
 void MRouterServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
-    (void)MServerRpcSupport::DispatchServerCallPacket(RegistryService, Connection, Data);
+    (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
 }

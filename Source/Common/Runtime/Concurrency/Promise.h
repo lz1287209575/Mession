@@ -39,6 +39,7 @@ template<typename T>
 class MPromise
 {
 public:
+    /** Completion source：生产异步结果，和 MFuture 成对出现。 */
     MPromise() : State(MakeShared<MDetail::SPromiseState<T>>()) {}
 
     MFuture<T> GetFuture();
@@ -56,12 +57,15 @@ template<typename T>
 class MFuture
 {
 public:
+    /** Result handle：消费异步结果，可 Wait/Await/Then。 */
     MFuture() = default;
     explicit MFuture(TSharedPtr<MDetail::SPromiseState<T>> InState) : State(std::move(InState)) {}
 
     bool Valid() const { return State != nullptr; }
+    bool IsReady() const;
 
     void Wait() const;
+    T Await() const;
     T Get() const;
 
     void Then(TFunction<void(MFuture<T>)> Callback);
@@ -76,6 +80,7 @@ template<>
 class MPromise<void>
 {
 public:
+    /** Completion source：生产异步结果，和 MFuture<void> 成对出现。 */
     MPromise() : State(MakeShared<MDetail::SPromiseStateVoid>()) {}
 
     MFuture<void> GetFuture();
@@ -92,12 +97,15 @@ template<>
 class MFuture<void>
 {
 public:
+    /** Result handle：消费异步结果，可 Wait/Await/Then。 */
     MFuture() = default;
     explicit MFuture(TSharedPtr<MDetail::SPromiseStateVoid> InState) : State(std::move(InState)) {}
 
     bool Valid() const { return State != nullptr; }
+    bool IsReady() const;
 
     void Wait() const;
+    void Await() const;
     void Get() const;
 
     void Then(TFunction<void(MFuture<void>)> Callback);
@@ -185,18 +193,30 @@ void MPromise<T>::SetException(std::exception_ptr E)
 }
 
 template<typename T>
+bool MFuture<T>::IsReady() const
+{
+    if (!State)
+    {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> Lock(State->Mutex);
+    return State->Ready;
+}
+
+template<typename T>
 void MFuture<T>::Wait() const
 {
     if (!State)
     {
-        return;
+        throw std::runtime_error("Await on invalid MFuture");
     }
     std::unique_lock<std::mutex> Lock(State->Mutex);
     State->Cond.wait(Lock, [this]() { return State->Ready; });
 }
 
 template<typename T>
-T MFuture<T>::Get() const
+T MFuture<T>::Await() const
 {
     Wait();
     if (State->Exception)
@@ -204,6 +224,12 @@ T MFuture<T>::Get() const
         std::rethrow_exception(State->Exception);
     }
     return std::move(*State->Value);
+}
+
+template<typename T>
+T MFuture<T>::Get() const
+{
+    return Await();
 }
 
 template<typename T>
@@ -282,23 +308,39 @@ inline void MPromise<void>::SetException(std::exception_ptr E)
     }
 }
 
+inline bool MFuture<void>::IsReady() const
+{
+    if (!State)
+    {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> Lock(State->Mutex);
+    return State->Ready;
+}
+
 inline void MFuture<void>::Wait() const
 {
     if (!State)
     {
-        return;
+        throw std::runtime_error("Await on invalid MFuture");
     }
     std::unique_lock<std::mutex> Lock(State->Mutex);
     State->Cond.wait(Lock, [this]() { return State->Ready; });
 }
 
-inline void MFuture<void>::Get() const
+inline void MFuture<void>::Await() const
 {
     Wait();
     if (State->Exception)
     {
         std::rethrow_exception(State->Exception);
     }
+}
+
+inline void MFuture<void>::Get() const
+{
+    Await();
 }
 
 inline void MFuture<void>::Then(TFunction<void(MFuture<void>)> Callback)

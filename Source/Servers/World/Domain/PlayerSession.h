@@ -3,7 +3,6 @@
 #include "Common/Net/ServerConnection.h"
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Reflect/Reflection.h"
-#include "Protocol/Messages/Mgo/MgoPlayerStateMessages.h"
 #include "Servers/World/Domain/PlayerAvatar.h"
 
 MCLASS(Type=Object)
@@ -33,21 +32,9 @@ public:
 
     void SetRoute(uint32 InSceneId, uint8 InTargetServerType);
 
-    void ApplyPersistenceRecords(const TVector<FMgoPersistenceRecord>& Records);
-
-    TVector<FMgoPersistenceRecord> BuildPersistenceRecords() const;
-
     MPlayerAvatar* GetAvatar() const;
 
     void VisitReferencedObjects(const TFunction<void(MObject*)>& Visitor) const override;
-
-private:
-    static bool ClassHasPersistenceProperties(const MClass* InClass);
-    static void BuildPersistenceSnapshotRecords(
-        const MObject* InObject,
-        const MString& InPath,
-        TVector<FMgoPersistenceRecord>& OutRecords);
-    MObject* ResolvePersistenceObjectByPath(const MString& InPath);
 
     MPlayerAvatar* Avatar = nullptr;
 };

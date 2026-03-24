@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/Object/Object.h"
-#include "Protocol/Messages/Common/InventoryMessages.h"
+#include "Protocol/Messages/World/WorldInventoryMessages.h"
 
 MCLASS(Type=Object)
 class MClientDownlink : public MObject

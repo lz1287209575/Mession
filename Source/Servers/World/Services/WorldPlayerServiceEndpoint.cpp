@@ -1,13 +1,207 @@
 #include "Servers/World/Services/WorldPlayerServiceEndpoint.h"
 
+namespace MWorldPlayerServiceFlows
+{
+namespace
+{
+FObjectPersistenceRecord ToProtocolPersistenceRecord(const SPersistenceRecord& Record)
+{
+    return FObjectPersistenceRecord{
+        Record.ObjectPath,
+        Record.ClassName,
+        Record.SnapshotData,
+    };
+}
+
+TVector<FObjectPersistenceRecord> ToProtocolPersistenceRecords(const TVector<SPersistenceRecord>& Records)
+{
+    TVector<FObjectPersistenceRecord> Result;
+    Result.reserve(Records.size());
+    for (const SPersistenceRecord& Record : Records)
+    {
+        Result.push_back(ToProtocolPersistenceRecord(Record));
+    }
+    return Result;
+}
+
+TVector<SObjectDomainSnapshotRecord> ToRuntimePersistenceRecords(const TVector<FObjectPersistenceRecord>& Records)
+{
+    TVector<SObjectDomainSnapshotRecord> Result;
+    Result.reserve(Records.size());
+    for (const FObjectPersistenceRecord& Record : Records)
+    {
+        Result.push_back(SObjectDomainSnapshotRecord{
+            0,
+            0,
+            0,
+            Record.ObjectPath,
+            Record.ClassName,
+            Record.SnapshotData,
+        });
+    }
+    return Result;
+}
+}
+
+class FPlayerEnterWorldWorkflow final
+    : public MServerCallAsyncSupport::TServerCallWorkflow<FPlayerEnterWorldWorkflow, FPlayerEnterWorldResponse>
+{
+public:
+    using TResponseType = FPlayerEnterWorldResponse;
+
+    FPlayerEnterWorldWorkflow(MWorldPlayerServiceEndpoint* InService, FPlayerEnterWorldRequest InRequest)
+        : Service(InService)
+        , Request(std::move(InRequest))
+    {
+    }
+
+protected:
+    void OnStart() override
+    {
+        FLoginValidateSessionRequest ValidateRequest;
+        ValidateRequest.PlayerId = Request.PlayerId;
+        ValidateRequest.SessionKey = Request.SessionKey;
+        Continue(Service->LoginRpc->ValidateSessionCall(ValidateRequest), &FPlayerEnterWorldWorkflow::OnSessionValidated);
+    }
+
+private:
+    void OnSessionValidated(const FLoginValidateSessionResponse& ValidateResponse)
+    {
+        if (!ValidateResponse.bValid)
+        {
+            Fail("session_invalid", "PlayerEnterWorld");
+            return;
+        }
+
+        FMgoLoadPlayerRequest LoadRequest;
+        LoadRequest.PlayerId = Request.PlayerId;
+        Continue(Service->MgoRpc->LoadPlayer(LoadRequest), &FPlayerEnterWorldWorkflow::OnPlayerLoaded);
+    }
+
+    void OnPlayerLoaded(const FMgoLoadPlayerResponse& LoadResponse)
+    {
+        MPlayerSession* Session = Service->FindOrCreatePlayerSession(Request.PlayerId);
+        if (!Session)
+        {
+            Fail("player_session_create_failed", "PlayerEnterWorld");
+            return;
+        }
+
+        Session->InitializeForLogin(Request.PlayerId, Request.GatewayConnectionId, Request.SessionKey);
+        if (!LoadResponse.Records.empty())
+        {
+            MString ApplyError;
+            if (!MObjectDomainUtils::ApplyObjectDomainSnapshotRecords(
+                    Session,
+                    ToRuntimePersistenceRecords(LoadResponse.Records),
+                    EPropertyDomainFlags::Persistence,
+                    &ApplyError))
+            {
+                Fail("player_state_apply_failed", ApplyError.c_str());
+                return;
+            }
+        }
+
+        FSceneEnterRequest SceneRequest;
+        SceneRequest.PlayerId = Request.PlayerId;
+        SceneRequest.SceneId = Session->SceneId;
+        Continue(Service->SceneRpc->EnterScene(SceneRequest), &FPlayerEnterWorldWorkflow::OnSceneEntered);
+    }
+
+    void OnSceneEntered(const FSceneEnterResponse& SceneResponse)
+    {
+        TargetSceneId = SceneResponse.SceneId;
+
+        FRouterUpsertPlayerRouteRequest RouteRequest;
+        RouteRequest.PlayerId = Request.PlayerId;
+        RouteRequest.TargetServerType = static_cast<uint8>(EServerType::Scene);
+        RouteRequest.SceneId = TargetSceneId;
+        Continue(Service->RouterRpc->UpsertPlayerRoute(RouteRequest), &FPlayerEnterWorldWorkflow::OnRouteUpdated);
+    }
+
+    void OnRouteUpdated(const FRouterUpsertPlayerRouteResponse&)
+    {
+        MPlayerSession* Session = Service->FindPlayerSession(Request.PlayerId);
+        if (!Session)
+        {
+            Fail("player_session_missing", "PlayerEnterWorld");
+            return;
+        }
+
+        Session->SetRoute(TargetSceneId, static_cast<uint8>(EServerType::Scene));
+
+        FPlayerEnterWorldResponse Response;
+        Response.PlayerId = Request.PlayerId;
+        Succeed(std::move(Response));
+    }
+
+    MWorldPlayerServiceEndpoint* Service = nullptr;
+    FPlayerEnterWorldRequest Request;
+    uint32 TargetSceneId = 0;
+};
+
+class FPlayerLogoutWorkflow final
+    : public MServerCallAsyncSupport::TServerCallWorkflow<FPlayerLogoutWorkflow, FPlayerLogoutResponse>
+{
+public:
+    using TResponseType = FPlayerLogoutResponse;
+
+    FPlayerLogoutWorkflow(MWorldPlayerServiceEndpoint* InService, FPlayerLogoutRequest InRequest)
+        : Service(InService)
+        , Request(std::move(InRequest))
+    {
+    }
+
+protected:
+    void OnStart() override
+    {
+        MPlayerSession* Session = Service->FindPlayerSession(Request.PlayerId);
+        if (!Session)
+        {
+            FPlayerLogoutResponse Response;
+            Response.PlayerId = Request.PlayerId;
+            Succeed(std::move(Response));
+            return;
+        }
+
+        FMgoSavePlayerRequest SaveRequest;
+        SaveRequest.PlayerId = Request.PlayerId;
+        if (!Service->PersistenceSubsystem)
+        {
+            Fail("persistence_subsystem_missing", "PlayerLogout");
+            return;
+        }
+
+        SaveRequest.Records = ToProtocolPersistenceRecords(
+            Service->PersistenceSubsystem->BuildRecordsForRoot(Session, false));
+        Continue(Service->MgoRpc->SavePlayer(SaveRequest), &FPlayerLogoutWorkflow::OnPlayerSaved);
+    }
+
+private:
+    void OnPlayerSaved(const FMgoSavePlayerResponse&)
+    {
+        Service->RemovePlayerSession(Request.PlayerId);
+
+        FPlayerLogoutResponse Response;
+        Response.PlayerId = Request.PlayerId;
+        Succeed(std::move(Response));
+    }
+
+    MWorldPlayerServiceEndpoint* Service = nullptr;
+    FPlayerLogoutRequest Request;
+};
+}
+
 void MWorldPlayerServiceEndpoint::Initialize(
     TMap<uint64, MPlayerSession*>* InOnlinePlayers,
+    MPersistenceSubsystem* InPersistenceSubsystem,
     MWorldLoginRpc* InLoginRpc,
     MWorldMgoRpc* InMgoRpc,
     MWorldSceneRpc* InSceneRpc,
     MWorldRouterRpc* InRouterRpc)
 {
     OnlinePlayers = InOnlinePlayers;
+    PersistenceSubsystem = InPersistenceSubsystem;
     LoginRpc = InLoginRpc;
     MgoRpc = InMgoRpc;
     SceneRpc = InSceneRpc;
@@ -47,114 +241,7 @@ MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> MWorldPlayerServiceEndpoi
         return MServerCallAsyncSupport::MakeErrorFuture<FPlayerEnterWorldResponse>("router_server_unavailable", "PlayerEnterWorld");
     }
 
-    MPromise<TResult<FPlayerEnterWorldResponse, FAppError>> Promise;
-    MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> Future = Promise.GetFuture();
-
-    FLoginValidateSessionRequest ValidateRequest;
-    ValidateRequest.PlayerId = Request.PlayerId;
-    ValidateRequest.SessionKey = Request.SessionKey;
-
-    LoginRpc->ValidateSessionCall(ValidateRequest)
-        .Then(
-            [this, Promise, Request](MFuture<TResult<FLoginValidateSessionResponse, FAppError>> ValidateFuture) mutable
-            {
-                const TResult<FLoginValidateSessionResponse, FAppError> ValidateResult = ValidateFuture.Get();
-                if (!ValidateResult.IsOk())
-                {
-                    Promise.SetValue(MakeErrorResult<FPlayerEnterWorldResponse>(ValidateResult.GetError()));
-                    return;
-                }
-
-                if (!ValidateResult.GetValue().bValid)
-                {
-                    Promise.SetValue(MakeErrorResult<FPlayerEnterWorldResponse>(FAppError::Make("session_invalid", "PlayerEnterWorld")));
-                    return;
-                }
-
-                FMgoLoadPlayerRequest LoadRequest;
-                LoadRequest.PlayerId = Request.PlayerId;
-
-                MgoRpc->LoadPlayer(LoadRequest)
-                    .Then(
-                        [this, Promise, Request](MFuture<TResult<FMgoLoadPlayerResponse, FAppError>> LoadFuture) mutable
-                        {
-                            const TResult<FMgoLoadPlayerResponse, FAppError> LoadResult = LoadFuture.Get();
-                            if (!LoadResult.IsOk())
-                            {
-                                Promise.SetValue(MakeErrorResult<FPlayerEnterWorldResponse>(LoadResult.GetError()));
-                                return;
-                            }
-
-                            MPlayerSession* Session = FindOrCreatePlayerSession(Request.PlayerId);
-                            if (!Session)
-                            {
-                                Promise.SetValue(MakeErrorResult<FPlayerEnterWorldResponse>(
-                                    FAppError::Make("player_session_create_failed", "PlayerEnterWorld")));
-                                return;
-                            }
-
-                            Session->InitializeForLogin(Request.PlayerId, Request.GatewayConnectionId, Request.SessionKey);
-
-                            const FMgoLoadPlayerResponse& LoadValue = LoadResult.GetValue();
-                            if (!LoadValue.Records.empty())
-                            {
-                                Session->ApplyPersistenceRecords(LoadValue.Records);
-                            }
-
-                            const uint32 TargetSceneId = Session->SceneId;
-
-                            FSceneEnterRequest SceneRequest;
-                            SceneRequest.PlayerId = Request.PlayerId;
-                            SceneRequest.SceneId = TargetSceneId;
-
-                            SceneRpc->EnterScene(SceneRequest)
-                                .Then(
-                                    [this, Promise, Request](MFuture<TResult<FSceneEnterResponse, FAppError>> SceneFuture) mutable
-                                    {
-                                        const TResult<FSceneEnterResponse, FAppError> SceneResult = SceneFuture.Get();
-                                        if (!SceneResult.IsOk())
-                                        {
-                                            Promise.SetValue(MakeErrorResult<FPlayerEnterWorldResponse>(SceneResult.GetError()));
-                                            return;
-                                        }
-
-                                        const uint32 SceneId = SceneResult.GetValue().SceneId;
-
-                                        FRouterUpsertPlayerRouteRequest RouteRequest;
-                                        RouteRequest.PlayerId = Request.PlayerId;
-                                        RouteRequest.TargetServerType = static_cast<uint8>(EServerType::Scene);
-                                        RouteRequest.SceneId = SceneId;
-
-                                        RouterRpc->UpsertPlayerRoute(RouteRequest)
-                                            .Then(
-                                                [this, Promise, Request, SceneId](MFuture<TResult<FRouterUpsertPlayerRouteResponse, FAppError>> RouteFuture) mutable
-                                                {
-                                                    const TResult<FRouterUpsertPlayerRouteResponse, FAppError> RouteResult = RouteFuture.Get();
-                                                    if (!RouteResult.IsOk())
-                                                    {
-                                                        Promise.SetValue(MakeErrorResult<FPlayerEnterWorldResponse>(RouteResult.GetError()));
-                                                        return;
-                                                    }
-
-                                                    MPlayerSession* Session = FindPlayerSession(Request.PlayerId);
-                                                    if (!Session)
-                                                    {
-                                                        Promise.SetValue(MakeErrorResult<FPlayerEnterWorldResponse>(
-                                                            FAppError::Make("player_session_missing", "PlayerEnterWorld")));
-                                                        return;
-                                                    }
-
-                                                    Session->SetRoute(SceneId, static_cast<uint8>(EServerType::Scene));
-
-                                                    FPlayerEnterWorldResponse Response;
-                                                    Response.PlayerId = Request.PlayerId;
-                                                    Promise.SetValue(TResult<FPlayerEnterWorldResponse, FAppError>::Ok(std::move(Response)));
-                                                });
-                                    });
-                        });
-            });
-
-    return Future;
+    return MServerCallAsyncSupport::StartWorkflow<MWorldPlayerServiceFlows::FPlayerEnterWorldWorkflow>(this, Request);
 }
 
 MFuture<TResult<FPlayerFindResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerFind(const FPlayerFindRequest& Request)
@@ -220,8 +307,7 @@ MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldPlayerServiceEndpoint::
         return MServerCallAsyncSupport::MakeErrorFuture<FPlayerLogoutResponse>("world_service_not_initialized", "PlayerLogout");
     }
 
-    MPlayerSession* Session = FindPlayerSession(Request.PlayerId);
-    if (!Session)
+    if (!FindPlayerSession(Request.PlayerId))
     {
         FPlayerLogoutResponse Response;
         Response.PlayerId = Request.PlayerId;
@@ -233,32 +319,7 @@ MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldPlayerServiceEndpoint::
         return MServerCallAsyncSupport::MakeErrorFuture<FPlayerLogoutResponse>("mgo_server_unavailable", "PlayerLogout");
     }
 
-    MPromise<TResult<FPlayerLogoutResponse, FAppError>> Promise;
-    MFuture<TResult<FPlayerLogoutResponse, FAppError>> Future = Promise.GetFuture();
-
-    FMgoSavePlayerRequest SaveRequest;
-    SaveRequest.PlayerId = Request.PlayerId;
-    SaveRequest.Records = Session->BuildPersistenceRecords();
-
-    MgoRpc->SavePlayer(SaveRequest)
-        .Then(
-            [this, Promise, Request](MFuture<TResult<FMgoSavePlayerResponse, FAppError>> SaveFuture) mutable
-            {
-                const TResult<FMgoSavePlayerResponse, FAppError> SaveResult = SaveFuture.Get();
-                if (!SaveResult.IsOk())
-                {
-                    Promise.SetValue(MakeErrorResult<FPlayerLogoutResponse>(SaveResult.GetError()));
-                    return;
-                }
-
-                RemovePlayerSession(Request.PlayerId);
-
-                FPlayerLogoutResponse Response;
-                Response.PlayerId = Request.PlayerId;
-                Promise.SetValue(TResult<FPlayerLogoutResponse, FAppError>::Ok(std::move(Response)));
-            });
-
-    return Future;
+    return MServerCallAsyncSupport::StartWorkflow<MWorldPlayerServiceFlows::FPlayerLogoutWorkflow>(this, Request);
 }
 
 MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerSwitchScene(

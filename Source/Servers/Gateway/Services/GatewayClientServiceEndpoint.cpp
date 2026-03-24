@@ -1,5 +1,16 @@
 #include "Servers/Gateway/Services/GatewayClientServiceEndpoint.h"
 
+namespace
+{
+template<typename TResponse>
+TResponse BuildClientFailureResponse(const FAppError& Error, const char* FallbackCode)
+{
+    TResponse Failed;
+    Failed.Error = Error.Code.empty() ? (FallbackCode ? FallbackCode : "client_call_failed") : Error.Code;
+    return Failed;
+}
+}
+
 void MGatewayClientServiceEndpoint::Initialize(MGatewayLoginRpc* InLoginRpc, MGatewayWorldRpc* InWorldRpc)
 {
     LoginRpc = InLoginRpc;
@@ -28,18 +39,12 @@ void MGatewayClientServiceEndpoint::Client_Login(FClientLoginRequest& Request, F
         return;
     }
 
-    SGatewayClientFlowDeps FlowDeps;
-    FlowDeps.LoginRpc = LoginRpc;
-    FlowDeps.WorldRpc = WorldRpc;
-
     (void)MClientCallAsyncSupport::StartDeferred<FClientLoginResponse>(
         Context,
-        MGatewayClientFlows::StartLogin(FlowDeps, Request, GatewayConnectionId),
+        StartLoginFlow(Request, GatewayConnectionId),
         [](const FAppError& Error)
         {
-            FClientLoginResponse Failed;
-            Failed.Error = Error.Code.empty() ? "client_login_failed" : Error.Code;
-            return Failed;
+            return BuildClientFailureResponse<FClientLoginResponse>(Error, "client_login_failed");
         });
 }
 
@@ -52,17 +57,12 @@ void MGatewayClientServiceEndpoint::Client_FindPlayer(FClientFindPlayerRequest& 
         return;
     }
 
-    SGatewayClientFlowDeps FlowDeps;
-    FlowDeps.WorldRpc = WorldRpc;
-
     (void)MClientCallAsyncSupport::StartDeferred<FClientFindPlayerResponse>(
         Context,
-        MGatewayClientFlows::StartFindPlayer(FlowDeps, Request),
+        StartFindPlayerFlow(Request),
         [](const FAppError& Error)
         {
-            FClientFindPlayerResponse Failed;
-            Failed.Error = Error.Code.empty() ? "player_find_failed" : Error.Code;
-            return Failed;
+            return BuildClientFailureResponse<FClientFindPlayerResponse>(Error, "player_find_failed");
         });
 }
 
@@ -75,17 +75,12 @@ void MGatewayClientServiceEndpoint::Client_Logout(FClientLogoutRequest& Request,
         return;
     }
 
-    SGatewayClientFlowDeps FlowDeps;
-    FlowDeps.WorldRpc = WorldRpc;
-
     (void)MClientCallAsyncSupport::StartDeferred<FClientLogoutResponse>(
         Context,
-        MGatewayClientFlows::StartLogout(FlowDeps, Request),
+        StartLogoutFlow(Request),
         [](const FAppError& Error)
         {
-            FClientLogoutResponse Failed;
-            Failed.Error = Error.Code.empty() ? "player_logout_failed" : Error.Code;
-            return Failed;
+            return BuildClientFailureResponse<FClientLogoutResponse>(Error, "player_logout_failed");
         });
 }
 
@@ -100,16 +95,151 @@ void MGatewayClientServiceEndpoint::Client_SwitchScene(
         return;
     }
 
-    SGatewayClientFlowDeps FlowDeps;
-    FlowDeps.WorldRpc = WorldRpc;
-
     (void)MClientCallAsyncSupport::StartDeferred<FClientSwitchSceneResponse>(
         Context,
-        MGatewayClientFlows::StartSwitchScene(FlowDeps, Request),
+        StartSwitchSceneFlow(Request),
         [](const FAppError& Error)
         {
-            FClientSwitchSceneResponse Failed;
-            Failed.Error = Error.Code.empty() ? "player_switch_scene_failed" : Error.Code;
-            return Failed;
+            return BuildClientFailureResponse<FClientSwitchSceneResponse>(Error, "player_switch_scene_failed");
+        });
+}
+
+MFuture<TResult<FClientLoginResponse, FAppError>> MGatewayClientServiceEndpoint::StartLoginFlow(
+    const FClientLoginRequest& Request,
+    uint64 GatewayConnectionId) const
+{
+    if (Request.PlayerId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FClientLoginResponse>("player_id_required", "Client_Login");
+    }
+
+    if (!LoginRpc || !LoginRpc->IsAvailable())
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FClientLoginResponse>("login_server_unavailable", "Client_Login");
+    }
+
+    if (!WorldRpc || !WorldRpc->IsAvailable())
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FClientLoginResponse>("world_server_unavailable", "Client_Login");
+    }
+
+    FLoginIssueSessionRequest IssueRequest;
+    IssueRequest.PlayerId = Request.PlayerId;
+    IssueRequest.GatewayConnectionId = GatewayConnectionId;
+
+    return MServerCallAsyncSupport::Chain(
+        LoginRpc->IssueSession(IssueRequest),
+        [this, PlayerId = Request.PlayerId, GatewayConnectionId](const FLoginIssueSessionResponse& LoginResponse)
+        {
+            FPlayerEnterWorldRequest EnterRequest;
+            EnterRequest.PlayerId = PlayerId;
+            EnterRequest.GatewayConnectionId = GatewayConnectionId;
+            EnterRequest.SessionKey = LoginResponse.SessionKey;
+
+            return MServerCallAsyncSupport::Map(
+                WorldRpc->PlayerEnterWorld(EnterRequest),
+                [PlayerId, SessionKey = LoginResponse.SessionKey](const FPlayerEnterWorldResponse&)
+                {
+                    FClientLoginResponse Response;
+                    Response.bSuccess = true;
+                    Response.PlayerId = PlayerId;
+                    Response.SessionKey = SessionKey;
+                    return Response;
+                });
+        });
+}
+
+MFuture<TResult<FClientFindPlayerResponse, FAppError>> MGatewayClientServiceEndpoint::StartFindPlayerFlow(
+    const FClientFindPlayerRequest& Request) const
+{
+    if (Request.PlayerId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FClientFindPlayerResponse>("player_id_required", "Client_FindPlayer");
+    }
+
+    if (!WorldRpc || !WorldRpc->IsAvailable())
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FClientFindPlayerResponse>("world_server_unavailable", "Client_FindPlayer");
+    }
+
+    FPlayerFindRequest FindRequest;
+    FindRequest.PlayerId = Request.PlayerId;
+
+    return MServerCallAsyncSupport::Map(
+        WorldRpc->PlayerFind(FindRequest),
+        [](const FPlayerFindResponse& FindValue)
+        {
+            FClientFindPlayerResponse Response;
+            Response.bFound = FindValue.bFound;
+            Response.PlayerId = FindValue.PlayerId;
+            Response.GatewayConnectionId = FindValue.GatewayConnectionId;
+            Response.SceneId = FindValue.SceneId;
+            return Response;
+        });
+}
+
+MFuture<TResult<FClientLogoutResponse, FAppError>> MGatewayClientServiceEndpoint::StartLogoutFlow(
+    const FClientLogoutRequest& Request) const
+{
+    if (Request.PlayerId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FClientLogoutResponse>("player_id_required", "Client_Logout");
+    }
+
+    if (!WorldRpc || !WorldRpc->IsAvailable())
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FClientLogoutResponse>("world_server_unavailable", "Client_Logout");
+    }
+
+    FPlayerLogoutRequest LogoutRequest;
+    LogoutRequest.PlayerId = Request.PlayerId;
+
+    return MServerCallAsyncSupport::Map(
+        WorldRpc->PlayerLogout(LogoutRequest),
+        [](const FPlayerLogoutResponse& LogoutValue)
+        {
+            FClientLogoutResponse Response;
+            Response.bSuccess = true;
+            Response.PlayerId = LogoutValue.PlayerId;
+            return Response;
+        });
+}
+
+MFuture<TResult<FClientSwitchSceneResponse, FAppError>> MGatewayClientServiceEndpoint::StartSwitchSceneFlow(
+    const FClientSwitchSceneRequest& Request) const
+{
+    if (Request.PlayerId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FClientSwitchSceneResponse>("player_id_required", "Client_SwitchScene");
+    }
+
+    if (!WorldRpc || !WorldRpc->IsAvailable())
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FClientSwitchSceneResponse>("world_server_unavailable", "Client_SwitchScene");
+    }
+
+    FPlayerSwitchSceneRequest SwitchRequest;
+    SwitchRequest.PlayerId = Request.PlayerId;
+    SwitchRequest.SceneId = Request.SceneId;
+
+    return MServerCallAsyncSupport::Chain(
+        WorldRpc->PlayerSwitchScene(SwitchRequest),
+        [this, PlayerId = Request.PlayerId, SceneId = Request.SceneId](const FPlayerSwitchSceneResponse& SwitchValue)
+        {
+            FPlayerUpdateRouteRequest RouteRequest;
+            RouteRequest.PlayerId = PlayerId;
+            RouteRequest.TargetServerType = static_cast<uint8>(EServerType::Scene);
+            RouteRequest.SceneId = SceneId;
+
+            return MServerCallAsyncSupport::Map(
+                WorldRpc->PlayerUpdateRoute(RouteRequest),
+                [SwitchValue](const FPlayerUpdateRouteResponse&)
+                {
+                    FClientSwitchSceneResponse Response;
+                    Response.bSuccess = true;
+                    Response.PlayerId = SwitchValue.PlayerId;
+                    Response.SceneId = SwitchValue.SceneId;
+                    return Response;
+                });
         });
 }
