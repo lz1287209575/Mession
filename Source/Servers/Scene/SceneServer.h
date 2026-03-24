@@ -5,18 +5,17 @@
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
-#include "Common/Net/ServerRpcRuntime.h"
 #include "Common/Runtime/Log/Logger.h"
-#include "Protocol/Messages/AppMessages.h"
-#include "Protocol/Messages/BackendServiceMessages.h"
-#include "Servers/App/SceneSessionService.h"
+#include "Protocol/Messages/Common/AppMessages.h"
+#include "Protocol/Messages/Scene/SceneServiceMessages.h"
+#include "Servers/Scene/Services/SceneSessionServiceEndpoint.h"
 
 struct SSceneConfig
 {
     uint16 ListenPort = 8004;
 };
 
-MCLASS()
+MCLASS(Type=Server)
 class MSceneServer : public MNetServerBase, public MObject
 {
 public:
@@ -34,16 +33,10 @@ public:
     void ShutdownConnections() override;
     void OnRunStarted() override;
 
-    MFUNCTION(ServerCall, Target=Scene)
-    MFuture<TResult<FSceneEnterResponse, FAppError>> EnterScene(const FSceneEnterRequest& Request);
-
-    MFUNCTION(ServerCall, Target=Scene)
-    MFuture<TResult<FSceneLeaveResponse, FAppError>> LeaveScene(const FSceneLeaveRequest& Request);
-
 private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
     SSceneConfig Config;
     TMap<uint64, uint32> PlayerScenes;
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
-    MSceneSessionService SceneService;
+    MSceneSessionServiceEndpoint* SceneService = nullptr;
 };

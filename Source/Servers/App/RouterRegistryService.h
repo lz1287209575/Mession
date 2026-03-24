@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
-#include "Protocol/Messages/BackendServiceMessages.h"
+#include "Protocol/Messages/Router/RouterServiceMessages.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
 
 struct SPlayerRouteRecord

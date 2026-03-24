@@ -66,6 +66,15 @@ enum class ERpcType : uint8
     ServerToServer = 4
 };
 
+enum class EClassKind : uint8
+{
+    Object = 0,
+    Server = 1,
+    Service = 2,
+    Rpc = 3,
+    Struct = 4,
+};
+
 class MEnumValue
 {
 public:
@@ -201,6 +210,7 @@ protected:
     ClassConstructor Constructor = nullptr;
 
     uint32 ClassFlags = 0;
+    EClassKind ClassKind = EClassKind::Object;
 
 public:
     MClass();
@@ -232,6 +242,7 @@ public:
     void CopyProperties(void* Dest, const void* Src) const;
 
     bool HasFlags(uint32 InFlags) const { return (ClassFlags & InFlags) != 0; }
+    EClassKind GetKind() const { return ClassKind; }
 
     template<typename TObject>
     void SetConstructor()
@@ -252,6 +263,11 @@ public:
         ClassPath = InPath;
         ParentClass = InParent;
         ClassFlags = InFlags;
+    }
+
+    void SetKind(EClassKind InKind)
+    {
+        ClassKind = InKind;
     }
 
     void SetCppTypeIndex(const std::type_index& InCppTypeIndex)

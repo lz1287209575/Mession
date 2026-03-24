@@ -27,6 +27,40 @@ template<typename TObject, typename... TArgs>
 TObject* CreateDefaultSubObject(MObject* Owner, const MString& Name = "", TArgs&&... Args)
 {
     TObject* Object = NewMObject<TObject>(Owner, Name, std::forward<TArgs>(Args)...);
-    Object->AddObjectFlags(1ull << 1);
+    Object->MarkAsDefaultSubObject();
     return Object;
+}
+
+inline void DestroyMObject(MObject* Object)
+{
+    delete Object;
+}
+
+template<typename TVisitor>
+void ForEachObjectInSubtree(MObject* Root, TVisitor&& Visitor)
+{
+    if (!Root)
+    {
+        return;
+    }
+
+    TSet<uint64> Visited;
+    TFunction<void(MObject*)> Walk = [&](MObject* Object)
+    {
+        if (!Object)
+        {
+            return;
+        }
+
+        if (Visited.count(Object->GetObjectId()) > 0)
+        {
+            return;
+        }
+
+        Visited.insert(Object->GetObjectId());
+        Visitor(Object);
+        Object->VisitReferencedObjects(Walk);
+    };
+
+    Walk(Root);
 }

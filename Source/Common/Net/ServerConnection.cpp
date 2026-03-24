@@ -1,5 +1,5 @@
 #include "Common/Net/ServerConnection.h"
-#include "Common/Net/ServerRpcRuntime.h"
+#include "Common/Net/Rpc/RpcManifest.h"
 #include "Protocol/ServerMessages.h"
 
 // MTcpMessageChannel implementation

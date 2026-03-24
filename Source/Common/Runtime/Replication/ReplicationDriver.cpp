@@ -1,38 +1,51 @@
 #include "ReplicationDriver.h"
 #include "Protocol/ServerMessages.h"
-#include "Common/Net/ServerRpcRuntime.h"
+#include "Common/Net/Rpc/RpcClientCall.h"
 #include "Common/Runtime/Reflect/Reflection.h"
 
 namespace
 {
-bool BuildReflectedActorSnapshot(MActor* Actor, TByteArray& OutData)
+bool ClassHasDomainProperties(const MClass* InClass, EPropertyDomainFlags InDomain);
+
+bool BuildReflectedObjectSnapshot(MObject* Object, TByteArray& OutData)
 {
     OutData.clear();
-    if (!Actor)
+    if (!Object)
     {
         return false;
     }
 
-    auto* ReflectActor = dynamic_cast<MObject*>(Actor);
-    if (!ReflectActor)
+    MClass* ObjectClass = Object->GetClass();
+    if (!ObjectClass)
     {
-        LOG_WARN("Replication requires reflected actor: actor_id=%llu",
-                 static_cast<unsigned long long>(Actor->GetObjectId()));
-        return false;
-    }
-
-    MClass* ActorClass = ReflectActor->GetClass();
-    if (!ActorClass)
-    {
-        LOG_WARN("Replication missing class metadata: actor_id=%llu",
-                 static_cast<unsigned long long>(Actor->GetObjectId()));
+        LOG_WARN("Replication missing class metadata: object_id=%llu",
+                 static_cast<unsigned long long>(Object->GetObjectId()));
         return false;
     }
 
     MReflectArchive Ar;
-    ActorClass->WriteSnapshot(Actor, Ar);
+    ObjectClass->WriteSnapshot(Object, Ar);
     OutData = Ar.Data;
     return true;
+}
+
+bool SupportsObjectReplication(MObject* Object)
+{
+    if (!Object)
+    {
+        return false;
+    }
+
+    if (MActor* Actor = dynamic_cast<MActor*>(Object))
+    {
+        if (Actor->DoesActorReplicate())
+        {
+            return true;
+        }
+    }
+
+    MClass* ObjectClass = Object->GetClass();
+    return ClassHasDomainProperties(ObjectClass, EPropertyDomainFlags::Replication);
 }
 
 bool ClassHasDomainProperties(const MClass* InClass, EPropertyDomainFlags InDomain)
@@ -52,39 +65,39 @@ bool ClassHasDomainProperties(const MClass* InClass, EPropertyDomainFlags InDoma
     return false;
 }
 
-TByteArray BuildActorUpdatePacket(uint64 ActorId, const TByteArray& Data)
+TByteArray BuildObjectUpdatePacket(uint64 ObjectId, const TByteArray& Data)
 {
     TByteArray Packet;
-    (void)BuildClientFunctionCallPacketByName("Client_OnActorUpdate", Packet, ActorId, Data);
+    (void)BuildClientFunctionCallPacketByName("Client_OnObjectUpdate", Packet, ObjectId, Data);
     return Packet;
 }
 
-TByteArray BuildActorCreatePacket(MActor* Actor)
+TByteArray BuildObjectCreatePacket(MObject* Object)
 {
     TByteArray Packet;
-    if (!Actor)
+    if (!Object)
     {
         return Packet;
     }
 
     TByteArray SnapshotData;
-    if (!BuildReflectedActorSnapshot(Actor, SnapshotData))
+    if (!BuildReflectedObjectSnapshot(Object, SnapshotData))
     {
         return Packet;
     }
 
     (void)BuildClientFunctionCallPacketByName(
-        "Client_OnActorCreate",
+        "Client_OnObjectCreate",
         Packet,
-        Actor->GetObjectId(),
+        Object->GetObjectId(),
         SnapshotData);
     return Packet;
 }
 
-TByteArray BuildActorDestroyPacket(uint64 ActorId)
+TByteArray BuildObjectDestroyPacket(uint64 ObjectId)
 {
     TByteArray Packet;
-    (void)BuildClientFunctionCallPacketByName("Client_OnActorDestroy", Packet, ActorId);
+    (void)BuildClientFunctionCallPacketByName("Client_OnObjectDestroy", Packet, ObjectId);
     return Packet;
 }
 }
@@ -98,31 +111,47 @@ MReplicationDriver::~MReplicationDriver()
     Channels.clear();
 }
 
+void MReplicationDriver::RegisterObject(MObject* Object)
+{
+    if (SupportsObjectReplication(Object))
+    {
+        ReplicationMap[Object->GetObjectId()] = Object;
+        if (MActor* Actor = dynamic_cast<MActor*>(Object))
+        {
+            Actor->SetActorActive(true);
+        }
+        TByteArray SnapshotData;
+        if (BuildReflectedObjectSnapshot(Object, SnapshotData))
+        {
+            LastSerializedSnapshots[Object->GetObjectId()] = SnapshotData;
+        }
+        LOG_DEBUG("Registered object %llu for replication",
+                  static_cast<unsigned long long>(Object->GetObjectId()));
+    }
+}
+
+void MReplicationDriver::UnregisterObject(uint64 ObjectId)
+{
+    auto It = ReplicationMap.find(ObjectId);
+    if (It != ReplicationMap.end())
+    {
+        if (MActor* Actor = dynamic_cast<MActor*>(It->second))
+        {
+            Actor->SetActorActive(false);
+        }
+        ReplicationMap.erase(It);
+    }
+    LastSerializedSnapshots.erase(ObjectId);
+}
+
 void MReplicationDriver::RegisterActor(MActor* Actor)
 {
-    if (Actor && Actor->DoesActorReplicate())
-    {
-        ReplicationMap[Actor->GetObjectId()] = Actor;
-        Actor->SetActorActive(true);
-        TByteArray SnapshotData;
-        if (BuildReflectedActorSnapshot(Actor, SnapshotData))
-        {
-            LastSerializedSnapshots[Actor->GetObjectId()] = SnapshotData;
-        }
-        LOG_DEBUG("Registered actor %llu for replication",
-                  static_cast<unsigned long long>(Actor->GetObjectId()));
-    }
+    RegisterObject(Actor);
 }
 
 void MReplicationDriver::UnregisterActor(uint64 ActorId)
 {
-    auto It = ReplicationMap.find(ActorId);
-    if (It != ReplicationMap.end())
-    {
-        It->second->SetActorActive(false);
-        ReplicationMap.erase(It);
-    }
-    LastSerializedSnapshots.erase(ActorId);
+    UnregisterObject(ActorId);
 }
 
 void MReplicationDriver::AddConnection(uint64 ConnectionId, TSharedPtr<INetConnection> Connection)
@@ -144,70 +173,95 @@ void MReplicationDriver::RemoveConnection(uint64 ConnectionId)
     }
 }
 
-void MReplicationDriver::AddRelevantActor(uint64 ConnectionId, uint64 ActorId)
+void MReplicationDriver::AddRelevantObject(uint64 ConnectionId, uint64 ObjectId)
 {
     auto It = Channels.find(ConnectionId);
     if (It != Channels.end())
     {
-        It->second->RelevantActors.insert(ActorId);
+        It->second->RelevantObjects.insert(ObjectId);
     }
+}
+
+void MReplicationDriver::RemoveRelevantObject(uint64 ConnectionId, uint64 ObjectId)
+{
+    auto It = Channels.find(ConnectionId);
+    if (It != Channels.end())
+    {
+        It->second->RelevantObjects.erase(ObjectId);
+    }
+}
+
+void MReplicationDriver::AddRelevantActor(uint64 ConnectionId, uint64 ActorId)
+{
+    AddRelevantObject(ConnectionId, ActorId);
 }
 
 void MReplicationDriver::RemoveRelevantActor(uint64 ConnectionId, uint64 ActorId)
 {
-    auto It = Channels.find(ConnectionId);
-    if (It != Channels.end())
-    {
-        It->second->RelevantActors.erase(ActorId);
-    }
+    RemoveRelevantObject(ConnectionId, ActorId);
 }
 
-void MReplicationDriver::Tick(float)
+void MReplicationDriver::Tick(float DeltaTime)
 {
-    for (auto& [ActorId, Actor] : ReplicationMap)
+    for (auto& [ObjectId, Object] : ReplicationMap)
     {
-        if (!Actor || !Actor->IsReadyForNetUpdate())
+        if (!Object)
         {
             continue;
         }
 
-        MObject* ReflectActor = dynamic_cast<MObject*>(Actor);
-        MClass* ActorClass = ReflectActor ? ReflectActor->GetClass() : nullptr;
+        MActor* Actor = dynamic_cast<MActor*>(Object);
+        if (Actor)
+        {
+            Actor->Tick(DeltaTime);
+            if (Actor->DoesActorReplicate() && !Actor->IsReadyForNetUpdate())
+            {
+                continue;
+            }
+        }
+
+        MClass* ObjectClass = Object->GetClass();
         const bool bUseReplicationDirtyDomain =
-            ReflectActor && ActorClass && ClassHasDomainProperties(ActorClass, EPropertyDomainFlags::Replication);
+            Object && ObjectClass && ClassHasDomainProperties(ObjectClass, EPropertyDomainFlags::Replication);
 
         if (bUseReplicationDirtyDomain &&
-            !ReflectActor->HasAnyDirtyPropertyForDomain(EPropertyDomainFlags::Replication))
+            !Object->HasAnyDirtyPropertyForDomain(EPropertyDomainFlags::Replication))
         {
-            Actor->MarkNetUpdateSent();
+            if (Actor)
+            {
+                Actor->MarkNetUpdateSent();
+            }
             continue;
         }
 
         TByteArray SnapshotData;
-        if (!BuildReflectedActorSnapshot(Actor, SnapshotData) || SnapshotData.empty())
+        if (!BuildReflectedObjectSnapshot(Object, SnapshotData) || SnapshotData.empty())
         {
             continue;
         }
 
-        TByteArray& LastSnapshot = LastSerializedSnapshots[ActorId];
+        TByteArray& LastSnapshot = LastSerializedSnapshots[ObjectId];
         if (SnapshotData == LastSnapshot)
         {
             if (bUseReplicationDirtyDomain)
             {
-                ReflectActor->ClearDirtyDomain(EPropertyDomainFlags::Replication);
+                Object->ClearDirtyDomain(EPropertyDomainFlags::Replication);
             }
-            Actor->MarkNetUpdateSent();
+            if (Actor)
+            {
+                Actor->MarkNetUpdateSent();
+            }
             continue;
         }
 
         for (auto& [ConnectionId, Channel] : Channels)
         {
-            if (Channel->RelevantActors.empty() || Channel->RelevantActors.count(ActorId) > 0)
+            if (Channel->RelevantObjects.empty() || Channel->RelevantObjects.count(ObjectId) > 0)
             {
                 auto ConnIt = Connections.find(ConnectionId);
                 if (ConnIt != Connections.end() && ConnIt->second->IsConnected())
                 {
-                    SendActorUpdate(ConnectionId, ActorId, SnapshotData);
+                    SendObjectUpdate(ConnectionId, ObjectId, SnapshotData);
                 }
             }
         }
@@ -215,15 +269,18 @@ void MReplicationDriver::Tick(float)
         LastSnapshot = SnapshotData;
         if (bUseReplicationDirtyDomain)
         {
-            ReflectActor->ClearDirtyDomain(EPropertyDomainFlags::Replication);
+            Object->ClearDirtyDomain(EPropertyDomainFlags::Replication);
         }
-        Actor->MarkNetUpdateSent();
+        if (Actor)
+        {
+            Actor->MarkNetUpdateSent();
+        }
     }
 
     ProcessPendingUpdates();
 }
 
-void MReplicationDriver::SendActorUpdate(uint64 ConnectionId, uint64 ActorId, const TByteArray& Data)
+void MReplicationDriver::SendObjectUpdate(uint64 ConnectionId, uint64 ObjectId, const TByteArray& Data)
 {
     auto ConnIt = Connections.find(ConnectionId);
     if (ConnIt == Connections.end())
@@ -231,18 +288,18 @@ void MReplicationDriver::SendActorUpdate(uint64 ConnectionId, uint64 ActorId, co
         return;
     }
 
-    const TByteArray Packet = BuildActorUpdatePacket(ActorId, Data);
+    const TByteArray Packet = BuildObjectUpdatePacket(ObjectId, Data);
     ConnIt->second->Send(Packet.data(), Packet.size());
 }
 
-void MReplicationDriver::BroadcastActorCreate(MActor* Actor, uint64 ExcludeConnectionId)
+void MReplicationDriver::BroadcastObjectCreate(MObject* Object, uint64 ExcludeConnectionId)
 {
-    if (!Actor)
+    if (!Object)
     {
         return;
     }
 
-    const TByteArray Packet = BuildActorCreatePacket(Actor);
+    const TByteArray Packet = BuildObjectCreatePacket(Object);
     for (auto& [ConnectionId, Connection] : Connections)
     {
         if (ConnectionId != ExcludeConnectionId && Connection->IsConnected())
@@ -252,9 +309,9 @@ void MReplicationDriver::BroadcastActorCreate(MActor* Actor, uint64 ExcludeConne
     }
 }
 
-void MReplicationDriver::BroadcastActorDestroy(uint64 ActorId, uint64 ExcludeConnectionId)
+void MReplicationDriver::BroadcastObjectDestroy(uint64 ObjectId, uint64 ExcludeConnectionId)
 {
-    const TByteArray Packet = BuildActorDestroyPacket(ActorId);
+    const TByteArray Packet = BuildObjectDestroyPacket(ObjectId);
     for (auto& [ConnectionId, Connection] : Connections)
     {
         if (ConnectionId != ExcludeConnectionId && Connection->IsConnected())
@@ -263,7 +320,22 @@ void MReplicationDriver::BroadcastActorDestroy(uint64 ActorId, uint64 ExcludeCon
         }
     }
 
-    UnregisterActor(ActorId);
+    UnregisterObject(ObjectId);
+}
+
+void MReplicationDriver::SendActorUpdate(uint64 ConnectionId, uint64 ActorId, const TByteArray& Data)
+{
+    SendObjectUpdate(ConnectionId, ActorId, Data);
+}
+
+void MReplicationDriver::BroadcastActorCreate(MActor* Actor, uint64 ExcludeConnectionId)
+{
+    BroadcastObjectCreate(Actor, ExcludeConnectionId);
+}
+
+void MReplicationDriver::BroadcastActorDestroy(uint64 ActorId, uint64 ExcludeConnectionId)
+{
+    BroadcastObjectDestroy(ActorId, ExcludeConnectionId);
 }
 
 void MReplicationDriver::ProcessPendingUpdates()

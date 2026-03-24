@@ -1,17 +1,8 @@
 #include "Servers/Gateway/GatewayServer.h"
-#include "Servers/App/ClientCallAsyncSupport.h"
-#include "Servers/App/GatewayClientFlows.h"
 #include "Servers/App/ServerRpcSupport.h"
-
-const MClass* MGatewayServer::GetLoginServerClass() const
-{
-    return MObject::FindClass("MLoginServer");
-}
-
-const MClass* MGatewayServer::GetWorldServerClass() const
-{
-    return MObject::FindClass("MWorldServer");
-}
+#include "Common/Net/Rpc/RpcClientCall.h"
+#include "Common/Net/Rpc/RpcServerCall.h"
+#include "Common/Runtime/Object/Object.h"
 
 bool MGatewayServer::LoadConfig(const MString& /*ConfigPath*/)
 {
@@ -45,6 +36,23 @@ bool MGatewayServer::Init(int InPort)
 
     LoginServerConn->Connect();
     WorldServerConn->Connect();
+
+    if (!LoginRpc)
+    {
+        LoginRpc = NewMObject<MGatewayLoginRpc>(this, "LoginRpc");
+    }
+    if (!WorldRpc)
+    {
+        WorldRpc = NewMObject<MGatewayWorldRpc>(this, "WorldRpc");
+    }
+    LoginRpc->SetConnection(LoginServerConn);
+    WorldRpc->SetConnection(WorldServerConn);
+    if (!ClientService)
+    {
+        ClientService = NewMObject<MGatewayClientServiceEndpoint>(this, "ClientService");
+    }
+    ClientService->Initialize(LoginRpc, WorldRpc);
+
     return true;
 }
 
@@ -100,134 +108,6 @@ void MGatewayServer::OnRunStarted()
     LOG_INFO("Gateway skeleton running on port %u", static_cast<unsigned>(Config.ListenPort));
 }
 
-bool MGatewayServer::SendGeneratedClientResponse(uint64 ConnectionId, uint16 FunctionId, uint64 CallId, const TByteArray& Payload)
-{
-    auto It = ClientConnections.find(ConnectionId);
-    if (It == ClientConnections.end() || !It->second)
-    {
-        return false;
-    }
-
-    TByteArray Packet;
-    if (!BuildClientCallPacket(FunctionId, CallId, Payload, Packet))
-    {
-        return false;
-    }
-
-    return It->second->Send(Packet.data(), static_cast<uint32>(Packet.size()));
-}
-
-void MGatewayServer::Client_Echo(FClientEchoRequest& Request, FClientEchoResponse& Response)
-{
-    Response.ConnectionId = GetCurrentClientConnectionId();
-    Response.Message = Request.Message;
-}
-
-void MGatewayServer::Client_Login(FClientLoginRequest& Request, FClientLoginResponse& Response)
-{
-    const uint64 GatewayConnectionId = GetCurrentClientConnectionId();
-    if (GatewayConnectionId == 0)
-    {
-        Response.Error = "client_context_missing";
-        return;
-    }
-
-    const SGeneratedClientCallContext Context = CaptureCurrentClientCallContext();
-    if (!Context.IsValid())
-    {
-        Response.Error = "client_call_context_missing";
-        return;
-    }
-
-    SGatewayClientFlowDeps FlowDeps;
-    FlowDeps.LoginServerConn = LoginServerConn;
-    FlowDeps.WorldServerConn = WorldServerConn;
-    FlowDeps.LoginServerClass = GetLoginServerClass();
-    FlowDeps.WorldServerClass = GetWorldServerClass();
-
-    (void)MClientCallAsyncSupport::StartDeferred<FClientLoginResponse>(
-        Context,
-        MGatewayClientFlows::StartLogin(FlowDeps, Request, GatewayConnectionId),
-        [](const FAppError& Error)
-        {
-            FClientLoginResponse Failed;
-            Failed.Error = Error.Code.empty() ? "client_login_failed" : Error.Code;
-            return Failed;
-        });
-}
-
-void MGatewayServer::Client_FindPlayer(FClientFindPlayerRequest& Request, FClientFindPlayerResponse& Response)
-{
-    const SGeneratedClientCallContext Context = CaptureCurrentClientCallContext();
-    if (!Context.IsValid())
-    {
-        Response.Error = "client_call_context_missing";
-        return;
-    }
-
-    SGatewayClientFlowDeps FlowDeps;
-    FlowDeps.WorldServerConn = WorldServerConn;
-    FlowDeps.WorldServerClass = GetWorldServerClass();
-
-    (void)MClientCallAsyncSupport::StartDeferred<FClientFindPlayerResponse>(
-        Context,
-        MGatewayClientFlows::StartFindPlayer(FlowDeps, Request),
-        [](const FAppError& Error)
-        {
-            FClientFindPlayerResponse Failed;
-            Failed.Error = Error.Code.empty() ? "player_find_failed" : Error.Code;
-            return Failed;
-        });
-}
-
-void MGatewayServer::Client_Logout(FClientLogoutRequest& Request, FClientLogoutResponse& Response)
-{
-    const SGeneratedClientCallContext Context = CaptureCurrentClientCallContext();
-    if (!Context.IsValid())
-    {
-        Response.Error = "client_call_context_missing";
-        return;
-    }
-
-    SGatewayClientFlowDeps FlowDeps;
-    FlowDeps.WorldServerConn = WorldServerConn;
-    FlowDeps.WorldServerClass = GetWorldServerClass();
-
-    (void)MClientCallAsyncSupport::StartDeferred<FClientLogoutResponse>(
-        Context,
-        MGatewayClientFlows::StartLogout(FlowDeps, Request),
-        [](const FAppError& Error)
-        {
-            FClientLogoutResponse Failed;
-            Failed.Error = Error.Code.empty() ? "player_logout_failed" : Error.Code;
-            return Failed;
-        });
-}
-
-void MGatewayServer::Client_SwitchScene(FClientSwitchSceneRequest& Request, FClientSwitchSceneResponse& Response)
-{
-    const SGeneratedClientCallContext Context = CaptureCurrentClientCallContext();
-    if (!Context.IsValid())
-    {
-        Response.Error = "client_call_context_missing";
-        return;
-    }
-
-    SGatewayClientFlowDeps FlowDeps;
-    FlowDeps.WorldServerConn = WorldServerConn;
-    FlowDeps.WorldServerClass = GetWorldServerClass();
-
-    (void)MClientCallAsyncSupport::StartDeferred<FClientSwitchSceneResponse>(
-        Context,
-        MGatewayClientFlows::StartSwitchScene(FlowDeps, Request),
-        [](const FAppError& Error)
-        {
-            FClientSwitchSceneResponse Failed;
-            Failed.Error = Error.Code.empty() ? "player_switch_scene_failed" : Error.Code;
-            return Failed;
-        });
-}
-
 void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& Data)
 {
     uint16 FunctionId = 0;
@@ -249,14 +129,49 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
             Data.begin() + static_cast<TByteArray::difference_type>(PayloadOffset + PayloadSize));
     }
 
-    (void)DispatchGeneratedClientFunction(this, ConnectionId, FunctionId, CallId, Payload);
+    auto ConnIt = ClientConnections.find(ConnectionId);
+    if (ConnIt == ClientConnections.end() || !ConnIt->second)
+    {
+        LOG_WARN("Gateway missing client connection for client call: connection=%llu",
+                 static_cast<unsigned long long>(ConnectionId));
+        return;
+    }
+
+    const TSharedPtr<INetConnection> ClientConnection = ConnIt->second;
+    const TSharedPtr<IClientResponseTarget> ResponseTarget =
+        MakeShared<MClientResponseTarget>(
+            [ClientConnection](uint64 ExpectedConnectionId) -> bool
+            {
+                (void)ExpectedConnectionId;
+                return ClientConnection && ClientConnection->IsConnected();
+            },
+            [ClientConnection](uint64 ExpectedConnectionId, uint16 ResponseFunctionId, uint64 ResponseCallId, const TByteArray& ResponsePayload) -> bool
+            {
+                (void)ExpectedConnectionId;
+                TByteArray Packet;
+                if (!BuildClientCallPacket(ResponseFunctionId, ResponseCallId, ResponsePayload, Packet))
+                {
+                    return false;
+                }
+
+                return ClientConnection->Send(Packet.data(), static_cast<uint32>(Packet.size()));
+            });
+
+    if (!ClientService)
+    {
+        LOG_WARN("Gateway client service missing for client call dispatch: connection=%llu",
+                 static_cast<unsigned long long>(ConnectionId));
+        return;
+    }
+
+    (void)DispatchClientFunction(ClientService, ConnectionId, FunctionId, CallId, Payload, ResponseTarget);
 }
 
 void MGatewayServer::HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName)
 {
     if (PacketType == static_cast<uint8>(EServerMessageType::MT_FunctionResponse))
     {
-        if (!HandleGeneratedServerCallResponse(Data))
+        if (!HandleServerCallResponse(Data))
         {
             LOG_WARN("Gateway failed to handle backend function response from %s", PeerName ? PeerName : "backend");
         }

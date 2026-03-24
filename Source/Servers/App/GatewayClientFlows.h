@@ -1,21 +1,19 @@
 #pragma once
 
 #include "Common/Net/ServerConnection.h"
-#include "Common/Net/ServerRpcRuntime.h"
 #include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Object/Result.h"
-#include "Protocol/Messages/AppMessages.h"
-#include "Protocol/Messages/AuthSessionMessages.h"
-#include "Protocol/Messages/ClientCallMessages.h"
-#include "Protocol/Messages/WorldPlayerMessages.h"
+#include "Protocol/Messages/Common/AppMessages.h"
+#include "Protocol/Messages/Auth/AuthSessionMessages.h"
+#include "Protocol/Messages/Common/ClientCallMessages.h"
+#include "Protocol/Messages/World/WorldPlayerMessages.h"
+#include "Servers/Gateway/Rpc/GatewayBackendRpc.h"
 #include "Servers/App/ServerRpcSupport.h"
 
 struct SGatewayClientFlowDeps
 {
-    TSharedPtr<MServerConnection> LoginServerConn;
-    TSharedPtr<MServerConnection> WorldServerConn;
-    const MClass* LoginServerClass = nullptr;
-    const MClass* WorldServerClass = nullptr;
+    MGatewayLoginRpc* LoginRpc = nullptr;
+    MGatewayWorldRpc* WorldRpc = nullptr;
 };
 
 namespace MGatewayClientFlows
@@ -37,19 +35,14 @@ inline MFuture<TResult<FClientLoginResponse, FAppError>> StartLogin(
         return MakeErrorFuture<FClientLoginResponse>("player_id_required", "Client_Login");
     }
 
-    if (!Deps.LoginServerConn || !Deps.LoginServerConn->IsConnected())
+    if (!Deps.LoginRpc || !Deps.LoginRpc->IsAvailable())
     {
         return MakeErrorFuture<FClientLoginResponse>("login_server_unavailable", "Client_Login");
     }
 
-    if (!Deps.WorldServerConn || !Deps.WorldServerConn->IsConnected())
+    if (!Deps.WorldRpc || !Deps.WorldRpc->IsAvailable())
     {
         return MakeErrorFuture<FClientLoginResponse>("world_server_unavailable", "Client_Login");
-    }
-
-    if (!Deps.LoginServerClass || !Deps.WorldServerClass)
-    {
-        return MakeErrorFuture<FClientLoginResponse>("gateway_missing_rpc_class", "Client_Login");
     }
 
     MPromise<TResult<FClientLoginResponse, FAppError>> Promise;
@@ -59,11 +52,7 @@ inline MFuture<TResult<FClientLoginResponse, FAppError>> StartLogin(
     IssueRequest.PlayerId = Request.PlayerId;
     IssueRequest.GatewayConnectionId = GatewayConnectionId;
 
-    CallGeneratedServerFunction<FLoginIssueSessionResponse>(
-        Deps.LoginServerConn,
-        Deps.LoginServerClass,
-        "IssueSession",
-        IssueRequest)
+    Deps.LoginRpc->IssueSession(IssueRequest)
         .Then(
             [Deps, Promise, Request, GatewayConnectionId](MFuture<TResult<FLoginIssueSessionResponse, FAppError>> LoginFuture) mutable
             {
@@ -79,11 +68,7 @@ inline MFuture<TResult<FClientLoginResponse, FAppError>> StartLogin(
                 EnterRequest.GatewayConnectionId = GatewayConnectionId;
                 EnterRequest.SessionKey = LoginResult.GetValue().SessionKey;
 
-                CallGeneratedServerFunction<FPlayerEnterWorldResponse>(
-                    Deps.WorldServerConn,
-                    Deps.WorldServerClass,
-                    "PlayerEnterWorld",
-                    EnterRequest)
+                Deps.WorldRpc->PlayerEnterWorld(EnterRequest)
                     .Then(
                         [Promise, Request, SessionKey = LoginResult.GetValue().SessionKey](MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> EnterFuture) mutable
                         {
@@ -114,14 +99,9 @@ inline MFuture<TResult<FClientFindPlayerResponse, FAppError>> StartFindPlayer(
         return MakeErrorFuture<FClientFindPlayerResponse>("player_id_required", "Client_FindPlayer");
     }
 
-    if (!Deps.WorldServerConn || !Deps.WorldServerConn->IsConnected())
+    if (!Deps.WorldRpc || !Deps.WorldRpc->IsAvailable())
     {
         return MakeErrorFuture<FClientFindPlayerResponse>("world_server_unavailable", "Client_FindPlayer");
-    }
-
-    if (!Deps.WorldServerClass)
-    {
-        return MakeErrorFuture<FClientFindPlayerResponse>("gateway_missing_rpc_class", "Client_FindPlayer");
     }
 
     MPromise<TResult<FClientFindPlayerResponse, FAppError>> Promise;
@@ -130,11 +110,7 @@ inline MFuture<TResult<FClientFindPlayerResponse, FAppError>> StartFindPlayer(
     FPlayerFindRequest FindRequest;
     FindRequest.PlayerId = Request.PlayerId;
 
-    CallGeneratedServerFunction<FPlayerFindResponse>(
-        Deps.WorldServerConn,
-        Deps.WorldServerClass,
-        "PlayerFind",
-        FindRequest)
+    Deps.WorldRpc->PlayerFind(FindRequest)
         .Then(
             [Promise](MFuture<TResult<FPlayerFindResponse, FAppError>> FindFuture) mutable
             {
@@ -166,14 +142,9 @@ inline MFuture<TResult<FClientLogoutResponse, FAppError>> StartLogout(
         return MakeErrorFuture<FClientLogoutResponse>("player_id_required", "Client_Logout");
     }
 
-    if (!Deps.WorldServerConn || !Deps.WorldServerConn->IsConnected())
+    if (!Deps.WorldRpc || !Deps.WorldRpc->IsAvailable())
     {
         return MakeErrorFuture<FClientLogoutResponse>("world_server_unavailable", "Client_Logout");
-    }
-
-    if (!Deps.WorldServerClass)
-    {
-        return MakeErrorFuture<FClientLogoutResponse>("gateway_missing_rpc_class", "Client_Logout");
     }
 
     MPromise<TResult<FClientLogoutResponse, FAppError>> Promise;
@@ -182,11 +153,7 @@ inline MFuture<TResult<FClientLogoutResponse, FAppError>> StartLogout(
     FPlayerLogoutRequest LogoutRequest;
     LogoutRequest.PlayerId = Request.PlayerId;
 
-    CallGeneratedServerFunction<FPlayerLogoutResponse>(
-        Deps.WorldServerConn,
-        Deps.WorldServerClass,
-        "PlayerLogout",
-        LogoutRequest)
+    Deps.WorldRpc->PlayerLogout(LogoutRequest)
         .Then(
             [Promise](MFuture<TResult<FPlayerLogoutResponse, FAppError>> LogoutFuture) mutable
             {
@@ -215,14 +182,9 @@ inline MFuture<TResult<FClientSwitchSceneResponse, FAppError>> StartSwitchScene(
         return MakeErrorFuture<FClientSwitchSceneResponse>("player_id_required", "Client_SwitchScene");
     }
 
-    if (!Deps.WorldServerConn || !Deps.WorldServerConn->IsConnected())
+    if (!Deps.WorldRpc || !Deps.WorldRpc->IsAvailable())
     {
         return MakeErrorFuture<FClientSwitchSceneResponse>("world_server_unavailable", "Client_SwitchScene");
-    }
-
-    if (!Deps.WorldServerClass)
-    {
-        return MakeErrorFuture<FClientSwitchSceneResponse>("gateway_missing_rpc_class", "Client_SwitchScene");
     }
 
     MPromise<TResult<FClientSwitchSceneResponse, FAppError>> Promise;
@@ -232,11 +194,7 @@ inline MFuture<TResult<FClientSwitchSceneResponse, FAppError>> StartSwitchScene(
     SwitchRequest.PlayerId = Request.PlayerId;
     SwitchRequest.SceneId = Request.SceneId;
 
-    CallGeneratedServerFunction<FPlayerSwitchSceneResponse>(
-        Deps.WorldServerConn,
-        Deps.WorldServerClass,
-        "PlayerSwitchScene",
-        SwitchRequest)
+    Deps.WorldRpc->PlayerSwitchScene(SwitchRequest)
         .Then(
             [Deps, Promise, Request](MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> SwitchFuture) mutable
             {
@@ -252,11 +210,7 @@ inline MFuture<TResult<FClientSwitchSceneResponse, FAppError>> StartSwitchScene(
                 RouteRequest.TargetServerType = static_cast<uint8>(EServerType::Scene);
                 RouteRequest.SceneId = Request.SceneId;
 
-                CallGeneratedServerFunction<FPlayerUpdateRouteResponse>(
-                    Deps.WorldServerConn,
-                    Deps.WorldServerClass,
-                    "PlayerUpdateRoute",
-                    RouteRequest)
+                Deps.WorldRpc->PlayerUpdateRoute(RouteRequest)
                     .Then(
                         [Promise, SwitchValue = SwitchResult.GetValue()](MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> RouteFuture) mutable
                         {

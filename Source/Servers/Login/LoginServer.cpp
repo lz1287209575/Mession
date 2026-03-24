@@ -1,5 +1,6 @@
 #include "Servers/Login/LoginServer.h"
 #include "Servers/App/ServerRpcSupport.h"
+#include "Common/Runtime/Object/Object.h"
 
 bool MLoginServer::LoadConfig(const MString& /*ConfigPath*/)
 {
@@ -16,6 +17,12 @@ bool MLoginServer::Init(int InPort)
     bRunning = true;
     MLogger::LogStartupBanner("LoginServer", Config.ListenPort, 0);
     MServerConnection::SetLocalInfo(2, EServerType::Login, "LoginSkeleton");
+
+    if (!SessionService)
+    {
+        SessionService = NewMObject<MLoginSessionServiceEndpoint>(this, "SessionService");
+    }
+    SessionService->Initialize(&Sessions, &NextSessionKey);
     return true;
 }
 
@@ -63,16 +70,6 @@ void MLoginServer::OnRunStarted()
     LOG_INFO("Login skeleton running on port %u", static_cast<unsigned>(Config.ListenPort));
 }
 
-MFuture<TResult<FLoginIssueSessionResponse, FAppError>> MLoginServer::IssueSession(const FLoginIssueSessionRequest& Request)
-{
-    return SessionService.IssueSession(Sessions, NextSessionKey, Request);
-}
-
-MFuture<TResult<FLoginValidateSessionResponse, FAppError>> MLoginServer::ValidateSessionCall(const FLoginValidateSessionRequest& Request)
-{
-    return SessionService.ValidateSession(Sessions, Request);
-}
-
 uint32 MLoginServer::AllocateSessionKey()
 {
     return NextSessionKey++;
@@ -80,5 +77,5 @@ uint32 MLoginServer::AllocateSessionKey()
 
 void MLoginServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
-    (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
+    (void)MServerRpcSupport::DispatchServerCallPacket(SessionService, Connection, Data);
 }

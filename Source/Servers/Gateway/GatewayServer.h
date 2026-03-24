@@ -4,14 +4,11 @@
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
-#include "Common/Net/ServerRpcRuntime.h"
+#include "Common/Net/Rpc/RpcDispatch.h"
 #include "Common/Runtime/Log/Logger.h"
-#include "Common/Runtime/Concurrency/Promise.h"
-#include "Common/Runtime/Object/Result.h"
-#include "Protocol/Messages/AppMessages.h"
-#include "Protocol/Messages/AuthSessionMessages.h"
-#include "Protocol/Messages/WorldPlayerMessages.h"
-#include "Protocol/Messages/ClientCallMessages.h"
+#include "Protocol/Messages/Common/AppMessages.h"
+#include "Servers/Gateway/Rpc/GatewayBackendRpc.h"
+#include "Servers/Gateway/Services/GatewayClientServiceEndpoint.h"
 
 struct SGatewayConfig
 {
@@ -22,14 +19,13 @@ struct SGatewayConfig
     uint16 WorldServerPort = 8003;
 };
 
-MCLASS()
-class MGatewayServer : public MNetServerBase, public MObject, public IGeneratedClientResponseTarget
+MCLASS(Type=Server)
+class MGatewayServer : public MNetServerBase, public MObject
 {
 public:
     MGENERATED_BODY(MGatewayServer, MObject, 0)
 public:
     using MObject::Tick;
-    IGeneratedClientResponseTarget* GetGeneratedClientResponseTarget() override { return this; }
 
     bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
@@ -41,26 +37,8 @@ public:
     void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
-    bool SendGeneratedClientResponse(uint64 ConnectionId, uint16 FunctionId, uint64 CallId, const TByteArray& Payload) override;
-
-    MFUNCTION(ClientCall)
-    void Client_Echo(FClientEchoRequest& Request, FClientEchoResponse& Response);
-
-    MFUNCTION(ClientCall)
-    void Client_Login(FClientLoginRequest& Request, FClientLoginResponse& Response);
-
-    MFUNCTION(ClientCall)
-    void Client_FindPlayer(FClientFindPlayerRequest& Request, FClientFindPlayerResponse& Response);
-
-    MFUNCTION(ClientCall)
-    void Client_Logout(FClientLogoutRequest& Request, FClientLogoutResponse& Response);
-
-    MFUNCTION(ClientCall)
-    void Client_SwitchScene(FClientSwitchSceneRequest& Request, FClientSwitchSceneResponse& Response);
 
 private:
-    const MClass* GetLoginServerClass() const;
-    const MClass* GetWorldServerClass() const;
     void HandleClientPacket(uint64 ConnectionId, const TByteArray& Data);
     void HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName);
 
@@ -69,4 +47,7 @@ private:
     MServerConnectionManager BackendConnectionManager;
     TSharedPtr<MServerConnection> LoginServerConn;
     TSharedPtr<MServerConnection> WorldServerConn;
+    MGatewayLoginRpc* LoginRpc = nullptr;
+    MGatewayWorldRpc* WorldRpc = nullptr;
+    MGatewayClientServiceEndpoint* ClientService = nullptr;
 };

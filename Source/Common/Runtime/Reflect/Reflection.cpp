@@ -4,6 +4,7 @@ MObject::~MObject()
 {
     RemoveFromRoot();
     SetOuter(nullptr);
+    GetObjectMap().erase(ObjectId);
 
     TVector<MObject*> ChildObjects = Children;
     Children.clear();
@@ -11,6 +12,12 @@ MObject::~MObject()
     {
         delete Child;
     }
+}
+
+TMap<uint64, MObject*>& MObject::GetObjectMap()
+{
+    static TMap<uint64, MObject*> ObjectMap;
+    return ObjectMap;
 }
 
 TSet<MObject*>& MObject::GetRootSet()

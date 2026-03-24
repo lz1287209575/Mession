@@ -1,5 +1,6 @@
 #include "Servers/Scene/SceneServer.h"
 #include "Servers/App/ServerRpcSupport.h"
+#include "Common/Runtime/Object/Object.h"
 
 bool MSceneServer::LoadConfig(const MString& /*ConfigPath*/)
 {
@@ -16,6 +17,12 @@ bool MSceneServer::Init(int InPort)
     bRunning = true;
     MLogger::LogStartupBanner("SceneServer", Config.ListenPort, 0);
     MServerConnection::SetLocalInfo(4, EServerType::Scene, "SceneSkeleton");
+
+    if (!SceneService)
+    {
+        SceneService = NewMObject<MSceneSessionServiceEndpoint>(this, "SceneService");
+    }
+    SceneService->Initialize(&PlayerScenes);
     return true;
 }
 
@@ -62,17 +69,7 @@ void MSceneServer::OnRunStarted()
     LOG_INFO("Scene skeleton running on port %u", static_cast<unsigned>(Config.ListenPort));
 }
 
-MFuture<TResult<FSceneEnterResponse, FAppError>> MSceneServer::EnterScene(const FSceneEnterRequest& Request)
-{
-    return SceneService.EnterScene(PlayerScenes, Request);
-}
-
-MFuture<TResult<FSceneLeaveResponse, FAppError>> MSceneServer::LeaveScene(const FSceneLeaveRequest& Request)
-{
-    return SceneService.LeaveScene(PlayerScenes, Request);
-}
-
 void MSceneServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
-    (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
+    (void)MServerRpcSupport::DispatchServerCallPacket(SceneService, Connection, Data);
 }

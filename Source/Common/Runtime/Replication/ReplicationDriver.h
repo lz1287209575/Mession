@@ -9,7 +9,7 @@ class MReplicationChannel
 {
 public:
     uint64 ConnectionId;
-    TSet<uint64> RelevantActors;  // 该连接可见的Actor
+    TSet<uint64> RelevantObjects;
     
     MReplicationChannel(uint64 InConnectionId) : ConnectionId(InConnectionId) {}
 };
@@ -18,8 +18,8 @@ public:
 class MReplicationDriver
 {
 private:
-    // 所有复制的Actor
-    TMap<uint64, MActor*> ReplicationMap;
+    // 所有复制对象
+    TMap<uint64, MObject*> ReplicationMap;
     
     // 每个连接的相关Actor
     TMap<uint64, MReplicationChannel*> Channels;
@@ -40,6 +40,14 @@ public:
     MReplicationDriver() = default;
     ~MReplicationDriver();
 
+    void RegisterObject(MObject* Object);
+    void UnregisterObject(uint64 ObjectId);
+    void AddRelevantObject(uint64 ConnectionId, uint64 ObjectId);
+    void RemoveRelevantObject(uint64 ConnectionId, uint64 ObjectId);
+    void SendObjectUpdate(uint64 ConnectionId, uint64 ObjectId, const TByteArray& Data);
+    void BroadcastObjectCreate(MObject* Object, uint64 ExcludeConnectionId = 0);
+    void BroadcastObjectDestroy(uint64 ObjectId, uint64 ExcludeConnectionId = 0);
+
     // 复制驱动负责“谁需要同步给谁”，具体包格式在 cpp 内部收口。
     void RegisterActor(MActor* Actor);
     void UnregisterActor(uint64 ActorId);
@@ -57,6 +65,7 @@ public:
     
     // 获取Actor数
     size_t GetActorCount() const { return ReplicationMap.size(); }
+    size_t GetObjectCount() const { return ReplicationMap.size(); }
 
 private:
     TMap<uint64, TByteArray> LastSerializedSnapshots;

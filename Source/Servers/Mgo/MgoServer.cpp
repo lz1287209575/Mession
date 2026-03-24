@@ -1,5 +1,6 @@
 #include "Servers/Mgo/MgoServer.h"
 #include "Servers/App/ServerRpcSupport.h"
+#include "Common/Runtime/Object/Object.h"
 
 bool MMgoServer::LoadConfig(const MString& /*ConfigPath*/)
 {
@@ -16,6 +17,12 @@ bool MMgoServer::Init(int InPort)
     bRunning = true;
     MLogger::LogStartupBanner("MgoServer", Config.ListenPort, 0);
     MServerConnection::SetLocalInfo(6, EServerType::Mgo, "MgoSkeleton");
+
+    if (!PlayerStateService)
+    {
+        PlayerStateService = NewMObject<MMgoPlayerStateServiceEndpoint>(this, "PlayerStateService");
+    }
+    PlayerStateService->Initialize(&PlayerPersistenceRecords);
     return true;
 }
 
@@ -62,17 +69,7 @@ void MMgoServer::OnRunStarted()
     LOG_INFO("Mgo skeleton running on port %u", static_cast<unsigned>(Config.ListenPort));
 }
 
-MFuture<TResult<FMgoLoadPlayerResponse, FAppError>> MMgoServer::LoadPlayer(const FMgoLoadPlayerRequest& Request)
-{
-    return PlayerStateService.LoadPlayer(PlayerPayloads, Request);
-}
-
-MFuture<TResult<FMgoSavePlayerResponse, FAppError>> MMgoServer::SavePlayer(const FMgoSavePlayerRequest& Request)
-{
-    return PlayerStateService.SavePlayer(PlayerPayloads, Request);
-}
-
 void MMgoServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
-    (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
+    (void)MServerRpcSupport::DispatchServerCallPacket(PlayerStateService, Connection, Data);
 }

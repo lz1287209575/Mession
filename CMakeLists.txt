@@ -85,7 +85,11 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Runtime/Log/FileLogSink.cpp
     Source/Common/Net/NetServerBase.cpp
     Source/Common/Net/ServerConnection.cpp
-    Source/Common/Net/ServerRpcRuntime.cpp
+    Source/Common/Net/Rpc/RpcClientCall.cpp
+    Source/Common/Net/Rpc/RpcDispatch.cpp
+    Source/Common/Net/Rpc/RpcManifest.cpp
+    Source/Common/Net/Rpc/RpcServerCall.cpp
+    Source/Common/Net/Rpc/RpcTransport.cpp
 )
 
 add_library(mession_common STATIC
@@ -281,6 +285,8 @@ add_executable(GatewayServer
     Source/Servers/Gateway/GatewayServer.h
     Source/Servers/Gateway/GatewayServer.cpp
     Source/Servers/Gateway/GatewayServerMain.cpp
+    Source/Servers/Gateway/Rpc/GatewayBackendRpc.cpp
+    Source/Servers/Gateway/Services/GatewayClientServiceEndpoint.cpp
 )
 target_link_libraries(GatewayServer
     PRIVATE
@@ -294,6 +300,7 @@ add_executable(LoginServer
     Source/Servers/Login/LoginServer.h
     Source/Servers/Login/LoginServer.cpp
     Source/Servers/Login/LoginServerMain.cpp
+    Source/Servers/Login/Services/LoginSessionServiceEndpoint.cpp
 )
 target_link_libraries(LoginServer
     PRIVATE
@@ -304,10 +311,15 @@ mession_attach_generated_groups(LoginServer shared login)
 
 # 3. World Server - 世界服务器
 add_executable(WorldServer 
-    Source/Servers/App/WorldPlayerService.cpp
     Source/Servers/World/WorldServer.h
     Source/Servers/World/WorldServer.cpp
     Source/Servers/World/WorldServerMain.cpp
+    Source/Servers/World/Domain/AttributeComponent.cpp
+    Source/Servers/World/Domain/InventoryComponent.cpp
+    Source/Servers/World/Domain/PlayerAvatar.cpp
+    Source/Servers/World/Domain/PlayerSession.cpp
+    Source/Servers/World/Rpc/WorldBackendRpc.cpp
+    Source/Servers/World/Services/WorldPlayerServiceEndpoint.cpp
 )
 target_link_libraries(WorldServer
     PRIVATE
@@ -321,6 +333,7 @@ add_executable(SceneServer
     Source/Servers/Scene/SceneServer.h
     Source/Servers/Scene/SceneServer.cpp
     Source/Servers/Scene/SceneServerMain.cpp
+    Source/Servers/Scene/Services/SceneSessionServiceEndpoint.cpp
 )
 target_link_libraries(SceneServer
     PRIVATE
@@ -334,6 +347,7 @@ add_executable(RouterServer
     Source/Servers/Router/RouterServer.h
     Source/Servers/Router/RouterServer.cpp
     Source/Servers/Router/RouterServerMain.cpp
+    Source/Servers/Router/Services/RouterRegistryServiceEndpoint.cpp
 )
 target_link_libraries(RouterServer
     PRIVATE
@@ -347,6 +361,7 @@ add_executable(MgoServer
     Source/Servers/Mgo/MgoServer.h
     Source/Servers/Mgo/MgoServer.cpp
     Source/Servers/Mgo/MgoServerMain.cpp
+    Source/Servers/Mgo/Services/MgoPlayerStateServiceEndpoint.cpp
 )
 target_link_libraries(MgoServer
     PRIVATE

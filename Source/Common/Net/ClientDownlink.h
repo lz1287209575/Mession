@@ -1,9 +1,9 @@
 #pragma once
 
 #include "Common/Runtime/Object/Object.h"
-#include "Protocol/Messages/InventoryMessages.h"
+#include "Protocol/Messages/Common/InventoryMessages.h"
 
-MCLASS()
+MCLASS(Type=Object)
 class MClientDownlink : public MObject
 {
 public:
@@ -20,6 +20,15 @@ public:
 
     MFUNCTION()
     void Client_OnActorDestroy(uint64) {}
+
+    MFUNCTION()
+    void Client_OnObjectCreate(uint64, const TByteArray&) {}
+
+    MFUNCTION()
+    void Client_OnObjectUpdate(uint64, const TByteArray&) {}
+
+    MFUNCTION()
+    void Client_OnObjectDestroy(uint64) {}
 
     MFUNCTION()
     void Client_OnInventoryPull(

@@ -38,6 +38,27 @@ public:
                  !std::is_same_v<T, SVector> &&
                  !std::is_same_v<T, SRotator>, int> = 0>
     MReflectArchive& operator<<(T& Value) { return WritePOD(Value); }
+
+    template<typename T,
+             std::enable_if_t<
+                 !std::is_arithmetic_v<T> &&
+                 !std::is_enum_v<T> &&
+                 !std::is_same_v<T, MString> &&
+                 !std::is_same_v<T, SVector> &&
+                 !std::is_same_v<T, SRotator> &&
+                 !std::is_trivially_copyable_v<T>, int> = 0>
+    MReflectArchive& operator<<(T& Value)
+    {
+        if (MClass* StructMeta = MObject::FindStruct(std::type_index(typeid(T))))
+        {
+            StructMeta->WriteSnapshot(&Value, *this);
+            return *this;
+        }
+
+        bReadOverflow = bReading;
+        return *this;
+    }
+
     MReflectArchive& operator<<(bool& Value)
     {
         uint8 Temp = Value ? 1u : 0u;

@@ -5,18 +5,17 @@
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
-#include "Common/Net/ServerRpcRuntime.h"
 #include "Common/Runtime/Log/Logger.h"
-#include "Protocol/Messages/AppMessages.h"
-#include "Protocol/Messages/BackendServiceMessages.h"
-#include "Servers/App/MgoPlayerStateService.h"
+#include "Protocol/Messages/Common/AppMessages.h"
+#include "Protocol/Messages/Mgo/MgoPlayerStateMessages.h"
+#include "Servers/Mgo/Services/MgoPlayerStateServiceEndpoint.h"
 
 struct SMgoConfig
 {
     uint16 ListenPort = 8006;
 };
 
-MCLASS()
+MCLASS(Type=Server)
 class MMgoServer : public MNetServerBase, public MObject
 {
 public:
@@ -34,16 +33,10 @@ public:
     void ShutdownConnections() override;
     void OnRunStarted() override;
 
-    MFUNCTION(ServerCall, Target=Mgo)
-    MFuture<TResult<FMgoLoadPlayerResponse, FAppError>> LoadPlayer(const FMgoLoadPlayerRequest& Request);
-
-    MFUNCTION(ServerCall, Target=Mgo)
-    MFuture<TResult<FMgoSavePlayerResponse, FAppError>> SavePlayer(const FMgoSavePlayerRequest& Request);
-
 private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
     SMgoConfig Config;
-    TMap<uint64, MString> PlayerPayloads;
+    TMap<uint64, TVector<FMgoPersistenceRecord>> PlayerPersistenceRecords;
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
-    MMgoPlayerStateService PlayerStateService;
+    MMgoPlayerStateServiceEndpoint* PlayerStateService = nullptr;
 };

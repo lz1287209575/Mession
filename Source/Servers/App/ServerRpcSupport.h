@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Common/Net/ServerRpcRuntime.h"
+#include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Object/Result.h"
@@ -52,23 +52,28 @@ inline bool DispatchServerCallPacket(
             PacketPayload.begin() + static_cast<TByteArray::difference_type>(PayloadOffset + PayloadSize));
     }
 
-    MGeneratedServerCallResponseTarget ResponseTarget(
-        [Connection](uint16 ResponseFunctionId, uint64 ResponseCallId, bool bSuccess, const TByteArray& ResponsePayload) -> bool
-        {
-            TByteArray ResponsePacketPayload;
-            if (!BuildServerCallResponsePacket(
-                    ResponseFunctionId,
-                    ResponseCallId,
-                    bSuccess,
-                    ResponsePayload,
-                    ResponsePacketPayload))
+    const TSharedPtr<IServerCallResponseTarget> ResponseTarget =
+        MakeShared<MServerCallResponseTarget>(
+            [Connection]() -> bool
             {
-                return false;
-            }
+                return Connection && Connection->IsConnected();
+            },
+            [Connection](uint16 ResponseFunctionId, uint64 ResponseCallId, bool bSuccess, const TByteArray& ResponsePayload) -> bool
+            {
+                TByteArray ResponsePacketPayload;
+                if (!BuildServerCallResponsePacket(
+                        ResponseFunctionId,
+                        ResponseCallId,
+                        bSuccess,
+                        ResponsePayload,
+                        ResponsePacketPayload))
+                {
+                    return false;
+                }
 
-            return SendServerCallResponseMessage(Connection, ResponsePacketPayload);
-        });
+                return SendServerCallResponseMessage(Connection, ResponsePacketPayload);
+            });
 
-    return DispatchGeneratedServerCall(Service, FunctionId, CallId, RequestPayload, ResponseTarget);
+    return DispatchServerCall(Service, FunctionId, CallId, RequestPayload, ResponseTarget);
 }
 }

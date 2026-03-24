@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
-#include "Protocol/Messages/AuthSessionMessages.h"
+#include "Protocol/Messages/Auth/AuthSessionMessages.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
 
 class MLoginSessionService

@@ -15,8 +15,8 @@
 
 class MReflectArchive;
 class MObject;
-class IGeneratedClientRouteTarget;
-class IGeneratedClientResponseTarget;
+class IClientRouteTarget;
+class IClientResponseTarget;
 bool BuildServerRpcPayload(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutData);
 
 template<typename T>
@@ -101,6 +101,7 @@ public:
     MObject()
         : ObjectId(MUniqueIdGenerator::Generate())
     {
+        GetObjectMap()[ObjectId] = this;
     }
     MObject(const MObject&) = delete;
     MObject& operator=(const MObject&) = delete;
@@ -109,7 +110,17 @@ public:
     virtual ~MObject();
     
     uint64 GetObjectId() const { return ObjectId; }
-    void SetObjectId(uint64 InId) { ObjectId = InId; }
+    void SetObjectId(uint64 InId)
+    {
+        if (ObjectId == InId)
+        {
+            return;
+        }
+
+        GetObjectMap().erase(ObjectId);
+        ObjectId = InId;
+        GetObjectMap()[ObjectId] = this;
+    }
     void SetReplicated(bool bInReplicated) { bReplicated = bInReplicated; }
     bool IsReplicated() const { return bReplicated; }
 
@@ -128,8 +139,8 @@ public:
     virtual void Tick(float DeltaTime) {}
     virtual void Destroy() {}
     virtual MString ToString() const;
-    virtual IGeneratedClientRouteTarget* GetGeneratedClientRouteTarget() { return nullptr; }
-    virtual IGeneratedClientResponseTarget* GetGeneratedClientResponseTarget() { return nullptr; }
+    virtual IClientRouteTarget* GetClientRouteTarget() { return nullptr; }
+    virtual IClientResponseTarget* GetClientResponseTarget() { return nullptr; }
     virtual void VisitReferencedObjects(const TFunction<void(MObject*)>& Visitor) const;
     
     // 反射方法
@@ -215,6 +226,26 @@ public:
         GetClassIdMap()[InClass->GetId()] = InClass;
     }
 
+    static MObject* FindObject(uint64 InObjectId)
+    {
+        auto It = GetObjectMap().find(InObjectId);
+        return (It != GetObjectMap().end()) ? It->second : nullptr;
+    }
+
+    static TVector<MObject*> GetAllObjects()
+    {
+        TVector<MObject*> Result;
+        Result.reserve(GetObjectMap().size());
+        for (const auto& Pair : GetObjectMap())
+        {
+            if (Pair.second)
+            {
+                Result.push_back(Pair.second);
+            }
+        }
+        return Result;
+    }
+
     static MEnum* FindEnum(const MString& InName)
     {
         auto It = GetEnumMap().find(InName);
@@ -290,6 +321,7 @@ public:
     void SetOuter(MObject* InOuter);
     void AddToRoot();
     void RemoveFromRoot();
+    void MarkAsDefaultSubObject() { AddObjectFlags(ObjectFlag_DefaultSubObject); }
     void SetObjectFlags(uint64 InFlags) { ObjectFlags = InFlags; }
     void AddObjectFlags(uint64 InFlags) { ObjectFlags |= InFlags; }
     void RemoveObjectFlags(uint64 InFlags) { ObjectFlags &= ~InFlags; }
@@ -395,6 +427,7 @@ public:
     }
     
 private:
+    static TMap<uint64, MObject*>& GetObjectMap();
     static TSet<MObject*>& GetRootSet();
     void AddChildObject(MObject* Child);
     void RemoveChildObject(MObject* Child);

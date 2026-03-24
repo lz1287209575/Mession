@@ -5,18 +5,17 @@
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
-#include "Common/Net/ServerRpcRuntime.h"
 #include "Common/Runtime/Log/Logger.h"
-#include "Protocol/Messages/AppMessages.h"
-#include "Protocol/Messages/BackendServiceMessages.h"
-#include "Servers/App/RouterRegistryService.h"
+#include "Protocol/Messages/Common/AppMessages.h"
+#include "Protocol/Messages/Router/RouterServiceMessages.h"
+#include "Servers/Router/Services/RouterRegistryServiceEndpoint.h"
 
 struct SRouterConfig
 {
     uint16 ListenPort = 8005;
 };
 
-MCLASS()
+MCLASS(Type=Server)
 class MRouterServer : public MNetServerBase, public MObject
 {
 public:
@@ -34,16 +33,10 @@ public:
     void ShutdownConnections() override;
     void OnRunStarted() override;
 
-    MFUNCTION(ServerCall, Target=Router)
-    MFuture<TResult<FRouterResolvePlayerRouteResponse, FAppError>> ResolvePlayerRoute(const FRouterResolvePlayerRouteRequest& Request);
-
-    MFUNCTION(ServerCall, Target=Router)
-    MFuture<TResult<FRouterUpsertPlayerRouteResponse, FAppError>> UpsertPlayerRoute(const FRouterUpsertPlayerRouteRequest& Request);
-
 private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
     SRouterConfig Config;
     TMap<uint64, SPlayerRouteRecord> Routes;
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
-    MRouterRegistryService RegistryService;
+    MRouterRegistryServiceEndpoint* RegistryService = nullptr;
 };
