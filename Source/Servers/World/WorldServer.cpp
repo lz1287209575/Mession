@@ -88,10 +88,10 @@ bool MWorldServer::Init(int InPort)
 
 void MWorldServer::Tick()
 {
-    for (const auto& [PlayerId, Session] : OnlinePlayers)
+    for (const auto& [PlayerId, Player] : OnlinePlayers)
     {
         (void)PlayerId;
-        (void)PersistenceSubsystem.EnqueueRootIfDirty(Session);
+        (void)PersistenceSubsystem.EnqueueRootIfDirty(Player);
     }
 
     (void)PersistenceSubsystem.Flush(64);
@@ -136,10 +136,10 @@ void MWorldServer::ShutdownConnections()
     }
     PeerConnections.clear();
 
-    for (auto& [PlayerId, Session] : OnlinePlayers)
+    for (auto& [PlayerId, Player] : OnlinePlayers)
     {
         (void)PlayerId;
-        DestroyMObject(Session);
+        DestroyMObject(Player);
     }
     OnlinePlayers.clear();
 

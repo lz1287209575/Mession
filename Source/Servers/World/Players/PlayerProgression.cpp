@@ -1,6 +1,6 @@
-#include "Servers/World/Domain/AttributeComponent.h"
+#include "Servers/World/Players/PlayerProgression.h"
 
-void MAttributeComponent::SetProgression(uint32 InLevel, uint32 InExperience, uint32 InHealth)
+void MPlayerProgression::SetState(uint32 InLevel, uint32 InExperience, uint32 InHealth)
 {
     Level = InLevel;
     Experience = InExperience;
@@ -10,7 +10,7 @@ void MAttributeComponent::SetProgression(uint32 InLevel, uint32 InExperience, ui
     MarkPropertyDirty("Health");
 }
 
-void MAttributeComponent::LoadProgression(uint32 InLevel, uint32 InExperience, uint32 InHealth)
+void MPlayerProgression::LoadState(uint32 InLevel, uint32 InExperience, uint32 InHealth)
 {
     Level = InLevel;
     Experience = InExperience;

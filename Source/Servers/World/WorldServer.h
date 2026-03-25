@@ -18,7 +18,7 @@
 #include "Protocol/Messages/Mgo/MgoPlayerStateMessages.h"
 #include "Protocol/Messages/Router/RouterServiceMessages.h"
 #include "Protocol/Messages/Scene/SceneServiceMessages.h"
-#include "Servers/World/Domain/PlayerSession.h"
+#include "Servers/World/Players/Player.h"
 #include "Servers/World/Rpc/WorldBackendRpc.h"
 #include "Servers/World/Services/WorldClientServiceEndpoint.h"
 #include "Servers/World/Services/WorldPlayerServiceEndpoint.h"
@@ -78,7 +78,7 @@ private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
     void HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName);
     SWorldConfig Config;
-    TMap<uint64, MPlayerSession*> OnlinePlayers;
+    TMap<uint64, MPlayer*> OnlinePlayers;
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
     MServerConnectionManager BackendConnectionManager;
     TSharedPtr<MServerConnection> LoginServerConn;

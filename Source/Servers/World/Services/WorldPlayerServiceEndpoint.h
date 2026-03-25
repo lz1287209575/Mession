@@ -8,7 +8,7 @@
 #include "Protocol/Messages/World/WorldPlayerMessages.h"
 #include "Common/Runtime/Persistence/PersistenceSubsystem.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
-#include "Servers/World/Domain/PlayerSession.h"
+#include "Servers/World/Players/Player.h"
 #include "Servers/World/Rpc/WorldBackendRpc.h"
 
 namespace MWorldPlayerServiceFlows
@@ -24,7 +24,7 @@ public:
     MGENERATED_BODY(MWorldPlayerServiceEndpoint, MObject, 0)
 public:
     void Initialize(
-        TMap<uint64, MPlayerSession*>* InOnlinePlayers,
+        TMap<uint64, MPlayer*>* InOnlinePlayers,
         MPersistenceSubsystem* InPersistenceSubsystem,
         MWorldLoginRpc* InLoginRpc,
         MWorldMgoRpc* InMgoRpc,
@@ -50,11 +50,11 @@ private:
     friend class MWorldPlayerServiceFlows::FPlayerEnterWorldWorkflow;
     friend class MWorldPlayerServiceFlows::FPlayerLogoutWorkflow;
 
-    MPlayerSession* FindPlayerSession(uint64 PlayerId) const;
-    MPlayerSession* FindOrCreatePlayerSession(uint64 PlayerId);
-    void RemovePlayerSession(uint64 PlayerId);
+    MPlayer* FindPlayer(uint64 PlayerId) const;
+    MPlayer* FindOrCreatePlayer(uint64 PlayerId);
+    void RemovePlayer(uint64 PlayerId);
 
-    TMap<uint64, MPlayerSession*>* OnlinePlayers = nullptr;
+    TMap<uint64, MPlayer*>* OnlinePlayers = nullptr;
     MPersistenceSubsystem* PersistenceSubsystem = nullptr;
     MWorldLoginRpc* LoginRpc = nullptr;
     MWorldMgoRpc* MgoRpc = nullptr;

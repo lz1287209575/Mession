@@ -3,10 +3,10 @@
 #include "Common/Runtime/Reflect/Reflection.h"
 
 MCLASS(Type=Object)
-class MInventoryComponent : public MObject
+class MPlayerInventory : public MObject
 {
 public:
-    MGENERATED_BODY(MInventoryComponent, MObject, 0)
+    MGENERATED_BODY(MPlayerInventory, MObject, 0)
 public:
     MPROPERTY(PersistentData | Replicated)
     uint32 Gold = 0;
@@ -14,7 +14,7 @@ public:
     MPROPERTY(PersistentData | Replicated)
     MString EquippedItem = "starter_sword";
 
-    void SetInventoryState(uint32 InGold, const MString& InEquippedItem);
+    void SetState(uint32 InGold, const MString& InEquippedItem);
 
-    void LoadInventoryState(uint32 InGold, const MString& InEquippedItem);
+    void LoadState(uint32 InGold, const MString& InEquippedItem);
 };

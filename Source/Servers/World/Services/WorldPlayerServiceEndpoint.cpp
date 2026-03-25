@@ -1,4 +1,5 @@
 #include "Servers/World/Services/WorldPlayerServiceEndpoint.h"
+#include "Common/Runtime/StringUtils.h"
 
 namespace MWorldPlayerServiceFlows
 {
@@ -24,18 +25,62 @@ TVector<FObjectPersistenceRecord> ToProtocolPersistenceRecords(const TVector<SPe
     return Result;
 }
 
-TVector<SObjectDomainSnapshotRecord> ToRuntimePersistenceRecords(const TVector<FObjectPersistenceRecord>& Records)
+TVector<SObjectDomainSnapshotRecord> FilterCompatiblePlayerRecords(const TVector<FObjectPersistenceRecord>& Records)
 {
     TVector<SObjectDomainSnapshotRecord> Result;
     Result.reserve(Records.size());
     for (const FObjectPersistenceRecord& Record : Records)
     {
+        // Backward compatibility:
+        // 1. Old saves used MPlayerSession as the persistence root.
+        // 2. The first Player refactor used MPlayer as root with route fields on the root object.
+        // 3. Avatar was renamed to Profile in the current split.
+        if (Record.ObjectPath.empty() &&
+            (Record.ClassName == "MPlayerSession" || Record.ClassName == "MPlayer"))
+        {
+            continue;
+        }
+
+        MString ObjectPath = Record.ObjectPath;
+        MString ClassName = Record.ClassName;
+
+        if (!ObjectPath.empty())
+        {
+            TStringView PathView(ObjectPath);
+            if (MStringView::StartsWith(PathView, "Avatar"))
+            {
+                ObjectPath.replace(0, sizeof("Avatar") - 1, "Profile");
+            }
+        }
+
+        if (ClassName == "MPlayerAvatar")
+        {
+            ClassName = "MPlayerProfile";
+        }
+        else if (ClassName == "MInventoryComponent")
+        {
+            ClassName = "MPlayerInventory";
+        }
+        else if (ClassName == "MAttributeComponent")
+        {
+            ClassName = "MPlayerProgression";
+        }
+
+        if (!ObjectPath.empty())
+        {
+            TStringView PathView(ObjectPath);
+            if (MStringView::StartsWith(PathView, "Profile.Attributes"))
+            {
+                ObjectPath.replace(0, sizeof("Profile.Attributes") - 1, "Profile.Progression");
+            }
+        }
+
         Result.push_back(SObjectDomainSnapshotRecord{
             0,
             0,
             0,
-            Record.ObjectPath,
-            Record.ClassName,
+            std::move(ObjectPath),
+            std::move(ClassName),
             Record.SnapshotData,
         });
     }
@@ -80,20 +125,20 @@ private:
 
     void OnPlayerLoaded(const FMgoLoadPlayerResponse& LoadResponse)
     {
-        MPlayerSession* Session = Service->FindOrCreatePlayerSession(Request.PlayerId);
-        if (!Session)
+        MPlayer* Player = Service->FindOrCreatePlayer(Request.PlayerId);
+        if (!Player)
         {
-            Fail("player_session_create_failed", "PlayerEnterWorld");
+            Fail("player_create_failed", "PlayerEnterWorld");
             return;
         }
 
-        Session->InitializeForLogin(Request.PlayerId, Request.GatewayConnectionId, Request.SessionKey);
+        Player->InitializeForLogin(Request.PlayerId, Request.GatewayConnectionId, Request.SessionKey);
         if (!LoadResponse.Records.empty())
         {
             MString ApplyError;
             if (!MObjectDomainUtils::ApplyObjectDomainSnapshotRecords(
-                    Session,
-                    ToRuntimePersistenceRecords(LoadResponse.Records),
+                    Player,
+                    FilterCompatiblePlayerRecords(LoadResponse.Records),
                     EPropertyDomainFlags::Persistence,
                     &ApplyError))
             {
@@ -102,9 +147,15 @@ private:
             }
         }
 
+        Player->FinalizeLoadedState();
+
         FSceneEnterRequest SceneRequest;
         SceneRequest.PlayerId = Request.PlayerId;
-        SceneRequest.SceneId = Session->SceneId;
+        SceneRequest.SceneId = 1;
+        if (MPlayerController* Controller = Player->GetController())
+        {
+            SceneRequest.SceneId = Controller->SceneId != 0 ? Controller->SceneId : 1;
+        }
         Continue(Service->SceneRpc->EnterScene(SceneRequest), &FPlayerEnterWorldWorkflow::OnSceneEntered);
     }
 
@@ -121,14 +172,14 @@ private:
 
     void OnRouteUpdated(const FRouterUpsertPlayerRouteResponse&)
     {
-        MPlayerSession* Session = Service->FindPlayerSession(Request.PlayerId);
-        if (!Session)
+        MPlayer* Player = Service->FindPlayer(Request.PlayerId);
+        if (!Player)
         {
-            Fail("player_session_missing", "PlayerEnterWorld");
+            Fail("player_missing", "PlayerEnterWorld");
             return;
         }
 
-        Session->SetRoute(TargetSceneId, static_cast<uint8>(EServerType::Scene));
+        Player->SetRoute(TargetSceneId, static_cast<uint8>(EServerType::Scene));
 
         FPlayerEnterWorldResponse Response;
         Response.PlayerId = Request.PlayerId;
@@ -155,8 +206,8 @@ public:
 protected:
     void OnStart() override
     {
-        MPlayerSession* Session = Service->FindPlayerSession(Request.PlayerId);
-        if (!Session)
+        MPlayer* Player = Service->FindPlayer(Request.PlayerId);
+        if (!Player)
         {
             FPlayerLogoutResponse Response;
             Response.PlayerId = Request.PlayerId;
@@ -173,14 +224,14 @@ protected:
         }
 
         SaveRequest.Records = ToProtocolPersistenceRecords(
-            Service->PersistenceSubsystem->BuildRecordsForRoot(Session, false));
+            Service->PersistenceSubsystem->BuildRecordsForRoot(Player, false));
         Continue(Service->MgoRpc->SavePlayer(SaveRequest), &FPlayerLogoutWorkflow::OnPlayerSaved);
     }
 
 private:
     void OnPlayerSaved(const FMgoSavePlayerResponse&)
     {
-        Service->RemovePlayerSession(Request.PlayerId);
+        Service->RemovePlayer(Request.PlayerId);
 
         FPlayerLogoutResponse Response;
         Response.PlayerId = Request.PlayerId;
@@ -193,7 +244,7 @@ private:
 }
 
 void MWorldPlayerServiceEndpoint::Initialize(
-    TMap<uint64, MPlayerSession*>* InOnlinePlayers,
+    TMap<uint64, MPlayer*>* InOnlinePlayers,
     MPersistenceSubsystem* InPersistenceSubsystem,
     MWorldLoginRpc* InLoginRpc,
     MWorldMgoRpc* InMgoRpc,
@@ -258,11 +309,21 @@ MFuture<TResult<FPlayerFindResponse, FAppError>> MWorldPlayerServiceEndpoint::Pl
 
     FPlayerFindResponse Response;
     Response.PlayerId = Request.PlayerId;
-    if (MPlayerSession* Session = FindPlayerSession(Request.PlayerId))
+    if (MPlayer* Player = FindPlayer(Request.PlayerId))
     {
+        MPlayerSession* Session = Player->GetSession();
+        MPlayerController* Controller = Player->GetController();
+        MPlayerProfile* Profile = Player->GetProfile();
         Response.bFound = true;
-        Response.GatewayConnectionId = Session->GatewayConnectionId;
-        Response.SceneId = Session->SceneId;
+        Response.GatewayConnectionId = Session ? Session->GatewayConnectionId : 0;
+        if (Controller && Controller->SceneId != 0)
+        {
+            Response.SceneId = Controller->SceneId;
+        }
+        else if (Profile)
+        {
+            Response.SceneId = Profile->CurrentSceneId;
+        }
     }
 
     return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
@@ -281,13 +342,13 @@ MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MWorldPlayerServiceEndpo
         return MServerCallAsyncSupport::MakeErrorFuture<FPlayerUpdateRouteResponse>("world_service_not_initialized", "PlayerUpdateRoute");
     }
 
-    MPlayerSession* Session = FindPlayerSession(Request.PlayerId);
-    if (!Session)
+    MPlayer* Player = FindPlayer(Request.PlayerId);
+    if (!Player)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FPlayerUpdateRouteResponse>("player_not_found", "PlayerUpdateRoute");
     }
 
-    Session->SetRoute(Request.SceneId, Request.TargetServerType);
+    Player->SetRoute(Request.SceneId, Request.TargetServerType);
 
     FPlayerUpdateRouteResponse Response;
     Response.PlayerId = Request.PlayerId;
@@ -307,7 +368,7 @@ MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldPlayerServiceEndpoint::
         return MServerCallAsyncSupport::MakeErrorFuture<FPlayerLogoutResponse>("world_service_not_initialized", "PlayerLogout");
     }
 
-    if (!FindPlayerSession(Request.PlayerId))
+    if (!FindPlayer(Request.PlayerId))
     {
         FPlayerLogoutResponse Response;
         Response.PlayerId = Request.PlayerId;
@@ -335,13 +396,13 @@ MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> MWorldPlayerServiceEndpo
         return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("world_service_not_initialized", "PlayerSwitchScene");
     }
 
-    MPlayerSession* Session = FindPlayerSession(Request.PlayerId);
-    if (!Session)
+    MPlayer* Player = FindPlayer(Request.PlayerId);
+    if (!Player)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("player_not_found", "PlayerSwitchScene");
     }
 
-    Session->SetRoute(Request.SceneId, static_cast<uint8>(EServerType::Scene));
+    Player->SetRoute(Request.SceneId, static_cast<uint8>(EServerType::Scene));
 
     FPlayerSwitchSceneResponse Response;
     Response.PlayerId = Request.PlayerId;
@@ -349,7 +410,7 @@ MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> MWorldPlayerServiceEndpo
     return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
 }
 
-MPlayerSession* MWorldPlayerServiceEndpoint::FindPlayerSession(uint64 PlayerId) const
+MPlayer* MWorldPlayerServiceEndpoint::FindPlayer(uint64 PlayerId) const
 {
     if (!OnlinePlayers)
     {
@@ -360,25 +421,25 @@ MPlayerSession* MWorldPlayerServiceEndpoint::FindPlayerSession(uint64 PlayerId) 
     return (It != OnlinePlayers->end()) ? It->second : nullptr;
 }
 
-MPlayerSession* MWorldPlayerServiceEndpoint::FindOrCreatePlayerSession(uint64 PlayerId)
+MPlayer* MWorldPlayerServiceEndpoint::FindOrCreatePlayer(uint64 PlayerId)
 {
     if (!OnlinePlayers)
     {
         return nullptr;
     }
 
-    if (MPlayerSession* Existing = FindPlayerSession(PlayerId))
+    if (MPlayer* Existing = FindPlayer(PlayerId))
     {
         return Existing;
     }
 
     MObject* Owner = GetOuter() ? GetOuter() : static_cast<MObject*>(this);
-    MPlayerSession* Session = NewMObject<MPlayerSession>(Owner, "PlayerSession_" + MStringUtil::ToString(PlayerId));
-    (*OnlinePlayers)[PlayerId] = Session;
-    return Session;
+    MPlayer* Player = NewMObject<MPlayer>(Owner, "Player_" + MStringUtil::ToString(PlayerId));
+    (*OnlinePlayers)[PlayerId] = Player;
+    return Player;
 }
 
-void MWorldPlayerServiceEndpoint::RemovePlayerSession(uint64 PlayerId)
+void MWorldPlayerServiceEndpoint::RemovePlayer(uint64 PlayerId)
 {
     if (!OnlinePlayers)
     {
@@ -391,7 +452,7 @@ void MWorldPlayerServiceEndpoint::RemovePlayerSession(uint64 PlayerId)
         return;
     }
 
-    MPlayerSession* Session = It->second;
+    MPlayer* Player = It->second;
     OnlinePlayers->erase(It);
-    DestroyMObject(Session);
+    DestroyMObject(Player);
 }

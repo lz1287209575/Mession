@@ -312,10 +312,12 @@ add_executable(WorldServer
     Source/Servers/World/WorldServer.h
     Source/Servers/World/WorldServer.cpp
     Source/Servers/World/WorldServerMain.cpp
-    Source/Servers/World/Domain/AttributeComponent.cpp
-    Source/Servers/World/Domain/InventoryComponent.cpp
-    Source/Servers/World/Domain/PlayerAvatar.cpp
-    Source/Servers/World/Domain/PlayerSession.cpp
+    Source/Servers/World/Players/PlayerInventory.cpp
+    Source/Servers/World/Players/PlayerProgression.cpp
+    Source/Servers/World/Players/Player.cpp
+    Source/Servers/World/Players/PlayerController.cpp
+    Source/Servers/World/Players/PlayerProfile.cpp
+    Source/Servers/World/Players/PlayerSession.cpp
     Source/Servers/World/Services/WorldClientServiceEndpoint.cpp
     Source/Servers/World/Services/WorldPlayerServiceEndpoint.cpp
 )

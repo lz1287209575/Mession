@@ -2,20 +2,21 @@
 
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Reflect/Reflection.h"
-#include "Servers/World/Domain/AttributeComponent.h"
-#include "Servers/World/Domain/InventoryComponent.h"
+#include "Servers/World/Players/PlayerInventory.h"
+#include "Servers/World/Players/PlayerProgression.h"
 
 MCLASS(Type=Object)
-class MPlayerAvatar : public MObject
+class MPlayerProfile : public MObject
 {
 public:
-    MGENERATED_BODY(MPlayerAvatar, MObject, 0)
+    MGENERATED_BODY(MPlayerProfile, MObject, 0)
 public:
-    MPlayerAvatar();
+    MPlayerProfile();
 
     MPROPERTY(PersistentData | Replicated)
     uint64 PlayerId = 0;
 
+    // Keep the persisted scene anchor here so legacy Avatar snapshots can map into Profile losslessly.
     MPROPERTY(PersistentData | Replicated)
     uint32 CurrentSceneId = 1;
 
@@ -31,13 +32,13 @@ public:
         uint32 InExperience,
         uint32 InHealth);
 
-    MInventoryComponent* GetInventory() const;
+    MPlayerInventory* GetInventory() const;
 
-    MAttributeComponent* GetAttributes() const;
+    MPlayerProgression* GetProgression() const;
 
     void VisitReferencedObjects(const TFunction<void(MObject*)>& Visitor) const override;
 
 private:
-    MInventoryComponent* Inventory = nullptr;
-    MAttributeComponent* Attributes = nullptr;
+    MPlayerInventory* Inventory = nullptr;
+    MPlayerProgression* Progression = nullptr;
 };
