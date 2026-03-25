@@ -1,53 +1,73 @@
-# Scripts
+# Scripts 目录说明
 
-`Scripts/` 目录包含开发和回归时最常用的辅助脚本。
+`Scripts/` 放的是开发和验证辅助脚本，不承载正式服务器逻辑。
 
-## 常用脚本
-
-### `validate.py`
-
-主链路回归入口。
-
-```bash
-python3 Scripts/validate.py --timeout 60
-python3 Scripts/validate.py --timeout 60 --no-build
-```
-
-当前主要覆盖：
-
-- Handshake
-- 登录
-- Actor create / update / destroy
-- 路由缓存
-- Chat
-- Heartbeat
-- 重连
-- 并发登录
-- 统一函数调用负向场景
+## 主要脚本
 
 ### `servers.py`
 
-本地起服 / 停服入口。
+开发期一键起停服：
 
 ```bash
-python3 Scripts/servers.py start
-python3 Scripts/servers.py stop
+python3 Scripts/servers.py start --build-dir Build
+python3 Scripts/servers.py stop --build-dir Build
 ```
+
+默认启动：
+
+- `RouterServer`
+- `LoginServer`
+- `WorldServer`
+- `SceneServer`
+- `GatewayServer`
+
+适合本地调试和看日志。
+
+### `validate.py`
+
+最小完整链路验证：
+
+```bash
+python3 Scripts/validate.py --build-dir Build
+python3 Scripts/validate.py --build-dir Build --no-build
+```
+
+它会启动：
+
+- `RouterServer`
+- `MgoServer`
+- `LoginServer`
+- `WorldServer`
+- `SceneServer`
+- `GatewayServer`
+
+并验证：
+
+- `Client_Login`
+- `Client_FindPlayer`
+- `Client_SwitchScene`
+- `Client_Logout`
 
 ### `verify_protocol.py`
 
-协议相关验证脚本。
+协议相关检查脚本，适合改消息结构或 RPC 元数据后运行。
 
-```bash
-python3 Scripts/verify_protocol.py
-```
+### `test_client.py`
 
-## 当前建议
+轻量测试客户端，用于手工试协议。
 
-开发时的默认节奏建议是：
+### `debug_replication.py`
 
-1. 改代码
-2. 看 `Docs/`
-3. 跑 `validate.py`
+复制链路调试脚本。
 
-如果是协议改动，再补跑 `verify_protocol.py`。
+## 推荐使用顺序
+
+1. 编译项目
+2. 跑 `validate.py`
+3. 若需长期观察服务，再用 `servers.py start`
+
+## 相关文档
+
+- [BuildAndRun.md](/root/Mession/Docs/BuildAndRun.md)
+- [Validation.md](/root/Mession/Docs/Validation.md)
+- [Tooling.md](/root/Mession/Docs/Tooling.md)

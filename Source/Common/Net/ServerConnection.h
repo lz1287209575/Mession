@@ -230,8 +230,8 @@ struct SConnectionManagerStats
 };
 
 // 服务器连接管理器
-// 说明：当前 Gateway/World/Scene 采用分散式连接（ApplyRoute 中自行持有 MTcpConnection），
-// 未使用本管理器。若需统一重连、心跳、连接池，可考虑迁移。详见 docs/TODO.md。
+// 说明：当前 Gateway/World/Scene 已部分迁移到显式后端连接持有模式，
+// 若后续需要统一重连、心跳、连接池，可结合 Docs/Roadmap.md 继续收敛。
 class MServerConnectionManager
 {
 private:
