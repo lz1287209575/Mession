@@ -121,19 +121,7 @@ bool WriteDefaultClientResponseProperty(
 
 bool BuildClientErrorResponsePayload(uint16 FunctionId, const FAppError& Error, TByteArray& OutPayload)
 {
-    const MFunction* Function = FindGlobalClientFunctionById(FunctionId);
-    if (!Function || Function->Params.size() < 2)
-    {
-        return false;
-    }
-
-    const MProperty* ResponseProperty = Function->Params[1];
-    if (!ResponseProperty)
-    {
-        return false;
-    }
-
-    MClass* ResponseStruct = MObject::FindStruct(ResponseProperty->CppTypeIndex);
+    MClass* ResponseStruct = FindGlobalClientResponseStructById(FunctionId);
     if (!ResponseStruct)
     {
         return false;

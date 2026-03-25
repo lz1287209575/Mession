@@ -362,6 +362,12 @@ SClientDispatchOutcome DispatchClientEntry(
             return Outcome;
         }
 
+        if (HandlerResult == EGeneratedClientCallHandlerResult::ParamBindingFailed)
+        {
+            Outcome.Result = EClientDispatchResult::ParamBindingFailed;
+            return Outcome;
+        }
+
         if (HandlerResult == EGeneratedClientCallHandlerResult::Deferred)
         {
             Outcome.Result = EClientDispatchResult::Handled;

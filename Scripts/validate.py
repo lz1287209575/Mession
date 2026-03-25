@@ -7,6 +7,7 @@ Mession 最小链路验证
 2. 启动 Router -> Mgo -> Login -> World -> Scene -> Gateway
 3. 客户端连接 Gateway，走统一 MT_FunctionCall
 4. 验证 Client_Login / Client_FindPlayer / Client_SwitchScene / Client_Logout
+5. 验证转发 ClientCall 的异常链路
 5. 清理服务器进程并退出
 """
 
@@ -183,7 +184,7 @@ def recv_one_packet_raw(sock: socket.socket, timeout: float) -> Optional[tuple[i
     return body[0], body[1:]
 
 
-def compute_stable_function_id(class_name: str, function_name: str) -> int:
+def compute_stable_id(scope_name: str, member_name: str) -> int:
     offset_basis = 2166136261
     prime = 16777619
     h = offset_basis
@@ -194,15 +195,19 @@ def compute_stable_function_id(class_name: str, function_name: str) -> int:
             h ^= ch
             h = (h * prime) & 0xFFFFFFFF
 
-    mix(class_name)
+    mix(scope_name)
     h ^= ord(":")
     h = (h * prime) & 0xFFFFFFFF
     h ^= ord(":")
     h = (h * prime) & 0xFFFFFFFF
-    mix(function_name)
+    mix(member_name)
 
     folded = ((h >> 16) ^ (h & 0xFFFF)) & 0xFFFF
     return folded if folded != 0 else 1
+
+
+def compute_stable_client_function_id(client_api_name: str) -> int:
+    return compute_stable_id("MClientApi", client_api_name)
 
 
 def next_call_id() -> int:
@@ -218,27 +223,11 @@ def build_client_call_packet(function_id: int, call_id: int, payload: bytes) -> 
     return struct.pack("<I", len(body)) + body
 
 
-def send_client_call(sock: socket.socket, class_name: str, function_name: str, payload: bytes) -> tuple[int, int]:
-    function_id = compute_stable_function_id(class_name, function_name)
+def send_client_call(sock: socket.socket, function_name: str, payload: bytes) -> tuple[int, int]:
+    function_id = compute_stable_client_function_id(function_name)
     call_id = next_call_id()
     sock.sendall(build_client_call_packet(function_id, call_id, payload))
     return function_id, call_id
-
-
-def resolve_client_owner_class(function_name: str) -> str:
-    if function_name == "Client_Echo":
-        return "MGatewayServer"
-
-    world_owned_functions = {
-        "Client_Login",
-        "Client_FindPlayer",
-        "Client_Logout",
-        "Client_SwitchScene",
-    }
-    if function_name in world_owned_functions:
-        return "MWorldServer"
-
-    return "MGatewayServer"
 
 
 def decode_client_call_packet(payload: bytes) -> Optional[tuple[int, int, bytes]]:
@@ -288,12 +277,7 @@ def call_client_function(
     request_payload: bytes,
     timeout: float = 5.0,
 ) -> bytes:
-    function_id, call_id = send_client_call(
-        sock,
-        resolve_client_owner_class(function_name),
-        function_name,
-        request_payload,
-    )
+    function_id, call_id = send_client_call(sock, function_name, request_payload)
     return recv_client_call_response(sock, function_id, call_id, timeout)
 
 
@@ -397,6 +381,13 @@ def try_login(sock: socket.socket, player_id: int) -> Optional[dict]:
         return None
 
 
+def try_find_player(sock: socket.socket, payload: bytes, timeout: float = 3.0) -> Optional[dict]:
+    try:
+        return parse_find_player_response(call_client_function(sock, "Client_FindPlayer", payload, timeout=timeout))
+    except (TimeoutError, ValueError, OSError):
+        return None
+
+
 def run_validation(
     build_dir: Path,
     timeout: float,
@@ -407,6 +398,7 @@ def run_validation(
     mongo_collection: str,
 ) -> bool:
     procs: List[subprocess.Popen] = []
+    proc_by_name: dict[str, subprocess.Popen] = {}
     stop_lingering_servers()
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -444,6 +436,7 @@ def run_validation(
         if proc is None:
             return False
         procs.append(proc)
+        proc_by_name[name] = proc
         if not wait_for_port("127.0.0.1", port, timeout):
             log(f"{name} did not become ready on port {port}")
             return False
@@ -573,6 +566,64 @@ def run_validation(
                 )
                 return False
             log("  Client_FindPlayer after logout OK: player removed from World state")
+
+            log("Test 7: forwarded Client_FindPlayer invalid payload...")
+            invalid_payload_response = try_find_player(sock, struct.pack("<I", player_id))
+            if invalid_payload_response is None:
+                log("  invalid payload test failed: no response")
+                return False
+            if invalid_payload_response["Error"] != "client_call_param_binding_failed":
+                log(
+                    "  invalid payload returned unexpected error: "
+                    f"{invalid_payload_response['Error']}"
+                )
+                return False
+            log("  invalid payload OK: binder error surfaced through Gateway")
+
+            log("Test 8: forwarded Client_FindPlayer validation error...")
+            zero_player_response = try_find_player(sock, struct.pack("<Q", 0))
+            if zero_player_response is None:
+                log("  zero player id test failed: no response")
+                return False
+            if zero_player_response["Error"] != "player_id_required":
+                log(
+                    "  zero player id returned unexpected error: "
+                    f"{zero_player_response['Error']}"
+                )
+                return False
+            log("  validation error OK: world business error reached client")
+
+            log("Test 9: World unavailable after forward route...")
+            world_proc = proc_by_name.get("WorldServer")
+            if world_proc is None:
+                log("  WorldServer process handle missing")
+                return False
+            try:
+                world_proc.terminate()
+                world_proc.wait(timeout=5)
+            except Exception:
+                try:
+                    world_proc.kill()
+                except Exception:
+                    pass
+            backend_unavailable_response = wait_until(
+                time.time() + 5.0,
+                lambda: try_find_player(sock, struct.pack("<Q", player_id), timeout=1.0),
+            )
+            if backend_unavailable_response is None:
+                log("  backend unavailable test failed: no response")
+                return False
+            if backend_unavailable_response["Error"] not in {
+                "client_route_backend_unavailable",
+                "server_call_disconnected",
+                "server_call_send_failed",
+            }:
+                log(
+                    "  backend unavailable returned unexpected error: "
+                    f"{backend_unavailable_response['Error']}"
+                )
+                return False
+            log("  backend unavailable OK: Gateway returned reflected route error")
 
             log("Validation PASSED")
             return True

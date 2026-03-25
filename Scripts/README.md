@@ -47,6 +47,9 @@ python3 Scripts/validate.py --build-dir Build --no-build
 - `Client_FindPlayer`
 - `Client_SwitchScene`
 - `Client_Logout`
+- forwarded `ClientCall` 异常链路
+
+脚本内部现在直接按 `Client API` 稳定名计算函数 ID，不再依赖 owner class 名。
 
 ### `verify_protocol.py`
 

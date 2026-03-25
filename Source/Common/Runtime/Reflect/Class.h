@@ -40,6 +40,11 @@ inline uint16 ComputeStableReflectId(const char* ScopeName, const char* MemberNa
     return (Folded == 0) ? 1u : Folded;
 }
 
+inline uint16 ComputeStableClientFunctionId(const char* ClientApiName)
+{
+    return ComputeStableReflectId("MClientApi", ClientApiName);
+}
+
 // 函数标志
 enum class EFunctionFlags : uint32
 {
@@ -140,8 +145,9 @@ public:
 enum class EGeneratedClientCallHandlerResult : uint8
 {
     Failed = 0,
-    Responded = 1,
-    Deferred = 2,
+    ParamBindingFailed = 1,
+    Responded = 2,
+    Deferred = 3,
 };
 
 class MFunction
@@ -156,6 +162,7 @@ public:
     uint16 FunctionId = 0;
     size_t ParamSize = 0;
     EServerType EndpointServerType = EServerType::Unknown;
+    MString ClientApiName;
     MString Transport;
     MString MessageName;
     MString RouteName;
@@ -297,14 +304,27 @@ public:
 
     void RegisterFunction(MFunction* InFunction)
     {
-        const uint16 StableId = ComputeStableReflectId(ClassName.c_str(), InFunction ? InFunction->Name.c_str() : "");
         if (InFunction)
         {
+            uint16 StableId = InFunction->FunctionId;
+            if (StableId == 0)
+            {
+                if (!InFunction->ClientApiName.empty())
+                {
+                    StableId = ComputeStableClientFunctionId(InFunction->ClientApiName.c_str());
+                }
+                else
+                {
+                    StableId = ComputeStableReflectId(ClassName.c_str(), InFunction->Name.c_str());
+                }
+            }
+
             if (FindFunctionById(StableId))
             {
-                LOG_WARN("Reflection function id collision: class=%s function=%s id=%u",
+                LOG_WARN("Reflection function id collision: class=%s function=%s api=%s id=%u",
                          ClassName.c_str(),
                          InFunction->Name.c_str(),
+                         InFunction->ClientApiName.c_str(),
                          static_cast<unsigned>(StableId));
             }
             InFunction->FunctionId = StableId;

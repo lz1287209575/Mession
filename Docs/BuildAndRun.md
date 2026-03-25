@@ -87,6 +87,7 @@ python3 Scripts/validate.py --build-dir Build
    `Client_FindPlayer`
    `Client_SwitchScene`
    `Client_Logout`
+   以及几条 forwarded `ClientCall` 异常路径
 5. 清理进程
 
 如果已经编译完成，可跳过构建：

@@ -769,6 +769,11 @@ inline uint16 GetStableRpcFunctionIdByName(const char* ClassName, const char* Fu
     return ComputeStableReflectId(ClassName, FuncName);
 }
 
+inline uint16 GetStableClientFunctionIdByName(const char* ClientApiName)
+{
+    return ComputeStableClientFunctionId(ClientApiName);
+}
+
 template<typename TObject>
 inline uint16 GetCachedRpcFunctionId(uint16& CachedFunctionId, const char* Name)
 {
@@ -789,3 +794,6 @@ inline uint16 GetCachedRpcFunctionId(uint16& CachedFunctionId, const char* Name)
 
 #define MGET_STABLE_RPC_FUNCTION_ID(ClassNameLiteral, FuncNameLiteral) \
     GetStableRpcFunctionIdByName(ClassNameLiteral, FuncNameLiteral)
+
+#define MGET_STABLE_CLIENT_FUNCTION_ID(ClientApiLiteral) \
+    GetStableClientFunctionIdByName(ClientApiLiteral)

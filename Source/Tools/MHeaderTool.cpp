@@ -45,6 +45,7 @@ struct SParsedFunction
     std::string Target;
     std::string Auth;
     std::string Wrap;
+    std::string ClientApi;
     std::vector<SParsedParameter> Params;
 };
 
@@ -559,6 +560,10 @@ void ApplyFunctionMetadataFromMacroArgs(SParsedFunction& Parsed)
         {
             Parsed.Wrap = Value;
         }
+        else if (Key == "Api" || Key == "ClientApi")
+        {
+            Parsed.ClientApi = Value;
+        }
     }
 }
 
@@ -919,9 +924,20 @@ bool IsReflectedStructLikeType(const std::vector<SParsedClass>& Classes, const s
 
 void ValidateClientCallFunction(const std::vector<SParsedClass>& Classes, const SParsedClass& ParsedClass, const SParsedFunction& Function)
 {
+    if (ParsedClass.ReflectionType != "Server" && ParsedClass.ReflectionType != "Service")
+    {
+        throw std::runtime_error("ClientCall function must belong to Type=Server or Type=Service: " +
+                                 ParsedClass.Name + "::" + Function.Name);
+    }
+
     if (Function.ReturnStorageType != "void")
     {
         throw std::runtime_error("ClientCall function must return void: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (Function.Target.empty())
+    {
+        throw std::runtime_error("ClientCall function must declare Target=...: " + ParsedClass.Name + "::" + Function.Name);
     }
 
     if (Function.Params.size() != 2)
@@ -1792,6 +1808,7 @@ std::string BuildFunctionRegistrationBlock(const SParsedClass& ParsedClass, cons
     const std::string BinderFunctionName = BuildClientBinderFunctionName(ParsedClass, Function);
     const std::string ClientCallHandlerFunctionName = BuildClientCallHandlerFunctionName(ParsedClass, Function);
     const std::string ServerCallHandlerFunctionName = BuildServerCallHandlerFunctionName(ParsedClass, Function);
+    const std::string ClientApiName = Function.ClientApi.empty() ? Function.Name : Function.ClientApi;
     std::ostringstream Out;
     if (Function.Transport == "Client" && !Function.Route.empty())
     {
@@ -1879,6 +1896,10 @@ std::string BuildFunctionRegistrationBlock(const SParsedClass& ParsedClass, cons
         Out << "        Func->TargetName = \"" << EscapeCppStringLiteral(Function.Target) << "\";\n";
         Out << "        Func->AuthMode = \"" << EscapeCppStringLiteral(Function.Auth) << "\";\n";
         Out << "        Func->WrapMode = \"" << EscapeCppStringLiteral(Function.Wrap) << "\";\n";
+        if (Function.Transport == "ClientCall")
+        {
+            Out << "        Func->ClientApiName = \"" << EscapeCppStringLiteral(ClientApiName) << "\";\n";
+        }
         if (Function.Transport == "ClientCall")
         {
             Out << "        Func->ClientCallHandler = &" << ClientCallHandlerFunctionName << ";\n";
@@ -2439,7 +2460,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
             Out << "    if (!ParseResult.IsOk())\n";
             Out << "    {\n";
             Out << "        LOG_WARN(\"ParsePayload failed: %s\", ParseResult.GetError().c_str());\n";
-            Out << "        return EGeneratedClientCallHandlerResult::Failed;\n";
+            Out << "        return EGeneratedClientCallHandlerResult::ParamBindingFailed;\n";
             Out << "    }\n";
             Out << "    " << ResponseParam.StorageType << " ResponseValue {};\n";
             Out << "    TypedObject->" << Function.Name << "(RequestValue, ResponseValue);\n";
@@ -3127,6 +3148,8 @@ bool WriteGeneratedClientManifest(const fs::path& OutputDir, const std::vector<S
     {
         std::string OwnerType;
         std::string FunctionName;
+        std::string ClientApiName;
+        std::string ResponseTypeName;
         std::string FunctionIdExpr;
         std::string Owner;
         std::string HeaderPath;
@@ -3154,8 +3177,15 @@ bool WriteGeneratedClientManifest(const fs::path& OutputDir, const std::vector<S
             Entries.push_back(SClientEntry{
                 ParsedClass.Name,
                 Function.Name,
-                "MGET_STABLE_RPC_FUNCTION_ID(\"" + EscapeCppStringLiteral(ParsedClass.Name) + "\", \"" +
-                    EscapeCppStringLiteral(Function.Name) + "\")",
+                Function.ClientApi.empty() ? Function.Name : Function.ClientApi,
+                (Function.Transport == "ClientCall" && Function.Params.size() >= 2)
+                    ? Function.Params[1].StorageType
+                    : (Function.ReturnStorageType != "void" ? Function.ReturnStorageType : ""),
+                Function.Transport == "ClientCall"
+                    ? ("MGET_STABLE_CLIENT_FUNCTION_ID(\"" +
+                       EscapeCppStringLiteral(Function.ClientApi.empty() ? Function.Name : Function.ClientApi) + "\")")
+                    : ("MGET_STABLE_RPC_FUNCTION_ID(\"" + EscapeCppStringLiteral(ParsedClass.Name) + "\", \"" +
+                       EscapeCppStringLiteral(Function.Name) + "\")"),
                 Function.Owner,
                 ParsedClass.HeaderPath.generic_string(),
                 Function.Transport,
@@ -3201,6 +3231,8 @@ bool WriteGeneratedClientManifest(const fs::path& OutputDir, const std::vector<S
     Out << "    uint16 FunctionId;\n";
     Out << "    const char* OwnerType;\n";
     Out << "    const char* FunctionName;\n";
+    Out << "    const char* ClientApiName;\n";
+    Out << "    const char* ResponseTypeName;\n";
     Out << "    const char* Owner;\n";
     Out << "    const char* HeaderPath;\n";
     Out << "    const char* Transport;\n";
@@ -3219,6 +3251,8 @@ bool WriteGeneratedClientManifest(const fs::path& OutputDir, const std::vector<S
         Out << "        {" << Entry.FunctionIdExpr
             << ", \"" << EscapeCppStringLiteral(Entry.OwnerType)
             << "\", \"" << EscapeCppStringLiteral(Entry.FunctionName)
+            << "\", \"" << EscapeCppStringLiteral(Entry.ClientApiName)
+            << "\", \"" << EscapeCppStringLiteral(Entry.ResponseTypeName)
             << "\", \"" << EscapeCppStringLiteral(Entry.Owner)
             << "\", \"" << EscapeCppStringLiteral(Entry.HeaderPath)
             << "\", \"" << EscapeCppStringLiteral(Entry.Transport)

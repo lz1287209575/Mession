@@ -20,6 +20,7 @@
 #include "Protocol/Messages/Scene/SceneServiceMessages.h"
 #include "Servers/World/Domain/PlayerSession.h"
 #include "Servers/World/Rpc/WorldBackendRpc.h"
+#include "Servers/World/Services/WorldClientServiceEndpoint.h"
 #include "Servers/World/Services/WorldPlayerServiceEndpoint.h"
 
 struct SWorldConfig
@@ -69,18 +70,6 @@ public:
     MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> PlayerSwitchScene(const FPlayerSwitchSceneRequest& Request);
 
-    MFUNCTION(ClientCall, Target=World)
-    void Client_Login(FClientLoginRequest& Request, FClientLoginResponse& Response);
-
-    MFUNCTION(ClientCall, Target=World)
-    void Client_FindPlayer(FClientFindPlayerRequest& Request, FClientFindPlayerResponse& Response);
-
-    MFUNCTION(ClientCall, Target=World)
-    void Client_Logout(FClientLogoutRequest& Request, FClientLogoutResponse& Response);
-
-    MFUNCTION(ClientCall, Target=World)
-    void Client_SwitchScene(FClientSwitchSceneRequest& Request, FClientSwitchSceneResponse& Response);
-
     MFUNCTION(ServerCall)
     MFuture<TResult<FForwardedClientCallResponse, FAppError>> ForwardClientCall(
         const FForwardedClientCallRequest& Request);
@@ -88,15 +77,6 @@ public:
 private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
     void HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName);
-    MFuture<TResult<FClientLoginResponse, FAppError>> StartClientLoginFlow(
-        const FClientLoginRequest& Request,
-        uint64 GatewayConnectionId);
-    MFuture<TResult<FClientFindPlayerResponse, FAppError>> StartClientFindPlayerFlow(
-        const FClientFindPlayerRequest& Request);
-    MFuture<TResult<FClientLogoutResponse, FAppError>> StartClientLogoutFlow(
-        const FClientLogoutRequest& Request);
-    MFuture<TResult<FClientSwitchSceneResponse, FAppError>> StartClientSwitchSceneFlow(
-        const FClientSwitchSceneRequest& Request);
     SWorldConfig Config;
     TMap<uint64, MPlayerSession*> OnlinePlayers;
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
@@ -105,6 +85,7 @@ private:
     TSharedPtr<MServerConnection> SceneServerConn;
     TSharedPtr<MServerConnection> RouterServerConn;
     TSharedPtr<MServerConnection> MgoServerConn;
+    MWorldClientServiceEndpoint* ClientService = nullptr;
     MWorldPlayerServiceEndpoint* PlayerService = nullptr;
     MWorldLoginRpc* LoginRpc = nullptr;
     MWorldMgoRpc* MgoRpc = nullptr;

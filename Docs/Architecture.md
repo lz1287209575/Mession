@@ -58,9 +58,10 @@ Mession 当前的目标是把游戏服务端项目收敛为一套可持续演进
 ### Gateway
 
 - 处理客户端连接
-- 处理 `Client_*` 请求
-- 作为客户端协议与服间协议的边界层
-- 当前依赖 `Login` 与 `World`
+- 统一接入客户端 `MT_FunctionCall`
+- 按全局 `ClientManifest` 解析目标服并透明转发
+- 只保留极少数网关本地能力，例如 `Client_Echo`
+- 对业务开发同学保持透明，不承载 World/Scene 业务流程
 
 ### Login
 
@@ -73,6 +74,7 @@ Mession 当前的目标是把游戏服务端项目收敛为一套可持续演进
 - 负责玩家进入世界、查找、切场、登出
 - 对接 `Login / Scene / Router / Mgo`
 - 负责将对象脏状态送入持久化子系统
+- 业务侧 `ClientCall` 已下沉到 `Services/WorldClientServiceEndpoint`
 
 ### Scene
 
@@ -119,10 +121,19 @@ Mession 当前的目标是把游戏服务端项目收敛为一套可持续演进
 ### 约束 2
 
 业务流程优先放在 `ServiceEndpoint` 或 `Workflow` 中，不把大量链式逻辑塞回 `Server` 类。
+`ClientCall` 也适用这条规则，`Server` 只保留转发入口与运行时边界。
 
 ### 约束 3
 
 `Server` 负责进程边界、连接边界、运行时边界，不负责承载所有业务细节。
+
+### 约束 3.1
+
+业务 `ClientCall` 的稳定 ID 不依赖 owner class。
+
+- 默认使用函数名作为稳定 API 名
+- 如需在重构时保留旧 ID，可显式写 `MFUNCTION(ClientCall, Target=World, Api=Player.Login)`
+- Gateway / validate / 生成清单都以该 API 名计算 ID，而不是 `MWorldServer::FuncName`
 
 ### 约束 4
 

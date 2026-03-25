@@ -44,6 +44,9 @@ python3 Scripts/servers.py start --build-dir Build
 - `Client_FindPlayer`
 - `Client_SwitchScene`
 - `Client_Logout`
+- forwarded `ClientCall` 的参数绑定失败
+- forwarded `ClientCall` 的业务校验失败
+- World 不可用时 Gateway 的转发错误返回
 
 ## 为什么以这条链路为主
 

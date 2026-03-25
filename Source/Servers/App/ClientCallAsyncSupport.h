@@ -4,6 +4,7 @@
 #include "Common/Net/Rpc/RpcClientCall.h"
 #include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Object/Result.h"
+#include "Protocol/Messages/Common/AppMessages.h"
 
 #include <exception>
 #include <functional>

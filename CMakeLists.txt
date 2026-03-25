@@ -316,6 +316,7 @@ add_executable(WorldServer
     Source/Servers/World/Domain/InventoryComponent.cpp
     Source/Servers/World/Domain/PlayerAvatar.cpp
     Source/Servers/World/Domain/PlayerSession.cpp
+    Source/Servers/World/Services/WorldClientServiceEndpoint.cpp
     Source/Servers/World/Services/WorldPlayerServiceEndpoint.cpp
 )
 target_link_libraries(WorldServer

@@ -47,7 +47,7 @@ static bool SendLoginAndWaitResponse(TSocketFd Fd, uint64 PlayerId)
     // 构造统一函数调用登录请求:
     // Length(4) + MsgType(1=MT_FunctionCall) + FunctionId(2) + PayloadSize(4) + PlayerId(8)
     constexpr uint8 MsgType = 13; // EClientMessageType::MT_FunctionCall
-    const uint16 FunctionId = MGET_STABLE_RPC_FUNCTION_ID("MWorldServer", "Client_Login");
+    const uint16 FunctionId = MGET_STABLE_CLIENT_FUNCTION_ID("Client_Login");
     const uint32 PlayerPayloadSize = sizeof(PlayerId);
     const uint32 BodySize = 1 + sizeof(FunctionId) + sizeof(PlayerPayloadSize) + PlayerPayloadSize;
 

@@ -56,14 +56,34 @@
 
 ### 客户端调用
 
-`GatewayServer` 上的 `MFUNCTION(ClientCall)` 是对客户端暴露的入口，例如：
+客户端统一连到 `GatewayServer`，但业务 `ClientCall` 不再要求挂在 Gateway 本体上。
 
-- `Client_Login`
-- `Client_FindPlayer`
-- `Client_SwitchScene`
-- `Client_Logout`
+当前模式是：
+
+- Gateway 根据 `MClientManifest` 查函数 ID、目标服、绑定器
+- 若目标是本地网关能力，则本地派发
+- 若目标是业务服，则转发 `FForwardedClientCallRequest`
+- 业务服上的 `ServiceEndpoint` 真正执行 `ClientCall`
+
+例如：
+
+- `MGatewayServer::Client_Echo`
+- `MWorldClientServiceEndpoint::Client_Login`
+- `MWorldClientServiceEndpoint::Client_FindPlayer`
+- `MWorldClientServiceEndpoint::Client_SwitchScene`
+- `MWorldClientServiceEndpoint::Client_Logout`
 
 当前最小闭环统一走 `MT_FunctionCall`。
+
+### Client API 稳定 ID
+
+`ClientCall` 的稳定 ID 现在使用固定作用域 `MClientApi`，不再依赖 owner class 名。
+
+- 默认稳定 ID 来源是函数名
+- 如果要在重命名函数或迁移 owner 时保持旧 ID，可显式指定 `Api=...`
+- 生成代码和脚本统一使用 `MGET_STABLE_CLIENT_FUNCTION_ID("Client_Login")`
+
+这意味着我们可以把 `Client_Login` 从 `MWorldServer` 迁到 `MWorldClientServiceEndpoint`，而客户端函数 ID 不变。
 
 ### 服间调用
 
@@ -143,6 +163,16 @@
 当逻辑跨越多个 RPC、包含错误分支与状态推进时：
 
 - 用 `MCoroutine` 或独立 `Workflow` 类
+- Gateway 只做转发时，不要把业务链塞回 Gateway
+- World/Scene/Login 的业务 `ClientCall` 优先落在各自 `ServiceEndpoint`
+
+## 新增一个 Client RPC 的推荐步骤
+
+1. 在目标业务服的 `Services/*Endpoint*` 上声明 `MFUNCTION(ClientCall, Target=目标服)`
+2. 请求/响应结构使用 `MSTRUCT + MPROPERTY`
+3. 如需保持旧客户端 ID，显式补 `Api=稳定名`
+4. 编译触发 `MHeaderTool` 更新 `MClientManifest.generated.h`
+5. 运行 `python3 Scripts/validate.py --build-dir Build --no-build`
 
 ### 不推荐
 

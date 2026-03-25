@@ -32,6 +32,17 @@ inline const MFunction* FindGlobalClientFunctionById(uint16 FunctionId)
     return OwnerClass->FindFunction(Entry->FunctionName);
 }
 
+inline MClass* FindGlobalClientResponseStructById(uint16 FunctionId)
+{
+    const MClientManifest::SEntry* Entry = FindGlobalClientFunctionEntryById(FunctionId);
+    if (!Entry || !Entry->ResponseTypeName || Entry->ResponseTypeName[0] == '\0')
+    {
+        return nullptr;
+    }
+
+    return MObject::FindStruct(Entry->ResponseTypeName);
+}
+
 inline EServerType GetGlobalClientFunctionTargetServerType(uint16 FunctionId)
 {
     const MClientManifest::SEntry* Entry = FindGlobalClientFunctionEntryById(FunctionId);
