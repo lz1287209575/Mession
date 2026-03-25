@@ -1,0 +1,35 @@
+#include "Common/Runtime/Persistence/MongoPersistenceSink.h"
+
+#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/HexUtils.h"
+
+
+MMongoPersistenceSink::MMongoPersistenceSink(SMongoPersistenceConfig InConfig)
+    : Config(std::move(InConfig))
+{
+}
+
+bool MMongoPersistenceSink::Persist(const SPersistenceRecord& InRecord)
+{
+    // 最小闭环版本：先以 Mongo 文档结构输出，避免业务层感知存储细节。
+    // 后续可在此处切换到 mongocxx / 驱动真实写入，不影响上层调用。
+    if (!bWarnedNoDriver)
+    {
+        LOG_WARN(
+            "Mongo sink running in stub mode (no mongocxx linked): uri=%s db=%s coll=%s",
+            Config.Uri.c_str(),
+            Config.Database.c_str(),
+            Config.Collection.c_str());
+        bWarnedNoDriver = true;
+    }
+
+    LOG_DEBUG(
+        "MongoSink doc {root_object_id:%llu,object_id:%llu,class_id:%u,path:%s,class:%s,snapshot_hex:%s}",
+        static_cast<unsigned long long>(InRecord.RootObjectId),
+        static_cast<unsigned long long>(InRecord.ObjectId),
+        static_cast<unsigned>(InRecord.ClassId),
+        InRecord.ObjectPath.c_str(),
+        InRecord.ClassName.c_str(),
+        Hex::BytesToHex(InRecord.SnapshotData).c_str());
+    return true;
+}

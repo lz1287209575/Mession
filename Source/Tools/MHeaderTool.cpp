@@ -5,6 +5,7 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <cctype>
@@ -69,8 +70,9 @@ struct SParsedClass
     EParsedTypeKind Kind = EParsedTypeKind::Class;
     std::string Name;
     fs::path HeaderPath;
-    std::string ParentClass = "MReflectObject";
+    std::string ParentClass = "MObject";
     std::string ClassFlagsExpr = "0";
+    std::string ReflectionType = "Object";
     std::string Owner;
     bool bScopedEnum = false;
     std::map<std::string, std::string> TypeAliases;
@@ -102,8 +104,11 @@ std::optional<std::string> ExtractMacroValue(const std::string& MacroArgs, std::
 std::string DetermineOwnerFromHeaderPath(const fs::path& HeaderPath);
 std::string NormalizeReflectionType(std::string TypeName);
 std::string InferPropertyKind(const std::string& TypeName);
+std::optional<std::string> ExtractServerCallResponseType(const SParsedFunction& Function);
+std::optional<std::string> ExtractRpcClassTarget(const SParsedClass& ParsedClass);
 std::vector<SParsedFunction::SParsedParameter> ParseFunctionParameters(const std::string& Signature);
 std::map<std::string, std::string> ParseTypeAliasesInBody(const std::string& ClassBody);
+std::string BuildClassKindExpr(const SParsedClass& ParsedClass);
 
 bool StartsWith(std::string_view Text, std::string_view Prefix)
 {
@@ -494,6 +499,14 @@ void ApplyFunctionMetadataFromMacroArgs(SParsedFunction& Parsed)
             {
                 Parsed.Transport = "Client";
             }
+            else if (Part == "ClientCall")
+            {
+                Parsed.Transport = "ClientCall";
+            }
+            else if (Part == "ServerCall")
+            {
+                Parsed.Transport = "ServerCall";
+            }
             else if (Part == "RPC")
             {
                 Parsed.bIsRpc = true;
@@ -738,7 +751,7 @@ std::string BuildFunctionFlagsExpr(const SParsedFunction& Function)
         for (const std::string& FlagToken : FlagTokens)
         {
             if (FlagToken.empty() || FlagToken == "NetServer" || FlagToken == "NetClient" ||
-                FlagToken == "Client" || FlagToken == "RPC")
+                FlagToken == "Client" || FlagToken == "ClientCall" || FlagToken == "ServerCall" || FlagToken == "RPC")
             {
                 continue;
             }
@@ -839,11 +852,11 @@ std::string InferPropertyKind(const std::string& TypeName)
     {
         return "Bool";
     }
-    if (Compact == "FString")
+    if (Compact == "MString")
     {
         return "String";
     }
-    if (Compact == "FName")
+    if (Compact == "MName")
     {
         return "Name";
     }
@@ -855,7 +868,7 @@ std::string InferPropertyKind(const std::string& TypeName)
     {
         return "Rotator";
     }
-    if (StartsWith(Compact, "TVector<") || StartsWith(Compact, "TArray<") ||
+    if (StartsWith(Compact, "TVector<") || StartsWith(Compact, "TByteArray<") ||
         StartsWith(Compact, "TMap<") || StartsWith(Compact, "TSet<"))
     {
         return "Array";
@@ -882,6 +895,92 @@ std::string ResolveAliasedType(const std::map<std::string, std::string>& TypeAli
         Resolved = NormalizeReflectionType(It->second);
     }
     return Resolved;
+}
+
+bool IsNonConstLValueReferenceParameter(const SParsedFunction::SParsedParameter& Param)
+{
+    const std::string Type = Trim(Param.Type);
+    return Type.find('&') != std::string::npos && !StartsWith(Type, "const ");
+}
+
+bool IsReflectedStructLikeType(const std::vector<SParsedClass>& Classes, const std::string& TypeName)
+{
+    const std::string NormalizedType = NormalizeReflectionType(TypeName);
+    for (const SParsedClass& ParsedClass : Classes)
+    {
+        if (ParsedClass.Name == NormalizedType)
+        {
+            return ParsedClass.Kind == EParsedTypeKind::Struct || ParsedClass.Kind == EParsedTypeKind::Class;
+        }
+    }
+
+    return InferPropertyKind(NormalizedType) == "Struct";
+}
+
+void ValidateClientCallFunction(const std::vector<SParsedClass>& Classes, const SParsedClass& ParsedClass, const SParsedFunction& Function)
+{
+    if (Function.ReturnStorageType != "void")
+    {
+        throw std::runtime_error("ClientCall function must return void: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (Function.Params.size() != 2)
+    {
+        throw std::runtime_error("ClientCall function must declare exactly request/response params: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    const auto& RequestParam = Function.Params[0];
+    const auto& ResponseParam = Function.Params[1];
+    if (!IsNonConstLValueReferenceParameter(RequestParam) || !IsNonConstLValueReferenceParameter(ResponseParam))
+    {
+        throw std::runtime_error("ClientCall params must be non-const lvalue refs: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (!IsReflectedStructLikeType(Classes, RequestParam.StorageType) || !IsReflectedStructLikeType(Classes, ResponseParam.StorageType))
+    {
+        throw std::runtime_error("ClientCall request/response must use reflected struct types: " + ParsedClass.Name + "::" + Function.Name);
+    }
+}
+
+void ValidateServerCallFunction(const std::vector<SParsedClass>& Classes, const SParsedClass& ParsedClass, const SParsedFunction& Function)
+{
+    if (Function.Params.size() != 1)
+    {
+        throw std::runtime_error("ServerCall function must declare exactly one request param: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    const bool bIsRpcOwner = ParsedClass.ReflectionType == "Rpc";
+    const bool bIsServiceOwner = ParsedClass.ReflectionType == "Service" || ParsedClass.ReflectionType == "Server";
+    if (bIsRpcOwner && Function.Target.empty())
+    {
+        throw std::runtime_error("Rpc ServerCall function must declare Target=...: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (bIsServiceOwner && !Function.Target.empty())
+    {
+        throw std::runtime_error("Service/Server ServerCall function must not declare Target=...: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (!bIsRpcOwner && !bIsServiceOwner)
+    {
+        throw std::runtime_error("ServerCall function must belong to Type=Server, Type=Service, or Type=Rpc: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (!IsReflectedStructLikeType(Classes, Function.Params[0].StorageType))
+    {
+        throw std::runtime_error("ServerCall request must use reflected struct type: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    const std::optional<std::string> ResponseType = ExtractServerCallResponseType(Function);
+    if (!ResponseType.has_value())
+    {
+        throw std::runtime_error("ServerCall function must return MFuture<TResult<Response, FAppError>>: " + ParsedClass.Name + "::" + Function.Name);
+    }
+
+    if (!IsReflectedStructLikeType(Classes, *ResponseType))
+    {
+        throw std::runtime_error("ServerCall response must use reflected struct type: " + ParsedClass.Name + "::" + Function.Name);
+    }
 }
 
 std::vector<SParsedFunction::SParsedParameter> ParseFunctionParameters(const std::string& Signature)
@@ -1356,6 +1455,14 @@ void ParseTypeMarkerMetadata(const std::string& Contents, const SClassRegion& Re
     {
         Parsed.Owner = *Owner;
     }
+    if (const auto Type = ExtractMacroValue(MacroArgs, "Type"))
+    {
+        Parsed.ReflectionType = *Type;
+    }
+    else if (Parsed.Kind == EParsedTypeKind::Struct)
+    {
+        Parsed.ReflectionType = "Struct";
+    }
 }
 
 bool HasNearbyTypeMarker(const std::string& Contents, const SClassRegion& Region, EParsedTypeKind Kind)
@@ -1586,21 +1693,145 @@ std::string BuildClientBinderFunctionName(const SParsedClass& ParsedClass, const
     return "MHeaderTool_BindClientParams_" + SanitizeIdentifier(ParsedClass.Name) + "_" + SanitizeIdentifier(Function.Name);
 }
 
+std::string BuildClientCallHandlerFunctionName(const SParsedClass& ParsedClass, const SParsedFunction& Function)
+{
+    return "MHeaderTool_HandleClientCall_" + SanitizeIdentifier(ParsedClass.Name) + "_" + SanitizeIdentifier(Function.Name);
+}
+
+std::string BuildServerCallHandlerFunctionName(const SParsedClass& ParsedClass, const SParsedFunction& Function)
+{
+    return "MHeaderTool_HandleServerCall_" + SanitizeIdentifier(ParsedClass.Name) + "_" + SanitizeIdentifier(Function.Name);
+}
+
+std::optional<std::string> ExtractServerCallResponseType(const SParsedFunction& Function)
+{
+    const std::string ReturnType = NormalizeReflectionType(Function.ReturnStorageType);
+    if (!StartsWith(ReturnType, "MFuture<") || ReturnType.back() != '>')
+    {
+        return std::nullopt;
+    }
+
+    const std::string FutureInner = Trim(ReturnType.substr(8, ReturnType.size() - 9));
+    if (!StartsWith(FutureInner, "TResult<") || FutureInner.back() != '>')
+    {
+        return std::nullopt;
+    }
+
+    const std::string ResultInner = Trim(FutureInner.substr(8, FutureInner.size() - 9));
+    const std::vector<std::string> ResultArgs = SplitTopLevelArgs(ResultInner);
+    if (ResultArgs.size() != 2)
+    {
+        return std::nullopt;
+    }
+
+    if (NormalizeReflectionType(ResultArgs[1]) != "FAppError")
+    {
+        return std::nullopt;
+    }
+
+    return NormalizeReflectionType(ResultArgs[0]);
+}
+
+std::optional<std::string> ExtractRpcClassTarget(const SParsedClass& ParsedClass)
+{
+    if (ParsedClass.ReflectionType != "Rpc")
+    {
+        return std::nullopt;
+    }
+
+    std::optional<std::string> ClassTarget;
+    for (const SParsedFunction& Function : ParsedClass.Functions)
+    {
+        if (Function.Transport != "ServerCall")
+        {
+            continue;
+        }
+
+        if (!ClassTarget.has_value())
+        {
+            ClassTarget = Function.Target;
+            continue;
+        }
+
+        if (*ClassTarget != Function.Target)
+        {
+            throw std::runtime_error(
+                "Rpc class must use a single Target across all ServerCall methods: " +
+                ParsedClass.Name + " (" + *ClassTarget + " vs " + Function.Target + ")");
+        }
+    }
+
+    return ClassTarget;
+}
+
+std::string BuildClassKindExpr(const SParsedClass& ParsedClass)
+{
+    if (ParsedClass.Kind == EParsedTypeKind::Struct)
+    {
+        return "EClassKind::Struct";
+    }
+    if (ParsedClass.ReflectionType == "Server")
+    {
+        return "EClassKind::Server";
+    }
+    if (ParsedClass.ReflectionType == "Service")
+    {
+        return "EClassKind::Service";
+    }
+    if (ParsedClass.ReflectionType == "Rpc")
+    {
+        return "EClassKind::Rpc";
+    }
+    return "EClassKind::Object";
+}
+
 std::string BuildFunctionRegistrationBlock(const SParsedClass& ParsedClass, const SParsedFunction& Function)
 {
     const std::string ReliableValue = Function.bReliable ? "true" : "false";
     const std::string ParamStructName = BuildFunctionParamStructName(ParsedClass, Function);
+    const std::string BinderFunctionName = BuildClientBinderFunctionName(ParsedClass, Function);
+    const std::string ClientCallHandlerFunctionName = BuildClientCallHandlerFunctionName(ParsedClass, Function);
+    const std::string ServerCallHandlerFunctionName = BuildServerCallHandlerFunctionName(ParsedClass, Function);
     std::ostringstream Out;
     if (Function.Transport == "Client" && !Function.Route.empty())
     {
         Out << "    do {\n";
-        Out << "        (void)InClass;\n";
+        Out << "        auto* Func = new MFunction();\n";
+        Out << "        Func->Name = \"" << Function.Name << "\";\n";
+        Out << "        Func->Flags = " << BuildFunctionFlagsExpr(Function) << ";\n";
+        Out << "        Func->ParamSize = sizeof(" << ParamStructName << ");\n";
+        for (const auto& Param : Function.Params)
+        {
+            Out << "        Func->Params.push_back(CreateOffsetProperty<" << Param.StorageType << ">(\""
+                << Param.Name << "\", EPropertyType::" << Param.PropertyKind << ", offsetof("
+                << ParamStructName << ", " << Param.Name << ")));\n";
+        }
+        if (Function.ReturnStorageType != "void")
+        {
+            Out << "        Func->ReturnProperty = CreateOffsetProperty<" << Function.ReturnStorageType
+                << ">(\"ReturnValue\", EPropertyType::" << Function.ReturnPropertyKind << ", offsetof("
+                << ParamStructName << ", ReturnValue));\n";
+        }
+        Out << "        Func->Transport = \"" << EscapeCppStringLiteral(Function.Transport) << "\";\n";
+        Out << "        Func->MessageName = \"" << EscapeCppStringLiteral(Function.MessageName) << "\";\n";
+        Out << "        Func->RouteName = \"" << EscapeCppStringLiteral(Function.Route) << "\";\n";
+        Out << "        Func->TargetName = \"" << EscapeCppStringLiteral(Function.Target) << "\";\n";
+        Out << "        Func->AuthMode = \"" << EscapeCppStringLiteral(Function.Auth) << "\";\n";
+        Out << "        Func->WrapMode = \"" << EscapeCppStringLiteral(Function.Wrap) << "\";\n";
+        Out << "        Func->ClientParamBinder = &" << BinderFunctionName << ";\n";
+        Out << "        InClass->RegisterFunction(Func);\n";
         Out << "    } while (0);";
         return Out.str();
     }
 
     Out << "    do {\n";
-    if (Function.bIsRpc)
+    if (Function.Transport == "ClientCall" || Function.Transport == "ServerCall")
+    {
+        Out << "        auto* Func = new MFunction();\n";
+        Out << "        Func->Name = \"" << Function.Name << "\";\n";
+        Out << "        Func->Flags = " << BuildFunctionFlagsExpr(Function) << ";\n";
+    }
+    else if (Function.bIsRpc)
     {
         const std::string RpcKind = Function.RpcKind.empty() ? "Server" : Function.RpcKind;
         Out << "        auto* Func = ";
@@ -1634,11 +1865,32 @@ std::string BuildFunctionRegistrationBlock(const SParsedClass& ParsedClass, cons
             << Param.Name << "\", EPropertyType::" << Param.PropertyKind << ", offsetof("
             << ParamStructName << ", " << Param.Name << ")));\n";
     }
-    if (Function.ReturnStorageType != "void")
+    if (Function.ReturnStorageType != "void" && Function.Transport != "ServerCall")
     {
         Out << "        Func->ReturnProperty = CreateOffsetProperty<" << Function.ReturnStorageType
             << ">(\"ReturnValue\", EPropertyType::" << Function.ReturnPropertyKind << ", offsetof("
             << ParamStructName << ", ReturnValue));\n";
+    }
+    if (Function.Transport == "Client" || Function.Transport == "ClientCall" || Function.Transport == "ServerCall" || !Function.MessageName.empty())
+    {
+        Out << "        Func->Transport = \"" << EscapeCppStringLiteral(Function.Transport) << "\";\n";
+        Out << "        Func->MessageName = \"" << EscapeCppStringLiteral(Function.MessageName) << "\";\n";
+        Out << "        Func->RouteName = \"" << EscapeCppStringLiteral(Function.Route) << "\";\n";
+        Out << "        Func->TargetName = \"" << EscapeCppStringLiteral(Function.Target) << "\";\n";
+        Out << "        Func->AuthMode = \"" << EscapeCppStringLiteral(Function.Auth) << "\";\n";
+        Out << "        Func->WrapMode = \"" << EscapeCppStringLiteral(Function.Wrap) << "\";\n";
+        if (Function.Transport == "ClientCall")
+        {
+            Out << "        Func->ClientCallHandler = &" << ClientCallHandlerFunctionName << ";\n";
+        }
+        else if (Function.Transport == "ServerCall" && ParsedClass.ReflectionType != "Rpc")
+        {
+            Out << "        Func->ServerCallHandler = &" << ServerCallHandlerFunctionName << ";\n";
+        }
+        else if (Function.Transport != "ServerCall")
+        {
+            Out << "        Func->ClientParamBinder = &" << BinderFunctionName << ";\n";
+        }
     }
     Out << "        InClass->RegisterFunction(Func);\n";
     Out << "    } while (0);";
@@ -1721,6 +1973,22 @@ std::vector<SParsedClass> ParseReflectedClassesInHeader(
             }
         }
         Classes.push_back(std::move(Parsed));
+    }
+
+    for (const SParsedClass& Parsed : Classes)
+    {
+        ExtractRpcClassTarget(Parsed);
+        for (const SParsedFunction& Function : Parsed.Functions)
+        {
+            if (Function.Transport == "ClientCall")
+            {
+                ValidateClientCallFunction(Classes, Parsed, Function);
+            }
+            if (Function.Transport == "ServerCall")
+            {
+                ValidateServerCallFunction(Classes, Parsed, Function);
+            }
+        }
     }
 
     return Classes;
@@ -1991,7 +2259,8 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
     Out << "// Source: " << ParsedClass.HeaderPath.string() << "\n";
     Out << "// Reflected " << GetTypeKindName(ParsedClass.Kind) << ": " << ParsedClass.Name << "\n";
     Out << "\n";
-    Out << "#include \"Common/ServerRpcRuntime.h\"\n";
+    Out << "#include \"Common/Net/Rpc/RpcClientCall.h\"\n";
+    Out << "#include \"Common/Net/Rpc/RpcServerCall.h\"\n";
     Out << "\n";
     if (ParsedClass.Kind == EParsedTypeKind::Enum)
     {
@@ -2008,7 +2277,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
                 : Value;
             Out << "        Enum->AddValue(\"" << Value << "\", static_cast<int64>(" << QualifiedValue << "));\n";
         }
-        Out << "        MReflectObject::RegisterEnum(Enum);\n";
+        Out << "        MObject::RegisterEnum(Enum);\n";
         Out << "    }\n";
         Out << "    return Enum;\n";
         Out << "}\n";
@@ -2041,11 +2310,12 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
         Out << "    {\n";
         Out << "        Struct = new MClass();\n";
         Out << "        Struct->SetMeta(\"" << ParsedClass.Name << "\", \"" << ParsedClass.HeaderPath.generic_string() << "\", nullptr, " << ParsedClass.ClassFlagsExpr << ");\n";
+        Out << "        Struct->SetKind(" << BuildClassKindExpr(ParsedClass) << ");\n";
         Out << "        Struct->SetCppTypeIndex(std::type_index(typeid(" << ParsedClass.Name << ")));\n";
         Out << "        using ThisClass = " << ParsedClass.Name << ";\n";
         Out << "        MClass* InClass = Struct;\n";
         Out << "        MHEADERTOOL_REGISTER_PROPERTIES_" << ParsedClass.Name << "();\n";
-        Out << "        MReflectObject::RegisterStruct(Struct);\n";
+        Out << "        MObject::RegisterStruct(Struct);\n";
         Out << "    }\n";
         Out << "    return Struct;\n";
         Out << "}\n";
@@ -2078,7 +2348,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
         {
             Out << "    " << Param.StorageType << " " << Param.Name << " {};\n";
         }
-        if (Function.ReturnStorageType != "void")
+        if (Function.ReturnStorageType != "void" && Function.Transport != "ServerCall")
         {
             Out << "    " << Function.ReturnStorageType << " ReturnValue {};\n";
         }
@@ -2100,7 +2370,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
             }
             const size_t PayloadParamCount = Function.Params.size() - InjectedParamCount;
 
-            Out << "inline bool " << BinderFunctionName << "(uint64 ConnectionId, const TArray& Payload, TArray& OutParamStorage)\n";
+            Out << "inline bool " << BinderFunctionName << "(uint64 ConnectionId, const TByteArray& Payload, TByteArray& OutParamStorage)\n";
             Out << "{\n";
             Out << "    OutParamStorage.assign(sizeof(" << ParamStructName << "), 0);\n";
             Out << "    auto* Params = reinterpret_cast<" << ParamStructName << "*>(OutParamStorage.data());\n";
@@ -2151,13 +2421,81 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
             Out << "\n";
         }
 
+        if (Function.Transport == "ClientCall")
+        {
+            const std::string ClientCallHandlerFunctionName = BuildClientCallHandlerFunctionName(ParsedClass, Function);
+            const auto& RequestParam = Function.Params.at(0);
+            const auto& ResponseParam = Function.Params.at(1);
+            Out << "inline EGeneratedClientCallHandlerResult " << ClientCallHandlerFunctionName
+                << "(MObject* Object, uint64 /*ConnectionId*/, const TByteArray& Payload, TByteArray& OutResponsePayload)\n";
+            Out << "{\n";
+            Out << "    auto* TypedObject = static_cast<" << ParsedClass.Name << "*>(Object);\n";
+            Out << "    if (!TypedObject)\n";
+            Out << "    {\n";
+            Out << "        return EGeneratedClientCallHandlerResult::Failed;\n";
+            Out << "    }\n";
+            Out << "    " << RequestParam.StorageType << " RequestValue {};\n";
+            Out << "    auto ParseResult = ParsePayload(Payload, RequestValue, \"" << Function.Name << "\");\n";
+            Out << "    if (!ParseResult.IsOk())\n";
+            Out << "    {\n";
+            Out << "        LOG_WARN(\"ParsePayload failed: %s\", ParseResult.GetError().c_str());\n";
+            Out << "        return EGeneratedClientCallHandlerResult::Failed;\n";
+            Out << "    }\n";
+            Out << "    " << ResponseParam.StorageType << " ResponseValue {};\n";
+            Out << "    TypedObject->" << Function.Name << "(RequestValue, ResponseValue);\n";
+            Out << "    if (IsCurrentClientCallDeferred())\n";
+            Out << "    {\n";
+            Out << "        return EGeneratedClientCallHandlerResult::Deferred;\n";
+            Out << "    }\n";
+            Out << "    OutResponsePayload = BuildPayload(ResponseValue);\n";
+            Out << "    return EGeneratedClientCallHandlerResult::Responded;\n";
+            Out << "}\n";
+            Out << "\n";
+        }
+
+        if (Function.Transport == "ServerCall")
+        {
+            const std::string ServerCallHandlerFunctionName = BuildServerCallHandlerFunctionName(ParsedClass, Function);
+            const auto& RequestParam = Function.Params.at(0);
+            const std::optional<std::string> ResponseType = ExtractServerCallResponseType(Function);
+            if (!ResponseType.has_value())
+            {
+                throw std::runtime_error("Codegen failed to extract ServerCall response type: " + ParsedClass.Name + "::" + Function.Name);
+            }
+
+            Out << "inline bool " << ServerCallHandlerFunctionName
+                << "(MObject* Object, const TByteArray& Payload)\n";
+            Out << "{\n";
+            Out << "    auto* TypedObject = static_cast<" << ParsedClass.Name << "*>(Object);\n";
+            Out << "    if (!TypedObject)\n";
+            Out << "    {\n";
+            Out << "        return false;\n";
+            Out << "    }\n";
+            Out << "    " << RequestParam.StorageType << " RequestValue {};\n";
+            Out << "    auto ParseResult = ParsePayload(Payload, RequestValue, \"" << Function.Name << "\");\n";
+            Out << "    if (!ParseResult.IsOk())\n";
+            Out << "    {\n";
+            Out << "        LOG_WARN(\"ParsePayload failed: %s\", ParseResult.GetError().c_str());\n";
+            Out << "        return false;\n";
+            Out << "    }\n";
+            Out << "    const SServerCallContext Context = CaptureCurrentServerCallContext();\n";
+            Out << "    if (!Context.IsValid())\n";
+            Out << "    {\n";
+            Out << "        return false;\n";
+            Out << "    }\n";
+            Out << "    return MServerCallAsyncSupport::StartDeferredServerCall(Context, TypedObject->" << Function.Name
+                << "(RequestValue), \"" << Function.Name << "\");\n";
+            Out << "}\n";
+            Out << "\n";
+        }
+
         if (Function.bIsRpc)
         {
             Out << "namespace MRpc\n";
             Out << "{\n";
             Out << "namespace " << SanitizeIdentifier(ParsedClass.Name) << "\n";
             Out << "{\n";
-            Out << "inline bool " << Function.Name << "(TArray& OutData";
+            Out << "inline bool " << Function.Name << "(TByteArray& OutData";
             for (const auto& Param : Function.Params)
             {
                 Out << ", " << Param.Type << " " << Param.Name;
@@ -2179,7 +2517,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
             }
             Out << ")\n";
             Out << "{\n";
-            Out << "    TArray RpcPayload;\n";
+            Out << "    TByteArray RpcPayload;\n";
             Out << "    if (!" << Function.Name << "(RpcPayload";
             for (const auto& Param : Function.Params)
             {
@@ -2235,7 +2573,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
 void WriteGeneratedSource(std::ofstream& Out, const SParsedClass& ParsedClass)
 {
     const std::string IncludeName = MakeIncludePathFromHeader(ParsedClass.HeaderPath);
-    const std::string GeneratedHeaderInclude = "Build/Generated/" + SanitizeIdentifier(ParsedClass.Name) + ".mgenerated.h";
+    const std::string GeneratedHeaderInclude = SanitizeIdentifier(ParsedClass.Name) + ".mgenerated.h";
     Out << "// Generated by MHeaderTool\n";
     Out << "// Source: " << ParsedClass.HeaderPath.string() << "\n";
     Out << "#include \"" << IncludeName << "\"\n";
@@ -2276,6 +2614,46 @@ void WriteGeneratedSource(std::ofstream& Out, const SParsedClass& ParsedClass)
         return;
     }
 
+    if (ParsedClass.ReflectionType == "Rpc")
+    {
+        for (const SParsedFunction& Function : ParsedClass.Functions)
+        {
+            if (Function.Transport != "ServerCall" || Function.Params.size() != 1)
+            {
+                continue;
+            }
+
+            const std::optional<std::string> ResponseType = ExtractServerCallResponseType(Function);
+            if (!ResponseType.has_value())
+            {
+                throw std::runtime_error(
+                    "Codegen failed to extract Rpc response type: " + ParsedClass.Name + "::" + Function.Name);
+            }
+
+            const auto& RequestParam = Function.Params.front();
+            Out << Function.ReturnType << " " << ParsedClass.Name << "::" << Function.Name
+                << "(" << RequestParam.Type << " " << RequestParam.Name << ")\n";
+            Out << "{\n";
+            Out << "    return CallRemoteByName<" << *ResponseType << ">(\"" << Function.Name << "\", " << RequestParam.Name << ");\n";
+            Out << "}\n";
+            Out << "\n";
+        }
+
+        const std::optional<std::string> RpcTarget = ExtractRpcClassTarget(ParsedClass);
+        Out << "EServerType " << ParsedClass.Name << "::GetTargetServerType() const\n";
+        Out << "{\n";
+        if (RpcTarget.has_value())
+        {
+            Out << "    return EServerType::" << *RpcTarget << ";\n";
+        }
+        else
+        {
+            Out << "    return EServerType::Unknown;\n";
+        }
+        Out << "}\n";
+        Out << "\n";
+    }
+
     Out << "void " << ParsedClass.Name << "::RegisterAllProperties(MClass* InClass)\n";
     Out << "{\n";
     Out << "    MHEADERTOOL_REGISTER_PROPERTIES_" << ParsedClass.Name << "();\n";
@@ -2293,10 +2671,11 @@ void WriteGeneratedSource(std::ofstream& Out, const SParsedClass& ParsedClass)
     Out << "    {\n";
     Out << "        Class = new MClass();\n";
     Out << "        Class->SetMeta(\"" << ParsedClass.Name << "\", \"" << ParsedClass.HeaderPath.generic_string() << "\", nullptr, " << ParsedClass.ClassFlagsExpr << ");\n";
+    Out << "        Class->SetKind(" << BuildClassKindExpr(ParsedClass) << ");\n";
     Out << "        Class->SetConstructor<" << ParsedClass.Name << ">();\n";
     Out << "        " << ParsedClass.Name << "::RegisterAllProperties(Class);\n";
     Out << "        " << ParsedClass.Name << "::RegisterAllFunctions(Class);\n";
-    Out << "        MReflectObject::RegisterClass(Class);\n";
+    Out << "        MObject::RegisterClass(Class);\n";
     Out << "    }\n";
     Out << "    return Class;\n";
     Out << "}\n";
@@ -2333,7 +2712,12 @@ bool WriteGeneratedFiles(const fs::path& OutputDir, const std::vector<SParsedCla
 
         const fs::path Path = Entry.path();
         const std::string Filename = Path.filename().string();
-        if (Filename.find(".mgenerated.") == std::string::npos)
+        const bool bIsTypeGenerated = (Filename.find(".mgenerated.") != std::string::npos);
+        const bool bIsLegacyManifestGenerated =
+            (Filename == "MRpcManifest.generated.h" ||
+             Filename == "MClientManifest.generated.h" ||
+             Filename == "MReflectionManifest.generated.h");
+        if (!bIsTypeGenerated && !bIsLegacyManifestGenerated)
         {
             continue;
         }
@@ -2404,7 +2788,7 @@ bool WriteGeneratedRpcManifest(const fs::path& OutputDir, const std::vector<SPar
         }
     }
 
-    const fs::path ManifestPath = OutputDir / "MRpcManifest.mgenerated.h";
+    const fs::path ManifestPath = OutputDir / "MRpcManifest.generated.h";
     std::ofstream Out(ManifestPath);
     if (!Out)
     {
@@ -2414,10 +2798,10 @@ bool WriteGeneratedRpcManifest(const fs::path& OutputDir, const std::vector<SPar
 
     Out << "#pragma once\n";
     Out << "// Generated by MHeaderTool\n\n";
-    Out << "#include \"Common/ServerRpcRuntime.h\"\n";
+    Out << "#include \"Common/Net/Rpc/RpcManifest.h\"\n";
     for (const std::string& ClassName : IncludeClasses)
     {
-        Out << "#include \"Build/Generated/" << SanitizeIdentifier(ClassName) << ".mgenerated.h\"\n";
+        Out << "#include \"" << SanitizeIdentifier(ClassName) << ".mgenerated.h\"\n";
     }
     Out << "\n";
     Out << "namespace MRpcManifest\n";
@@ -2539,7 +2923,7 @@ bool WriteGeneratedRpcManifest(const fs::path& OutputDir, const std::vector<SPar
         Out << "struct TBuilder<EFunction::" << HelperName << ">\n";
         Out << "{\n";
         Out << "    template<typename... TArgs>\n";
-        Out << "    static bool Build(EServerType ServerType, TArray& OutData, TArgs&&... Args)\n";
+        Out << "    static bool Build(EServerType ServerType, TByteArray& OutData, TArgs&&... Args)\n";
         Out << "{\n";
         Out << "    switch (ServerType)\n";
         Out << "    {\n";
@@ -2556,7 +2940,7 @@ bool WriteGeneratedRpcManifest(const fs::path& OutputDir, const std::vector<SPar
         Out << "};\n\n";
     }
     Out << "template<EFunction Function, typename... TArgs>\n";
-    Out << "inline bool Build(EServerType ServerType, TArray& OutData, TArgs&&... Args)\n";
+    Out << "inline bool Build(EServerType ServerType, TByteArray& OutData, TArgs&&... Args)\n";
     Out << "{\n";
     Out << "    return TBuilder<Function>::Build(ServerType, OutData, std::forward<TArgs>(Args)...);\n";
     Out << "}\n";
@@ -2567,10 +2951,10 @@ bool WriteGeneratedRpcManifest(const fs::path& OutputDir, const std::vector<SPar
     Out << "template<MRpcManifest::EFunction Function, typename TConnection, typename... TArgs>\n";
     Out << "inline bool Call(TConnection&& Connection, EServerType ServerType, TArgs&&... Args)\n";
     Out << "{\n";
-    Out << "    TArray RpcPayload;\n";
+    Out << "    TByteArray RpcPayload;\n";
     Out << "    if (!MRpcManifest::Build<Function>(ServerType, RpcPayload, std::forward<TArgs>(Args)...))\n";
     Out << "    {\n";
-    Out << "        ReportUnsupportedGeneratedRpcEndpoint(ServerType, MRpcManifest::GetFunctionName(Function));\n";
+    Out << "        ReportUnsupportedRpcEndpoint(ServerType, MRpcManifest::GetFunctionName(Function));\n";
     Out << "        return false;\n";
     Out << "    }\n";
     Out << "    return SendServerRpcMessage(std::forward<TConnection>(Connection), RpcPayload);\n";
@@ -2586,7 +2970,7 @@ bool WriteGeneratedRpcManifest(const fs::path& OutputDir, const std::vector<SPar
 
 bool WriteGeneratedReflectionManifest(const fs::path& OutputDir, const std::vector<SParsedClass>& Classes)
 {
-    const fs::path ManifestPath = OutputDir / "MReflectionManifest.mgenerated.h";
+    const fs::path ManifestPath = OutputDir / "MReflectionManifest.generated.h";
     std::ofstream Out(ManifestPath);
     if (!Out)
     {
@@ -2596,7 +2980,7 @@ bool WriteGeneratedReflectionManifest(const fs::path& OutputDir, const std::vect
 
     Out << "#pragma once\n";
     Out << "// Generated by MHeaderTool\n\n";
-    Out << "#include \"Core/Net/NetCore.h\"\n\n";
+    Out << "#include \"Common/Runtime/MLib.h\"\n\n";
     Out << "namespace MReflectionManifest\n";
     Out << "{\n";
     Out << "struct STypeEntry\n";
@@ -2761,7 +3145,7 @@ bool WriteGeneratedClientManifest(const fs::path& OutputDir, const std::vector<S
     {
         for (const SParsedFunction& Function : ParsedClass.Functions)
         {
-            if (Function.Transport != "Client" && Function.MessageName.empty())
+            if (Function.Transport != "Client" && Function.Transport != "ClientCall" && Function.MessageName.empty())
             {
                 continue;
             }
@@ -2780,11 +3164,11 @@ bool WriteGeneratedClientManifest(const fs::path& OutputDir, const std::vector<S
                 Function.Target,
                 Function.Auth,
                 Function.Wrap});
-            IncludeHeaders.insert("Build/Generated/" + SanitizeIdentifier(ParsedClass.Name) + ".mgenerated.h");
+            IncludeHeaders.insert(SanitizeIdentifier(ParsedClass.Name) + ".mgenerated.h");
         }
     }
 
-    const fs::path ManifestPath = OutputDir / "MClientManifest.mgenerated.h";
+    const fs::path ManifestPath = OutputDir / "MClientManifest.generated.h";
     std::ofstream Out(ManifestPath);
     if (!Out)
     {
@@ -2795,7 +3179,7 @@ bool WriteGeneratedClientManifest(const fs::path& OutputDir, const std::vector<S
     Out << "#pragma once\n";
     Out << "// Generated by MHeaderTool\n\n";
     Out << "#include <cstring>\n";
-    Out << "#include \"Core/Net/NetCore.h\"\n";
+    Out << "#include \"Common/Runtime/MLib.h\"\n";
     for (const std::string& IncludeHeader : IncludeHeaders)
     {
         Out << "#include \"" << IncludeHeader << "\"\n";
@@ -2803,7 +3187,7 @@ bool WriteGeneratedClientManifest(const fs::path& OutputDir, const std::vector<S
     Out << "\n";
     Out << "namespace MClientManifest\n";
     Out << "{\n";
-    Out << "using FBindParamsFn = bool(*)(uint64 ConnectionId, const TArray& Payload, TArray& OutParamStorage);\n";
+    Out << "using FBindParamsFn = bool(*)(uint64 ConnectionId, const TByteArray& Payload, TByteArray& OutParamStorage);\n";
     Out << "struct SEntry\n";
     Out << "{\n";
     Out << "    uint16 FunctionId;\n";
@@ -3005,57 +3389,50 @@ bool WriteCMakeManifest(const fs::path& ManifestPath, const fs::path& OutputDir,
 
 int main(int Argc, char** Argv)
 {
-    SOptions Options;
-    if (!ParseArgs(Argc, Argv, Options))
+    try
     {
-        std::cerr << "Usage: MHeaderTool [--source-root=Source] [--output-dir=Build/Generated] [--verbose]\n";
-        return 1;
-    }
-
-    const std::vector<fs::path> Headers = DiscoverHeaders(Options.SourceRoot);
-    const std::vector<SParsedClass> Classes = DiscoverReflectedClasses(Headers);
-
-    if (Options.bVerbose)
-    {
-        std::cout << "MHeaderTool source root: " << Options.SourceRoot << "\n";
-        std::cout << "MHeaderTool output dir: " << Options.OutputDir << "\n";
-        std::cout << "Headers discovered: " << Headers.size() << "\n";
-        std::cout << "Reflected types discovered: " << Classes.size() << "\n";
-        for (const SParsedClass& ParsedClass : Classes)
+        SOptions Options;
+        if (!ParseArgs(Argc, Argv, Options))
         {
-            std::cout << "  " << ParsedClass.Name
-                      << " (" << ParsedClass.HeaderPath << ")"
-                      << " kind=" << GetTypeKindName(ParsedClass.Kind)
-                      << " properties=" << ParsedClass.Properties.size()
-                      << " functions=" << ParsedClass.Functions.size() << "\n";
+            std::cerr << "Usage: MHeaderTool [--source-root=Source] [--output-dir=Build/Generated] [--verbose]\n";
+            return 1;
         }
-    }
 
-    if (!WriteGeneratedFiles(Options.OutputDir, Classes))
+        const std::vector<fs::path> Headers = DiscoverHeaders(Options.SourceRoot);
+        const std::vector<SParsedClass> Classes = DiscoverReflectedClasses(Headers);
+
+        if (Options.bVerbose)
+        {
+            std::cout << "MHeaderTool source root: " << Options.SourceRoot << "\n";
+            std::cout << "MHeaderTool output dir: " << Options.OutputDir << "\n";
+            std::cout << "Headers discovered: " << Headers.size() << "\n";
+            std::cout << "Reflected types discovered: " << Classes.size() << "\n";
+            for (const SParsedClass& ParsedClass : Classes)
+            {
+                std::cout << "  " << ParsedClass.Name
+                          << " (" << ParsedClass.HeaderPath << ")"
+                          << " kind=" << GetTypeKindName(ParsedClass.Kind)
+                          << " properties=" << ParsedClass.Properties.size()
+                          << " functions=" << ParsedClass.Functions.size() << "\n";
+            }
+        }
+
+        if (!WriteGeneratedFiles(Options.OutputDir, Classes))
+        {
+            return 1;
+        }
+
+        if (!WriteCMakeManifest(Options.CMakeManifestPath, Options.OutputDir, Classes))
+        {
+            return 1;
+        }
+
+        std::cout << "MHeaderTool discovered " << Classes.size() << " reflected classes.\n";
+        return 0;
+    }
+    catch (const std::exception& Ex)
     {
+        std::cerr << "MHeaderTool error: " << Ex.what() << "\n";
         return 1;
     }
-
-    if (!WriteGeneratedRpcManifest(Options.OutputDir, Classes))
-    {
-        return 1;
-    }
-
-    if (!WriteGeneratedReflectionManifest(Options.OutputDir, Classes))
-    {
-        return 1;
-    }
-
-    if (!WriteGeneratedClientManifest(Options.OutputDir, Classes))
-    {
-        return 1;
-    }
-
-    if (!WriteCMakeManifest(Options.CMakeManifestPath, Options.OutputDir, Classes))
-    {
-        return 1;
-    }
-
-    std::cout << "MHeaderTool discovered " << Classes.size() << " reflected classes.\n";
-    return 0;
 }

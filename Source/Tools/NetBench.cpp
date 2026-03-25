@@ -1,12 +1,12 @@
-#include "Core/Net/NetCore.h"
-#include "Core/Net/SocketPlatform.h"
-#include "NetDriver/Reflection.h"
+#include "Common/Runtime/MLib.h"
+#include "Common/IO/Socket/SocketPlatform.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 #include <atomic>
 #include <cstring>
 
 struct SBenchConfig
 {
-    FString Host = "127.0.0.1";
+    MString Host = "127.0.0.1";
     uint16 Port = 8001;           // Gateway 默认端口
     int Clients = 32;
     int RequestsPerClient = 50;   // 每个客户端执行多少次登录+移动
@@ -87,7 +87,7 @@ static bool SendLoginAndWaitResponse(TSocketFd Fd, uint64 PlayerId)
     }
 
     // 读取响应体
-    TArray RespBody;
+    TByteArray RespBody;
     RespBody.resize(RespLen);
     if (!RecvAll(Fd, RespBody.data(), RespBody.size()))
     {
@@ -167,7 +167,7 @@ int main(int argc, char** argv)
     SBenchConfig Config;
     for (int i = 1; i < argc; ++i)
     {
-        FString Arg = argv[i];
+        MString Arg = argv[i];
         if ((Arg == "--host" || Arg == "-h") && i + 1 < argc)
         {
             Config.Host = argv[++i];

@@ -1,42 +1,7 @@
-#include "MgoServer.h"
-#include "Common/ParseArgs.h"
-#include <csignal>
+#include "Servers/Mgo/MgoServer.h"
+#include "Servers/App/ServerMain.h"
 
-static MMgoServer* GMgoServer = nullptr;
-
-void SignalHandler(int Signal)
+int main(int argc, char** argv)
 {
-    (void)Signal;
-    LOG_INFO("Received signal, graceful shutdown...");
-    if (GMgoServer)
-    {
-        GMgoServer->RequestShutdown();
-    }
+    return RunMessionServerMain<MMgoServer>(argc, argv);
 }
-
-int main(int argc, char* argv[])
-{
-    signal(SIGINT, SignalHandler);
-    signal(SIGTERM, SignalHandler);
-
-    FString ConfigPath;
-    int Port = 8006;
-    MParseArgs::Parse(argc, argv, ConfigPath, Port, 8006);
-
-    MMgoServer Server;
-    GMgoServer = &Server;
-    Server.LoadConfig(ConfigPath);
-
-    const double StartTime = MTime::GetTimeSeconds();
-    if (!Server.Init(Port > 0 ? Port : 0))
-    {
-        LOG_ERROR("Failed to start MgoServer");
-        return 1;
-    }
-    MLogger::LogStarted("MgoServer", MTime::GetTimeSeconds() - StartTime);
-
-    Server.Run();
-    GMgoServer = nullptr;
-    return 0;
-}
-

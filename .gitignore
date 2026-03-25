@@ -20,6 +20,8 @@ Thumbs.db
 
 # Logs
 *.log
+__pycache__/
+*.pyc
 
 # Binary
 Server

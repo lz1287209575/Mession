@@ -1,310 +1,113 @@
 # Mession
 
-Mession 是一个基于 C++20 的分布式游戏服务器项目。  
-当前已经跑通并持续验证的主链路是：
+Mession 是一个基于 C++20 的多服游戏服务端实验工程。当前仓库已经完成从“按服务器堆逻辑”到“按运行时 / 协议 / 服务 / 领域对象分层”的重构，代码主线围绕以下几件事展开：
 
-```text
-Client -> Gateway -> Router -> Login / World / Scene
-```
+- 统一反射系统：`MCLASS` / `MSTRUCT` / `MPROPERTY` / `MFUNCTION`
+- 统一 RPC 调用链：客户端调用、服间调用、负载编解码、运行时路由
+- 统一对象状态流：对象属性脏标记、Persistence、Replication 共用同一套对象域快照能力
+- 统一服务结构：`Server -> Rpc -> ServiceEndpoint -> Domain Object`
 
-项目当前关注的不是继续堆样例功能，而是把这几件事做稳：
+仓库当前重点不是展示单个玩法，而是提供一套可以继续扩展的服务端骨架。
 
-- 客户端统一函数调用入口
-- Gateway 路由与转发边界
-- World 侧 Avatar / Gameplay 骨架
-- 反射驱动的 snapshot / replication
-- 自动化验证与回归基线
+## 仓库地图
 
-## 🏗️ 当前架构
+- `Source/Common`
+  运行时基础设施，包括网络、事件循环、并发、反射、对象系统、日志、持久化、复制。
+- `Source/Protocol`
+  所有跨进程消息与协议定义，已经按业务域拆分到 `Messages/*`。
+- `Source/Servers`
+  各个服务器实现，当前包含 `Gateway / Login / World / Scene / Router / Mgo`。
+- `Source/Tools`
+  工具程序，当前主要是 `MHeaderTool` 和 `NetBench`。
+- `Scripts`
+  本地启动、验证、协议检查等脚本。
+- `Docs`
+  正式文档目录。
+- `Build`
+  CMake 构建目录，同时承载 `Build/Generated` 反射生成结果。
+- `Bin`
+  所有可执行文件输出目录。
 
-建议把仓库理解成三层：
+## 当前服务拓扑
 
-```text
-Server Application
-  -> Gateway / Login / World / Scene / Router 的流程编排
+- `GatewayServer` `8001`
+  客户端入口，处理 `Client_*` 调用，并把请求转发给 `Login` / `World`。
+- `LoginServer` `8002`
+  登录会话签发与校验。
+- `WorldServer` `8003`
+  玩家主状态归属、对象树维护、持久化脏数据提交、路由与切场协作。
+- `SceneServer` `8004`
+  场景进入/离开与轻量场景态。
+- `RouterServer` `8005`
+  玩家路由注册与查询。
+- `MgoServer` `8006`
+  玩家持久化记录加载与保存，当前可工作在内存模式，亦可选接 Mongo。
 
-Gameplay Domain
-  -> Avatar / Member / Attribute / Interaction 等领域模型
+## 典型调用链
 
-Infrastructure
-  -> Reflection / Snapshot / Replication / RPC / Message / Socket / EventLoop
-```
+1. 客户端连接 `GatewayServer`
+2. 通过统一 `MT_FunctionCall` 发起 `Client_Login`
+3. `Gateway` 转调 `Login.IssueSession`
+4. `Gateway` 或 `World` 继续通过服间 RPC 与 `World / Router / Scene / Mgo` 协作
+5. `World` 持有 `MPlayerSession` 对象树，并基于脏标记驱动持久化与复制
 
-其中：
+## 快速开始
 
-- `Server` 决定流程、路由和调度
-- `Gameplay` 决定对象、状态和规则
-- `Infrastructure` 决定同步、持久化和传输
-
-### 🌐 服务拓扑
-
-```mermaid
-flowchart LR
-    Client[Client / UE] --> Gateway[Gateway]
-    Gateway --> Router[Router]
-    Gateway --> Login[Login]
-    Gateway --> World[World]
-    Scene[Scene] --> Router
-    Scene --> World
-    Login --> Router
-    World --> Router
-```
-
-### 🧭 当前架构图
-
-```mermaid
-flowchart TB
-    Client[Client / UE]
-
-    subgraph GatewayLayer["Gateway Server"]
-        GatewayIngress[MT_FunctionCall Ingress]
-        GatewayAuth[Connection/Auth State]
-        GatewayRoute[RouterResolved Route]
-        GatewayDownlink[MT_FunctionCall Downlink]
-    end
-
-    subgraph LoginLayer["Login Server"]
-        LoginSession[Session / SessionKey]
-    end
-
-    subgraph WorldLayer["World Server"]
-        WorldFlow[Player Session Flow]
-
-        subgraph GameplayLayer["Gameplay"]
-            Avatar[MPlayerAvatar]
-            Member[AvatarMember]
-        end
-
-        subgraph ReplicationLayer["Reflection / Snapshot / Replication"]
-            Reflection[Reflection Metadata]
-            Snapshot[Snapshot Write]
-            Replication[Replication Driver]
-        end
-    end
-
-    subgraph SceneLayer["Scene Server"]
-        SceneView[Scene View / Mirror]
-    end
-
-    subgraph RouterLayer["Router Server"]
-        RouterRegistry[Service Registry]
-        RouterBinding[Player -> World Binding]
-    end
-
-    Client --> GatewayIngress
-    GatewayIngress --> GatewayAuth
-    GatewayAuth --> GatewayRoute
-    GatewayRoute --> LoginSession
-    GatewayRoute --> WorldFlow
-    GatewayDownlink --> Client
-
-    WorldFlow --> Avatar
-    Avatar --> Member
-    Avatar --> Reflection
-    Reflection --> Snapshot
-    Snapshot --> Replication
-    Replication --> GatewayDownlink
-
-    WorldFlow --> SceneView
-    GatewayRoute --> RouterRegistry
-    LoginSession --> RouterRegistry
-    WorldFlow --> RouterRegistry
-    SceneView --> RouterRegistry
-    RouterRegistry --> RouterBinding
-```
-
-### 🎯 下一步目标图
-
-```mermaid
-flowchart TB
-    subgraph WorldServer["World Server"]
-        Session[PlayerSession]
-
-        subgraph Gameplay["Gameplay Domain"]
-            Avatar[MPlayerAvatar]
-            Member[AvatarMember]
-            Property["MPROPERTY PersistentData + RepToClient"]
-        end
-
-        subgraph Runtime["Runtime State"]
-            Dirty[Per-Domain Dirty Tracking]
-            ClientDirty[Client Dirty Domain]
-            PersistentDirty[Persistent Dirty Domain]
-        end
-
-        subgraph Infra["Infrastructure"]
-            Reflection[Reflection Metadata]
-            Snapshot[Snapshot / Replication Export]
-            Replication[Replication Subsystem]
-            Persistence[Persistence Subsystem]
-        end
-    end
-
-    Session --> Avatar
-    Avatar --> Member
-    Avatar --> Property
-    Property --> Reflection
-    Property --> Dirty
-    Dirty --> ClientDirty
-    Dirty --> PersistentDirty
-    Reflection --> Snapshot
-    ClientDirty --> Replication
-    Snapshot --> Replication
-    PersistentDirty --> Persistence
-```
-
-这张图表达的目标是：
-
-- `Avatar` 仍然是运行时对象
-- 字段通过元数据声明属于哪些同步域
-- 属性修改后只标记 dirty
-- `Replication` 和 `Persistence` 各自消费自己的 dirty 域
-- 不把“改字段 -> 立刻写库 / 立刻发包”硬编码在业务对象里
-
-### 🧱 分层关系
-
-```mermaid
-flowchart TB
-    subgraph Server["Server Application"]
-        GatewaySvc[Gateway]
-        LoginSvc[Login]
-        WorldSvc[World]
-        SceneSvc[Scene]
-        RouterSvc[Router]
-    end
-
-    subgraph Gameplay["Gameplay Domain"]
-        Avatar[MPlayerAvatar]
-        Member[AvatarMember]
-        Attr[Attribute / Movement / Interaction]
-    end
-
-    subgraph Infra["Infrastructure"]
-        Reflection[Reflection]
-        Snapshot[Snapshot]
-        Replication[Replication]
-        Rpc[RPC / Messages]
-        Runtime[Socket / EventLoop]
-    end
-
-    Server --> Gameplay
-    Server --> Infra
-    Gameplay --> Infra
-    Avatar --> Member
-    Member --> Attr
-```
-
-### 🔄 主链路时序
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant G as Gateway
-    participant R as Router
-    participant L as Login
-    participant W as World
-    participant S as Scene
-
-    C->>G: MT_FunctionCall(Client_Handshake)
-    C->>G: MT_FunctionCall(Client_Login)
-    G->>R: Query Login / World route
-    G->>L: Forward login request
-    L-->>G: Login response + SessionKey
-    G->>W: Forward player login context
-    W->>L: Validate session
-    L-->>W: Session valid
-    W->>S: Player enter / scene sync
-    W-->>G: Client_OnActorCreate / Update
-    G-->>C: MT_FunctionCall downlink
-```
-
-## 📚 文档入口
-
-仓库只保留一套正式文档目录：`Docs/`。
-
-第一次阅读建议按下面顺序：
-
-1. 当前文件 `README.md`
-2. [Docs/README.md](/workspaces/Mession/Docs/README.md)
-3. [Docs/client-unified-function-call.md](/workspaces/Mession/Docs/client-unified-function-call.md)
-4. [Docs/gameplay-avatar-framework.md](/workspaces/Mession/Docs/gameplay-avatar-framework.md)
-5. [Docs/validation.md](/workspaces/Mession/Docs/validation.md)
-
-## 📁 仓库结构
-
-```text
-Mession/
-├── Source/
-│   ├── Core/          # 事件循环、并发、网络基础
-│   ├── Common/        # 公共类型、日志、配置、消息工具
-│   ├── Messages/      # 消息枚举与协议边界
-│   ├── NetDriver/     # 反射、snapshot、replication
-│   ├── Gameplay/      # Avatar / Member 等领域模型
-│   ├── Servers/       # Gateway / Login / World / Scene / Router
-│   └── Tools/         # 代码生成与调试工具
-├── Docs/              # 正式设计、模块说明、流程文档
-├── Scripts/           # 起服、验证、协议检查脚本
-├── Config/            # 配置文件
-├── Bin/               # 构建产物
-├── Build/             # CMake 构建目录
-└── CMakeLists.txt
-```
-
-## 🚀 快速开始
-
-### 🔧 构建
+1. 配置构建：
 
 ```bash
 cmake -S . -B Build -DCMAKE_BUILD_TYPE=Release
+```
+
+2. 编译：
+
+```bash
 cmake --build Build -j4
 ```
 
-### ✅ 运行主链路验证
+3. 一键起服：
 
 ```bash
-python3 Scripts/validate.py --timeout 60
+python3 Scripts/servers.py start --build-dir Build
 ```
 
-如果只想重跑验证：
+4. 跑最小链路验证：
 
 ```bash
-python3 Scripts/validate.py --timeout 60 --no-build
+python3 Scripts/validate.py --build-dir Build --no-build
 ```
 
-### ▶️ 只启动服务
+5. 停服：
 
 ```bash
-python3 Scripts/servers.py start
-python3 Scripts/servers.py stop
+python3 Scripts/servers.py stop --build-dir Build
 ```
 
-脚本说明见 [Scripts/README.md](/workspaces/Mession/Scripts/README.md)。
+## 文档入口
 
-## 📌 当前重点文档
+- [Docs/README.md](/root/Mession/Docs/README.md)
+- [Docs/Architecture.md](/root/Mession/Docs/Architecture.md)
+- [Docs/BuildAndRun.md](/root/Mession/Docs/BuildAndRun.md)
+- [Docs/RuntimeAndRpc.md](/root/Mession/Docs/RuntimeAndRpc.md)
+- [Docs/GameplayAndState.md](/root/Mession/Docs/GameplayAndState.md)
+- [Docs/PersistenceAndReplication.md](/root/Mession/Docs/PersistenceAndReplication.md)
+- [Docs/Tooling.md](/root/Mession/Docs/Tooling.md)
+- [Docs/Validation.md](/root/Mession/Docs/Validation.md)
+- [Docs/Roadmap.md](/root/Mession/Docs/Roadmap.md)
 
-- 客户端与 UE 接入
-  - [Docs/client-unified-function-call.md](/workspaces/Mession/Docs/client-unified-function-call.md)
-  - [Docs/function-id-rules.md](/workspaces/Mession/Docs/function-id-rules.md)
-  - [Docs/ue-gateway-quickstart.md](/workspaces/Mession/Docs/ue-gateway-quickstart.md)
-  - [Docs/ue-client-downlink-function-call.md](/workspaces/Mession/Docs/ue-client-downlink-function-call.md)
+## 当前实现状态
 
-- Gameplay 方向
-  - [Docs/gameplay-avatar-framework.md](/workspaces/Mession/Docs/gameplay-avatar-framework.md)
+- 服务骨架、协议目录、RPC 运行时、对象域快照能力已经收敛到同一套结构
+- `World` 的玩家主状态对象树已经使用 `MPROPERTY` 域标记驱动 Persistence / Replication
+- 持久化记录协议已从手写归档提升为 `MSTRUCT + MPROPERTY` 可反射结构
+- `MFuture / MPromise / MCoroutine` 已形成基础分层，但高阶链式编排能力仍有收敛空间
 
-- 开发与回归
-  - [Docs/validation.md](/workspaces/Mession/Docs/validation.md)
-  - [Docs/TODO.md](/workspaces/Mession/Docs/TODO.md)
+## 阅读建议
 
-## 💡 当前建议
+如果是第一次接触这个仓库，建议按以下顺序阅读：
 
-如果接下来继续推进项目，优先顺序建议是：
-
-1. 先确认 `Docs/README.md` 里的文档地图
-2. 再确认 `Docs/gameplay-avatar-framework.md` 里的分层原则
-3. 然后推进字段域与 dirty 域这类真正影响业务架构的骨架
-
-当前不建议优先做的事情：
-
-- 继续扩样例对象
-- 把更多业务直接塞进 `WorldServer`
-- 为兼容历史路径继续扩手写消息分支
+1. [Docs/Architecture.md](/root/Mession/Docs/Architecture.md)
+2. [Docs/BuildAndRun.md](/root/Mession/Docs/BuildAndRun.md)
+3. [Docs/RuntimeAndRpc.md](/root/Mession/Docs/RuntimeAndRpc.md)
+4. [Docs/GameplayAndState.md](/root/Mession/Docs/GameplayAndState.md)
+5. [Docs/PersistenceAndReplication.md](/root/Mession/Docs/PersistenceAndReplication.md)
