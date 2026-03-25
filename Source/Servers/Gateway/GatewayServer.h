@@ -8,14 +8,12 @@
 #include "Common/Net/Rpc/RpcDispatch.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Protocol/Messages/Common/AppMessages.h"
-#include "Servers/Gateway/Rpc/GatewayBackendRpc.h"
-#include "Servers/Gateway/Services/GatewayClientServiceEndpoint.h"
+#include "Protocol/Messages/Common/ForwardedClientCallMessages.h"
+#include "Protocol/Messages/Gateway/GatewayClientMessages.h"
 
 struct SGatewayConfig
 {
     uint16 ListenPort = 8001;
-    MString LoginServerAddr = "127.0.0.1";
-    uint16 LoginServerPort = 8002;
     MString WorldServerAddr = "127.0.0.1";
     uint16 WorldServerPort = 8003;
 };
@@ -39,20 +37,8 @@ public:
     void ShutdownConnections() override;
     void OnRunStarted() override;
 
-    MFUNCTION(ClientCall)
+    MFUNCTION(ClientCall, Target=Gateway)
     void Client_Echo(FClientEchoRequest& Request, FClientEchoResponse& Response);
-
-    MFUNCTION(ClientCall)
-    void Client_Login(FClientLoginRequest& Request, FClientLoginResponse& Response);
-
-    MFUNCTION(ClientCall)
-    void Client_FindPlayer(FClientFindPlayerRequest& Request, FClientFindPlayerResponse& Response);
-
-    MFUNCTION(ClientCall)
-    void Client_Logout(FClientLogoutRequest& Request, FClientLogoutResponse& Response);
-
-    MFUNCTION(ClientCall)
-    void Client_SwitchScene(FClientSwitchSceneRequest& Request, FClientSwitchSceneResponse& Response);
 
 private:
     void HandleClientPacket(uint64 ConnectionId, const TByteArray& Data);
@@ -61,9 +47,5 @@ private:
     SGatewayConfig Config;
     TMap<uint64, TSharedPtr<INetConnection>> ClientConnections;
     MServerConnectionManager BackendConnectionManager;
-    TSharedPtr<MServerConnection> LoginServerConn;
     TSharedPtr<MServerConnection> WorldServerConn;
-    MGatewayLoginRpc* LoginRpc = nullptr;
-    MGatewayWorldRpc* WorldRpc = nullptr;
-    MGatewayClientServiceEndpoint* ClientService = nullptr;
 };

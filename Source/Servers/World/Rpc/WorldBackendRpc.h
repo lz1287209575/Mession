@@ -14,6 +14,9 @@ public:
     MGENERATED_BODY(MWorldLoginRpc, MServerCallProxyBase, 0)
 public:
     MFUNCTION(ServerCall, Target=Login)
+    MFuture<TResult<FLoginIssueSessionResponse, FAppError>> IssueSession(const FLoginIssueSessionRequest& Request);
+
+    MFUNCTION(ServerCall, Target=Login)
     MFuture<TResult<FLoginValidateSessionResponse, FAppError>> ValidateSessionCall(const FLoginValidateSessionRequest& Request);
 
 private:

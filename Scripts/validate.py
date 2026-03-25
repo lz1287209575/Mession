@@ -225,6 +225,22 @@ def send_client_call(sock: socket.socket, class_name: str, function_name: str, p
     return function_id, call_id
 
 
+def resolve_client_owner_class(function_name: str) -> str:
+    if function_name == "Client_Echo":
+        return "MGatewayServer"
+
+    world_owned_functions = {
+        "Client_Login",
+        "Client_FindPlayer",
+        "Client_Logout",
+        "Client_SwitchScene",
+    }
+    if function_name in world_owned_functions:
+        return "MWorldServer"
+
+    return "MGatewayServer"
+
+
 def decode_client_call_packet(payload: bytes) -> Optional[tuple[int, int, bytes]]:
     if len(payload) < 2 + 8 + 4:
         return None
@@ -272,7 +288,12 @@ def call_client_function(
     request_payload: bytes,
     timeout: float = 5.0,
 ) -> bytes:
-    function_id, call_id = send_client_call(sock, "MGatewayServer", function_name, request_payload)
+    function_id, call_id = send_client_call(
+        sock,
+        resolve_client_owner_class(function_name),
+        function_name,
+        request_payload,
+    )
     return recv_client_call_response(sock, function_id, call_id, timeout)
 
 

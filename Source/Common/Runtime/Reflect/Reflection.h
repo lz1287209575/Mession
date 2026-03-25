@@ -136,7 +136,7 @@ public:
     
     // 虚函数
     virtual void BeginPlay() {}
-    virtual void Tick(float DeltaTime) {}
+    virtual void Tick(float /*DeltaTime*/) {}
     virtual void Destroy() {}
     virtual MString ToString() const;
     virtual IClientRouteTarget* GetClientRouteTarget() { return nullptr; }

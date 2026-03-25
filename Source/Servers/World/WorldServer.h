@@ -11,6 +11,8 @@
 #include "Common/Runtime/Object/Result.h"
 #include "Common/Runtime/Persistence/PersistenceSubsystem.h"
 #include "Protocol/Messages/Common/AppMessages.h"
+#include "Protocol/Messages/Common/ForwardedClientCallMessages.h"
+#include "Protocol/Messages/Gateway/GatewayClientMessages.h"
 #include "Protocol/Messages/World/WorldPlayerMessages.h"
 #include "Protocol/Messages/Auth/AuthSessionMessages.h"
 #include "Protocol/Messages/Mgo/MgoPlayerStateMessages.h"
@@ -67,9 +69,34 @@ public:
     MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> PlayerSwitchScene(const FPlayerSwitchSceneRequest& Request);
 
+    MFUNCTION(ClientCall, Target=World)
+    void Client_Login(FClientLoginRequest& Request, FClientLoginResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
+    void Client_FindPlayer(FClientFindPlayerRequest& Request, FClientFindPlayerResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
+    void Client_Logout(FClientLogoutRequest& Request, FClientLogoutResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
+    void Client_SwitchScene(FClientSwitchSceneRequest& Request, FClientSwitchSceneResponse& Response);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FForwardedClientCallResponse, FAppError>> ForwardClientCall(
+        const FForwardedClientCallRequest& Request);
+
 private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
     void HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName);
+    MFuture<TResult<FClientLoginResponse, FAppError>> StartClientLoginFlow(
+        const FClientLoginRequest& Request,
+        uint64 GatewayConnectionId);
+    MFuture<TResult<FClientFindPlayerResponse, FAppError>> StartClientFindPlayerFlow(
+        const FClientFindPlayerRequest& Request);
+    MFuture<TResult<FClientLogoutResponse, FAppError>> StartClientLogoutFlow(
+        const FClientLogoutRequest& Request);
+    MFuture<TResult<FClientSwitchSceneResponse, FAppError>> StartClientSwitchSceneFlow(
+        const FClientSwitchSceneRequest& Request);
     SWorldConfig Config;
     TMap<uint64, MPlayerSession*> OnlinePlayers;
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;

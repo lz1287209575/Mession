@@ -285,7 +285,6 @@ add_executable(GatewayServer
     Source/Servers/Gateway/GatewayServer.h
     Source/Servers/Gateway/GatewayServer.cpp
     Source/Servers/Gateway/GatewayServerMain.cpp
-    Source/Servers/Gateway/Services/GatewayClientServiceEndpoint.cpp
 )
 target_link_libraries(GatewayServer
     PRIVATE
