@@ -156,6 +156,10 @@ private:
         {
             SceneRequest.SceneId = Controller->SceneId != 0 ? Controller->SceneId : 1;
         }
+        else if (MPlayerPawn* Pawn = Player->GetPawn())
+        {
+            SceneRequest.SceneId = Pawn->SceneId != 0 ? Pawn->SceneId : 1;
+        }
         Continue(Service->SceneRpc->EnterScene(SceneRequest), &FPlayerEnterWorldWorkflow::OnSceneEntered);
     }
 
@@ -307,52 +311,42 @@ MFuture<TResult<FPlayerFindResponse, FAppError>> MWorldPlayerServiceEndpoint::Pl
         return MServerCallAsyncSupport::MakeErrorFuture<FPlayerFindResponse>("world_service_not_initialized", "PlayerFind");
     }
 
-    FPlayerFindResponse Response;
-    Response.PlayerId = Request.PlayerId;
-    if (MPlayer* Player = FindPlayer(Request.PlayerId))
+    if (!FindPlayer(Request.PlayerId))
     {
-        MPlayerSession* Session = Player->GetSession();
-        MPlayerController* Controller = Player->GetController();
-        MPlayerProfile* Profile = Player->GetProfile();
-        Response.bFound = true;
-        Response.GatewayConnectionId = Session ? Session->GatewayConnectionId : 0;
-        if (Controller && Controller->SceneId != 0)
-        {
-            Response.SceneId = Controller->SceneId;
-        }
-        else if (Profile)
-        {
-            Response.SceneId = Profile->CurrentSceneId;
-        }
+        FPlayerFindResponse Response;
+        Response.PlayerId = Request.PlayerId;
+        Response.bFound = false;
+        return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
     }
 
-    return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
+    FPlayerQueryStateRequest QueryRequest;
+    return MServerCallAsyncSupport::Map(
+        DispatchPlayerCall<FPlayerQueryStateResponse>(Request.PlayerId, "PlayerFind", "QueryStateCall", QueryRequest),
+        [](const FPlayerQueryStateResponse& PlayerState)
+        {
+            FPlayerFindResponse Response;
+            Response.bFound = true;
+            Response.PlayerId = PlayerState.PlayerId;
+            Response.GatewayConnectionId = PlayerState.GatewayConnectionId;
+            Response.SceneId = PlayerState.SceneId;
+            return Response;
+        });
 }
 
 MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerUpdateRoute(
     const FPlayerUpdateRouteRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerUpdateRouteResponse>("player_id_required", "PlayerUpdateRoute");
-    }
-
-    if (!OnlinePlayers)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerUpdateRouteResponse>("world_service_not_initialized", "PlayerUpdateRoute");
-    }
-
-    MPlayer* Player = FindPlayer(Request.PlayerId);
-    if (!Player)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerUpdateRouteResponse>("player_not_found", "PlayerUpdateRoute");
-    }
-
-    Player->SetRoute(Request.SceneId, Request.TargetServerType);
-
-    FPlayerUpdateRouteResponse Response;
-    Response.PlayerId = Request.PlayerId;
-    return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
+    FPlayerApplyRouteRequest ApplyRequest;
+    ApplyRequest.SceneId = Request.SceneId;
+    ApplyRequest.TargetServerType = Request.TargetServerType;
+    return MServerCallAsyncSupport::Map(
+        DispatchPlayerCall<FPlayerApplyRouteResponse>(Request.PlayerId, "PlayerUpdateRoute", "ApplyRouteCall", ApplyRequest),
+        [](const FPlayerApplyRouteResponse& ApplyValue)
+        {
+            FPlayerUpdateRouteResponse Response;
+            Response.PlayerId = ApplyValue.PlayerId;
+            return Response;
+        });
 }
 
 MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerLogout(
@@ -386,28 +380,18 @@ MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldPlayerServiceEndpoint::
 MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerSwitchScene(
     const FPlayerSwitchSceneRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("player_id_required", "PlayerSwitchScene");
-    }
-
-    if (!OnlinePlayers)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("world_service_not_initialized", "PlayerSwitchScene");
-    }
-
-    MPlayer* Player = FindPlayer(Request.PlayerId);
-    if (!Player)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("player_not_found", "PlayerSwitchScene");
-    }
-
-    Player->SetRoute(Request.SceneId, static_cast<uint8>(EServerType::Scene));
-
-    FPlayerSwitchSceneResponse Response;
-    Response.PlayerId = Request.PlayerId;
-    Response.SceneId = Request.SceneId;
-    return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
+    FPlayerApplyRouteRequest ApplyRequest;
+    ApplyRequest.SceneId = Request.SceneId;
+    ApplyRequest.TargetServerType = static_cast<uint8>(EServerType::Scene);
+    return MServerCallAsyncSupport::Map(
+        DispatchPlayerCall<FPlayerApplyRouteResponse>(Request.PlayerId, "PlayerSwitchScene", "ApplyRouteCall", ApplyRequest),
+        [](const FPlayerApplyRouteResponse& ApplyValue)
+        {
+            FPlayerSwitchSceneResponse Response;
+            Response.PlayerId = ApplyValue.PlayerId;
+            Response.SceneId = ApplyValue.SceneId;
+            return Response;
+        });
 }
 
 MPlayer* MWorldPlayerServiceEndpoint::FindPlayer(uint64 PlayerId) const

@@ -7,6 +7,8 @@
 #include "Protocol/Messages/Scene/SceneServiceMessages.h"
 #include "Protocol/Messages/World/WorldPlayerMessages.h"
 #include "Common/Runtime/Persistence/PersistenceSubsystem.h"
+#include "Protocol/Messages/Common/ObjectProxyMessages.h"
+#include "Servers/App/ObjectProxyCall.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
 #include "Servers/World/Players/Player.h"
 #include "Servers/World/Rpc/WorldBackendRpc.h"
@@ -50,6 +52,13 @@ private:
     friend class MWorldPlayerServiceFlows::FPlayerEnterWorldWorkflow;
     friend class MWorldPlayerServiceFlows::FPlayerLogoutWorkflow;
 
+    template<typename TResponse, typename TRequest>
+    MFuture<TResult<TResponse, FAppError>> DispatchPlayerCall(
+        uint64 PlayerId,
+        const char* ServiceFunctionName,
+        const char* PlayerFunctionName,
+        const TRequest& Request) const;
+
     MPlayer* FindPlayer(uint64 PlayerId) const;
     MPlayer* FindOrCreatePlayer(uint64 PlayerId);
     void RemovePlayer(uint64 PlayerId);
@@ -61,3 +70,29 @@ private:
     MWorldSceneRpc* SceneRpc = nullptr;
     MWorldRouterRpc* RouterRpc = nullptr;
 };
+
+template<typename TResponse, typename TRequest>
+MFuture<TResult<TResponse, FAppError>> MWorldPlayerServiceEndpoint::DispatchPlayerCall(
+    uint64 PlayerId,
+    const char* ServiceFunctionName,
+    const char* PlayerFunctionName,
+    const TRequest& Request) const
+{
+    if (PlayerId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<TResponse>("player_id_required", ServiceFunctionName ? ServiceFunctionName : "");
+    }
+
+    if (!OnlinePlayers)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<TResponse>(
+            "world_service_not_initialized",
+            ServiceFunctionName ? ServiceFunctionName : "");
+    }
+
+    FObjectProxyTarget Target;
+    Target.RootType = EObjectProxyRootType::Player;
+    Target.RootId = PlayerId;
+    Target.TargetServerType = EServerType::World;
+    return MObjectProxyCall::Call<TResponse>(Target, PlayerFunctionName, Request, const_cast<MWorldPlayerServiceEndpoint*>(this));
+}

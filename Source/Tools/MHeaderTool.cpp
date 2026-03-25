@@ -967,19 +967,20 @@ void ValidateServerCallFunction(const std::vector<SParsedClass>& Classes, const 
 
     const bool bIsRpcOwner = ParsedClass.ReflectionType == "Rpc";
     const bool bIsServiceOwner = ParsedClass.ReflectionType == "Service" || ParsedClass.ReflectionType == "Server";
+    const bool bIsObjectOwner = ParsedClass.ReflectionType == "Object";
     if (bIsRpcOwner && Function.Target.empty())
     {
         throw std::runtime_error("Rpc ServerCall function must declare Target=...: " + ParsedClass.Name + "::" + Function.Name);
     }
 
-    if (bIsServiceOwner && !Function.Target.empty())
+    if ((bIsServiceOwner || bIsObjectOwner) && !Function.Target.empty())
     {
-        throw std::runtime_error("Service/Server ServerCall function must not declare Target=...: " + ParsedClass.Name + "::" + Function.Name);
+        throw std::runtime_error("Object/Service/Server ServerCall function must not declare Target=...: " + ParsedClass.Name + "::" + Function.Name);
     }
 
-    if (!bIsRpcOwner && !bIsServiceOwner)
+    if (!bIsRpcOwner && !bIsServiceOwner && !bIsObjectOwner)
     {
-        throw std::runtime_error("ServerCall function must belong to Type=Server, Type=Service, or Type=Rpc: " + ParsedClass.Name + "::" + Function.Name);
+        throw std::runtime_error("ServerCall function must belong to Type=Object, Type=Server, Type=Service, or Type=Rpc: " + ParsedClass.Name + "::" + Function.Name);
     }
 
     if (!IsReflectedStructLikeType(Classes, Function.Params[0].StorageType))

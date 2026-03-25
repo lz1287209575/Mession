@@ -98,3 +98,44 @@ struct FPlayerSwitchSceneResponse
     MPROPERTY()
     uint32 SceneId = 0;
 };
+
+MSTRUCT()
+struct FPlayerApplyRouteRequest
+{
+    MPROPERTY()
+    uint32 SceneId = 0;
+
+    MPROPERTY()
+    uint8 TargetServerType = 0;
+};
+
+MSTRUCT()
+struct FPlayerApplyRouteResponse
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint32 SceneId = 0;
+
+    MPROPERTY()
+    uint8 TargetServerType = 0;
+};
+
+MSTRUCT()
+struct FPlayerQueryStateRequest
+{
+};
+
+MSTRUCT()
+struct FPlayerQueryStateResponse
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint64 GatewayConnectionId = 0;
+
+    MPROPERTY()
+    uint32 SceneId = 0;
+};

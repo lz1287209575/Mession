@@ -90,6 +90,8 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Net/Rpc/RpcManifest.cpp
     Source/Common/Net/Rpc/RpcServerCall.cpp
     Source/Common/Net/Rpc/RpcTransport.cpp
+    Source/Servers/App/ObjectProxyRegistry.cpp
+    Source/Servers/App/ObjectProxyServiceEndpoint.cpp
 )
 
 add_library(mession_common STATIC
@@ -316,6 +318,7 @@ add_executable(WorldServer
     Source/Servers/World/Players/PlayerProgression.cpp
     Source/Servers/World/Players/Player.cpp
     Source/Servers/World/Players/PlayerController.cpp
+    Source/Servers/World/Players/PlayerPawn.cpp
     Source/Servers/World/Players/PlayerProfile.cpp
     Source/Servers/World/Players/PlayerSession.cpp
     Source/Servers/World/Services/WorldClientServiceEndpoint.cpp
@@ -326,7 +329,7 @@ target_link_libraries(WorldServer
         mession_netdriver
 )
 configure_mession_target(WorldServer)
-mession_attach_generated_groups(WorldServer shared world)
+mession_attach_generated_groups(WorldServer shared app world)
 
 # 4. Scene Server - 场景服务器
 add_executable(SceneServer 

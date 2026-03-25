@@ -172,6 +172,11 @@ public:
         LocalServerInfo.ServerType = Type;
         LocalServerInfo.ServerName = Name;
     }
+
+    static const SServerInfo& GetLocalInfo()
+    {
+        return LocalServerInfo;
+    }
     
     // 回调设置
     void SetOnConnect(TFunction<void(TSharedPtr<MServerConnection>)> CB) { OnConnectCallback = CB; }

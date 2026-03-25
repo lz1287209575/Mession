@@ -71,6 +71,10 @@ bool MWorldServer::Init(int InPort)
     {
         PlayerService = NewMObject<MWorldPlayerServiceEndpoint>(this, "PlayerService");
     }
+    if (!ObjectProxyService)
+    {
+        ObjectProxyService = NewMObject<MObjectProxyServiceEndpoint>(this, "ObjectProxyService");
+    }
     if (!ClientService)
     {
         ClientService = NewMObject<MWorldClientServiceEndpoint>(this, "ClientService");
@@ -80,6 +84,16 @@ bool MWorldServer::Init(int InPort)
     RegisterRpcTransport(EServerType::Mgo, MgoServerConn);
     RegisterRpcTransport(EServerType::Scene, SceneServerConn);
     RegisterRpcTransport(EServerType::Router, RouterServerConn);
+    if (!PlayerRootResolver)
+    {
+        PlayerRootResolver = std::make_unique<FPlayerObjectProxyRootResolver>(&OnlinePlayers);
+    }
+    else
+    {
+        PlayerRootResolver->SetOnlinePlayers(&OnlinePlayers);
+    }
+    ObjectProxyRegistry.RegisterResolver(PlayerRootResolver.get());
+    ObjectProxyService->Initialize(&ObjectProxyRegistry);
     PlayerService->Initialize(&OnlinePlayers, &PersistenceSubsystem, LoginRpc, MgoRpc, SceneRpc, RouterRpc);
     ClientService->Initialize(PlayerService, LoginRpc);
 
@@ -244,6 +258,19 @@ MFuture<TResult<FForwardedClientCallResponse, FAppError>> MWorldServer::ForwardC
     }
 
     return MClientCallForwarding::ExecuteForwardedClientCall(ClientService, Request);
+}
+
+MFuture<TResult<FObjectProxyInvokeResponse, FAppError>> MWorldServer::InvokeObjectCall(
+    const FObjectProxyInvokeRequest& Request)
+{
+    if (!ObjectProxyService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FObjectProxyInvokeResponse>(
+            "object_proxy_service_missing",
+            "InvokeObjectCall");
+    }
+
+    return ObjectProxyService->InvokeObjectCall(Request);
 }
 
 void MWorldServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)

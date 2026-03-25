@@ -2,7 +2,10 @@
 
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Protocol/Messages/World/WorldPlayerMessages.h"
+#include "Servers/App/ServerCallAsyncSupport.h"
 #include "Servers/World/Players/PlayerController.h"
+#include "Servers/World/Players/PlayerPawn.h"
 #include "Servers/World/Players/PlayerProfile.h"
 #include "Servers/World/Players/PlayerSession.h"
 
@@ -23,9 +26,17 @@ public:
 
     void FinalizeLoadedState();
 
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerApplyRouteResponse, FAppError>> ApplyRouteCall(const FPlayerApplyRouteRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryStateResponse, FAppError>> QueryStateCall(const FPlayerQueryStateRequest& Request);
+
     MPlayerSession* GetSession() const;
 
     MPlayerController* GetController() const;
+
+    MPlayerPawn* GetPawn() const;
 
     MPlayerProfile* GetProfile() const;
 
@@ -34,5 +45,6 @@ public:
 private:
     MPlayerSession* Session = nullptr;
     MPlayerController* Controller = nullptr;
+    MPlayerPawn* Pawn = nullptr;
     MPlayerProfile* Profile = nullptr;
 };

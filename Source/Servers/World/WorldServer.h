@@ -12,12 +12,15 @@
 #include "Common/Runtime/Persistence/PersistenceSubsystem.h"
 #include "Protocol/Messages/Common/AppMessages.h"
 #include "Protocol/Messages/Common/ForwardedClientCallMessages.h"
+#include "Protocol/Messages/Common/ObjectProxyMessages.h"
 #include "Protocol/Messages/Gateway/GatewayClientMessages.h"
 #include "Protocol/Messages/World/WorldPlayerMessages.h"
 #include "Protocol/Messages/Auth/AuthSessionMessages.h"
 #include "Protocol/Messages/Mgo/MgoPlayerStateMessages.h"
 #include "Protocol/Messages/Router/RouterServiceMessages.h"
 #include "Protocol/Messages/Scene/SceneServiceMessages.h"
+#include "Servers/App/ObjectProxyRegistry.h"
+#include "Servers/App/ObjectProxyServiceEndpoint.h"
 #include "Servers/World/Players/Player.h"
 #include "Servers/World/Rpc/WorldBackendRpc.h"
 #include "Servers/World/Services/WorldClientServiceEndpoint.h"
@@ -36,8 +39,46 @@ struct SWorldConfig
     uint16 MgoServerPort = 8006;
 };
 
+class FPlayerObjectProxyRootResolver final : public IObjectProxyRootResolver
+{
+public:
+    explicit FPlayerObjectProxyRootResolver(const TMap<uint64, MPlayer*>* InOnlinePlayers = nullptr)
+        : OnlinePlayers(InOnlinePlayers)
+    {
+    }
+
+    void SetOnlinePlayers(const TMap<uint64, MPlayer*>* InOnlinePlayers)
+    {
+        OnlinePlayers = InOnlinePlayers;
+    }
+
+    EObjectProxyRootType GetRootType() const override
+    {
+        return EObjectProxyRootType::Player;
+    }
+
+    EServerType GetOwnerServerType() const override
+    {
+        return EServerType::World;
+    }
+
+    MObject* ResolveRootObject(uint64 RootId) const override
+    {
+        if (!OnlinePlayers)
+        {
+            return nullptr;
+        }
+
+        const auto It = OnlinePlayers->find(RootId);
+        return It != OnlinePlayers->end() ? It->second : nullptr;
+    }
+
+private:
+    const TMap<uint64, MPlayer*>* OnlinePlayers = nullptr;
+};
+
 MCLASS(Type=Server)
-class MWorldServer : public MNetServerBase, public MObject, public MServerRuntimeContext
+class MWorldServer : public MNetServerBase, public MObject, public MServerRuntimeContext, public IObjectProxyRegistryProvider
 {
 public:
     MGENERATED_BODY(MWorldServer, MObject, 0)
@@ -74,6 +115,12 @@ public:
     MFuture<TResult<FForwardedClientCallResponse, FAppError>> ForwardClientCall(
         const FForwardedClientCallRequest& Request);
 
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FObjectProxyInvokeResponse, FAppError>> InvokeObjectCall(const FObjectProxyInvokeRequest& Request);
+
+    MObjectProxyRegistry* GetObjectProxyRegistry() override { return &ObjectProxyRegistry; }
+    const MObjectProxyRegistry* GetObjectProxyRegistry() const override { return &ObjectProxyRegistry; }
+
 private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
     void HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName);
@@ -91,5 +138,8 @@ private:
     MWorldMgoRpc* MgoRpc = nullptr;
     MWorldSceneRpc* SceneRpc = nullptr;
     MWorldRouterRpc* RouterRpc = nullptr;
+    MObjectProxyServiceEndpoint* ObjectProxyService = nullptr;
     MPersistenceSubsystem PersistenceSubsystem;
+    MObjectProxyRegistry ObjectProxyRegistry;
+    TUniquePtr<FPlayerObjectProxyRootResolver> PlayerRootResolver;
 };

@@ -14,7 +14,7 @@ public:
     MPROPERTY(PersistentData | Replicated)
     uint32 Experience = 0;
 
-    // Health is temporarily kept with progression persistence until scene pawn state is introduced.
+    // Persistence bridge for runtime health until Pawn persistence has a dedicated migration path.
     MPROPERTY(PersistentData | Replicated)
     uint32 Health = 100;
 

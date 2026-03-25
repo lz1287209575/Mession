@@ -16,7 +16,7 @@ public:
     MPROPERTY(PersistentData | Replicated)
     uint64 PlayerId = 0;
 
-    // Keep the persisted scene anchor here so legacy Avatar snapshots can map into Profile losslessly.
+    // Persistence bridge for the last known scene until scene residency is fully migrated into Pawn snapshots.
     MPROPERTY(PersistentData | Replicated)
     uint32 CurrentSceneId = 1;
 
