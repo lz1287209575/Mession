@@ -24,4 +24,12 @@ public:
     MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> PlayerQueryInventory(
         const FPlayerQueryInventoryRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerChangeGoldResponse, FAppError>> PlayerChangeGold(
+        const FPlayerChangeGoldRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerEquipItemResponse, FAppError>> PlayerEquipItem(
+        const FPlayerEquipItemRequest& Request);
 };

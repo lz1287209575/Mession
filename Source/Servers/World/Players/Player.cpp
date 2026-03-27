@@ -114,7 +114,7 @@ uint32 MPlayer::ResolveCurrentSceneId() const
 
 uint32 MPlayer::ResolveCurrentHealth() const
 {
-    if (Pawn && Pawn->Health != 0)
+    if (Pawn && Pawn->IsSpawned())
     {
         return Pawn->Health;
     }
@@ -122,6 +122,11 @@ uint32 MPlayer::ResolveCurrentHealth() const
     if (Profile)
     {
         return Profile->ResolveCurrentHealth();
+    }
+
+    if (Pawn && Pawn->Health != 0)
+    {
+        return Pawn->Health;
     }
 
     return 100;

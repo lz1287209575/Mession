@@ -364,6 +364,60 @@ def parse_switch_scene_response(payload: bytes) -> dict:
     return result
 
 
+def parse_change_gold_response(payload: bytes) -> dict:
+    reader = ReflectReader(payload)
+    result = {
+        "bSuccess": reader.read_bool(),
+        "PlayerId": reader.read_u64(),
+        "Gold": reader.read_u32(),
+        "Error": reader.read_string(),
+    }
+    reader.ensure_consumed()
+    return result
+
+
+def parse_equip_item_response(payload: bytes) -> dict:
+    reader = ReflectReader(payload)
+    result = {
+        "bSuccess": reader.read_bool(),
+        "PlayerId": reader.read_u64(),
+        "EquippedItem": reader.read_string(),
+        "Error": reader.read_string(),
+    }
+    reader.ensure_consumed()
+    return result
+
+
+def parse_grant_experience_response(payload: bytes) -> dict:
+    reader = ReflectReader(payload)
+    result = {
+        "bSuccess": reader.read_bool(),
+        "PlayerId": reader.read_u64(),
+        "Level": reader.read_u32(),
+        "Experience": reader.read_u32(),
+        "Error": reader.read_string(),
+    }
+    reader.ensure_consumed()
+    return result
+
+
+def parse_modify_health_response(payload: bytes) -> dict:
+    reader = ReflectReader(payload)
+    result = {
+        "bSuccess": reader.read_bool(),
+        "PlayerId": reader.read_u64(),
+        "Health": reader.read_u32(),
+        "Error": reader.read_string(),
+    }
+    reader.ensure_consumed()
+    return result
+
+
+def pack_string(value: str) -> bytes:
+    encoded = value.encode("utf-8")
+    return struct.pack("<I", len(encoded)) + encoded
+
+
 def wait_until(deadline: float, step: Callable[[], Optional[dict]]) -> Optional[dict]:
     while time.time() < deadline:
         value = step()
@@ -459,7 +513,7 @@ def run_validation(
         log(f"Server logs: {log_dir}")
         time.sleep(2.0)
 
-        player_id = 10001
+        player_id = int(time.time() * 1000) % 4000000000 + 10001
         next_scene_id = 2
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -543,7 +597,93 @@ def run_validation(
                 f"playerId={find_after_switch['PlayerId']} sceneId={find_after_switch['SceneId']}"
             )
 
-            log("Test 5: Client_Logout...")
+            log("Test 5: Client_ChangeGold...")
+            change_gold_response = parse_change_gold_response(
+                call_client_function(sock, "Client_ChangeGold", struct.pack("<Qi", player_id, 50))
+            )
+            if not change_gold_response["bSuccess"]:
+                log(f"  Client_ChangeGold failed: error={change_gold_response['Error']}")
+                return False
+            if change_gold_response["PlayerId"] != player_id or change_gold_response["Gold"] != 50:
+                log(
+                    "  Client_ChangeGold returned unexpected payload: "
+                    f"playerId={change_gold_response['PlayerId']} gold={change_gold_response['Gold']}"
+                )
+                return False
+            log(
+                "  Client_ChangeGold OK: "
+                f"playerId={change_gold_response['PlayerId']} gold={change_gold_response['Gold']}"
+            )
+
+            log("Test 6: Client_EquipItem...")
+            equip_item_response = parse_equip_item_response(
+                call_client_function(
+                    sock,
+                    "Client_EquipItem",
+                    struct.pack("<Q", player_id) + pack_string("iron_sword"),
+                )
+            )
+            if not equip_item_response["bSuccess"]:
+                log(f"  Client_EquipItem failed: error={equip_item_response['Error']}")
+                return False
+            if equip_item_response["PlayerId"] != player_id or equip_item_response["EquippedItem"] != "iron_sword":
+                log(
+                    "  Client_EquipItem returned unexpected payload: "
+                    f"playerId={equip_item_response['PlayerId']} "
+                    f"equippedItem={equip_item_response['EquippedItem']}"
+                )
+                return False
+            log(
+                "  Client_EquipItem OK: "
+                f"playerId={equip_item_response['PlayerId']} "
+                f"equippedItem={equip_item_response['EquippedItem']}"
+            )
+
+            log("Test 7: Client_GrantExperience...")
+            grant_experience_response = parse_grant_experience_response(
+                call_client_function(sock, "Client_GrantExperience", struct.pack("<QI", player_id, 250))
+            )
+            if not grant_experience_response["bSuccess"]:
+                log(f"  Client_GrantExperience failed: error={grant_experience_response['Error']}")
+                return False
+            if (
+                grant_experience_response["PlayerId"] != player_id
+                or grant_experience_response["Level"] != 3
+                or grant_experience_response["Experience"] != 250
+            ):
+                log(
+                    "  Client_GrantExperience returned unexpected payload: "
+                    f"playerId={grant_experience_response['PlayerId']} "
+                    f"level={grant_experience_response['Level']} "
+                    f"experience={grant_experience_response['Experience']}"
+                )
+                return False
+            log(
+                "  Client_GrantExperience OK: "
+                f"playerId={grant_experience_response['PlayerId']} "
+                f"level={grant_experience_response['Level']} "
+                f"experience={grant_experience_response['Experience']}"
+            )
+
+            log("Test 8: Client_ModifyHealth...")
+            modify_health_response = parse_modify_health_response(
+                call_client_function(sock, "Client_ModifyHealth", struct.pack("<Qi", player_id, -25))
+            )
+            if not modify_health_response["bSuccess"]:
+                log(f"  Client_ModifyHealth failed: error={modify_health_response['Error']}")
+                return False
+            if modify_health_response["PlayerId"] != player_id or modify_health_response["Health"] != 75:
+                log(
+                    "  Client_ModifyHealth returned unexpected payload: "
+                    f"playerId={modify_health_response['PlayerId']} health={modify_health_response['Health']}"
+                )
+                return False
+            log(
+                "  Client_ModifyHealth OK: "
+                f"playerId={modify_health_response['PlayerId']} health={modify_health_response['Health']}"
+            )
+
+            log("Test 9: Client_Logout...")
             logout_response = parse_logout_response(
                 call_client_function(sock, "Client_Logout", struct.pack("<Q", player_id))
             )
@@ -555,7 +695,7 @@ def run_validation(
                 return False
             log(f"  Client_Logout OK: playerId={logout_response['PlayerId']}")
 
-            log("Test 6: Client_FindPlayer after logout...")
+            log("Test 10: Client_FindPlayer after logout...")
             find_after_logout = parse_find_player_response(
                 call_client_function(sock, "Client_FindPlayer", struct.pack("<Q", player_id))
             )
@@ -567,7 +707,7 @@ def run_validation(
                 return False
             log("  Client_FindPlayer after logout OK: player removed from World state")
 
-            log("Test 7: Client_Login again after logout...")
+            log("Test 11: Client_Login again after logout...")
             relogin_response = parse_login_response(
                 call_client_function(sock, "Client_Login", struct.pack("<Q", player_id))
             )
@@ -579,7 +719,7 @@ def run_validation(
                 f"playerId={relogin_response['PlayerId']} sessionKey={relogin_response['SessionKey']}"
             )
 
-            log("Test 8: Client_FindPlayer after relogin...")
+            log("Test 12: Client_FindPlayer after relogin...")
             find_after_relogin = parse_find_player_response(
                 call_client_function(sock, "Client_FindPlayer", struct.pack("<Q", player_id))
             )
@@ -595,7 +735,88 @@ def run_validation(
                 f"playerId={find_after_relogin['PlayerId']} sceneId={find_after_relogin['SceneId']}"
             )
 
-            log("Test 9: forwarded Client_FindPlayer invalid payload...")
+            log("Test 13: Client_ChangeGold after relogin...")
+            change_gold_after_relogin = parse_change_gold_response(
+                call_client_function(sock, "Client_ChangeGold", struct.pack("<Qi", player_id, 0))
+            )
+            if not change_gold_after_relogin["bSuccess"] or change_gold_after_relogin["Gold"] != 50:
+                log(
+                    "  Client_ChangeGold after relogin returned unexpected payload: "
+                    f"success={change_gold_after_relogin['bSuccess']} "
+                    f"gold={change_gold_after_relogin['Gold']} "
+                    f"error={change_gold_after_relogin['Error']}"
+                )
+                return False
+            log(
+                "  Client_ChangeGold after relogin OK: "
+                f"playerId={change_gold_after_relogin['PlayerId']} gold={change_gold_after_relogin['Gold']}"
+            )
+
+            log("Test 14: Client_EquipItem after relogin...")
+            equip_item_after_relogin = parse_equip_item_response(
+                call_client_function(
+                    sock,
+                    "Client_EquipItem",
+                    struct.pack("<Q", player_id) + pack_string("iron_sword"),
+                )
+            )
+            if not equip_item_after_relogin["bSuccess"] or equip_item_after_relogin["EquippedItem"] != "iron_sword":
+                log(
+                    "  Client_EquipItem after relogin returned unexpected payload: "
+                    f"success={equip_item_after_relogin['bSuccess']} "
+                    f"equippedItem={equip_item_after_relogin['EquippedItem']} "
+                    f"error={equip_item_after_relogin['Error']}"
+                )
+                return False
+            log(
+                "  Client_EquipItem after relogin OK: "
+                f"playerId={equip_item_after_relogin['PlayerId']} "
+                f"equippedItem={equip_item_after_relogin['EquippedItem']}"
+            )
+
+            log("Test 15: Client_GrantExperience after relogin...")
+            grant_experience_after_relogin = parse_grant_experience_response(
+                call_client_function(sock, "Client_GrantExperience", struct.pack("<QI", player_id, 1))
+            )
+            if (
+                not grant_experience_after_relogin["bSuccess"]
+                or grant_experience_after_relogin["Level"] != 3
+                or grant_experience_after_relogin["Experience"] != 251
+            ):
+                log(
+                    "  Client_GrantExperience after relogin returned unexpected payload: "
+                    f"success={grant_experience_after_relogin['bSuccess']} "
+                    f"level={grant_experience_after_relogin['Level']} "
+                    f"experience={grant_experience_after_relogin['Experience']} "
+                    f"error={grant_experience_after_relogin['Error']}"
+                )
+                return False
+            log(
+                "  Client_GrantExperience after relogin OK: "
+                f"playerId={grant_experience_after_relogin['PlayerId']} "
+                f"level={grant_experience_after_relogin['Level']} "
+                f"experience={grant_experience_after_relogin['Experience']}"
+            )
+
+            log("Test 16: Client_ModifyHealth after relogin...")
+            modify_health_after_relogin = parse_modify_health_response(
+                call_client_function(sock, "Client_ModifyHealth", struct.pack("<Qi", player_id, 0))
+            )
+            if not modify_health_after_relogin["bSuccess"] or modify_health_after_relogin["Health"] != 75:
+                log(
+                    "  Client_ModifyHealth after relogin returned unexpected payload: "
+                    f"success={modify_health_after_relogin['bSuccess']} "
+                    f"health={modify_health_after_relogin['Health']} "
+                    f"error={modify_health_after_relogin['Error']}"
+                )
+                return False
+            log(
+                "  Client_ModifyHealth after relogin OK: "
+                f"playerId={modify_health_after_relogin['PlayerId']} "
+                f"health={modify_health_after_relogin['Health']}"
+            )
+
+            log("Test 17: forwarded Client_FindPlayer invalid payload...")
             invalid_payload_response = try_find_player(sock, struct.pack("<I", player_id))
             if invalid_payload_response is None:
                 log("  invalid payload test failed: no response")
@@ -608,7 +829,7 @@ def run_validation(
                 return False
             log("  invalid payload OK: binder error surfaced through Gateway")
 
-            log("Test 10: forwarded Client_FindPlayer validation error...")
+            log("Test 18: forwarded Client_FindPlayer validation error...")
             zero_player_response = try_find_player(sock, struct.pack("<Q", 0))
             if zero_player_response is None:
                 log("  zero player id test failed: no response")
@@ -621,7 +842,7 @@ def run_validation(
                 return False
             log("  validation error OK: world business error reached client")
 
-            log("Test 11: World unavailable after forward route...")
+            log("Test 19: World unavailable after forward route...")
             world_proc = proc_by_name.get("WorldServer")
             if world_proc is None:
                 log("  WorldServer process handle missing")

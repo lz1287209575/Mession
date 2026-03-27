@@ -2,6 +2,8 @@
 
 #include "Servers/World/Players/PlayerProfile.h"
 
+#include <limits>
+
 void MPlayerInventory::SetState(uint32 InGold, const MString& InEquippedItem)
 {
     Gold = InGold;
@@ -26,6 +28,58 @@ MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> MPlayerInventory::Pla
     }
 
     Response.Gold = Gold;
+    Response.EquippedItem = EquippedItem;
+    return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
+}
+
+MFuture<TResult<FPlayerChangeGoldResponse, FAppError>> MPlayerInventory::PlayerChangeGold(
+    const FPlayerChangeGoldRequest& Request)
+{
+    const int64 NextGold = static_cast<int64>(Gold) + static_cast<int64>(Request.DeltaGold);
+    if (NextGold < 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerChangeGoldResponse>(
+            "player_gold_insufficient",
+            "PlayerChangeGold");
+    }
+
+    if (NextGold > static_cast<int64>(std::numeric_limits<uint32>::max()))
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerChangeGoldResponse>(
+            "player_gold_overflow",
+            "PlayerChangeGold");
+    }
+
+    Gold = static_cast<uint32>(NextGold);
+    MarkPropertyDirty("Gold");
+
+    FPlayerChangeGoldResponse Response;
+    if (const MPlayerProfile* Profile = dynamic_cast<const MPlayerProfile*>(GetOuter()))
+    {
+        Response.PlayerId = Profile->PlayerId;
+    }
+    Response.Gold = Gold;
+    return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
+}
+
+MFuture<TResult<FPlayerEquipItemResponse, FAppError>> MPlayerInventory::PlayerEquipItem(
+    const FPlayerEquipItemRequest& Request)
+{
+    if (Request.EquippedItem.empty())
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerEquipItemResponse>(
+            "equipped_item_required",
+            "PlayerEquipItem");
+    }
+
+    EquippedItem = Request.EquippedItem;
+    MarkPropertyDirty("EquippedItem");
+
+    FPlayerEquipItemResponse Response;
+    if (const MPlayerProfile* Profile = dynamic_cast<const MPlayerProfile*>(GetOuter()))
+    {
+        Response.PlayerId = Profile->PlayerId;
+    }
     Response.EquippedItem = EquippedItem;
     return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
 }

@@ -90,6 +90,58 @@ struct TPlayerRpcBindingTraits<FPlayerQueryProgressionRequest>
         return "PlayerQueryProgression";
     }
 };
+
+template<>
+struct TPlayerRpcBindingTraits<FPlayerChangeGoldRequest>
+{
+    using TResponse = FPlayerChangeGoldResponse;
+    static constexpr MPlayerProxyCall::EObjectProxyPlayerNode PlayerNode =
+        MPlayerProxyCall::EObjectProxyPlayerNode::Inventory;
+
+    static const char* FunctionName()
+    {
+        return "PlayerChangeGold";
+    }
+};
+
+template<>
+struct TPlayerRpcBindingTraits<FPlayerEquipItemRequest>
+{
+    using TResponse = FPlayerEquipItemResponse;
+    static constexpr MPlayerProxyCall::EObjectProxyPlayerNode PlayerNode =
+        MPlayerProxyCall::EObjectProxyPlayerNode::Inventory;
+
+    static const char* FunctionName()
+    {
+        return "PlayerEquipItem";
+    }
+};
+
+template<>
+struct TPlayerRpcBindingTraits<FPlayerGrantExperienceRequest>
+{
+    using TResponse = FPlayerGrantExperienceResponse;
+    static constexpr MPlayerProxyCall::EObjectProxyPlayerNode PlayerNode =
+        MPlayerProxyCall::EObjectProxyPlayerNode::Progression;
+
+    static const char* FunctionName()
+    {
+        return "PlayerGrantExperience";
+    }
+};
+
+template<>
+struct TPlayerRpcBindingTraits<FPlayerModifyHealthRequest>
+{
+    using TResponse = FPlayerModifyHealthResponse;
+    static constexpr MPlayerProxyCall::EObjectProxyPlayerNode PlayerNode =
+        MPlayerProxyCall::EObjectProxyPlayerNode::Progression;
+
+    static const char* FunctionName()
+    {
+        return "PlayerModifyHealth";
+    }
+};
 }
 
 MCLASS(Type=Service)
@@ -126,6 +178,22 @@ public:
         const FPlayerQueryProgressionRequest& Request);
 
     MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerChangeGoldResponse, FAppError>> PlayerChangeGold(
+        const FPlayerChangeGoldRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerEquipItemResponse, FAppError>> PlayerEquipItem(
+        const FPlayerEquipItemRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> PlayerGrantExperience(
+        const FPlayerGrantExperienceRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> PlayerModifyHealth(
+        const FPlayerModifyHealthRequest& Request);
+
+    MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerLogoutResponse, FAppError>> PlayerLogout(const FPlayerLogoutRequest& Request);
 
     MFUNCTION(ServerCall)
@@ -146,6 +214,10 @@ private:
 
     template<typename TRequest>
     auto DispatchPlayerRequest(const TRequest& Request) const
+        -> MFuture<TResult<typename MWorldPlayerServiceDispatch::TPlayerRpcBindingTraits<TRequest>::TResponse, FAppError>>;
+
+    template<typename TRequest>
+    auto DispatchExistingPlayerRequest(const TRequest& Request, const char* ServiceFunctionName) const
         -> MFuture<TResult<typename MWorldPlayerServiceDispatch::TPlayerRpcBindingTraits<TRequest>::TResponse, FAppError>>;
 
     MPlayer* FindPlayer(uint64 PlayerId) const;
@@ -195,4 +267,34 @@ auto MWorldPlayerServiceEndpoint::DispatchPlayerRequest(const TRequest& Request)
         TBinding::PlayerNode,
         TBinding::FunctionName(),
         Request);
+}
+
+template<typename TRequest>
+auto MWorldPlayerServiceEndpoint::DispatchExistingPlayerRequest(const TRequest& Request, const char* ServiceFunctionName) const
+    -> MFuture<TResult<typename MWorldPlayerServiceDispatch::TPlayerRpcBindingTraits<TRequest>::TResponse, FAppError>>
+{
+    using TResponse = typename MWorldPlayerServiceDispatch::TPlayerRpcBindingTraits<TRequest>::TResponse;
+
+    if (Request.PlayerId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<TResponse>(
+            "player_id_required",
+            ServiceFunctionName ? ServiceFunctionName : "");
+    }
+
+    if (!OnlinePlayers)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<TResponse>(
+            "world_service_not_initialized",
+            ServiceFunctionName ? ServiceFunctionName : "");
+    }
+
+    if (!FindPlayer(Request.PlayerId))
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<TResponse>(
+            "player_not_found",
+            ServiceFunctionName ? ServiceFunctionName : "");
+    }
+
+    return DispatchPlayerRequest(Request);
 }

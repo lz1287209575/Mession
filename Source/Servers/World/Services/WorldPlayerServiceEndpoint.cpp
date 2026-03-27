@@ -449,82 +449,43 @@ MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MWorldPlayerServiceEndpo
 MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerQueryProfile(
     const FPlayerQueryProfileRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProfileResponse>(
-            "player_id_required",
-            "PlayerQueryProfile");
-    }
-
-    if (!OnlinePlayers)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProfileResponse>(
-            "world_service_not_initialized",
-            "PlayerQueryProfile");
-    }
-
-    if (!FindPlayer(Request.PlayerId))
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProfileResponse>(
-            "player_not_found",
-            "PlayerQueryProfile");
-    }
-
-    return DispatchPlayerRequest(Request);
+    return DispatchExistingPlayerRequest(Request, "PlayerQueryProfile");
 }
 
 MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerQueryInventory(
     const FPlayerQueryInventoryRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryInventoryResponse>(
-            "player_id_required",
-            "PlayerQueryInventory");
-    }
-
-    if (!OnlinePlayers)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryInventoryResponse>(
-            "world_service_not_initialized",
-            "PlayerQueryInventory");
-    }
-
-    if (!FindPlayer(Request.PlayerId))
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryInventoryResponse>(
-            "player_not_found",
-            "PlayerQueryInventory");
-    }
-
-    return DispatchPlayerRequest(Request);
+    return DispatchExistingPlayerRequest(Request, "PlayerQueryInventory");
 }
 
 MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerQueryProgression(
     const FPlayerQueryProgressionRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProgressionResponse>(
-            "player_id_required",
-            "PlayerQueryProgression");
-    }
+    return DispatchExistingPlayerRequest(Request, "PlayerQueryProgression");
+}
 
-    if (!OnlinePlayers)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProgressionResponse>(
-            "world_service_not_initialized",
-            "PlayerQueryProgression");
-    }
+MFuture<TResult<FPlayerChangeGoldResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerChangeGold(
+    const FPlayerChangeGoldRequest& Request)
+{
+    return DispatchExistingPlayerRequest(Request, "PlayerChangeGold");
+}
 
-    if (!FindPlayer(Request.PlayerId))
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProgressionResponse>(
-            "player_not_found",
-            "PlayerQueryProgression");
-    }
+MFuture<TResult<FPlayerEquipItemResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerEquipItem(
+    const FPlayerEquipItemRequest& Request)
+{
+    return DispatchExistingPlayerRequest(Request, "PlayerEquipItem");
+}
 
-    return DispatchPlayerRequest(Request);
+MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerGrantExperience(
+    const FPlayerGrantExperienceRequest& Request)
+{
+    return DispatchExistingPlayerRequest(Request, "PlayerGrantExperience");
+}
+
+MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerModifyHealth(
+    const FPlayerModifyHealthRequest& Request)
+{
+    return DispatchExistingPlayerRequest(Request, "PlayerModifyHealth");
 }
 
 MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerLogout(

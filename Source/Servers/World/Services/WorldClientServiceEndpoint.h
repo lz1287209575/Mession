@@ -33,18 +33,24 @@ public:
     MFUNCTION(ClientCall, Target=World)
     void Client_SwitchScene(FClientSwitchSceneRequest& Request, FClientSwitchSceneResponse& Response);
 
+    MFUNCTION(ClientCall, Target=World)
+    void Client_ChangeGold(FClientChangeGoldRequest& Request, FClientChangeGoldResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
+    void Client_EquipItem(FClientEquipItemRequest& Request, FClientEquipItemResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
+    void Client_GrantExperience(FClientGrantExperienceRequest& Request, FClientGrantExperienceResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
+    void Client_ModifyHealth(FClientModifyHealthRequest& Request, FClientModifyHealthResponse& Response);
+
 private:
     friend class MWorldClientFlows::FClientLoginWorkflow;
 
     MFuture<TResult<FClientLoginResponse, FAppError>> StartClientLoginFlow(
         const FClientLoginRequest& Request,
         uint64 GatewayConnectionId);
-    MFuture<TResult<FClientFindPlayerResponse, FAppError>> StartClientFindPlayerFlow(
-        const FClientFindPlayerRequest& Request);
-    MFuture<TResult<FClientLogoutResponse, FAppError>> StartClientLogoutFlow(
-        const FClientLogoutRequest& Request);
-    MFuture<TResult<FClientSwitchSceneResponse, FAppError>> StartClientSwitchSceneFlow(
-        const FClientSwitchSceneRequest& Request);
 
     MWorldPlayerServiceEndpoint* PlayerService = nullptr;
     MWorldLoginRpc* LoginRpc = nullptr;

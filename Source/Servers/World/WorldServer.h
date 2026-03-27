@@ -116,6 +116,20 @@ public:
         const FPlayerQueryProgressionRequest& Request);
 
     MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerChangeGoldResponse, FAppError>> PlayerChangeGold(const FPlayerChangeGoldRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerEquipItemResponse, FAppError>> PlayerEquipItem(const FPlayerEquipItemRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> PlayerGrantExperience(
+        const FPlayerGrantExperienceRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> PlayerModifyHealth(
+        const FPlayerModifyHealthRequest& Request);
+
+    MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerLogoutResponse, FAppError>> PlayerLogout(const FPlayerLogoutRequest& Request);
 
     MFUNCTION(ServerCall)

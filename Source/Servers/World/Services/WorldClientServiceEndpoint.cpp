@@ -25,6 +25,11 @@ struct TClientPlayerCallBindingTraits<FClientFindPlayerRequest>
         return "Client_FindPlayer";
     }
 
+    static const char* FailureCode()
+    {
+        return "player_find_failed";
+    }
+
     static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
         MWorldPlayerServiceEndpoint* PlayerService,
         const TPlayerRequest& Request)
@@ -62,6 +67,11 @@ struct TClientPlayerCallBindingTraits<FClientLogoutRequest>
         return "Client_Logout";
     }
 
+    static const char* FailureCode()
+    {
+        return "player_logout_failed";
+    }
+
     static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
         MWorldPlayerServiceEndpoint* PlayerService,
         const TPlayerRequest& Request)
@@ -97,6 +107,11 @@ struct TClientPlayerCallBindingTraits<FClientSwitchSceneRequest>
         return "Client_SwitchScene";
     }
 
+    static const char* FailureCode()
+    {
+        return "player_switch_scene_failed";
+    }
+
     static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
         MWorldPlayerServiceEndpoint* PlayerService,
         const TPlayerRequest& Request)
@@ -118,6 +133,175 @@ struct TClientPlayerCallBindingTraits<FClientSwitchSceneRequest>
         Response.bSuccess = true;
         Response.PlayerId = ResponseValue.PlayerId;
         Response.SceneId = ResponseValue.SceneId;
+        return Response;
+    }
+};
+
+template<>
+struct TClientPlayerCallBindingTraits<FClientChangeGoldRequest>
+{
+    using TClientResponse = FClientChangeGoldResponse;
+    using TPlayerRequest = FPlayerChangeGoldRequest;
+    using TPlayerResponse = FPlayerChangeGoldResponse;
+
+    static const char* ClientFunctionName()
+    {
+        return "Client_ChangeGold";
+    }
+
+    static const char* FailureCode()
+    {
+        return "player_change_gold_failed";
+    }
+
+    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
+        MWorldPlayerServiceEndpoint* PlayerService,
+        const TPlayerRequest& Request)
+    {
+        return PlayerService->PlayerChangeGold(Request);
+    }
+
+    static TPlayerRequest BuildPlayerRequest(const FClientChangeGoldRequest& Request)
+    {
+        TPlayerRequest OutRequest;
+        OutRequest.PlayerId = Request.PlayerId;
+        OutRequest.DeltaGold = Request.DeltaGold;
+        return OutRequest;
+    }
+
+    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
+    {
+        TClientResponse Response;
+        Response.bSuccess = true;
+        Response.PlayerId = ResponseValue.PlayerId;
+        Response.Gold = ResponseValue.Gold;
+        return Response;
+    }
+};
+
+template<>
+struct TClientPlayerCallBindingTraits<FClientEquipItemRequest>
+{
+    using TClientResponse = FClientEquipItemResponse;
+    using TPlayerRequest = FPlayerEquipItemRequest;
+    using TPlayerResponse = FPlayerEquipItemResponse;
+
+    static const char* ClientFunctionName()
+    {
+        return "Client_EquipItem";
+    }
+
+    static const char* FailureCode()
+    {
+        return "player_equip_item_failed";
+    }
+
+    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
+        MWorldPlayerServiceEndpoint* PlayerService,
+        const TPlayerRequest& Request)
+    {
+        return PlayerService->PlayerEquipItem(Request);
+    }
+
+    static TPlayerRequest BuildPlayerRequest(const FClientEquipItemRequest& Request)
+    {
+        TPlayerRequest OutRequest;
+        OutRequest.PlayerId = Request.PlayerId;
+        OutRequest.EquippedItem = Request.EquippedItem;
+        return OutRequest;
+    }
+
+    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
+    {
+        TClientResponse Response;
+        Response.bSuccess = true;
+        Response.PlayerId = ResponseValue.PlayerId;
+        Response.EquippedItem = ResponseValue.EquippedItem;
+        return Response;
+    }
+};
+
+template<>
+struct TClientPlayerCallBindingTraits<FClientGrantExperienceRequest>
+{
+    using TClientResponse = FClientGrantExperienceResponse;
+    using TPlayerRequest = FPlayerGrantExperienceRequest;
+    using TPlayerResponse = FPlayerGrantExperienceResponse;
+
+    static const char* ClientFunctionName()
+    {
+        return "Client_GrantExperience";
+    }
+
+    static const char* FailureCode()
+    {
+        return "player_grant_experience_failed";
+    }
+
+    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
+        MWorldPlayerServiceEndpoint* PlayerService,
+        const TPlayerRequest& Request)
+    {
+        return PlayerService->PlayerGrantExperience(Request);
+    }
+
+    static TPlayerRequest BuildPlayerRequest(const FClientGrantExperienceRequest& Request)
+    {
+        TPlayerRequest OutRequest;
+        OutRequest.PlayerId = Request.PlayerId;
+        OutRequest.ExperienceDelta = Request.ExperienceDelta;
+        return OutRequest;
+    }
+
+    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
+    {
+        TClientResponse Response;
+        Response.bSuccess = true;
+        Response.PlayerId = ResponseValue.PlayerId;
+        Response.Level = ResponseValue.Level;
+        Response.Experience = ResponseValue.Experience;
+        return Response;
+    }
+};
+
+template<>
+struct TClientPlayerCallBindingTraits<FClientModifyHealthRequest>
+{
+    using TClientResponse = FClientModifyHealthResponse;
+    using TPlayerRequest = FPlayerModifyHealthRequest;
+    using TPlayerResponse = FPlayerModifyHealthResponse;
+
+    static const char* ClientFunctionName()
+    {
+        return "Client_ModifyHealth";
+    }
+
+    static const char* FailureCode()
+    {
+        return "player_modify_health_failed";
+    }
+
+    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
+        MWorldPlayerServiceEndpoint* PlayerService,
+        const TPlayerRequest& Request)
+    {
+        return PlayerService->PlayerModifyHealth(Request);
+    }
+
+    static TPlayerRequest BuildPlayerRequest(const FClientModifyHealthRequest& Request)
+    {
+        TPlayerRequest OutRequest;
+        OutRequest.PlayerId = Request.PlayerId;
+        OutRequest.HealthDelta = Request.HealthDelta;
+        return OutRequest;
+    }
+
+    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
+    {
+        TClientResponse Response;
+        Response.bSuccess = true;
+        Response.PlayerId = ResponseValue.PlayerId;
+        Response.Health = ResponseValue.Health;
         return Response;
     }
 };
@@ -150,6 +334,31 @@ MFuture<TResult<typename TClientPlayerCallBindingTraits<TClientRequest>::TClient
         [](const typename TBinding::TPlayerResponse& ResponseValue)
         {
             return TBinding::BuildClientResponse(ResponseValue);
+        });
+}
+
+template<typename TClientRequest>
+void BeginDeferredBoundPlayerClientCall(
+    MWorldPlayerServiceEndpoint* PlayerService,
+    const TClientRequest& Request,
+    typename TClientPlayerCallBindingTraits<TClientRequest>::TClientResponse& Response)
+{
+    using TBinding = TClientPlayerCallBindingTraits<TClientRequest>;
+    using TClientResponse = typename TBinding::TClientResponse;
+
+    const SClientCallContext Context = CaptureCurrentClientCallContext();
+    if (!Context.IsValid())
+    {
+        Response.Error = "client_call_context_missing";
+        return;
+    }
+
+    (void)MClientCallAsyncSupport::StartDeferred<TClientResponse>(
+        Context,
+        StartBoundPlayerClientFlow(PlayerService, Request),
+        [](const FAppError& Error)
+        {
+            return BuildClientFailureResponse<TClientResponse>(Error, TBinding::FailureCode());
         });
 }
 
@@ -250,58 +459,47 @@ void MWorldClientServiceEndpoint::Client_Login(FClientLoginRequest& Request, FCl
 
 void MWorldClientServiceEndpoint::Client_FindPlayer(FClientFindPlayerRequest& Request, FClientFindPlayerResponse& Response)
 {
-    const SClientCallContext Context = CaptureCurrentClientCallContext();
-    if (!Context.IsValid())
-    {
-        Response.Error = "client_call_context_missing";
-        return;
-    }
-
-    (void)MClientCallAsyncSupport::StartDeferred<FClientFindPlayerResponse>(
-        Context,
-        StartClientFindPlayerFlow(Request),
-        [](const FAppError& Error)
-        {
-            return MWorldClientFlows::BuildClientFailureResponse<FClientFindPlayerResponse>(Error, "player_find_failed");
-        });
+    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
 }
 
 void MWorldClientServiceEndpoint::Client_Logout(FClientLogoutRequest& Request, FClientLogoutResponse& Response)
 {
-    const SClientCallContext Context = CaptureCurrentClientCallContext();
-    if (!Context.IsValid())
-    {
-        Response.Error = "client_call_context_missing";
-        return;
-    }
-
-    (void)MClientCallAsyncSupport::StartDeferred<FClientLogoutResponse>(
-        Context,
-        StartClientLogoutFlow(Request),
-        [](const FAppError& Error)
-        {
-            return MWorldClientFlows::BuildClientFailureResponse<FClientLogoutResponse>(Error, "player_logout_failed");
-        });
+    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
 }
 
 void MWorldClientServiceEndpoint::Client_SwitchScene(
     FClientSwitchSceneRequest& Request,
     FClientSwitchSceneResponse& Response)
 {
-    const SClientCallContext Context = CaptureCurrentClientCallContext();
-    if (!Context.IsValid())
-    {
-        Response.Error = "client_call_context_missing";
-        return;
-    }
+    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
+}
 
-    (void)MClientCallAsyncSupport::StartDeferred<FClientSwitchSceneResponse>(
-        Context,
-        StartClientSwitchSceneFlow(Request),
-        [](const FAppError& Error)
-        {
-            return MWorldClientFlows::BuildClientFailureResponse<FClientSwitchSceneResponse>(Error, "player_switch_scene_failed");
-        });
+void MWorldClientServiceEndpoint::Client_ChangeGold(
+    FClientChangeGoldRequest& Request,
+    FClientChangeGoldResponse& Response)
+{
+    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
+}
+
+void MWorldClientServiceEndpoint::Client_EquipItem(
+    FClientEquipItemRequest& Request,
+    FClientEquipItemResponse& Response)
+{
+    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
+}
+
+void MWorldClientServiceEndpoint::Client_GrantExperience(
+    FClientGrantExperienceRequest& Request,
+    FClientGrantExperienceResponse& Response)
+{
+    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
+}
+
+void MWorldClientServiceEndpoint::Client_ModifyHealth(
+    FClientModifyHealthRequest& Request,
+    FClientModifyHealthResponse& Response)
+{
+    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
 }
 
 MFuture<TResult<FClientLoginResponse, FAppError>> MWorldClientServiceEndpoint::StartClientLoginFlow(
@@ -333,22 +531,4 @@ MFuture<TResult<FClientLoginResponse, FAppError>> MWorldClientServiceEndpoint::S
         PlayerService,
         Request,
         GatewayConnectionId);
-}
-
-MFuture<TResult<FClientFindPlayerResponse, FAppError>> MWorldClientServiceEndpoint::StartClientFindPlayerFlow(
-    const FClientFindPlayerRequest& Request)
-{
-    return MWorldClientFlows::StartBoundPlayerClientFlow(PlayerService, Request);
-}
-
-MFuture<TResult<FClientLogoutResponse, FAppError>> MWorldClientServiceEndpoint::StartClientLogoutFlow(
-    const FClientLogoutRequest& Request)
-{
-    return MWorldClientFlows::StartBoundPlayerClientFlow(PlayerService, Request);
-}
-
-MFuture<TResult<FClientSwitchSceneResponse, FAppError>> MWorldClientServiceEndpoint::StartClientSwitchSceneFlow(
-    const FClientSwitchSceneRequest& Request)
-{
-    return MWorldClientFlows::StartBoundPlayerClientFlow(PlayerService, Request);
 }

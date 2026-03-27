@@ -30,4 +30,12 @@ public:
     MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> PlayerQueryProgression(
         const FPlayerQueryProgressionRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> PlayerGrantExperience(
+        const FPlayerGrantExperienceRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> PlayerModifyHealth(
+        const FPlayerModifyHealthRequest& Request);
 };

@@ -49,6 +49,20 @@ public:
     MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> PlayerQueryProgression(
         const FPlayerQueryProgressionRequest& Request);
 
+    MFUNCTION(ServerCall, Target=World)
+    MFuture<TResult<FPlayerChangeGoldResponse, FAppError>> PlayerChangeGold(const FPlayerChangeGoldRequest& Request);
+
+    MFUNCTION(ServerCall, Target=World)
+    MFuture<TResult<FPlayerEquipItemResponse, FAppError>> PlayerEquipItem(const FPlayerEquipItemRequest& Request);
+
+    MFUNCTION(ServerCall, Target=World)
+    MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> PlayerGrantExperience(
+        const FPlayerGrantExperienceRequest& Request);
+
+    MFUNCTION(ServerCall, Target=World)
+    MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> PlayerModifyHealth(
+        const FPlayerModifyHealthRequest& Request);
+
 private:
     EServerType GetTargetServerType() const override;
 };

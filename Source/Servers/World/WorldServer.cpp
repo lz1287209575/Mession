@@ -247,6 +247,58 @@ MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> MWorldServer::Playe
     return PlayerService->PlayerQueryProgression(Request);
 }
 
+MFuture<TResult<FPlayerChangeGoldResponse, FAppError>> MWorldServer::PlayerChangeGold(
+    const FPlayerChangeGoldRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerChangeGoldResponse>(
+            "world_player_service_missing",
+            "PlayerChangeGold");
+    }
+
+    return PlayerService->PlayerChangeGold(Request);
+}
+
+MFuture<TResult<FPlayerEquipItemResponse, FAppError>> MWorldServer::PlayerEquipItem(
+    const FPlayerEquipItemRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerEquipItemResponse>(
+            "world_player_service_missing",
+            "PlayerEquipItem");
+    }
+
+    return PlayerService->PlayerEquipItem(Request);
+}
+
+MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> MWorldServer::PlayerGrantExperience(
+    const FPlayerGrantExperienceRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerGrantExperienceResponse>(
+            "world_player_service_missing",
+            "PlayerGrantExperience");
+    }
+
+    return PlayerService->PlayerGrantExperience(Request);
+}
+
+MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> MWorldServer::PlayerModifyHealth(
+    const FPlayerModifyHealthRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerModifyHealthResponse>(
+            "world_player_service_missing",
+            "PlayerModifyHealth");
+    }
+
+    return PlayerService->PlayerModifyHealth(Request);
+}
+
 MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldServer::PlayerLogout(const FPlayerLogoutRequest& Request)
 {
     if (!PlayerService)
