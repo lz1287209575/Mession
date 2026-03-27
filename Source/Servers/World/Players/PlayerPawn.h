@@ -13,7 +13,7 @@ public:
 
     // Runtime world-presence state. Persistence still flows through Profile/Progression for compatibility.
     MPROPERTY(Replicated)
-    uint32 SceneId = 1;
+    uint32 SceneId = 0;
 
     MPROPERTY(Replicated)
     uint32 Health = 100;
@@ -22,7 +22,13 @@ public:
 
     void SyncFromPersistence(uint32 InSceneId, uint32 InHealth);
 
+    void Spawn(uint32 InSceneId, uint32 InHealth);
+
+    void Despawn();
+
     void SetSceneId(uint32 InSceneId);
 
     void SetHealth(uint32 InHealth);
+
+    bool IsSpawned() const;
 };

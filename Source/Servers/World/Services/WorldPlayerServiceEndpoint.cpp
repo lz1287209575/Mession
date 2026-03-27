@@ -151,15 +151,7 @@ private:
 
         FSceneEnterRequest SceneRequest;
         SceneRequest.PlayerId = Request.PlayerId;
-        SceneRequest.SceneId = 1;
-        if (MPlayerController* Controller = Player->GetController())
-        {
-            SceneRequest.SceneId = Controller->SceneId != 0 ? Controller->SceneId : 1;
-        }
-        else if (MPlayerPawn* Pawn = Player->GetPawn())
-        {
-            SceneRequest.SceneId = Pawn->SceneId != 0 ? Pawn->SceneId : 1;
-        }
+        SceneRequest.SceneId = Player->ResolveCurrentSceneId();
         Continue(Service->SceneRpc->EnterScene(SceneRequest), &FPlayerEnterWorldWorkflow::OnSceneEntered);
     }
 
@@ -176,14 +168,22 @@ private:
 
     void OnRouteUpdated(const FRouterUpsertPlayerRouteResponse&)
     {
-        MPlayer* Player = Service->FindPlayer(Request.PlayerId);
-        if (!Player)
+        FPlayerUpdateRouteRequest UpdateRouteRequest;
+        UpdateRouteRequest.PlayerId = Request.PlayerId;
+        UpdateRouteRequest.SceneId = TargetSceneId;
+        UpdateRouteRequest.TargetServerType = static_cast<uint8>(EServerType::Scene);
+        Continue(
+            Service->DispatchPlayerRequest(UpdateRouteRequest),
+            &FPlayerEnterWorldWorkflow::OnRouteApplied);
+    }
+
+    void OnRouteApplied(const FPlayerUpdateRouteResponse&)
+    {
+        if (!Service->FindPlayer(Request.PlayerId))
         {
             Fail("player_missing", "PlayerEnterWorld");
             return;
         }
-
-        Player->SetRoute(TargetSceneId, static_cast<uint8>(EServerType::Scene));
 
         FPlayerEnterWorldResponse Response;
         Response.PlayerId = Request.PlayerId;
@@ -210,7 +210,7 @@ public:
 protected:
     void OnStart() override
     {
-        MPlayer* Player = Service->FindPlayer(Request.PlayerId);
+        Player = Service->FindPlayer(Request.PlayerId);
         if (!Player)
         {
             FPlayerLogoutResponse Response;
@@ -219,20 +219,37 @@ protected:
             return;
         }
 
-        FMgoSavePlayerRequest SaveRequest;
-        SaveRequest.PlayerId = Request.PlayerId;
         if (!Service->PersistenceSubsystem)
         {
             Fail("persistence_subsystem_missing", "PlayerLogout");
             return;
         }
 
-        SaveRequest.Records = ToProtocolPersistenceRecords(
-            Service->PersistenceSubsystem->BuildRecordsForRoot(Player, false));
-        Continue(Service->MgoRpc->SavePlayer(SaveRequest), &FPlayerLogoutWorkflow::OnPlayerSaved);
+        if (Player->ResolveCurrentSceneId() != 0 && Service->SceneRpc && Service->SceneRpc->IsAvailable())
+        {
+            FSceneLeaveRequest LeaveRequest;
+            LeaveRequest.PlayerId = Request.PlayerId;
+            Continue(Service->SceneRpc->LeaveScene(LeaveRequest), &FPlayerLogoutWorkflow::OnSceneLeft);
+            return;
+        }
+
+        OnSceneLeft(FSceneLeaveResponse{Request.PlayerId});
     }
 
 private:
+    void OnSceneLeft(const FSceneLeaveResponse&)
+    {
+        if (Player)
+        {
+            Player->PrepareForLogout();
+            SaveRequest.PlayerId = Request.PlayerId;
+            SaveRequest.Records = ToProtocolPersistenceRecords(
+                Service->PersistenceSubsystem->BuildRecordsForRoot(Player, false));
+        }
+
+        Continue(Service->MgoRpc->SavePlayer(SaveRequest), &FPlayerLogoutWorkflow::OnPlayerSaved);
+    }
+
     void OnPlayerSaved(const FMgoSavePlayerResponse&)
     {
         Service->RemovePlayer(Request.PlayerId);
@@ -244,6 +261,107 @@ private:
 
     MWorldPlayerServiceEndpoint* Service = nullptr;
     FPlayerLogoutRequest Request;
+    MPlayer* Player = nullptr;
+    FMgoSavePlayerRequest SaveRequest;
+};
+
+class FPlayerSwitchSceneWorkflow final
+    : public MServerCallAsyncSupport::TServerCallWorkflow<FPlayerSwitchSceneWorkflow, FPlayerSwitchSceneResponse>
+{
+public:
+    using TResponseType = FPlayerSwitchSceneResponse;
+
+    FPlayerSwitchSceneWorkflow(MWorldPlayerServiceEndpoint* InService, FPlayerSwitchSceneRequest InRequest)
+        : Service(InService)
+        , Request(std::move(InRequest))
+    {
+    }
+
+protected:
+    void OnStart() override
+    {
+        Player = Service->FindPlayer(Request.PlayerId);
+        if (!Player)
+        {
+            Fail("player_not_found", "PlayerSwitchScene");
+            return;
+        }
+
+        CurrentSceneId = Player->ResolveCurrentSceneId();
+        TargetSceneId = Request.SceneId;
+
+        if (CurrentSceneId == TargetSceneId)
+        {
+            OnSceneEntered(FSceneEnterResponse{Request.PlayerId, TargetSceneId});
+            return;
+        }
+
+        if (CurrentSceneId != 0)
+        {
+            FSceneLeaveRequest LeaveRequest;
+            LeaveRequest.PlayerId = Request.PlayerId;
+            Continue(Service->SceneRpc->LeaveScene(LeaveRequest), &FPlayerSwitchSceneWorkflow::OnSceneLeft);
+            return;
+        }
+
+        EnterTargetScene();
+    }
+
+private:
+    void OnSceneLeft(const FSceneLeaveResponse&)
+    {
+        EnterTargetScene();
+    }
+
+    void EnterTargetScene()
+    {
+        FSceneEnterRequest SceneRequest;
+        SceneRequest.PlayerId = Request.PlayerId;
+        SceneRequest.SceneId = TargetSceneId;
+        Continue(Service->SceneRpc->EnterScene(SceneRequest), &FPlayerSwitchSceneWorkflow::OnSceneEntered);
+    }
+
+    void OnSceneEntered(const FSceneEnterResponse& SceneResponse)
+    {
+        TargetSceneId = SceneResponse.SceneId;
+
+        FRouterUpsertPlayerRouteRequest RouteRequest;
+        RouteRequest.PlayerId = Request.PlayerId;
+        RouteRequest.TargetServerType = static_cast<uint8>(EServerType::Scene);
+        RouteRequest.SceneId = TargetSceneId;
+        Continue(Service->RouterRpc->UpsertPlayerRoute(RouteRequest), &FPlayerSwitchSceneWorkflow::OnRouteUpdated);
+    }
+
+    void OnRouteUpdated(const FRouterUpsertPlayerRouteResponse&)
+    {
+        FPlayerUpdateRouteRequest UpdateRouteRequest;
+        UpdateRouteRequest.PlayerId = Request.PlayerId;
+        UpdateRouteRequest.SceneId = TargetSceneId;
+        UpdateRouteRequest.TargetServerType = static_cast<uint8>(EServerType::Scene);
+        Continue(
+            Service->DispatchPlayerRequest(UpdateRouteRequest),
+            &FPlayerSwitchSceneWorkflow::OnRouteApplied);
+    }
+
+    void OnRouteApplied(const FPlayerUpdateRouteResponse&)
+    {
+        if (!Player)
+        {
+            Fail("player_missing", "PlayerSwitchScene");
+            return;
+        }
+
+        FPlayerSwitchSceneResponse Response;
+        Response.PlayerId = Request.PlayerId;
+        Response.SceneId = TargetSceneId;
+        Succeed(std::move(Response));
+    }
+
+    MWorldPlayerServiceEndpoint* Service = nullptr;
+    FPlayerSwitchSceneRequest Request;
+    MPlayer* Player = nullptr;
+    uint32 CurrentSceneId = 0;
+    uint32 TargetSceneId = 0;
 };
 }
 
@@ -319,34 +437,94 @@ MFuture<TResult<FPlayerFindResponse, FAppError>> MWorldPlayerServiceEndpoint::Pl
         return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
     }
 
-    FPlayerQueryStateRequest QueryRequest;
-    return MServerCallAsyncSupport::Map(
-        DispatchPlayerCall<FPlayerQueryStateResponse>(Request.PlayerId, "PlayerFind", "QueryStateCall", QueryRequest),
-        [](const FPlayerQueryStateResponse& PlayerState)
-        {
-            FPlayerFindResponse Response;
-            Response.bFound = true;
-            Response.PlayerId = PlayerState.PlayerId;
-            Response.GatewayConnectionId = PlayerState.GatewayConnectionId;
-            Response.SceneId = PlayerState.SceneId;
-            return Response;
-        });
+    return DispatchPlayerRequest(Request);
 }
 
 MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerUpdateRoute(
     const FPlayerUpdateRouteRequest& Request)
 {
-    FPlayerApplyRouteRequest ApplyRequest;
-    ApplyRequest.SceneId = Request.SceneId;
-    ApplyRequest.TargetServerType = Request.TargetServerType;
-    return MServerCallAsyncSupport::Map(
-        DispatchPlayerCall<FPlayerApplyRouteResponse>(Request.PlayerId, "PlayerUpdateRoute", "ApplyRouteCall", ApplyRequest),
-        [](const FPlayerApplyRouteResponse& ApplyValue)
-        {
-            FPlayerUpdateRouteResponse Response;
-            Response.PlayerId = ApplyValue.PlayerId;
-            return Response;
-        });
+    return DispatchPlayerRequest(Request);
+}
+
+MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerQueryProfile(
+    const FPlayerQueryProfileRequest& Request)
+{
+    if (Request.PlayerId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProfileResponse>(
+            "player_id_required",
+            "PlayerQueryProfile");
+    }
+
+    if (!OnlinePlayers)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProfileResponse>(
+            "world_service_not_initialized",
+            "PlayerQueryProfile");
+    }
+
+    if (!FindPlayer(Request.PlayerId))
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProfileResponse>(
+            "player_not_found",
+            "PlayerQueryProfile");
+    }
+
+    return DispatchPlayerRequest(Request);
+}
+
+MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerQueryInventory(
+    const FPlayerQueryInventoryRequest& Request)
+{
+    if (Request.PlayerId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryInventoryResponse>(
+            "player_id_required",
+            "PlayerQueryInventory");
+    }
+
+    if (!OnlinePlayers)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryInventoryResponse>(
+            "world_service_not_initialized",
+            "PlayerQueryInventory");
+    }
+
+    if (!FindPlayer(Request.PlayerId))
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryInventoryResponse>(
+            "player_not_found",
+            "PlayerQueryInventory");
+    }
+
+    return DispatchPlayerRequest(Request);
+}
+
+MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerQueryProgression(
+    const FPlayerQueryProgressionRequest& Request)
+{
+    if (Request.PlayerId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProgressionResponse>(
+            "player_id_required",
+            "PlayerQueryProgression");
+    }
+
+    if (!OnlinePlayers)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProgressionResponse>(
+            "world_service_not_initialized",
+            "PlayerQueryProgression");
+    }
+
+    if (!FindPlayer(Request.PlayerId))
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProgressionResponse>(
+            "player_not_found",
+            "PlayerQueryProgression");
+    }
+
+    return DispatchPlayerRequest(Request);
 }
 
 MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerLogout(
@@ -380,18 +558,32 @@ MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldPlayerServiceEndpoint::
 MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> MWorldPlayerServiceEndpoint::PlayerSwitchScene(
     const FPlayerSwitchSceneRequest& Request)
 {
-    FPlayerApplyRouteRequest ApplyRequest;
-    ApplyRequest.SceneId = Request.SceneId;
-    ApplyRequest.TargetServerType = static_cast<uint8>(EServerType::Scene);
-    return MServerCallAsyncSupport::Map(
-        DispatchPlayerCall<FPlayerApplyRouteResponse>(Request.PlayerId, "PlayerSwitchScene", "ApplyRouteCall", ApplyRequest),
-        [](const FPlayerApplyRouteResponse& ApplyValue)
-        {
-            FPlayerSwitchSceneResponse Response;
-            Response.PlayerId = ApplyValue.PlayerId;
-            Response.SceneId = ApplyValue.SceneId;
-            return Response;
-        });
+    if (Request.PlayerId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("player_id_required", "PlayerSwitchScene");
+    }
+
+    if (Request.SceneId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("scene_id_required", "PlayerSwitchScene");
+    }
+
+    if (!OnlinePlayers)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("world_service_not_initialized", "PlayerSwitchScene");
+    }
+
+    if (!SceneRpc || !SceneRpc->IsAvailable())
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("scene_server_unavailable", "PlayerSwitchScene");
+    }
+
+    if (!RouterRpc || !RouterRpc->IsAvailable())
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("router_server_unavailable", "PlayerSwitchScene");
+    }
+
+    return MServerCallAsyncSupport::StartWorkflow<MWorldPlayerServiceFlows::FPlayerSwitchSceneWorkflow>(this, Request);
 }
 
 MPlayer* MWorldPlayerServiceEndpoint::FindPlayer(uint64 PlayerId) const

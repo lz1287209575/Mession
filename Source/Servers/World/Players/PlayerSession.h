@@ -21,4 +21,6 @@ public:
     uint32 SessionKey = 0;
 
     void InitializeForLogin(uint64 InPlayerId, uint64 InGatewayConnectionId, uint32 InSessionKey);
+
+    void ClearRuntimeState();
 };

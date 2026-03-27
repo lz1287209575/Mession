@@ -23,25 +23,14 @@ void MPlayer::InitializeForLogin(uint64 InPlayerId, uint64 InGatewayConnectionId
         Profile->InitializeForPlayer(PlayerId, Profile->CurrentSceneId);
     }
 
-    uint32 InitialSceneId = 1;
-    uint32 InitialHealth = 100;
-    if (Profile)
-    {
-        InitialSceneId = Profile->CurrentSceneId != 0 ? Profile->CurrentSceneId : 1;
-        if (MPlayerProgression* Progression = Profile->GetProgression())
-        {
-            InitialHealth = Progression->Health;
-        }
-    }
-
     if (Controller)
     {
-        Controller->InitializeForLogin(InitialSceneId);
+        Controller->InitializeForLogin(ResolveCurrentSceneId());
     }
 
     if (Pawn)
     {
-        Pawn->InitializeForLogin(InitialSceneId, InitialHealth);
+        Pawn->InitializeForLogin(0, ResolveCurrentHealth());
     }
 }
 
@@ -54,10 +43,17 @@ void MPlayer::SetRoute(uint32 InSceneId, uint8 InTargetServerType)
 
     if (Pawn)
     {
-        Pawn->SetSceneId(InSceneId);
+        if (InTargetServerType == static_cast<uint8>(EServerType::Scene) && InSceneId != 0)
+        {
+            Pawn->Spawn(InSceneId, ResolveCurrentHealth());
+        }
+        else
+        {
+            Pawn->Despawn();
+        }
     }
 
-    if (Profile)
+    if (Profile && InSceneId != 0)
     {
         Profile->SetCurrentSceneId(InSceneId);
     }
@@ -67,71 +63,97 @@ void MPlayer::FinalizeLoadedState()
 {
     if (Profile)
     {
-        PlayerId = Profile->PlayerId != 0 ? Profile->PlayerId : PlayerId;
-    }
-
-    uint32 ResolvedSceneId = 1;
-    if (Controller && Controller->SceneId != 0)
-    {
-        ResolvedSceneId = Controller->SceneId;
-    }
-    else if (Profile && Profile->CurrentSceneId != 0)
-    {
-        ResolvedSceneId = Profile->CurrentSceneId;
-    }
-
-    uint32 ResolvedHealth = 100;
-    if (Profile)
-    {
-        if (MPlayerProgression* Progression = Profile->GetProgression())
+        if (Profile->PlayerId != 0)
         {
-            ResolvedHealth = Progression->Health;
+            PlayerId = Profile->PlayerId;
+        }
+        else if (PlayerId != 0)
+        {
+            Profile->InitializeForPlayer(PlayerId, Profile->CurrentSceneId);
         }
     }
 
-    if (Controller && Profile)
+    const uint32 ResolvedSceneId = ResolveCurrentSceneId();
+    const uint32 ResolvedHealth = ResolveCurrentHealth();
+
+    if (Controller && Controller->SceneId == 0)
     {
-        if (Controller->SceneId == 0)
-        {
-            Controller->SceneId = ResolvedSceneId;
-        }
+        Controller->InitializeForLogin(ResolvedSceneId);
+    }
 
-        if (Profile->CurrentSceneId == 0)
-        {
-            Profile->CurrentSceneId = ResolvedSceneId;
-        }
-
-        if (Controller->TargetServerType == static_cast<uint8>(EServerType::World))
-        {
-            Controller->TargetServerType = static_cast<uint8>(EServerType::Scene);
-        }
+    if (Profile && Profile->CurrentSceneId == 0)
+    {
+        Profile->SetCurrentSceneId(ResolvedSceneId);
     }
 
     if (Pawn)
     {
-        Pawn->SyncFromPersistence(ResolvedSceneId, ResolvedHealth);
+        Pawn->SyncFromPersistence(0, ResolvedHealth);
     }
 }
 
-MFuture<TResult<FPlayerApplyRouteResponse, FAppError>> MPlayer::ApplyRouteCall(const FPlayerApplyRouteRequest& Request)
+uint32 MPlayer::ResolveCurrentSceneId() const
 {
-    if (Request.SceneId == 0)
+    if (Pawn && Pawn->IsSpawned() && Pawn->SceneId != 0)
     {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerApplyRouteResponse>("scene_id_required", "ApplyRouteCall");
+        return Pawn->SceneId;
     }
 
-    SetRoute(Request.SceneId, Request.TargetServerType);
+    if (Controller && Controller->SceneId != 0)
+    {
+        return Controller->SceneId;
+    }
 
-    FPlayerApplyRouteResponse Response;
-    Response.PlayerId = PlayerId;
-    Response.SceneId = Request.SceneId;
-    Response.TargetServerType = Request.TargetServerType;
-    return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
+    if (Profile)
+    {
+        return Profile->ResolveCurrentSceneId();
+    }
+
+    return 1;
 }
 
-MFuture<TResult<FPlayerQueryStateResponse, FAppError>> MPlayer::QueryStateCall(const FPlayerQueryStateRequest& /*Request*/)
+uint32 MPlayer::ResolveCurrentHealth() const
 {
-    FPlayerQueryStateResponse Response;
+    if (Pawn && Pawn->Health != 0)
+    {
+        return Pawn->Health;
+    }
+
+    if (Profile)
+    {
+        return Profile->ResolveCurrentHealth();
+    }
+
+    return 100;
+}
+
+void MPlayer::SyncRuntimeStateToProfile()
+{
+    if (Profile)
+    {
+        Profile->SyncRuntimeState(ResolveCurrentSceneId(), ResolveCurrentHealth());
+    }
+}
+
+void MPlayer::PrepareForLogout()
+{
+    SyncRuntimeStateToProfile();
+
+    if (Pawn)
+    {
+        Pawn->Despawn();
+    }
+
+    if (Session)
+    {
+        Session->ClearRuntimeState();
+    }
+}
+
+MFuture<TResult<FPlayerFindResponse, FAppError>> MPlayer::PlayerFind(const FPlayerFindRequest& /*Request*/)
+{
+    FPlayerFindResponse Response;
+    Response.bFound = true;
     Response.PlayerId = PlayerId;
 
     if (Session)
@@ -139,19 +161,7 @@ MFuture<TResult<FPlayerQueryStateResponse, FAppError>> MPlayer::QueryStateCall(c
         Response.GatewayConnectionId = Session->GatewayConnectionId;
     }
 
-    if (Controller && Controller->SceneId != 0)
-    {
-        Response.SceneId = Controller->SceneId;
-    }
-    else if (Pawn && Pawn->SceneId != 0)
-    {
-        Response.SceneId = Pawn->SceneId;
-    }
-    else if (Profile)
-    {
-        Response.SceneId = Profile->CurrentSceneId;
-    }
-
+    Response.SceneId = ResolveCurrentSceneId();
     return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
 }
 

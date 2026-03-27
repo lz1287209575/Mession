@@ -13,3 +13,11 @@ void MPlayerSession::InitializeForLogin(uint64 InPlayerId, uint64 InGatewayConne
     MarkPropertyDirty("GatewayConnectionId");
     MarkPropertyDirty("SessionKey");
 }
+
+void MPlayerSession::ClearRuntimeState()
+{
+    GatewayConnectionId = 0;
+    SessionKey = 0;
+    MarkPropertyDirty("GatewayConnectionId");
+    MarkPropertyDirty("SessionKey");
+}

@@ -139,3 +139,78 @@ struct FPlayerQueryStateResponse
     MPROPERTY()
     uint32 SceneId = 0;
 };
+
+MSTRUCT()
+struct FPlayerQueryProfileRequest
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+};
+
+MSTRUCT()
+struct FPlayerQueryProfileResponse
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint32 CurrentSceneId = 0;
+
+    MPROPERTY()
+    uint32 Gold = 0;
+
+    MPROPERTY()
+    MString EquippedItem;
+
+    MPROPERTY()
+    uint32 Level = 0;
+
+    MPROPERTY()
+    uint32 Experience = 0;
+
+    MPROPERTY()
+    uint32 Health = 0;
+};
+
+MSTRUCT()
+struct FPlayerQueryInventoryRequest
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+};
+
+MSTRUCT()
+struct FPlayerQueryInventoryResponse
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint32 Gold = 0;
+
+    MPROPERTY()
+    MString EquippedItem;
+};
+
+MSTRUCT()
+struct FPlayerQueryProgressionRequest
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+};
+
+MSTRUCT()
+struct FPlayerQueryProgressionResponse
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint32 Level = 0;
+
+    MPROPERTY()
+    uint32 Experience = 0;
+
+    MPROPERTY()
+    uint32 Health = 0;
+};

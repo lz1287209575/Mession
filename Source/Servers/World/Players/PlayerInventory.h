@@ -1,6 +1,9 @@
 #pragma once
 
+#include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Protocol/Messages/World/WorldPlayerMessages.h"
+#include "Servers/App/ServerCallAsyncSupport.h"
 
 MCLASS(Type=Object)
 class MPlayerInventory : public MObject
@@ -17,4 +20,8 @@ public:
     void SetState(uint32 InGold, const MString& InEquippedItem);
 
     void LoadState(uint32 InGold, const MString& InEquippedItem);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> PlayerQueryInventory(
+        const FPlayerQueryInventoryRequest& Request);
 };

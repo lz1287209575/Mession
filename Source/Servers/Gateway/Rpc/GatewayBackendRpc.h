@@ -39,6 +39,16 @@ public:
     MFUNCTION(ServerCall, Target=World)
     MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> PlayerUpdateRoute(const FPlayerUpdateRouteRequest& Request);
 
+    MFUNCTION(ServerCall, Target=World)
+    MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> PlayerQueryProfile(const FPlayerQueryProfileRequest& Request);
+
+    MFUNCTION(ServerCall, Target=World)
+    MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> PlayerQueryInventory(const FPlayerQueryInventoryRequest& Request);
+
+    MFUNCTION(ServerCall, Target=World)
+    MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> PlayerQueryProgression(
+        const FPlayerQueryProgressionRequest& Request);
+
 private:
     EServerType GetTargetServerType() const override;
 };

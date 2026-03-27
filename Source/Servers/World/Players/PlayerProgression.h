@@ -1,6 +1,9 @@
 #pragma once
 
+#include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Protocol/Messages/World/WorldPlayerMessages.h"
+#include "Servers/App/ServerCallAsyncSupport.h"
 
 MCLASS(Type=Object)
 class MPlayerProgression : public MObject
@@ -20,5 +23,11 @@ public:
 
     void SetState(uint32 InLevel, uint32 InExperience, uint32 InHealth);
 
+    void SetHealth(uint32 InHealth);
+
     void LoadState(uint32 InLevel, uint32 InExperience, uint32 InHealth);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> PlayerQueryProgression(
+        const FPlayerQueryProgressionRequest& Request);
 };

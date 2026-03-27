@@ -10,6 +10,149 @@ TResponse BuildClientFailureResponse(const FAppError& Error, const char* Fallbac
     return Failed;
 }
 
+template<typename TClientRequest>
+struct TClientPlayerCallBindingTraits;
+
+template<>
+struct TClientPlayerCallBindingTraits<FClientFindPlayerRequest>
+{
+    using TClientResponse = FClientFindPlayerResponse;
+    using TPlayerRequest = FPlayerFindRequest;
+    using TPlayerResponse = FPlayerFindResponse;
+
+    static const char* ClientFunctionName()
+    {
+        return "Client_FindPlayer";
+    }
+
+    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
+        MWorldPlayerServiceEndpoint* PlayerService,
+        const TPlayerRequest& Request)
+    {
+        return PlayerService->PlayerFind(Request);
+    }
+
+    static TPlayerRequest BuildPlayerRequest(const FClientFindPlayerRequest& Request)
+    {
+        TPlayerRequest OutRequest;
+        OutRequest.PlayerId = Request.PlayerId;
+        return OutRequest;
+    }
+
+    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
+    {
+        TClientResponse Response;
+        Response.bFound = ResponseValue.bFound;
+        Response.PlayerId = ResponseValue.PlayerId;
+        Response.GatewayConnectionId = ResponseValue.GatewayConnectionId;
+        Response.SceneId = ResponseValue.SceneId;
+        return Response;
+    }
+};
+
+template<>
+struct TClientPlayerCallBindingTraits<FClientLogoutRequest>
+{
+    using TClientResponse = FClientLogoutResponse;
+    using TPlayerRequest = FPlayerLogoutRequest;
+    using TPlayerResponse = FPlayerLogoutResponse;
+
+    static const char* ClientFunctionName()
+    {
+        return "Client_Logout";
+    }
+
+    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
+        MWorldPlayerServiceEndpoint* PlayerService,
+        const TPlayerRequest& Request)
+    {
+        return PlayerService->PlayerLogout(Request);
+    }
+
+    static TPlayerRequest BuildPlayerRequest(const FClientLogoutRequest& Request)
+    {
+        TPlayerRequest OutRequest;
+        OutRequest.PlayerId = Request.PlayerId;
+        return OutRequest;
+    }
+
+    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
+    {
+        TClientResponse Response;
+        Response.bSuccess = true;
+        Response.PlayerId = ResponseValue.PlayerId;
+        return Response;
+    }
+};
+
+template<>
+struct TClientPlayerCallBindingTraits<FClientSwitchSceneRequest>
+{
+    using TClientResponse = FClientSwitchSceneResponse;
+    using TPlayerRequest = FPlayerSwitchSceneRequest;
+    using TPlayerResponse = FPlayerSwitchSceneResponse;
+
+    static const char* ClientFunctionName()
+    {
+        return "Client_SwitchScene";
+    }
+
+    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
+        MWorldPlayerServiceEndpoint* PlayerService,
+        const TPlayerRequest& Request)
+    {
+        return PlayerService->PlayerSwitchScene(Request);
+    }
+
+    static TPlayerRequest BuildPlayerRequest(const FClientSwitchSceneRequest& Request)
+    {
+        TPlayerRequest OutRequest;
+        OutRequest.PlayerId = Request.PlayerId;
+        OutRequest.SceneId = Request.SceneId;
+        return OutRequest;
+    }
+
+    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
+    {
+        TClientResponse Response;
+        Response.bSuccess = true;
+        Response.PlayerId = ResponseValue.PlayerId;
+        Response.SceneId = ResponseValue.SceneId;
+        return Response;
+    }
+};
+
+template<typename TClientRequest>
+MFuture<TResult<typename TClientPlayerCallBindingTraits<TClientRequest>::TClientResponse, FAppError>> StartBoundPlayerClientFlow(
+    MWorldPlayerServiceEndpoint* PlayerService,
+    const TClientRequest& Request)
+{
+    using TBinding = TClientPlayerCallBindingTraits<TClientRequest>;
+    using TClientResponse = typename TBinding::TClientResponse;
+
+    if (Request.PlayerId == 0)
+    {
+        return MClientCallAsyncSupport::MakeErrorFuture<TClientResponse>(
+            "player_id_required",
+            TBinding::ClientFunctionName());
+    }
+
+    if (!PlayerService)
+    {
+        return MClientCallAsyncSupport::MakeErrorFuture<TClientResponse>(
+            "world_player_service_missing",
+            TBinding::ClientFunctionName());
+    }
+
+    const typename TBinding::TPlayerRequest PlayerRequest = TBinding::BuildPlayerRequest(Request);
+    return MClientCallAsyncSupport::Map(
+        TBinding::Invoke(PlayerService, PlayerRequest),
+        [](const typename TBinding::TPlayerResponse& ResponseValue)
+        {
+            return TBinding::BuildClientResponse(ResponseValue);
+        });
+}
+
 class FClientLoginWorkflow final
     : public MClientCallAsyncSupport::TClientCallWorkflow<FClientLoginWorkflow, FClientLoginResponse>
 {
@@ -195,81 +338,17 @@ MFuture<TResult<FClientLoginResponse, FAppError>> MWorldClientServiceEndpoint::S
 MFuture<TResult<FClientFindPlayerResponse, FAppError>> MWorldClientServiceEndpoint::StartClientFindPlayerFlow(
     const FClientFindPlayerRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MClientCallAsyncSupport::MakeErrorFuture<FClientFindPlayerResponse>("player_id_required", "Client_FindPlayer");
-    }
-
-    if (!PlayerService)
-    {
-        return MClientCallAsyncSupport::MakeErrorFuture<FClientFindPlayerResponse>("world_player_service_missing", "Client_FindPlayer");
-    }
-
-    FPlayerFindRequest FindRequest;
-    FindRequest.PlayerId = Request.PlayerId;
-    return MClientCallAsyncSupport::Map(
-        PlayerService->PlayerFind(FindRequest),
-        [](const FPlayerFindResponse& FindValue)
-        {
-            FClientFindPlayerResponse Response;
-            Response.bFound = FindValue.bFound;
-            Response.PlayerId = FindValue.PlayerId;
-            Response.GatewayConnectionId = FindValue.GatewayConnectionId;
-            Response.SceneId = FindValue.SceneId;
-            return Response;
-        });
+    return MWorldClientFlows::StartBoundPlayerClientFlow(PlayerService, Request);
 }
 
 MFuture<TResult<FClientLogoutResponse, FAppError>> MWorldClientServiceEndpoint::StartClientLogoutFlow(
     const FClientLogoutRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MClientCallAsyncSupport::MakeErrorFuture<FClientLogoutResponse>("player_id_required", "Client_Logout");
-    }
-
-    if (!PlayerService)
-    {
-        return MClientCallAsyncSupport::MakeErrorFuture<FClientLogoutResponse>("world_player_service_missing", "Client_Logout");
-    }
-
-    FPlayerLogoutRequest LogoutRequest;
-    LogoutRequest.PlayerId = Request.PlayerId;
-    return MClientCallAsyncSupport::Map(
-        PlayerService->PlayerLogout(LogoutRequest),
-        [](const FPlayerLogoutResponse& LogoutValue)
-        {
-            FClientLogoutResponse Response;
-            Response.bSuccess = true;
-            Response.PlayerId = LogoutValue.PlayerId;
-            return Response;
-        });
+    return MWorldClientFlows::StartBoundPlayerClientFlow(PlayerService, Request);
 }
 
 MFuture<TResult<FClientSwitchSceneResponse, FAppError>> MWorldClientServiceEndpoint::StartClientSwitchSceneFlow(
     const FClientSwitchSceneRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MClientCallAsyncSupport::MakeErrorFuture<FClientSwitchSceneResponse>("player_id_required", "Client_SwitchScene");
-    }
-
-    if (!PlayerService)
-    {
-        return MClientCallAsyncSupport::MakeErrorFuture<FClientSwitchSceneResponse>("world_player_service_missing", "Client_SwitchScene");
-    }
-
-    FPlayerSwitchSceneRequest SwitchRequest;
-    SwitchRequest.PlayerId = Request.PlayerId;
-    SwitchRequest.SceneId = Request.SceneId;
-    return MClientCallAsyncSupport::Map(
-        PlayerService->PlayerSwitchScene(SwitchRequest),
-        [](const FPlayerSwitchSceneResponse& SwitchValue)
-        {
-            FClientSwitchSceneResponse Response;
-            Response.bSuccess = true;
-            Response.PlayerId = SwitchValue.PlayerId;
-            Response.SceneId = SwitchValue.SceneId;
-            return Response;
-        });
+    return MWorldClientFlows::StartBoundPlayerClientFlow(PlayerService, Request);
 }

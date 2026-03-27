@@ -50,8 +50,8 @@ Mession 当前的目标是把游戏服务端项目收敛为一套可持续演进
   指向其他服务器的强类型 RPC 包装。
 - `Services/*Endpoint*`
   编排业务流程，不直接承担底层网络细节。
-- `Domain/*`
-  领域对象与对象树，仅在确有状态归属时出现。
+- `Players/*`
+  玩家对象树与玩家主状态归属。
 
 ## 当前服务职责
 
@@ -70,7 +70,7 @@ Mession 当前的目标是把游戏服务端项目收敛为一套可持续演进
 
 ### World
 
-- 持有 `MPlayerSession` 及其子对象树
+- 持有 `MPlayer` 及其子对象树
 - 负责玩家进入世界、查找、切场、登出
 - 对接 `Login / Scene / Router / Mgo`
 - 负责将对象脏状态送入持久化子系统
@@ -96,8 +96,8 @@ Mession 当前的目标是把游戏服务端项目收敛为一套可持续演进
 
 当前工程不再把“玩家状态、复制数据、持久化数据”拆成三套彼此独立的结构，而是统一为对象树：
 
-- 根对象示例：`MPlayerSession`
-- 子对象示例：`MPlayerAvatar`、`MInventoryComponent`、`MAttributeComponent`
+- 根对象示例：`MPlayer`
+- 子对象示例：`MPlayerSession`、`MPlayerController`、`MPlayerPawn`、`MPlayerProfile`
 - 属性通过 `MPROPERTY(...)` 声明领域含义
 
 典型标记：

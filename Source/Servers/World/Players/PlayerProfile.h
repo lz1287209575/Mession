@@ -2,6 +2,8 @@
 
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Protocol/Messages/World/WorldPlayerMessages.h"
+#include "Servers/App/ServerCallAsyncSupport.h"
 #include "Servers/World/Players/PlayerInventory.h"
 #include "Servers/World/Players/PlayerProgression.h"
 
@@ -24,6 +26,12 @@ public:
 
     void SetCurrentSceneId(uint32 InCurrentSceneId);
 
+    uint32 ResolveCurrentSceneId() const;
+
+    uint32 ResolveCurrentHealth() const;
+
+    void SyncRuntimeState(uint32 InCurrentSceneId, uint32 InHealth);
+
     void LoadPersistenceState(
         uint32 InCurrentSceneId,
         uint32 InGold,
@@ -31,6 +39,10 @@ public:
         uint32 InLevel,
         uint32 InExperience,
         uint32 InHealth);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> PlayerQueryProfile(
+        const FPlayerQueryProfileRequest& Request);
 
     MPlayerInventory* GetInventory() const;
 

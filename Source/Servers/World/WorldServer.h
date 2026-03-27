@@ -106,6 +106,16 @@ public:
     MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> PlayerUpdateRoute(const FPlayerUpdateRouteRequest& Request);
 
     MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> PlayerQueryProfile(const FPlayerQueryProfileRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> PlayerQueryInventory(const FPlayerQueryInventoryRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> PlayerQueryProgression(
+        const FPlayerQueryProgressionRequest& Request);
+
+    MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerLogoutResponse, FAppError>> PlayerLogout(const FPlayerLogoutRequest& Request);
 
     MFUNCTION(ServerCall)

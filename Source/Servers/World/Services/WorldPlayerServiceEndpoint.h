@@ -11,12 +11,85 @@
 #include "Servers/App/ObjectProxyCall.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
 #include "Servers/World/Players/Player.h"
+#include "Servers/World/Players/PlayerProxyCall.h"
 #include "Servers/World/Rpc/WorldBackendRpc.h"
 
 namespace MWorldPlayerServiceFlows
 {
 class FPlayerEnterWorldWorkflow;
 class FPlayerLogoutWorkflow;
+class FPlayerSwitchSceneWorkflow;
+}
+
+namespace MWorldPlayerServiceDispatch
+{
+template<typename TRequest>
+struct TPlayerRpcBindingTraits;
+
+template<>
+struct TPlayerRpcBindingTraits<FPlayerFindRequest>
+{
+    using TResponse = FPlayerFindResponse;
+    static constexpr MPlayerProxyCall::EObjectProxyPlayerNode PlayerNode =
+        MPlayerProxyCall::EObjectProxyPlayerNode::Root;
+
+    static const char* FunctionName()
+    {
+        return "PlayerFind";
+    }
+};
+
+template<>
+struct TPlayerRpcBindingTraits<FPlayerUpdateRouteRequest>
+{
+    using TResponse = FPlayerUpdateRouteResponse;
+    static constexpr MPlayerProxyCall::EObjectProxyPlayerNode PlayerNode =
+        MPlayerProxyCall::EObjectProxyPlayerNode::Controller;
+
+    static const char* FunctionName()
+    {
+        return "PlayerUpdateRoute";
+    }
+};
+
+template<>
+struct TPlayerRpcBindingTraits<FPlayerQueryProfileRequest>
+{
+    using TResponse = FPlayerQueryProfileResponse;
+    static constexpr MPlayerProxyCall::EObjectProxyPlayerNode PlayerNode =
+        MPlayerProxyCall::EObjectProxyPlayerNode::Profile;
+
+    static const char* FunctionName()
+    {
+        return "PlayerQueryProfile";
+    }
+};
+
+template<>
+struct TPlayerRpcBindingTraits<FPlayerQueryInventoryRequest>
+{
+    using TResponse = FPlayerQueryInventoryResponse;
+    static constexpr MPlayerProxyCall::EObjectProxyPlayerNode PlayerNode =
+        MPlayerProxyCall::EObjectProxyPlayerNode::Inventory;
+
+    static const char* FunctionName()
+    {
+        return "PlayerQueryInventory";
+    }
+};
+
+template<>
+struct TPlayerRpcBindingTraits<FPlayerQueryProgressionRequest>
+{
+    using TResponse = FPlayerQueryProgressionResponse;
+    static constexpr MPlayerProxyCall::EObjectProxyPlayerNode PlayerNode =
+        MPlayerProxyCall::EObjectProxyPlayerNode::Progression;
+
+    static const char* FunctionName()
+    {
+        return "PlayerQueryProgression";
+    }
+};
 }
 
 MCLASS(Type=Service)
@@ -43,6 +116,16 @@ public:
     MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> PlayerUpdateRoute(const FPlayerUpdateRouteRequest& Request);
 
     MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> PlayerQueryProfile(const FPlayerQueryProfileRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> PlayerQueryInventory(const FPlayerQueryInventoryRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> PlayerQueryProgression(
+        const FPlayerQueryProgressionRequest& Request);
+
+    MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerLogoutResponse, FAppError>> PlayerLogout(const FPlayerLogoutRequest& Request);
 
     MFUNCTION(ServerCall)
@@ -51,13 +134,19 @@ public:
 private:
     friend class MWorldPlayerServiceFlows::FPlayerEnterWorldWorkflow;
     friend class MWorldPlayerServiceFlows::FPlayerLogoutWorkflow;
+    friend class MWorldPlayerServiceFlows::FPlayerSwitchSceneWorkflow;
 
     template<typename TResponse, typename TRequest>
     MFuture<TResult<TResponse, FAppError>> DispatchPlayerCall(
         uint64 PlayerId,
         const char* ServiceFunctionName,
+        MPlayerProxyCall::EObjectProxyPlayerNode PlayerNode,
         const char* PlayerFunctionName,
         const TRequest& Request) const;
+
+    template<typename TRequest>
+    auto DispatchPlayerRequest(const TRequest& Request) const
+        -> MFuture<TResult<typename MWorldPlayerServiceDispatch::TPlayerRpcBindingTraits<TRequest>::TResponse, FAppError>>;
 
     MPlayer* FindPlayer(uint64 PlayerId) const;
     MPlayer* FindOrCreatePlayer(uint64 PlayerId);
@@ -75,6 +164,7 @@ template<typename TResponse, typename TRequest>
 MFuture<TResult<TResponse, FAppError>> MWorldPlayerServiceEndpoint::DispatchPlayerCall(
     uint64 PlayerId,
     const char* ServiceFunctionName,
+    MPlayerProxyCall::EObjectProxyPlayerNode PlayerNode,
     const char* PlayerFunctionName,
     const TRequest& Request) const
 {
@@ -90,9 +180,19 @@ MFuture<TResult<TResponse, FAppError>> MWorldPlayerServiceEndpoint::DispatchPlay
             ServiceFunctionName ? ServiceFunctionName : "");
     }
 
-    FObjectProxyTarget Target;
-    Target.RootType = EObjectProxyRootType::Player;
-    Target.RootId = PlayerId;
-    Target.TargetServerType = EServerType::World;
-    return MObjectProxyCall::Call<TResponse>(Target, PlayerFunctionName, Request, const_cast<MWorldPlayerServiceEndpoint*>(this));
+    return MPlayerProxyCall::Bind(PlayerId, const_cast<MWorldPlayerServiceEndpoint*>(this), PlayerNode)
+        .Call<TResponse>(PlayerFunctionName, Request);
+}
+
+template<typename TRequest>
+auto MWorldPlayerServiceEndpoint::DispatchPlayerRequest(const TRequest& Request) const
+    -> MFuture<TResult<typename MWorldPlayerServiceDispatch::TPlayerRpcBindingTraits<TRequest>::TResponse, FAppError>>
+{
+    using TBinding = MWorldPlayerServiceDispatch::TPlayerRpcBindingTraits<TRequest>;
+    return DispatchPlayerCall<typename TBinding::TResponse>(
+        Request.PlayerId,
+        TBinding::FunctionName(),
+        TBinding::PlayerNode,
+        TBinding::FunctionName(),
+        Request);
 }

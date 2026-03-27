@@ -6,27 +6,33 @@
 
 ## 当前玩家对象树
 
-玩家主状态以 `MPlayerSession` 为根对象。
+玩家主状态以 `MPlayer` 为根对象。
 
 典型子对象包括：
 
-- `MPlayerAvatar`
-- `MInventoryComponent`
-- `MAttributeComponent`
+- `MPlayerSession`
+- `MPlayerController`
+- `MPlayerPawn`
+- `MPlayerProfile`
+- `MPlayerInventory`
+- `MPlayerProgression`
 
 这些对象都继承自 `MObject`，并通过父子关系形成一棵可遍历、可快照、可按路径定位的对象树。
 
-## `MPlayerSession`
+## `MPlayer` 对象树
 
-当前可以从 [PlayerSession.h](/root/Mession/Source/Servers/World/Domain/PlayerSession.h) 看到几个关键属性：
+当前玩家对象树主要分工如下：
 
-- `PlayerId`
-- `GatewayConnectionId`
-- `SessionKey`
-- `SceneId`
-- `TargetServerType`
+- [PlayerSession.h](/root/Mession/Source/Servers/World/Players/PlayerSession.h)
+  承载登录会话、网关连接和 SessionKey 等纯连接态。
+- [PlayerController.h](/root/Mession/Source/Servers/World/Players/PlayerController.h)
+  承载玩家当前路由与主场景归属。
+- [PlayerPawn.h](/root/Mession/Source/Servers/World/Players/PlayerPawn.h)
+  承载在线实体态，例如当前在线场景与运行时生命值。
+- [PlayerProfile.h](/root/Mession/Source/Servers/World/Players/PlayerProfile.h)
+  承载玩家长期档案，并挂载 `Inventory` / `Progression` 子对象。
 
-它们的 Persistence / Replication 含义直接写在 `MPROPERTY(...)` 标记上，而不是散落在其他配置中。
+这些对象的 Persistence / Replication 含义直接写在 `MPROPERTY(...)` 标记上，而不是散落在其他配置中。
 
 ## 域标记驱动状态流
 
@@ -93,14 +99,14 @@
   负责网络入口、连接管理、运行时上下文
 - `MWorldPlayerServiceEndpoint`
   负责玩家进入世界、切场、登出等业务编排
-- `MPlayerSession` 及子对象
+- `MPlayer` 及子对象
   负责承载真正的领域状态
 
 这个拆分的重点是：
 
 - `Server` 不再是万能 God Object
 - `Endpoint` 承担流程
-- `Domain Object` 承担状态
+- `Player Object Tree` 承担状态
 
 ## 后续扩展建议
 

@@ -13,6 +13,83 @@
 
 namespace MObjectProxyCall
 {
+inline MFuture<TResult<FObjectProxyInvokeResponse, FAppError>> CallRaw(
+    const FObjectProxyTarget& Target,
+    const char* FunctionName,
+    const TByteArray& RequestPayload,
+    MObject* ContextObject);
+
+template<typename TResponse, typename TRequest>
+MFuture<TResult<TResponse, FAppError>> Call(
+    const FObjectProxyTarget& Target,
+    const char* FunctionName,
+    const TRequest& Request,
+    MObject* ContextObject);
+
+class FBoundObjectProxy
+{
+public:
+    FBoundObjectProxy() = default;
+
+    FBoundObjectProxy(FObjectProxyTarget InTarget, MObject* InContextObject)
+        : Target(std::move(InTarget))
+        , ContextObject(InContextObject)
+    {
+    }
+
+    const FObjectProxyTarget& GetTarget() const
+    {
+        return Target;
+    }
+
+    MObject* GetContextObject() const
+    {
+        return ContextObject;
+    }
+
+    FBoundObjectProxy WithPath(MString InObjectPath) const
+    {
+        FObjectProxyTarget NextTarget = Target;
+        NextTarget.ObjectPath = std::move(InObjectPath);
+        return FBoundObjectProxy(std::move(NextTarget), ContextObject);
+    }
+
+    FBoundObjectProxy Child(const char* Segment) const
+    {
+        if (!Segment || Segment[0] == '\0')
+        {
+            return *this;
+        }
+
+        MString NextPath = Target.ObjectPath;
+        if (!NextPath.empty())
+        {
+            NextPath += ".";
+        }
+        NextPath += Segment;
+        return WithPath(std::move(NextPath));
+    }
+
+    template<typename TResponse, typename TRequest>
+    MFuture<TResult<TResponse, FAppError>> Call(
+        const char* FunctionName,
+        const TRequest& Request) const
+    {
+        return MObjectProxyCall::Call<TResponse>(Target, FunctionName, Request, ContextObject);
+    }
+
+    MFuture<TResult<FObjectProxyInvokeResponse, FAppError>> CallRaw(
+        const char* FunctionName,
+        const TByteArray& RequestPayload) const
+    {
+        return MObjectProxyCall::CallRaw(Target, FunctionName, RequestPayload, ContextObject);
+    }
+
+private:
+    FObjectProxyTarget Target;
+    MObject* ContextObject = nullptr;
+};
+
 namespace MDetail
 {
 inline uint64 AllocateLocalCallId()
@@ -319,5 +396,10 @@ MFuture<TResult<TResponse, FAppError>> Call(
     return MDetail::ParseRawResponse<TResponse>(
         CallRaw(Target, FunctionName, BuildPayload(Request), ContextObject),
         FunctionName);
+}
+
+inline FBoundObjectProxy Bind(const FObjectProxyTarget& Target, MObject* ContextObject)
+{
+    return FBoundObjectProxy(Target, ContextObject);
 }
 } // namespace MObjectProxyCall

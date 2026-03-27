@@ -48,6 +48,9 @@ public:
     MFUNCTION(ServerCall, Target=Scene)
     MFuture<TResult<FSceneEnterResponse, FAppError>> EnterScene(const FSceneEnterRequest& Request);
 
+    MFUNCTION(ServerCall, Target=Scene)
+    MFuture<TResult<FSceneLeaveResponse, FAppError>> LeaveScene(const FSceneLeaveRequest& Request);
+
 private:
     EServerType GetTargetServerType() const override;
 };

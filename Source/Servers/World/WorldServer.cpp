@@ -208,6 +208,45 @@ MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MWorldServer::PlayerUpda
     return PlayerService->PlayerUpdateRoute(Request);
 }
 
+MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> MWorldServer::PlayerQueryProfile(
+    const FPlayerQueryProfileRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProfileResponse>(
+            "world_player_service_missing",
+            "PlayerQueryProfile");
+    }
+
+    return PlayerService->PlayerQueryProfile(Request);
+}
+
+MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> MWorldServer::PlayerQueryInventory(
+    const FPlayerQueryInventoryRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryInventoryResponse>(
+            "world_player_service_missing",
+            "PlayerQueryInventory");
+    }
+
+    return PlayerService->PlayerQueryInventory(Request);
+}
+
+MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> MWorldServer::PlayerQueryProgression(
+    const FPlayerQueryProgressionRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryProgressionResponse>(
+            "world_player_service_missing",
+            "PlayerQueryProgression");
+    }
+
+    return PlayerService->PlayerQueryProgression(Request);
+}
+
 MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldServer::PlayerLogout(const FPlayerLogoutRequest& Request)
 {
     if (!PlayerService)

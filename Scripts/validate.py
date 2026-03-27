@@ -567,7 +567,35 @@ def run_validation(
                 return False
             log("  Client_FindPlayer after logout OK: player removed from World state")
 
-            log("Test 7: forwarded Client_FindPlayer invalid payload...")
+            log("Test 7: Client_Login again after logout...")
+            relogin_response = parse_login_response(
+                call_client_function(sock, "Client_Login", struct.pack("<Q", player_id))
+            )
+            if not relogin_response["bSuccess"]:
+                log(f"  second Client_Login failed: error={relogin_response['Error']}")
+                return False
+            log(
+                "  second Client_Login OK: "
+                f"playerId={relogin_response['PlayerId']} sessionKey={relogin_response['SessionKey']}"
+            )
+
+            log("Test 8: Client_FindPlayer after relogin...")
+            find_after_relogin = parse_find_player_response(
+                call_client_function(sock, "Client_FindPlayer", struct.pack("<Q", player_id))
+            )
+            if not find_after_relogin["bFound"] or find_after_relogin["SceneId"] != next_scene_id:
+                log(
+                    "  Client_FindPlayer after relogin returned unexpected payload: "
+                    f"found={find_after_relogin['bFound']} sceneId={find_after_relogin['SceneId']} "
+                    f"error={find_after_relogin['Error']}"
+                )
+                return False
+            log(
+                "  Client_FindPlayer after relogin OK: "
+                f"playerId={find_after_relogin['PlayerId']} sceneId={find_after_relogin['SceneId']}"
+            )
+
+            log("Test 9: forwarded Client_FindPlayer invalid payload...")
             invalid_payload_response = try_find_player(sock, struct.pack("<I", player_id))
             if invalid_payload_response is None:
                 log("  invalid payload test failed: no response")
@@ -580,7 +608,7 @@ def run_validation(
                 return False
             log("  invalid payload OK: binder error surfaced through Gateway")
 
-            log("Test 8: forwarded Client_FindPlayer validation error...")
+            log("Test 10: forwarded Client_FindPlayer validation error...")
             zero_player_response = try_find_player(sock, struct.pack("<Q", 0))
             if zero_player_response is None:
                 log("  zero player id test failed: no response")
@@ -593,7 +621,7 @@ def run_validation(
                 return False
             log("  validation error OK: world business error reached client")
 
-            log("Test 9: World unavailable after forward route...")
+            log("Test 11: World unavailable after forward route...")
             world_proc = proc_by_name.get("WorldServer")
             if world_proc is None:
                 log("  WorldServer process handle missing")

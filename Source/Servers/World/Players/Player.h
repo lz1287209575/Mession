@@ -26,11 +26,16 @@ public:
 
     void FinalizeLoadedState();
 
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerApplyRouteResponse, FAppError>> ApplyRouteCall(const FPlayerApplyRouteRequest& Request);
+    uint32 ResolveCurrentSceneId() const;
+
+    uint32 ResolveCurrentHealth() const;
+
+    void SyncRuntimeStateToProfile();
+
+    void PrepareForLogout();
 
     MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerQueryStateResponse, FAppError>> QueryStateCall(const FPlayerQueryStateRequest& Request);
+    MFuture<TResult<FPlayerFindResponse, FAppError>> PlayerFind(const FPlayerFindRequest& Request);
 
     MPlayerSession* GetSession() const;
 
