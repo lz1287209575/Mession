@@ -1,367 +1,311 @@
 #include "Servers/World/Services/WorldClientServiceEndpoint.h"
+#include "Servers/World/Rpc/WorldBackendRpc.h"
+#include "Servers/World/Services/WorldPlayerServiceEndpoint.h"
 
-namespace MWorldClientFlows
+#include <cstring>
+#include <typeindex>
+
+namespace
 {
 template<typename TResponse>
-TResponse BuildClientFailureResponse(const FAppError& Error, const char* FallbackCode)
+TResponse BuildFailureResponse(const FAppError& Error, const char* FallbackCode)
 {
     TResponse Failed;
     Failed.Error = Error.Code.empty() ? (FallbackCode ? FallbackCode : "client_call_failed") : Error.Code;
     return Failed;
 }
 
-template<typename TClientRequest>
-struct TClientPlayerCallBindingTraits;
+template<typename TMethod>
+struct TPlayerMethodTraits;
 
-template<>
-struct TClientPlayerCallBindingTraits<FClientFindPlayerRequest>
+template<typename TObject, typename TResponse, typename TRequest>
+struct TPlayerMethodTraits<MFuture<TResult<TResponse, FAppError>>(TObject::*)(const TRequest&)>
 {
-    using TClientResponse = FClientFindPlayerResponse;
-    using TPlayerRequest = FPlayerFindRequest;
-    using TPlayerResponse = FPlayerFindResponse;
-
-    static const char* ClientFunctionName()
-    {
-        return "Client_FindPlayer";
-    }
-
-    static const char* FailureCode()
-    {
-        return "player_find_failed";
-    }
-
-    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
-        MWorldPlayerServiceEndpoint* PlayerService,
-        const TPlayerRequest& Request)
-    {
-        return PlayerService->PlayerFind(Request);
-    }
-
-    static TPlayerRequest BuildPlayerRequest(const FClientFindPlayerRequest& Request)
-    {
-        TPlayerRequest OutRequest;
-        OutRequest.PlayerId = Request.PlayerId;
-        return OutRequest;
-    }
-
-    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
-    {
-        TClientResponse Response;
-        Response.bFound = ResponseValue.bFound;
-        Response.PlayerId = ResponseValue.PlayerId;
-        Response.GatewayConnectionId = ResponseValue.GatewayConnectionId;
-        Response.SceneId = ResponseValue.SceneId;
-        return Response;
-    }
+    using TPlayerRequest = TRequest;
+    using TPlayerResponse = TResponse;
 };
 
-template<>
-struct TClientPlayerCallBindingTraits<FClientLogoutRequest>
+namespace MClientBindingDetail
 {
-    using TClientResponse = FClientLogoutResponse;
-    using TPlayerRequest = FPlayerLogoutRequest;
-    using TPlayerResponse = FPlayerLogoutResponse;
-
-    static const char* ClientFunctionName()
-    {
-        return "Client_Logout";
-    }
-
-    static const char* FailureCode()
-    {
-        return "player_logout_failed";
-    }
-
-    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
-        MWorldPlayerServiceEndpoint* PlayerService,
-        const TPlayerRequest& Request)
-    {
-        return PlayerService->PlayerLogout(Request);
-    }
-
-    static TPlayerRequest BuildPlayerRequest(const FClientLogoutRequest& Request)
-    {
-        TPlayerRequest OutRequest;
-        OutRequest.PlayerId = Request.PlayerId;
-        return OutRequest;
-    }
-
-    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
-    {
-        TClientResponse Response;
-        Response.bSuccess = true;
-        Response.PlayerId = ResponseValue.PlayerId;
-        return Response;
-    }
-};
-
-template<>
-struct TClientPlayerCallBindingTraits<FClientSwitchSceneRequest>
+template<typename TStruct>
+MClass* FindStructClass()
 {
-    using TClientResponse = FClientSwitchSceneResponse;
-    using TPlayerRequest = FPlayerSwitchSceneRequest;
-    using TPlayerResponse = FPlayerSwitchSceneResponse;
-
-    static const char* ClientFunctionName()
-    {
-        return "Client_SwitchScene";
-    }
-
-    static const char* FailureCode()
-    {
-        return "player_switch_scene_failed";
-    }
-
-    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
-        MWorldPlayerServiceEndpoint* PlayerService,
-        const TPlayerRequest& Request)
-    {
-        return PlayerService->PlayerSwitchScene(Request);
-    }
-
-    static TPlayerRequest BuildPlayerRequest(const FClientSwitchSceneRequest& Request)
-    {
-        TPlayerRequest OutRequest;
-        OutRequest.PlayerId = Request.PlayerId;
-        OutRequest.SceneId = Request.SceneId;
-        return OutRequest;
-    }
-
-    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
-    {
-        TClientResponse Response;
-        Response.bSuccess = true;
-        Response.PlayerId = ResponseValue.PlayerId;
-        Response.SceneId = ResponseValue.SceneId;
-        return Response;
-    }
-};
-
-template<>
-struct TClientPlayerCallBindingTraits<FClientChangeGoldRequest>
-{
-    using TClientResponse = FClientChangeGoldResponse;
-    using TPlayerRequest = FPlayerChangeGoldRequest;
-    using TPlayerResponse = FPlayerChangeGoldResponse;
-
-    static const char* ClientFunctionName()
-    {
-        return "Client_ChangeGold";
-    }
-
-    static const char* FailureCode()
-    {
-        return "player_change_gold_failed";
-    }
-
-    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
-        MWorldPlayerServiceEndpoint* PlayerService,
-        const TPlayerRequest& Request)
-    {
-        return PlayerService->PlayerChangeGold(Request);
-    }
-
-    static TPlayerRequest BuildPlayerRequest(const FClientChangeGoldRequest& Request)
-    {
-        TPlayerRequest OutRequest;
-        OutRequest.PlayerId = Request.PlayerId;
-        OutRequest.DeltaGold = Request.DeltaGold;
-        return OutRequest;
-    }
-
-    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
-    {
-        TClientResponse Response;
-        Response.bSuccess = true;
-        Response.PlayerId = ResponseValue.PlayerId;
-        Response.Gold = ResponseValue.Gold;
-        return Response;
-    }
-};
-
-template<>
-struct TClientPlayerCallBindingTraits<FClientEquipItemRequest>
-{
-    using TClientResponse = FClientEquipItemResponse;
-    using TPlayerRequest = FPlayerEquipItemRequest;
-    using TPlayerResponse = FPlayerEquipItemResponse;
-
-    static const char* ClientFunctionName()
-    {
-        return "Client_EquipItem";
-    }
-
-    static const char* FailureCode()
-    {
-        return "player_equip_item_failed";
-    }
-
-    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
-        MWorldPlayerServiceEndpoint* PlayerService,
-        const TPlayerRequest& Request)
-    {
-        return PlayerService->PlayerEquipItem(Request);
-    }
-
-    static TPlayerRequest BuildPlayerRequest(const FClientEquipItemRequest& Request)
-    {
-        TPlayerRequest OutRequest;
-        OutRequest.PlayerId = Request.PlayerId;
-        OutRequest.EquippedItem = Request.EquippedItem;
-        return OutRequest;
-    }
-
-    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
-    {
-        TClientResponse Response;
-        Response.bSuccess = true;
-        Response.PlayerId = ResponseValue.PlayerId;
-        Response.EquippedItem = ResponseValue.EquippedItem;
-        return Response;
-    }
-};
-
-template<>
-struct TClientPlayerCallBindingTraits<FClientGrantExperienceRequest>
-{
-    using TClientResponse = FClientGrantExperienceResponse;
-    using TPlayerRequest = FPlayerGrantExperienceRequest;
-    using TPlayerResponse = FPlayerGrantExperienceResponse;
-
-    static const char* ClientFunctionName()
-    {
-        return "Client_GrantExperience";
-    }
-
-    static const char* FailureCode()
-    {
-        return "player_grant_experience_failed";
-    }
-
-    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
-        MWorldPlayerServiceEndpoint* PlayerService,
-        const TPlayerRequest& Request)
-    {
-        return PlayerService->PlayerGrantExperience(Request);
-    }
-
-    static TPlayerRequest BuildPlayerRequest(const FClientGrantExperienceRequest& Request)
-    {
-        TPlayerRequest OutRequest;
-        OutRequest.PlayerId = Request.PlayerId;
-        OutRequest.ExperienceDelta = Request.ExperienceDelta;
-        return OutRequest;
-    }
-
-    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
-    {
-        TClientResponse Response;
-        Response.bSuccess = true;
-        Response.PlayerId = ResponseValue.PlayerId;
-        Response.Level = ResponseValue.Level;
-        Response.Experience = ResponseValue.Experience;
-        return Response;
-    }
-};
-
-template<>
-struct TClientPlayerCallBindingTraits<FClientModifyHealthRequest>
-{
-    using TClientResponse = FClientModifyHealthResponse;
-    using TPlayerRequest = FPlayerModifyHealthRequest;
-    using TPlayerResponse = FPlayerModifyHealthResponse;
-
-    static const char* ClientFunctionName()
-    {
-        return "Client_ModifyHealth";
-    }
-
-    static const char* FailureCode()
-    {
-        return "player_modify_health_failed";
-    }
-
-    static MFuture<TResult<TPlayerResponse, FAppError>> Invoke(
-        MWorldPlayerServiceEndpoint* PlayerService,
-        const TPlayerRequest& Request)
-    {
-        return PlayerService->PlayerModifyHealth(Request);
-    }
-
-    static TPlayerRequest BuildPlayerRequest(const FClientModifyHealthRequest& Request)
-    {
-        TPlayerRequest OutRequest;
-        OutRequest.PlayerId = Request.PlayerId;
-        OutRequest.HealthDelta = Request.HealthDelta;
-        return OutRequest;
-    }
-
-    static TClientResponse BuildClientResponse(const TPlayerResponse& ResponseValue)
-    {
-        TClientResponse Response;
-        Response.bSuccess = true;
-        Response.PlayerId = ResponseValue.PlayerId;
-        Response.Health = ResponseValue.Health;
-        return Response;
-    }
-};
-
-template<typename TClientRequest>
-MFuture<TResult<typename TClientPlayerCallBindingTraits<TClientRequest>::TClientResponse, FAppError>> StartBoundPlayerClientFlow(
-    MWorldPlayerServiceEndpoint* PlayerService,
-    const TClientRequest& Request)
-{
-    using TBinding = TClientPlayerCallBindingTraits<TClientRequest>;
-    using TClientResponse = typename TBinding::TClientResponse;
-
-    if (Request.PlayerId == 0)
-    {
-        return MClientCallAsyncSupport::MakeErrorFuture<TClientResponse>(
-            "player_id_required",
-            TBinding::ClientFunctionName());
-    }
-
-    if (!PlayerService)
-    {
-        return MClientCallAsyncSupport::MakeErrorFuture<TClientResponse>(
-            "world_player_service_missing",
-            TBinding::ClientFunctionName());
-    }
-
-    const typename TBinding::TPlayerRequest PlayerRequest = TBinding::BuildPlayerRequest(Request);
-    return MClientCallAsyncSupport::Map(
-        TBinding::Invoke(PlayerService, PlayerRequest),
-        [](const typename TBinding::TPlayerResponse& ResponseValue)
-        {
-            return TBinding::BuildClientResponse(ResponseValue);
-        });
+    return MObject::FindStruct(std::type_index(typeid(TStruct)));
 }
 
-template<typename TClientRequest>
-void BeginDeferredBoundPlayerClientCall(
-    MWorldPlayerServiceEndpoint* PlayerService,
-    const TClientRequest& Request,
-    typename TClientPlayerCallBindingTraits<TClientRequest>::TClientResponse& Response)
+inline bool AreCompatibleProperties(const MProperty* DestProperty, const MProperty* SrcProperty)
 {
-    using TBinding = TClientPlayerCallBindingTraits<TClientRequest>;
-    using TClientResponse = typename TBinding::TClientResponse;
-
-    const SClientCallContext Context = CaptureCurrentClientCallContext();
-    if (!Context.IsValid())
+    if (!DestProperty || !SrcProperty)
     {
-        Response.Error = "client_call_context_missing";
+        return false;
+    }
+
+    if (DestProperty->Type != SrcProperty->Type || DestProperty->Size != SrcProperty->Size)
+    {
+        return false;
+    }
+
+    switch (DestProperty->Type)
+    {
+    case EPropertyType::Struct:
+    case EPropertyType::Enum:
+        return DestProperty->CppTypeIndex == SrcProperty->CppTypeIndex;
+    default:
+        return true;
+    }
+}
+
+inline bool CopyPropertyValue(
+    const MProperty* DestProperty,
+    void* DestObject,
+    const MProperty* SrcProperty,
+    const void* SrcObject);
+
+inline bool CopyStructValue(
+    const MProperty* DestProperty,
+    void* DestObject,
+    const MProperty* SrcProperty,
+    const void* SrcObject)
+{
+    if (!AreCompatibleProperties(DestProperty, SrcProperty))
+    {
+        return false;
+    }
+
+    void* DestValue = DestProperty->GetValueVoidPtr(DestObject);
+    const void* SrcValue = SrcProperty->GetValueVoidPtr(SrcObject);
+    if (!DestValue || !SrcValue)
+    {
+        return false;
+    }
+
+    MClass* StructClass = MObject::FindStruct(DestProperty->CppTypeIndex);
+    if (!StructClass)
+    {
+        return false;
+    }
+
+    for (const MProperty* ChildDestProperty : StructClass->GetProperties())
+    {
+        if (!ChildDestProperty)
+        {
+            continue;
+        }
+
+        const MProperty* ChildSrcProperty = StructClass->FindProperty(ChildDestProperty->Name);
+        if (!ChildSrcProperty)
+        {
+            continue;
+        }
+
+        (void)CopyPropertyValue(ChildDestProperty, DestValue, ChildSrcProperty, SrcValue);
+    }
+
+    return true;
+}
+
+inline bool CopyPropertyValue(
+    const MProperty* DestProperty,
+    void* DestObject,
+    const MProperty* SrcProperty,
+    const void* SrcObject)
+{
+    if (!AreCompatibleProperties(DestProperty, SrcProperty))
+    {
+        return false;
+    }
+
+    void* DestValue = DestProperty->GetValueVoidPtr(DestObject);
+    const void* SrcValue = SrcProperty->GetValueVoidPtr(SrcObject);
+    if (!DestValue || !SrcValue)
+    {
+        return false;
+    }
+
+    switch (DestProperty->Type)
+    {
+    case EPropertyType::Int8:
+        *static_cast<int8*>(DestValue) = *static_cast<const int8*>(SrcValue);
+        return true;
+    case EPropertyType::Int16:
+        *static_cast<int16*>(DestValue) = *static_cast<const int16*>(SrcValue);
+        return true;
+    case EPropertyType::Int32:
+        *static_cast<int32*>(DestValue) = *static_cast<const int32*>(SrcValue);
+        return true;
+    case EPropertyType::Int64:
+        *static_cast<int64*>(DestValue) = *static_cast<const int64*>(SrcValue);
+        return true;
+    case EPropertyType::UInt8:
+        *static_cast<uint8*>(DestValue) = *static_cast<const uint8*>(SrcValue);
+        return true;
+    case EPropertyType::UInt16:
+        *static_cast<uint16*>(DestValue) = *static_cast<const uint16*>(SrcValue);
+        return true;
+    case EPropertyType::UInt32:
+        *static_cast<uint32*>(DestValue) = *static_cast<const uint32*>(SrcValue);
+        return true;
+    case EPropertyType::UInt64:
+        *static_cast<uint64*>(DestValue) = *static_cast<const uint64*>(SrcValue);
+        return true;
+    case EPropertyType::Float:
+        *static_cast<float*>(DestValue) = *static_cast<const float*>(SrcValue);
+        return true;
+    case EPropertyType::Double:
+        *static_cast<double*>(DestValue) = *static_cast<const double*>(SrcValue);
+        return true;
+    case EPropertyType::Bool:
+        *static_cast<bool*>(DestValue) = *static_cast<const bool*>(SrcValue);
+        return true;
+    case EPropertyType::String:
+    case EPropertyType::Name:
+        *static_cast<MString*>(DestValue) = *static_cast<const MString*>(SrcValue);
+        return true;
+    case EPropertyType::Vector:
+        *static_cast<SVector*>(DestValue) = *static_cast<const SVector*>(SrcValue);
+        return true;
+    case EPropertyType::Rotator:
+        *static_cast<SRotator*>(DestValue) = *static_cast<const SRotator*>(SrcValue);
+        return true;
+    case EPropertyType::Enum:
+        std::memcpy(DestValue, SrcValue, DestProperty->Size);
+        return true;
+    case EPropertyType::Struct:
+        return CopyStructValue(DestProperty, DestObject, SrcProperty, SrcObject);
+    default:
+        return false;
+    }
+}
+
+template<typename TDest, typename TSrc>
+void CopyMatchingProperties(TDest& Dest, const TSrc& Src)
+{
+    MClass* DestClass = FindStructClass<TDest>();
+    MClass* SrcClass = FindStructClass<TSrc>();
+    if (!DestClass || !SrcClass)
+    {
         return;
     }
 
-    (void)MClientCallAsyncSupport::StartDeferred<TClientResponse>(
-        Context,
-        StartBoundPlayerClientFlow(PlayerService, Request),
-        [](const FAppError& Error)
+    for (const MProperty* DestProperty : DestClass->GetProperties())
+    {
+        if (!DestProperty)
         {
-            return BuildClientFailureResponse<TClientResponse>(Error, TBinding::FailureCode());
-        });
+            continue;
+        }
+
+        const MProperty* SrcProperty = SrcClass->FindProperty(DestProperty->Name);
+        if (!SrcProperty)
+        {
+            continue;
+        }
+
+        (void)CopyPropertyValue(DestProperty, &Dest, SrcProperty, &Src);
+    }
 }
 
+template<typename TResponse>
+void MarkSuccessIfPresent(TResponse& Response)
+{
+    MClass* ResponseClass = FindStructClass<TResponse>();
+    if (!ResponseClass)
+    {
+        return;
+    }
+
+    const MProperty* SuccessProperty = ResponseClass->FindProperty("bSuccess");
+    if (!SuccessProperty || SuccessProperty->Type != EPropertyType::Bool)
+    {
+        return;
+    }
+
+    void* Value = SuccessProperty->GetValueVoidPtr(&Response);
+    if (!Value)
+    {
+        return;
+    }
+
+    *static_cast<bool*>(Value) = true;
+}
+} // namespace MClientBindingDetail
+
+}
+
+namespace MWorldClientDetail
+{
+class FClientPlayerCallBinding
+{
+public:
+    explicit FClientPlayerCallBinding(MWorldPlayerServiceEndpoint* InPlayerService)
+        : PlayerService(InPlayerService)
+    {
+    }
+
+#define M_WORLD_CLIENT_PLAYER_ROUTE(MethodName, PlayerMethodName, ClientRequestType, ClientResponseType, FailureCode) \
+    void MethodName(ClientRequestType& Request, ClientResponseType& Response) const \
+    { \
+        Dispatch<&MWorldPlayerServiceEndpoint::PlayerMethodName>(FailureCode, Request, Response); \
+    }
+#include "Servers/World/Services/WorldClientPlayerRouteList.inl"
+#undef M_WORLD_CLIENT_PLAYER_ROUTE
+
+private:
+    template<auto TPlayerMethod, typename TClientRequest, typename TClientResponse>
+    void Dispatch(
+        const char* FailureCode,
+        const TClientRequest& Request,
+        TClientResponse& Response) const
+    {
+        using TMethodTraits = TPlayerMethodTraits<decltype(TPlayerMethod)>;
+        using TPlayerRequest = typename TMethodTraits::TPlayerRequest;
+        using TPlayerResponse = typename TMethodTraits::TPlayerResponse;
+
+        if (Request.PlayerId == 0)
+        {
+            Response.Error = "player_id_required";
+            return;
+        }
+
+        if (!PlayerService)
+        {
+            Response.Error = "world_player_service_missing";
+            return;
+        }
+
+        const SClientCallContext Context = CaptureCurrentClientCallContext();
+        if (!Context.IsValid())
+        {
+            Response.Error = "client_call_context_missing";
+            return;
+        }
+
+        TPlayerRequest PlayerRequest {};
+        MClientBindingDetail::CopyMatchingProperties(PlayerRequest, Request);
+
+        (void)MClientCallAsyncSupport::StartDeferred<TClientResponse>(
+            Context,
+            MClientCallAsyncSupport::Map(
+                (PlayerService->*TPlayerMethod)(PlayerRequest),
+                [](const TPlayerResponse& PlayerResponse)
+                {
+                    TClientResponse ClientResponse {};
+                    MClientBindingDetail::CopyMatchingProperties(ClientResponse, PlayerResponse);
+                    MClientBindingDetail::MarkSuccessIfPresent(ClientResponse);
+                    return ClientResponse;
+                }),
+            [FailureCode](const FAppError& Error)
+            {
+                return BuildFailureResponse<TClientResponse>(Error, FailureCode);
+            });
+    }
+
+private:
+    MWorldPlayerServiceEndpoint* PlayerService = nullptr;
+};
+} // namespace MWorldClientDetail
+
+namespace MWorldClientFlows
+{
 class FClientLoginWorkflow final
     : public MClientCallAsyncSupport::TClientCallWorkflow<FClientLoginWorkflow, FClientLoginResponse>
 {
@@ -453,53 +397,21 @@ void MWorldClientServiceEndpoint::Client_Login(FClientLoginRequest& Request, FCl
         StartClientLoginFlow(Request, GatewayConnectionId),
         [](const FAppError& Error)
         {
-            return MWorldClientFlows::BuildClientFailureResponse<FClientLoginResponse>(Error, "client_login_failed");
+            return BuildFailureResponse<FClientLoginResponse>(Error, "client_login_failed");
         });
 }
 
-void MWorldClientServiceEndpoint::Client_FindPlayer(FClientFindPlayerRequest& Request, FClientFindPlayerResponse& Response)
-{
-    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
+#define M_WORLD_CLIENT_PLAYER_ROUTE(MethodName, PlayerMethodName, ClientRequestType, ClientResponseType, FailureCode) \
+void MWorldClientServiceEndpoint::Client_##MethodName(ClientRequestType& Request, ClientResponseType& Response) \
+{ \
+    ClientPlayerCall().MethodName(Request, Response); \
 }
+#include "Servers/World/Services/WorldClientPlayerRouteList.inl"
+#undef M_WORLD_CLIENT_PLAYER_ROUTE
 
-void MWorldClientServiceEndpoint::Client_Logout(FClientLogoutRequest& Request, FClientLogoutResponse& Response)
+MWorldClientDetail::FClientPlayerCallBinding MWorldClientServiceEndpoint::ClientPlayerCall() const
 {
-    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
-}
-
-void MWorldClientServiceEndpoint::Client_SwitchScene(
-    FClientSwitchSceneRequest& Request,
-    FClientSwitchSceneResponse& Response)
-{
-    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
-}
-
-void MWorldClientServiceEndpoint::Client_ChangeGold(
-    FClientChangeGoldRequest& Request,
-    FClientChangeGoldResponse& Response)
-{
-    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
-}
-
-void MWorldClientServiceEndpoint::Client_EquipItem(
-    FClientEquipItemRequest& Request,
-    FClientEquipItemResponse& Response)
-{
-    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
-}
-
-void MWorldClientServiceEndpoint::Client_GrantExperience(
-    FClientGrantExperienceRequest& Request,
-    FClientGrantExperienceResponse& Response)
-{
-    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
-}
-
-void MWorldClientServiceEndpoint::Client_ModifyHealth(
-    FClientModifyHealthRequest& Request,
-    FClientModifyHealthResponse& Response)
-{
-    MWorldClientFlows::BeginDeferredBoundPlayerClientCall(PlayerService, Request, Response);
+    return MWorldClientDetail::FClientPlayerCallBinding(PlayerService);
 }
 
 MFuture<TResult<FClientLoginResponse, FAppError>> MWorldClientServiceEndpoint::StartClientLoginFlow(

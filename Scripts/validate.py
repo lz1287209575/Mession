@@ -376,6 +376,50 @@ def parse_change_gold_response(payload: bytes) -> dict:
     return result
 
 
+def parse_query_profile_response(payload: bytes) -> dict:
+    reader = ReflectReader(payload)
+    result = {
+        "bSuccess": reader.read_bool(),
+        "PlayerId": reader.read_u64(),
+        "CurrentSceneId": reader.read_u32(),
+        "Gold": reader.read_u32(),
+        "EquippedItem": reader.read_string(),
+        "Level": reader.read_u32(),
+        "Experience": reader.read_u32(),
+        "Health": reader.read_u32(),
+        "Error": reader.read_string(),
+    }
+    reader.ensure_consumed()
+    return result
+
+
+def parse_query_inventory_response(payload: bytes) -> dict:
+    reader = ReflectReader(payload)
+    result = {
+        "bSuccess": reader.read_bool(),
+        "PlayerId": reader.read_u64(),
+        "Gold": reader.read_u32(),
+        "EquippedItem": reader.read_string(),
+        "Error": reader.read_string(),
+    }
+    reader.ensure_consumed()
+    return result
+
+
+def parse_query_progression_response(payload: bytes) -> dict:
+    reader = ReflectReader(payload)
+    result = {
+        "bSuccess": reader.read_bool(),
+        "PlayerId": reader.read_u64(),
+        "Level": reader.read_u32(),
+        "Experience": reader.read_u32(),
+        "Health": reader.read_u32(),
+        "Error": reader.read_string(),
+    }
+    reader.ensure_consumed()
+    return result
+
+
 def parse_equip_item_response(payload: bytes) -> dict:
     reader = ReflectReader(payload)
     result = {
@@ -683,7 +727,63 @@ def run_validation(
                 f"playerId={modify_health_response['PlayerId']} health={modify_health_response['Health']}"
             )
 
-            log("Test 9: Client_Logout...")
+            log("Test 9: Client_QueryProfile after writes...")
+            query_profile_response = parse_query_profile_response(
+                call_client_function(sock, "Client_QueryProfile", struct.pack("<Q", player_id))
+            )
+            if (
+                not query_profile_response["bSuccess"]
+                or query_profile_response["PlayerId"] != player_id
+                or query_profile_response["CurrentSceneId"] != next_scene_id
+                or query_profile_response["Gold"] != 50
+                or query_profile_response["EquippedItem"] != "iron_sword"
+                or query_profile_response["Level"] != 3
+                or query_profile_response["Experience"] != 250
+                or query_profile_response["Health"] != 75
+            ):
+                log(
+                    "  Client_QueryProfile returned unexpected payload: "
+                    f"{query_profile_response}"
+                )
+                return False
+            log(f"  Client_QueryProfile OK: {query_profile_response}")
+
+            log("Test 10: Client_QueryInventory after writes...")
+            query_inventory_response = parse_query_inventory_response(
+                call_client_function(sock, "Client_QueryInventory", struct.pack("<Q", player_id))
+            )
+            if (
+                not query_inventory_response["bSuccess"]
+                or query_inventory_response["PlayerId"] != player_id
+                or query_inventory_response["Gold"] != 50
+                or query_inventory_response["EquippedItem"] != "iron_sword"
+            ):
+                log(
+                    "  Client_QueryInventory returned unexpected payload: "
+                    f"{query_inventory_response}"
+                )
+                return False
+            log(f"  Client_QueryInventory OK: {query_inventory_response}")
+
+            log("Test 11: Client_QueryProgression after writes...")
+            query_progression_response = parse_query_progression_response(
+                call_client_function(sock, "Client_QueryProgression", struct.pack("<Q", player_id))
+            )
+            if (
+                not query_progression_response["bSuccess"]
+                or query_progression_response["PlayerId"] != player_id
+                or query_progression_response["Level"] != 3
+                or query_progression_response["Experience"] != 250
+                or query_progression_response["Health"] != 75
+            ):
+                log(
+                    "  Client_QueryProgression returned unexpected payload: "
+                    f"{query_progression_response}"
+                )
+                return False
+            log(f"  Client_QueryProgression OK: {query_progression_response}")
+
+            log("Test 12: Client_Logout...")
             logout_response = parse_logout_response(
                 call_client_function(sock, "Client_Logout", struct.pack("<Q", player_id))
             )
@@ -695,7 +795,7 @@ def run_validation(
                 return False
             log(f"  Client_Logout OK: playerId={logout_response['PlayerId']}")
 
-            log("Test 10: Client_FindPlayer after logout...")
+            log("Test 13: Client_FindPlayer after logout...")
             find_after_logout = parse_find_player_response(
                 call_client_function(sock, "Client_FindPlayer", struct.pack("<Q", player_id))
             )
@@ -707,7 +807,7 @@ def run_validation(
                 return False
             log("  Client_FindPlayer after logout OK: player removed from World state")
 
-            log("Test 11: Client_Login again after logout...")
+            log("Test 14: Client_Login again after logout...")
             relogin_response = parse_login_response(
                 call_client_function(sock, "Client_Login", struct.pack("<Q", player_id))
             )
@@ -719,7 +819,7 @@ def run_validation(
                 f"playerId={relogin_response['PlayerId']} sessionKey={relogin_response['SessionKey']}"
             )
 
-            log("Test 12: Client_FindPlayer after relogin...")
+            log("Test 15: Client_FindPlayer after relogin...")
             find_after_relogin = parse_find_player_response(
                 call_client_function(sock, "Client_FindPlayer", struct.pack("<Q", player_id))
             )
@@ -735,88 +835,63 @@ def run_validation(
                 f"playerId={find_after_relogin['PlayerId']} sceneId={find_after_relogin['SceneId']}"
             )
 
-            log("Test 13: Client_ChangeGold after relogin...")
-            change_gold_after_relogin = parse_change_gold_response(
-                call_client_function(sock, "Client_ChangeGold", struct.pack("<Qi", player_id, 0))
-            )
-            if not change_gold_after_relogin["bSuccess"] or change_gold_after_relogin["Gold"] != 50:
-                log(
-                    "  Client_ChangeGold after relogin returned unexpected payload: "
-                    f"success={change_gold_after_relogin['bSuccess']} "
-                    f"gold={change_gold_after_relogin['Gold']} "
-                    f"error={change_gold_after_relogin['Error']}"
-                )
-                return False
-            log(
-                "  Client_ChangeGold after relogin OK: "
-                f"playerId={change_gold_after_relogin['PlayerId']} gold={change_gold_after_relogin['Gold']}"
-            )
-
-            log("Test 14: Client_EquipItem after relogin...")
-            equip_item_after_relogin = parse_equip_item_response(
-                call_client_function(
-                    sock,
-                    "Client_EquipItem",
-                    struct.pack("<Q", player_id) + pack_string("iron_sword"),
-                )
-            )
-            if not equip_item_after_relogin["bSuccess"] or equip_item_after_relogin["EquippedItem"] != "iron_sword":
-                log(
-                    "  Client_EquipItem after relogin returned unexpected payload: "
-                    f"success={equip_item_after_relogin['bSuccess']} "
-                    f"equippedItem={equip_item_after_relogin['EquippedItem']} "
-                    f"error={equip_item_after_relogin['Error']}"
-                )
-                return False
-            log(
-                "  Client_EquipItem after relogin OK: "
-                f"playerId={equip_item_after_relogin['PlayerId']} "
-                f"equippedItem={equip_item_after_relogin['EquippedItem']}"
-            )
-
-            log("Test 15: Client_GrantExperience after relogin...")
-            grant_experience_after_relogin = parse_grant_experience_response(
-                call_client_function(sock, "Client_GrantExperience", struct.pack("<QI", player_id, 1))
+            log("Test 16: Client_QueryProfile after relogin...")
+            query_profile_after_relogin = parse_query_profile_response(
+                call_client_function(sock, "Client_QueryProfile", struct.pack("<Q", player_id))
             )
             if (
-                not grant_experience_after_relogin["bSuccess"]
-                or grant_experience_after_relogin["Level"] != 3
-                or grant_experience_after_relogin["Experience"] != 251
+                not query_profile_after_relogin["bSuccess"]
+                or query_profile_after_relogin["PlayerId"] != player_id
+                or query_profile_after_relogin["CurrentSceneId"] != next_scene_id
+                or query_profile_after_relogin["Gold"] != 50
+                or query_profile_after_relogin["EquippedItem"] != "iron_sword"
+                or query_profile_after_relogin["Level"] != 3
+                or query_profile_after_relogin["Experience"] != 250
+                or query_profile_after_relogin["Health"] != 75
             ):
                 log(
-                    "  Client_GrantExperience after relogin returned unexpected payload: "
-                    f"success={grant_experience_after_relogin['bSuccess']} "
-                    f"level={grant_experience_after_relogin['Level']} "
-                    f"experience={grant_experience_after_relogin['Experience']} "
-                    f"error={grant_experience_after_relogin['Error']}"
+                    "  Client_QueryProfile after relogin returned unexpected payload: "
+                    f"{query_profile_after_relogin}"
                 )
                 return False
-            log(
-                "  Client_GrantExperience after relogin OK: "
-                f"playerId={grant_experience_after_relogin['PlayerId']} "
-                f"level={grant_experience_after_relogin['Level']} "
-                f"experience={grant_experience_after_relogin['Experience']}"
-            )
+            log(f"  Client_QueryProfile after relogin OK: {query_profile_after_relogin}")
 
-            log("Test 16: Client_ModifyHealth after relogin...")
-            modify_health_after_relogin = parse_modify_health_response(
-                call_client_function(sock, "Client_ModifyHealth", struct.pack("<Qi", player_id, 0))
+            log("Test 17: Client_QueryInventory after relogin...")
+            query_inventory_after_relogin = parse_query_inventory_response(
+                call_client_function(sock, "Client_QueryInventory", struct.pack("<Q", player_id))
             )
-            if not modify_health_after_relogin["bSuccess"] or modify_health_after_relogin["Health"] != 75:
+            if (
+                not query_inventory_after_relogin["bSuccess"]
+                or query_inventory_after_relogin["PlayerId"] != player_id
+                or query_inventory_after_relogin["Gold"] != 50
+                or query_inventory_after_relogin["EquippedItem"] != "iron_sword"
+            ):
                 log(
-                    "  Client_ModifyHealth after relogin returned unexpected payload: "
-                    f"success={modify_health_after_relogin['bSuccess']} "
-                    f"health={modify_health_after_relogin['Health']} "
-                    f"error={modify_health_after_relogin['Error']}"
+                    "  Client_QueryInventory after relogin returned unexpected payload: "
+                    f"{query_inventory_after_relogin}"
                 )
                 return False
-            log(
-                "  Client_ModifyHealth after relogin OK: "
-                f"playerId={modify_health_after_relogin['PlayerId']} "
-                f"health={modify_health_after_relogin['Health']}"
-            )
+            log(f"  Client_QueryInventory after relogin OK: {query_inventory_after_relogin}")
 
-            log("Test 17: forwarded Client_FindPlayer invalid payload...")
+            log("Test 18: Client_QueryProgression after relogin...")
+            query_progression_after_relogin = parse_query_progression_response(
+                call_client_function(sock, "Client_QueryProgression", struct.pack("<Q", player_id))
+            )
+            if (
+                not query_progression_after_relogin["bSuccess"]
+                or query_progression_after_relogin["PlayerId"] != player_id
+                or query_progression_after_relogin["Level"] != 3
+                or query_progression_after_relogin["Experience"] != 250
+                or query_progression_after_relogin["Health"] != 75
+            ):
+                log(
+                    "  Client_QueryProgression after relogin returned unexpected payload: "
+                    f"{query_progression_after_relogin}"
+                )
+                return False
+            log(f"  Client_QueryProgression after relogin OK: {query_progression_after_relogin}")
+
+            log("Test 19: forwarded Client_FindPlayer invalid payload...")
             invalid_payload_response = try_find_player(sock, struct.pack("<I", player_id))
             if invalid_payload_response is None:
                 log("  invalid payload test failed: no response")
@@ -829,7 +904,7 @@ def run_validation(
                 return False
             log("  invalid payload OK: binder error surfaced through Gateway")
 
-            log("Test 18: forwarded Client_FindPlayer validation error...")
+            log("Test 20: forwarded Client_FindPlayer validation error...")
             zero_player_response = try_find_player(sock, struct.pack("<Q", 0))
             if zero_player_response is None:
                 log("  zero player id test failed: no response")
@@ -842,7 +917,7 @@ def run_validation(
                 return False
             log("  validation error OK: world business error reached client")
 
-            log("Test 19: World unavailable after forward route...")
+            log("Test 21: World unavailable after forward route...")
             world_proc = proc_by_name.get("WorldServer")
             if world_proc is None:
                 log("  WorldServer process handle missing")

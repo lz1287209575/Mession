@@ -3,8 +3,14 @@
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Protocol/Messages/Gateway/GatewayClientMessages.h"
 #include "Servers/App/ClientCallAsyncSupport.h"
-#include "Servers/World/Rpc/WorldBackendRpc.h"
-#include "Servers/World/Services/WorldPlayerServiceEndpoint.h"
+
+class MWorldLoginRpc;
+class MWorldPlayerServiceEndpoint;
+
+namespace MWorldClientDetail
+{
+class FClientPlayerCallBinding;
+}
 
 namespace MWorldClientFlows
 {
@@ -28,6 +34,15 @@ public:
     void Client_FindPlayer(FClientFindPlayerRequest& Request, FClientFindPlayerResponse& Response);
 
     MFUNCTION(ClientCall, Target=World)
+    void Client_QueryProfile(FClientQueryProfileRequest& Request, FClientQueryProfileResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
+    void Client_QueryInventory(FClientQueryInventoryRequest& Request, FClientQueryInventoryResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
+    void Client_QueryProgression(FClientQueryProgressionRequest& Request, FClientQueryProgressionResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
     void Client_Logout(FClientLogoutRequest& Request, FClientLogoutResponse& Response);
 
     MFUNCTION(ClientCall, Target=World)
@@ -47,6 +62,8 @@ public:
 
 private:
     friend class MWorldClientFlows::FClientLoginWorkflow;
+
+    MWorldClientDetail::FClientPlayerCallBinding ClientPlayerCall() const;
 
     MFuture<TResult<FClientLoginResponse, FAppError>> StartClientLoginFlow(
         const FClientLoginRequest& Request,

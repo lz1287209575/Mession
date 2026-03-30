@@ -69,6 +69,99 @@ struct FClientFindPlayerResponse
 };
 
 MSTRUCT()
+struct FClientQueryProfileRequest
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+};
+
+MSTRUCT()
+struct FClientQueryProfileResponse
+{
+    MPROPERTY()
+    bool bSuccess = false;
+
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint32 CurrentSceneId = 0;
+
+    MPROPERTY()
+    uint32 Gold = 0;
+
+    MPROPERTY()
+    MString EquippedItem;
+
+    MPROPERTY()
+    uint32 Level = 0;
+
+    MPROPERTY()
+    uint32 Experience = 0;
+
+    MPROPERTY()
+    uint32 Health = 0;
+
+    MPROPERTY()
+    MString Error;
+};
+
+MSTRUCT()
+struct FClientQueryInventoryRequest
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+};
+
+MSTRUCT()
+struct FClientQueryInventoryResponse
+{
+    MPROPERTY()
+    bool bSuccess = false;
+
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint32 Gold = 0;
+
+    MPROPERTY()
+    MString EquippedItem;
+
+    MPROPERTY()
+    MString Error;
+};
+
+MSTRUCT()
+struct FClientQueryProgressionRequest
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+};
+
+MSTRUCT()
+struct FClientQueryProgressionResponse
+{
+    MPROPERTY()
+    bool bSuccess = false;
+
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint32 Level = 0;
+
+    MPROPERTY()
+    uint32 Experience = 0;
+
+    MPROPERTY()
+    uint32 Health = 0;
+
+    MPROPERTY()
+    MString Error;
+};
+
+MSTRUCT()
 struct FClientLogoutRequest
 {
     MPROPERTY()

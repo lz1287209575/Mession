@@ -1,0 +1,13 @@
+// Intentionally no include guard.
+// This file is consumed multiple times with different X-macro definitions.
+
+M_WORLD_CLIENT_PLAYER_ROUTE(FindPlayer, PlayerFind, FClientFindPlayerRequest, FClientFindPlayerResponse, "player_find_failed")
+M_WORLD_CLIENT_PLAYER_ROUTE(QueryProfile, PlayerQueryProfile, FClientQueryProfileRequest, FClientQueryProfileResponse, "player_query_profile_failed")
+M_WORLD_CLIENT_PLAYER_ROUTE(QueryInventory, PlayerQueryInventory, FClientQueryInventoryRequest, FClientQueryInventoryResponse, "player_query_inventory_failed")
+M_WORLD_CLIENT_PLAYER_ROUTE(QueryProgression, PlayerQueryProgression, FClientQueryProgressionRequest, FClientQueryProgressionResponse, "player_query_progression_failed")
+M_WORLD_CLIENT_PLAYER_ROUTE(Logout, PlayerLogout, FClientLogoutRequest, FClientLogoutResponse, "player_logout_failed")
+M_WORLD_CLIENT_PLAYER_ROUTE(SwitchScene, PlayerSwitchScene, FClientSwitchSceneRequest, FClientSwitchSceneResponse, "player_switch_scene_failed")
+M_WORLD_CLIENT_PLAYER_ROUTE(ChangeGold, PlayerChangeGold, FClientChangeGoldRequest, FClientChangeGoldResponse, "player_change_gold_failed")
+M_WORLD_CLIENT_PLAYER_ROUTE(EquipItem, PlayerEquipItem, FClientEquipItemRequest, FClientEquipItemResponse, "player_equip_item_failed")
+M_WORLD_CLIENT_PLAYER_ROUTE(GrantExperience, PlayerGrantExperience, FClientGrantExperienceRequest, FClientGrantExperienceResponse, "player_grant_experience_failed")
+M_WORLD_CLIENT_PLAYER_ROUTE(ModifyHealth, PlayerModifyHealth, FClientModifyHealthRequest, FClientModifyHealthResponse, "player_modify_health_failed")
