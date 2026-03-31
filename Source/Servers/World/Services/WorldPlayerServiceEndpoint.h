@@ -49,7 +49,13 @@ public:
     MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> PlayerUpdateRoute(const FPlayerUpdateRouteRequest& Request);
 
     MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerMoveResponse, FAppError>> PlayerMove(const FPlayerMoveRequest& Request);
+
+    MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> PlayerQueryProfile(const FPlayerQueryProfileRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryPawnResponse, FAppError>> PlayerQueryPawn(const FPlayerQueryPawnRequest& Request);
 
     MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> PlayerQueryInventory(const FPlayerQueryInventoryRequest& Request);

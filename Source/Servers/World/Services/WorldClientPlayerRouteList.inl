@@ -2,7 +2,9 @@
 // This file is consumed multiple times with different X-macro definitions.
 
 M_WORLD_CLIENT_PLAYER_ROUTE(FindPlayer, PlayerFind, FClientFindPlayerRequest, FClientFindPlayerResponse, "player_find_failed")
+M_WORLD_CLIENT_PLAYER_ROUTE(Move, PlayerMove, FClientMoveRequest, FClientMoveResponse, "player_move_failed")
 M_WORLD_CLIENT_PLAYER_ROUTE(QueryProfile, PlayerQueryProfile, FClientQueryProfileRequest, FClientQueryProfileResponse, "player_query_profile_failed")
+M_WORLD_CLIENT_PLAYER_ROUTE(QueryPawn, PlayerQueryPawn, FClientQueryPawnRequest, FClientQueryPawnResponse, "player_query_pawn_failed")
 M_WORLD_CLIENT_PLAYER_ROUTE(QueryInventory, PlayerQueryInventory, FClientQueryInventoryRequest, FClientQueryInventoryResponse, "player_query_inventory_failed")
 M_WORLD_CLIENT_PLAYER_ROUTE(QueryProgression, PlayerQueryProgression, FClientQueryProgressionRequest, FClientQueryProgressionResponse, "player_query_progression_failed")
 M_WORLD_CLIENT_PLAYER_ROUTE(Logout, PlayerLogout, FClientLogoutRequest, FClientLogoutResponse, "player_logout_failed")

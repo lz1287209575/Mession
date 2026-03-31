@@ -6,6 +6,7 @@
 
 class MWorldLoginRpc;
 class MWorldPlayerServiceEndpoint;
+class MWorldServer;
 
 namespace MWorldClientDetail
 {
@@ -24,7 +25,7 @@ public:
     MGENERATED_BODY(MWorldClientServiceEndpoint, MObject, 0)
 public:
     void Initialize(
-        MWorldPlayerServiceEndpoint* InPlayerService,
+        MWorldServer* InWorldServer,
         MWorldLoginRpc* InLoginRpc);
 
     MFUNCTION(ClientCall, Target=World)
@@ -34,7 +35,13 @@ public:
     void Client_FindPlayer(FClientFindPlayerRequest& Request, FClientFindPlayerResponse& Response);
 
     MFUNCTION(ClientCall, Target=World)
+    void Client_Move(FClientMoveRequest& Request, FClientMoveResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
     void Client_QueryProfile(FClientQueryProfileRequest& Request, FClientQueryProfileResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
+    void Client_QueryPawn(FClientQueryPawnRequest& Request, FClientQueryPawnResponse& Response);
 
     MFUNCTION(ClientCall, Target=World)
     void Client_QueryInventory(FClientQueryInventoryRequest& Request, FClientQueryInventoryResponse& Response);
@@ -69,6 +76,6 @@ private:
         const FClientLoginRequest& Request,
         uint64 GatewayConnectionId);
 
-    MWorldPlayerServiceEndpoint* PlayerService = nullptr;
+    MWorldServer* WorldServer = nullptr;
     MWorldLoginRpc* LoginRpc = nullptr;
 };

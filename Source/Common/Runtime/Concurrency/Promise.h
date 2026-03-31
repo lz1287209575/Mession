@@ -18,7 +18,7 @@ struct SPromiseState
     std::exception_ptr Exception;
     bool Ready = false;
     bool FutureRetrieved = false;
-    TFunction<void(MFuture<T>)> ThenCallback;
+    TVector<TFunction<void(MFuture<T>)>> ThenCallbacks;
 };
 
 struct SPromiseStateVoid
@@ -28,7 +28,7 @@ struct SPromiseStateVoid
     std::exception_ptr Exception;
     bool Ready = false;
     bool FutureRetrieved = false;
-    TFunction<void(MFuture<void>)> ThenCallback;
+    TVector<TFunction<void(MFuture<void>)>> ThenCallbacks;
 };
 }
 
@@ -132,7 +132,7 @@ MFuture<T> MPromise<T>::GetFuture()
 template<typename T>
 void MPromise<T>::SetValue(const T& Val)
 {
-    TFunction<void(MFuture<T>)> Cb;
+    TVector<TFunction<void(MFuture<T>)>> Callbacks;
     {
         std::lock_guard<std::mutex> Lock(State->Mutex);
         if (State->Ready)
@@ -141,19 +141,22 @@ void MPromise<T>::SetValue(const T& Val)
         }
         State->Value = Val;
         State->Ready = true;
-        Cb = std::move(State->ThenCallback);
+        Callbacks = std::move(State->ThenCallbacks);
     }
     State->Cond.notify_all();
-    if (Cb)
+    for (auto& Callback : Callbacks)
     {
-        Cb(MFuture<T>(State));
+        if (Callback)
+        {
+            Callback(MFuture<T>(State));
+        }
     }
 }
 
 template<typename T>
 void MPromise<T>::SetValue(T&& Val)
 {
-    TFunction<void(MFuture<T>)> Cb;
+    TVector<TFunction<void(MFuture<T>)>> Callbacks;
     {
         std::lock_guard<std::mutex> Lock(State->Mutex);
         if (State->Ready)
@@ -162,19 +165,22 @@ void MPromise<T>::SetValue(T&& Val)
         }
         State->Value = std::move(Val);
         State->Ready = true;
-        Cb = std::move(State->ThenCallback);
+        Callbacks = std::move(State->ThenCallbacks);
     }
     State->Cond.notify_all();
-    if (Cb)
+    for (auto& Callback : Callbacks)
     {
-        Cb(MFuture<T>(State));
+        if (Callback)
+        {
+            Callback(MFuture<T>(State));
+        }
     }
 }
 
 template<typename T>
 void MPromise<T>::SetException(std::exception_ptr E)
 {
-    TFunction<void(MFuture<T>)> Cb;
+    TVector<TFunction<void(MFuture<T>)>> Callbacks;
     {
         std::lock_guard<std::mutex> Lock(State->Mutex);
         if (State->Ready)
@@ -183,12 +189,15 @@ void MPromise<T>::SetException(std::exception_ptr E)
         }
         State->Exception = std::move(E);
         State->Ready = true;
-        Cb = std::move(State->ThenCallback);
+        Callbacks = std::move(State->ThenCallbacks);
     }
     State->Cond.notify_all();
-    if (Cb)
+    for (auto& Callback : Callbacks)
     {
-        Cb(MFuture<T>(State));
+        if (Callback)
+        {
+            Callback(MFuture<T>(State));
+        }
     }
 }
 
@@ -235,7 +244,7 @@ T MFuture<T>::Get() const
 template<typename T>
 void MFuture<T>::Then(TFunction<void(MFuture<T>)> Callback)
 {
-    if (!State)
+    if (!State || !Callback)
     {
         return;
     }
@@ -248,10 +257,10 @@ void MFuture<T>::Then(TFunction<void(MFuture<T>)> Callback)
         }
         else
         {
-            State->ThenCallback = std::move(Callback);
+            State->ThenCallbacks.push_back(Callback);
         }
     }
-    if (bCallNow && Callback)
+    if (bCallNow)
     {
         Callback(MFuture<T>(State));
     }
@@ -271,7 +280,7 @@ inline MFuture<void> MPromise<void>::GetFuture()
 
 inline void MPromise<void>::SetValue()
 {
-    TFunction<void(MFuture<void>)> Cb;
+    TVector<TFunction<void(MFuture<void>)>> Callbacks;
     {
         std::lock_guard<std::mutex> Lock(State->Mutex);
         if (State->Ready)
@@ -279,18 +288,21 @@ inline void MPromise<void>::SetValue()
             return;
         }
         State->Ready = true;
-        Cb = std::move(State->ThenCallback);
+        Callbacks = std::move(State->ThenCallbacks);
     }
     State->Cond.notify_all();
-    if (Cb)
+    for (auto& Callback : Callbacks)
     {
-        Cb(MFuture<void>(State));
+        if (Callback)
+        {
+            Callback(MFuture<void>(State));
+        }
     }
 }
 
 inline void MPromise<void>::SetException(std::exception_ptr E)
 {
-    TFunction<void(MFuture<void>)> Cb;
+    TVector<TFunction<void(MFuture<void>)>> Callbacks;
     {
         std::lock_guard<std::mutex> Lock(State->Mutex);
         if (State->Ready)
@@ -299,12 +311,15 @@ inline void MPromise<void>::SetException(std::exception_ptr E)
         }
         State->Exception = std::move(E);
         State->Ready = true;
-        Cb = std::move(State->ThenCallback);
+        Callbacks = std::move(State->ThenCallbacks);
     }
     State->Cond.notify_all();
-    if (Cb)
+    for (auto& Callback : Callbacks)
     {
-        Cb(MFuture<void>(State));
+        if (Callback)
+        {
+            Callback(MFuture<void>(State));
+        }
     }
 }
 
@@ -345,7 +360,7 @@ inline void MFuture<void>::Get() const
 
 inline void MFuture<void>::Then(TFunction<void(MFuture<void>)> Callback)
 {
-    if (!State)
+    if (!State || !Callback)
     {
         return;
     }
@@ -358,10 +373,10 @@ inline void MFuture<void>::Then(TFunction<void(MFuture<void>)> Callback)
         }
         else
         {
-            State->ThenCallback = std::move(Callback);
+            State->ThenCallbacks.push_back(Callback);
         }
     }
-    if (bCallNow && Callback)
+    if (bCallNow)
     {
         Callback(MFuture<void>(State));
     }

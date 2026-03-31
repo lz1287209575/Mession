@@ -1,4 +1,5 @@
 #include "Servers/World/Services/WorldClientServiceEndpoint.h"
+#include "Servers/World/WorldServer.h"
 #include "Servers/World/Rpc/WorldBackendRpc.h"
 #include "Servers/World/Services/WorldPlayerServiceEndpoint.h"
 
@@ -236,15 +237,15 @@ namespace MWorldClientDetail
 class FClientPlayerCallBinding
 {
 public:
-    explicit FClientPlayerCallBinding(MWorldPlayerServiceEndpoint* InPlayerService)
-        : PlayerService(InPlayerService)
+    explicit FClientPlayerCallBinding(MWorldServer* InWorldServer)
+        : WorldServer(InWorldServer)
     {
     }
 
 #define M_WORLD_CLIENT_PLAYER_ROUTE(MethodName, PlayerMethodName, ClientRequestType, ClientResponseType, FailureCode) \
     void MethodName(ClientRequestType& Request, ClientResponseType& Response) const \
     { \
-        Dispatch<&MWorldPlayerServiceEndpoint::PlayerMethodName>(FailureCode, Request, Response); \
+        Dispatch<&MWorldServer::PlayerMethodName>(FailureCode, Request, Response); \
     }
 #include "Servers/World/Services/WorldClientPlayerRouteList.inl"
 #undef M_WORLD_CLIENT_PLAYER_ROUTE
@@ -266,9 +267,9 @@ private:
             return;
         }
 
-        if (!PlayerService)
+        if (!WorldServer)
         {
-            Response.Error = "world_player_service_missing";
+            Response.Error = "world_server_missing";
             return;
         }
 
@@ -285,7 +286,7 @@ private:
         (void)MClientCallAsyncSupport::StartDeferred<TClientResponse>(
             Context,
             MClientCallAsyncSupport::Map(
-                (PlayerService->*TPlayerMethod)(PlayerRequest),
+                (WorldServer->*TPlayerMethod)(PlayerRequest),
                 [](const TPlayerResponse& PlayerResponse)
                 {
                     TClientResponse ClientResponse {};
@@ -300,7 +301,7 @@ private:
     }
 
 private:
-    MWorldPlayerServiceEndpoint* PlayerService = nullptr;
+    MWorldServer* WorldServer = nullptr;
 };
 } // namespace MWorldClientDetail
 
@@ -314,11 +315,11 @@ public:
 
     FClientLoginWorkflow(
         MWorldLoginRpc* InLoginRpc,
-        MWorldPlayerServiceEndpoint* InPlayerService,
+        MWorldServer* InWorldServer,
         FClientLoginRequest InRequest,
         uint64 InGatewayConnectionId)
         : LoginRpc(InLoginRpc)
-        , PlayerService(InPlayerService)
+        , WorldServer(InWorldServer)
         , Request(std::move(InRequest))
         , GatewayConnectionId(InGatewayConnectionId)
     {
@@ -327,7 +328,7 @@ public:
 protected:
     void OnStart() override
     {
-        if (!LoginRpc || !PlayerService)
+        if (!LoginRpc || !WorldServer)
         {
             Fail("client_login_dependencies_missing", "Client_Login");
             return;
@@ -348,7 +349,7 @@ private:
         EnterRequest.PlayerId = Request.PlayerId;
         EnterRequest.GatewayConnectionId = GatewayConnectionId;
         EnterRequest.SessionKey = SessionKey;
-        Continue(PlayerService->PlayerEnterWorld(EnterRequest), &FClientLoginWorkflow::OnPlayerEnteredWorld);
+        Continue(WorldServer->PlayerEnterWorld(EnterRequest), &FClientLoginWorkflow::OnPlayerEnteredWorld);
     }
 
     void OnPlayerEnteredWorld(const FPlayerEnterWorldResponse&)
@@ -361,7 +362,7 @@ private:
     }
 
     MWorldLoginRpc* LoginRpc = nullptr;
-    MWorldPlayerServiceEndpoint* PlayerService = nullptr;
+    MWorldServer* WorldServer = nullptr;
     FClientLoginRequest Request;
     uint64 GatewayConnectionId = 0;
     uint32 SessionKey = 0;
@@ -369,10 +370,10 @@ private:
 }
 
 void MWorldClientServiceEndpoint::Initialize(
-    MWorldPlayerServiceEndpoint* InPlayerService,
+    MWorldServer* InWorldServer,
     MWorldLoginRpc* InLoginRpc)
 {
-    PlayerService = InPlayerService;
+    WorldServer = InWorldServer;
     LoginRpc = InLoginRpc;
 }
 
@@ -411,7 +412,7 @@ void MWorldClientServiceEndpoint::Client_##MethodName(ClientRequestType& Request
 
 MWorldClientDetail::FClientPlayerCallBinding MWorldClientServiceEndpoint::ClientPlayerCall() const
 {
-    return MWorldClientDetail::FClientPlayerCallBinding(PlayerService);
+    return MWorldClientDetail::FClientPlayerCallBinding(WorldServer);
 }
 
 MFuture<TResult<FClientLoginResponse, FAppError>> MWorldClientServiceEndpoint::StartClientLoginFlow(
@@ -433,14 +434,14 @@ MFuture<TResult<FClientLoginResponse, FAppError>> MWorldClientServiceEndpoint::S
         return MClientCallAsyncSupport::MakeErrorFuture<FClientLoginResponse>("login_server_unavailable", "Client_Login");
     }
 
-    if (!PlayerService)
+    if (!WorldServer)
     {
-        return MClientCallAsyncSupport::MakeErrorFuture<FClientLoginResponse>("world_player_service_missing", "Client_Login");
+        return MClientCallAsyncSupport::MakeErrorFuture<FClientLoginResponse>("world_server_missing", "Client_Login");
     }
 
     return MClientCallAsyncSupport::StartWorkflow<MWorldClientFlows::FClientLoginWorkflow>(
         LoginRpc,
-        PlayerService,
+        WorldServer,
         Request,
         GatewayConnectionId);
 }

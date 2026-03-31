@@ -7,9 +7,13 @@
 #include "Common/Net/Rpc/RpcRuntimeContext.h"
 #include "Common/Net/Rpc/RpcDispatch.h"
 #include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Object/Result.h"
 #include "Protocol/Messages/Common/AppMessages.h"
+#include "Protocol/Messages/Common/ClientDownlinkMessages.h"
+#include "Protocol/Messages/Common/ControlPlaneMessages.h"
 #include "Protocol/Messages/Common/ForwardedClientCallMessages.h"
 #include "Protocol/Messages/Gateway/GatewayClientMessages.h"
+#include "Servers/App/ServerCallAsyncSupport.h"
 
 struct SGatewayConfig
 {
@@ -40,9 +44,19 @@ public:
     MFUNCTION(ClientCall, Target=Gateway)
     void Client_Echo(FClientEchoRequest& Request, FClientEchoResponse& Response);
 
+    MFUNCTION(ClientCall, Target=Gateway)
+    void Client_Heartbeat(FClientHeartbeatRequest& Request, FClientHeartbeatResponse& Response);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<SEmptyServerMessage, FAppError>> PushClientDownlink(const FClientDownlinkPushRequest& Request);
+
 private:
     void HandleClientPacket(uint64 ConnectionId, const TByteArray& Data);
-    void HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName);
+    void HandleBackendPacket(
+        const TSharedPtr<MServerConnection>& Connection,
+        uint8 PacketType,
+        const TByteArray& Data,
+        const char* PeerName);
 
     SGatewayConfig Config;
     TMap<uint64, TSharedPtr<INetConnection>> ClientConnections;

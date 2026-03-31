@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/Object/Object.h"
+#include "Protocol/Messages/Scene/SceneSyncMessages.h"
 #include "Protocol/Messages/World/WorldInventoryMessages.h"
 
 MCLASS(Type=Object)
@@ -36,4 +37,13 @@ public:
         int32,
         uint32,
         const TVector<SInventoryItemPayload>&) {}
+
+    MFUNCTION()
+    void Client_ScenePlayerEnter(const SPlayerSceneStateMessage&) {}
+
+    MFUNCTION()
+    void Client_ScenePlayerUpdate(const SPlayerSceneStateMessage&) {}
+
+    MFUNCTION()
+    void Client_ScenePlayerLeave(const SPlayerSceneLeaveMessage&) {}
 };

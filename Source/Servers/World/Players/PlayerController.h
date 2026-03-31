@@ -29,5 +29,8 @@ public:
         const FPlayerUpdateRouteRequest& Request);
 
     MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerMoveResponse, FAppError>> PlayerMove(const FPlayerMoveRequest& Request);
+
+    MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerApplyRouteResponse, FAppError>> ApplyRouteCall(const FPlayerApplyRouteRequest& Request);
 };

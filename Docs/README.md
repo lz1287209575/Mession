@@ -21,6 +21,11 @@
 
 - [Tooling.md](/root/Mession/Docs/Tooling.md)
 - [Validation.md](/root/Mession/Docs/Validation.md)
+- [UE_LoginIntegrationGuide.md](/root/Mession/Docs/UE_LoginIntegrationGuide.md)
+- [UE_HeartbeatIntegrationGuide.md](/root/Mession/Docs/UE_HeartbeatIntegrationGuide.md)
+- [UE_PlayerSyncAgentGuide.md](/root/Mession/Docs/UE_PlayerSyncAgentGuide.md)
+- [UE_LoginAgentPrompt.md](/root/Mession/Docs/UE_LoginAgentPrompt.md)
+- [UE_ClientSkeletonDesign.md](/root/Mession/Docs/UE_ClientSkeletonDesign.md)
 - [UE_ServerProjectManagerSpec.md](/root/Mession/Docs/UE_ServerProjectManagerSpec.md)
 
 ## 对后续演进相关的文档

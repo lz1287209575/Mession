@@ -11,9 +11,12 @@
 #include "Common/Runtime/Object/Result.h"
 #include "Common/Runtime/Persistence/PersistenceSubsystem.h"
 #include "Protocol/Messages/Common/AppMessages.h"
+#include "Protocol/Messages/Common/ClientDownlinkMessages.h"
+#include "Protocol/Messages/Common/ControlPlaneMessages.h"
 #include "Protocol/Messages/Common/ForwardedClientCallMessages.h"
 #include "Protocol/Messages/Common/ObjectProxyMessages.h"
 #include "Protocol/Messages/Gateway/GatewayClientMessages.h"
+#include "Protocol/Messages/Scene/SceneSyncMessages.h"
 #include "Protocol/Messages/World/WorldPlayerMessages.h"
 #include "Protocol/Messages/Auth/AuthSessionMessages.h"
 #include "Protocol/Messages/Mgo/MgoPlayerStateMessages.h"
@@ -106,7 +109,13 @@ public:
     MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> PlayerUpdateRoute(const FPlayerUpdateRouteRequest& Request);
 
     MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerMoveResponse, FAppError>> PlayerMove(const FPlayerMoveRequest& Request);
+
+    MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> PlayerQueryProfile(const FPlayerQueryProfileRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FPlayerQueryPawnResponse, FAppError>> PlayerQueryPawn(const FPlayerQueryPawnRequest& Request);
 
     MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> PlayerQueryInventory(const FPlayerQueryInventoryRequest& Request);
@@ -146,6 +155,13 @@ public:
     const MObjectProxyRegistry* GetObjectProxyRegistry() const override { return &ObjectProxyRegistry; }
 
 private:
+    MPlayer* FindPlayerById(uint64 PlayerId) const;
+    TSharedPtr<INetConnection> ResolveGatewayPeerConnection() const;
+    void QueueClientDownlink(uint64 GatewayConnectionId, uint16 FunctionId, const TByteArray& Payload) const;
+    void QueueScenePlayerEnterBroadcast(uint64 PlayerId);
+    void QueueScenePlayerUpdateBroadcast(uint64 PlayerId);
+    void QueueScenePlayerLeaveBroadcast(uint64 PlayerId, uint32 SceneId);
+
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
     void HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName);
     SWorldConfig Config;

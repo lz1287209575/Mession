@@ -3,6 +3,7 @@
 #include "Common/Net/Rpc/RpcClientCall.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Runtime/Object/Object.h"
+#include "Servers/App/ServerCallAsyncSupport.h"
 #include "Servers/App/ServerRpcSupport.h"
 
 namespace
@@ -143,6 +144,59 @@ bool BuildClientErrorResponsePayload(uint16 FunctionId, const FAppError& Error, 
     return true;
 }
 
+bool DispatchBackendServerCallPacket(
+    MObject* Service,
+    const TSharedPtr<MServerConnection>& Connection,
+    const TByteArray& Data)
+{
+    if (!Service || !Connection || Data.empty())
+    {
+        return false;
+    }
+
+    uint16 FunctionId = 0;
+    uint64 CallId = 0;
+    uint32 PayloadSize = 0;
+    size_t PayloadOffset = 0;
+    if (!ParseServerCallPacket(Data, FunctionId, CallId, PayloadSize, PayloadOffset))
+    {
+        return false;
+    }
+
+    TByteArray RequestPayload;
+    if (PayloadSize > 0)
+    {
+        RequestPayload.insert(
+            RequestPayload.end(),
+            Data.begin() + static_cast<TByteArray::difference_type>(PayloadOffset),
+            Data.begin() + static_cast<TByteArray::difference_type>(PayloadOffset + PayloadSize));
+    }
+
+    const TSharedPtr<IServerCallResponseTarget> ResponseTarget =
+        MakeShared<MServerCallResponseTarget>(
+            [Connection]() -> bool
+            {
+                return Connection && Connection->IsConnected();
+            },
+            [Connection](uint16 ResponseFunctionId, uint64 ResponseCallId, bool bSuccess, const TByteArray& ResponsePayload) -> bool
+            {
+                TByteArray ResponsePacketPayload;
+                if (!BuildServerCallResponsePacket(
+                        ResponseFunctionId,
+                        ResponseCallId,
+                        bSuccess,
+                        ResponsePayload,
+                        ResponsePacketPayload))
+                {
+                    return false;
+                }
+
+                return SendServerCallResponseMessage(Connection, ResponsePacketPayload);
+            });
+
+    return DispatchServerCall(Service, FunctionId, CallId, RequestPayload, ResponseTarget);
+}
+
 void SendClientErrorResponse(
     const TSharedPtr<IClientResponseTarget>& ResponseTarget,
     uint64 ConnectionId,
@@ -187,9 +241,9 @@ bool MGatewayServer::Init(int InPort)
     WorldServerConn = BackendConnectionManager.AddServer(
         SServerConnectionConfig(3, EServerType::World, "WorldSkeleton", Config.WorldServerAddr, Config.WorldServerPort));
 
-    WorldServerConn->SetOnMessage([this](auto, uint8 PacketType, const TByteArray& Data)
+    WorldServerConn->SetOnMessage([this](auto Connection, uint8 PacketType, const TByteArray& Data)
     {
-        HandleBackendPacket(PacketType, Data, "World");
+        HandleBackendPacket(Connection, PacketType, Data, "World");
     });
 
     WorldServerConn->Connect();
@@ -255,6 +309,56 @@ void MGatewayServer::Client_Echo(FClientEchoRequest& Request, FClientEchoRespons
 {
     Response.ConnectionId = GetCurrentClientConnectionId();
     Response.Message = Request.Message;
+}
+
+void MGatewayServer::Client_Heartbeat(FClientHeartbeatRequest& Request, FClientHeartbeatResponse& Response)
+{
+    Response.bSuccess = true;
+    Response.Sequence = Request.Sequence;
+    Response.ConnectionId = GetCurrentClientConnectionId();
+}
+
+MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::PushClientDownlink(
+    const FClientDownlinkPushRequest& Request)
+{
+    if (Request.GatewayConnectionId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>(
+            "gateway_connection_id_required",
+            "PushClientDownlink");
+    }
+
+    if (Request.FunctionId == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>(
+            "client_downlink_function_required",
+            "PushClientDownlink");
+    }
+
+    const auto It = ClientConnections.find(Request.GatewayConnectionId);
+    if (It == ClientConnections.end() || !It->second || !It->second->IsConnected())
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>(
+            "gateway_client_connection_missing",
+            "PushClientDownlink");
+    }
+
+    TByteArray Packet;
+    if (!BuildClientFunctionPacket(Request.FunctionId, Request.Payload, Packet))
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>(
+            "client_downlink_packet_build_failed",
+            "PushClientDownlink");
+    }
+
+    if (!It->second->Send(Packet.data(), static_cast<uint32>(Packet.size())))
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>(
+            "client_downlink_send_failed",
+            "PushClientDownlink");
+    }
+
+    return MServerCallAsyncSupport::MakeSuccessFuture(SEmptyServerMessage{});
 }
 
 void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& Data)
@@ -373,8 +477,21 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
             });
 }
 
-void MGatewayServer::HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName)
+void MGatewayServer::HandleBackendPacket(
+    const TSharedPtr<MServerConnection>& Connection,
+    uint8 PacketType,
+    const TByteArray& Data,
+    const char* PeerName)
 {
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_FunctionCall))
+    {
+        if (!DispatchBackendServerCallPacket(this, Connection, Data))
+        {
+            LOG_WARN("Gateway failed to dispatch backend function call from %s", PeerName ? PeerName : "backend");
+        }
+        return;
+    }
+
     if (PacketType == static_cast<uint8>(EServerMessageType::MT_FunctionResponse))
     {
         if (!HandleServerCallResponse(Data))

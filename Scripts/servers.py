@@ -25,6 +25,7 @@ GATEWAY_PORT = 8001
 LOGIN_PORT = 8002
 WORLD_PORT = 8003
 SCENE_PORT = 8004
+MGO_PORT = 8006
 
 SERVER_ORDER = [
     ("RouterServer", ROUTER_PORT),
@@ -32,6 +33,7 @@ SERVER_ORDER = [
     ("WorldServer", WORLD_PORT),
     ("SceneServer", SCENE_PORT),
     ("GatewayServer", GATEWAY_PORT),
+    ("MgoServer", MGO_PORT),
 ]
 
 PID_FILE_NAME = ".mession_servers.pid"

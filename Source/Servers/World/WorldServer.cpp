@@ -1,7 +1,43 @@
 #include "Servers/World/WorldServer.h"
+#include "Common/Net/Rpc/RpcClientCall.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Servers/App/ClientCallForwarding.h"
 #include "Servers/App/ServerRpcSupport.h"
+
+namespace
+{
+bool CanReceiveSceneDownlink(const MPlayer* Player)
+{
+    if (!Player)
+    {
+        return false;
+    }
+
+    const MPlayerSession* Session = Player->GetSession();
+    return Session && Session->GatewayConnectionId != 0;
+}
+
+bool TryBuildSceneStateMessage(const MPlayer* Player, SPlayerSceneStateMessage& OutMessage)
+{
+    if (!Player)
+    {
+        return false;
+    }
+
+    const MPlayerPawn* Pawn = Player->GetPawn();
+    if (!Pawn || !Pawn->IsSpawned() || Pawn->SceneId == 0)
+    {
+        return false;
+    }
+
+    OutMessage.PlayerId = Player->PlayerId;
+    OutMessage.SceneId = static_cast<uint16>(Pawn->SceneId);
+    OutMessage.X = Pawn->X;
+    OutMessage.Y = Pawn->Y;
+    OutMessage.Z = Pawn->Z;
+    return true;
+}
+}
 
 bool MWorldServer::LoadConfig(const MString& /*ConfigPath*/)
 {
@@ -95,7 +131,7 @@ bool MWorldServer::Init(int InPort)
     ObjectProxyRegistry.RegisterResolver(PlayerRootResolver.get());
     ObjectProxyService->Initialize(&ObjectProxyRegistry);
     PlayerService->Initialize(&OnlinePlayers, &PersistenceSubsystem, LoginRpc, MgoRpc, SceneRpc, RouterRpc);
-    ClientService->Initialize(PlayerService, LoginRpc);
+    ClientService->Initialize(this, LoginRpc);
 
     return true;
 }
@@ -180,7 +216,22 @@ MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> MWorldServer::PlayerEnter
             "PlayerEnterWorld");
     }
 
-    return PlayerService->PlayerEnterWorld(Request);
+    MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> Future = PlayerService->PlayerEnterWorld(Request);
+    Future.Then([this, PlayerId = Request.PlayerId](MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> Completed)
+    {
+        try
+        {
+            const TResult<FPlayerEnterWorldResponse, FAppError> Result = Completed.Get();
+            if (Result.IsOk())
+            {
+                QueueScenePlayerEnterBroadcast(PlayerId);
+            }
+        }
+        catch (...)
+        {
+        }
+    });
+    return Future;
 }
 
 MFuture<TResult<FPlayerFindResponse, FAppError>> MWorldServer::PlayerFind(const FPlayerFindRequest& Request)
@@ -208,6 +259,33 @@ MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MWorldServer::PlayerUpda
     return PlayerService->PlayerUpdateRoute(Request);
 }
 
+MFuture<TResult<FPlayerMoveResponse, FAppError>> MWorldServer::PlayerMove(const FPlayerMoveRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerMoveResponse>(
+            "world_player_service_missing",
+            "PlayerMove");
+    }
+
+    MFuture<TResult<FPlayerMoveResponse, FAppError>> Future = PlayerService->PlayerMove(Request);
+    Future.Then([this, PlayerId = Request.PlayerId](MFuture<TResult<FPlayerMoveResponse, FAppError>> Completed)
+    {
+        try
+        {
+            const TResult<FPlayerMoveResponse, FAppError> Result = Completed.Get();
+            if (Result.IsOk())
+            {
+                QueueScenePlayerUpdateBroadcast(PlayerId);
+            }
+        }
+        catch (...)
+        {
+        }
+    });
+    return Future;
+}
+
 MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> MWorldServer::PlayerQueryProfile(
     const FPlayerQueryProfileRequest& Request)
 {
@@ -219,6 +297,19 @@ MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> MWorldServer::PlayerQue
     }
 
     return PlayerService->PlayerQueryProfile(Request);
+}
+
+MFuture<TResult<FPlayerQueryPawnResponse, FAppError>> MWorldServer::PlayerQueryPawn(
+    const FPlayerQueryPawnRequest& Request)
+{
+    if (!PlayerService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerQueryPawnResponse>(
+            "world_player_service_missing",
+            "PlayerQueryPawn");
+    }
+
+    return PlayerService->PlayerQueryPawn(Request);
 }
 
 MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> MWorldServer::PlayerQueryInventory(
@@ -296,7 +387,22 @@ MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> MWorldServer::PlayerMod
             "PlayerModifyHealth");
     }
 
-    return PlayerService->PlayerModifyHealth(Request);
+    MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> Future = PlayerService->PlayerModifyHealth(Request);
+    Future.Then([this, PlayerId = Request.PlayerId](MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> Completed)
+    {
+        try
+        {
+            const TResult<FPlayerModifyHealthResponse, FAppError> Result = Completed.Get();
+            if (Result.IsOk())
+            {
+                QueueScenePlayerUpdateBroadcast(PlayerId);
+            }
+        }
+        catch (...)
+        {
+        }
+    });
+    return Future;
 }
 
 MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldServer::PlayerLogout(const FPlayerLogoutRequest& Request)
@@ -308,7 +414,28 @@ MFuture<TResult<FPlayerLogoutResponse, FAppError>> MWorldServer::PlayerLogout(co
             "PlayerLogout");
     }
 
-    return PlayerService->PlayerLogout(Request);
+    uint32 SceneIdBeforeLogout = 0;
+    if (const MPlayer* Player = FindPlayerById(Request.PlayerId))
+    {
+        SceneIdBeforeLogout = Player->ResolveCurrentSceneId();
+    }
+
+    MFuture<TResult<FPlayerLogoutResponse, FAppError>> Future = PlayerService->PlayerLogout(Request);
+    Future.Then([this, PlayerId = Request.PlayerId, SceneIdBeforeLogout](MFuture<TResult<FPlayerLogoutResponse, FAppError>> Completed)
+    {
+        try
+        {
+            const TResult<FPlayerLogoutResponse, FAppError> Result = Completed.Get();
+            if (Result.IsOk() && SceneIdBeforeLogout != 0)
+            {
+                QueueScenePlayerLeaveBroadcast(PlayerId, SceneIdBeforeLogout);
+            }
+        }
+        catch (...)
+        {
+        }
+    });
+    return Future;
 }
 
 MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> MWorldServer::PlayerSwitchScene(
@@ -321,7 +448,228 @@ MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> MWorldServer::PlayerSwit
             "PlayerSwitchScene");
     }
 
-    return PlayerService->PlayerSwitchScene(Request);
+    uint32 PreviousSceneId = 0;
+    if (const MPlayer* Player = FindPlayerById(Request.PlayerId))
+    {
+        PreviousSceneId = Player->ResolveCurrentSceneId();
+    }
+
+    MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> Future = PlayerService->PlayerSwitchScene(Request);
+    Future.Then([this, PlayerId = Request.PlayerId, PreviousSceneId](MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> Completed)
+    {
+        try
+        {
+            const TResult<FPlayerSwitchSceneResponse, FAppError> Result = Completed.Get();
+            if (!Result.IsOk())
+            {
+                return;
+            }
+
+            const uint32 NewSceneId = Result.GetValue().SceneId;
+            if (PreviousSceneId != 0 && PreviousSceneId != NewSceneId)
+            {
+                QueueScenePlayerLeaveBroadcast(PlayerId, PreviousSceneId);
+            }
+
+            QueueScenePlayerEnterBroadcast(PlayerId);
+        }
+        catch (...)
+        {
+        }
+    });
+    return Future;
+}
+
+MPlayer* MWorldServer::FindPlayerById(uint64 PlayerId) const
+{
+    const auto It = OnlinePlayers.find(PlayerId);
+    return It != OnlinePlayers.end() ? It->second : nullptr;
+}
+
+TSharedPtr<INetConnection> MWorldServer::ResolveGatewayPeerConnection() const
+{
+    for (const auto& [ConnectionId, Connection] : PeerConnections)
+    {
+        (void)ConnectionId;
+        if (Connection && Connection->IsConnected())
+        {
+            return Connection;
+        }
+    }
+
+    return nullptr;
+}
+
+void MWorldServer::QueueClientDownlink(uint64 GatewayConnectionId, uint16 FunctionId, const TByteArray& Payload) const
+{
+    if (GatewayConnectionId == 0 || FunctionId == 0)
+    {
+        return;
+    }
+
+    const TSharedPtr<INetConnection> GatewayPeerConnection = ResolveGatewayPeerConnection();
+    if (!GatewayPeerConnection)
+    {
+        LOG_WARN("World missing Gateway peer connection for downlink: connection=%llu function_id=%u",
+                 static_cast<unsigned long long>(GatewayConnectionId),
+                 static_cast<unsigned>(FunctionId));
+        return;
+    }
+
+    FClientDownlinkPushRequest Request;
+    Request.GatewayConnectionId = GatewayConnectionId;
+    Request.FunctionId = FunctionId;
+    Request.Payload = Payload;
+
+    CallServerFunction<SEmptyServerMessage>(GatewayPeerConnection, "MGatewayServer", "PushClientDownlink", Request)
+        .Then([GatewayConnectionId, FunctionId](MFuture<TResult<SEmptyServerMessage, FAppError>> Completed)
+        {
+            try
+            {
+                const TResult<SEmptyServerMessage, FAppError> Result = Completed.Get();
+                if (!Result.IsOk())
+                {
+                    LOG_WARN("World downlink push failed: connection=%llu function_id=%u code=%s",
+                             static_cast<unsigned long long>(GatewayConnectionId),
+                             static_cast<unsigned>(FunctionId),
+                             Result.GetError().Code.c_str());
+                }
+            }
+            catch (const std::exception& Ex)
+            {
+                LOG_WARN("World downlink push exception: connection=%llu function_id=%u error=%s",
+                         static_cast<unsigned long long>(GatewayConnectionId),
+                         static_cast<unsigned>(FunctionId),
+                         Ex.what());
+            }
+            catch (...)
+            {
+                LOG_WARN("World downlink push unknown exception: connection=%llu function_id=%u",
+                         static_cast<unsigned long long>(GatewayConnectionId),
+                         static_cast<unsigned>(FunctionId));
+            }
+        });
+}
+
+void MWorldServer::QueueScenePlayerEnterBroadcast(uint64 PlayerId)
+{
+    MPlayer* SubjectPlayer = FindPlayerById(PlayerId);
+    if (!SubjectPlayer || !CanReceiveSceneDownlink(SubjectPlayer))
+    {
+        return;
+    }
+
+    SPlayerSceneStateMessage SubjectState;
+    if (!TryBuildSceneStateMessage(SubjectPlayer, SubjectState))
+    {
+        return;
+    }
+
+    const uint16 EnterFunctionId = MGET_STABLE_RPC_FUNCTION_ID("MClientDownlink", "Client_ScenePlayerEnter");
+    if (EnterFunctionId == 0)
+    {
+        return;
+    }
+
+    const MPlayerSession* SubjectSession = SubjectPlayer->GetSession();
+    if (!SubjectSession)
+    {
+        return;
+    }
+
+    const TByteArray SubjectPayload = BuildPayload(SubjectState);
+    for (const auto& [OtherPlayerId, OtherPlayer] : OnlinePlayers)
+    {
+        if (OtherPlayerId == PlayerId || !CanReceiveSceneDownlink(OtherPlayer))
+        {
+            continue;
+        }
+
+        SPlayerSceneStateMessage OtherState;
+        if (!TryBuildSceneStateMessage(OtherPlayer, OtherState))
+        {
+            continue;
+        }
+
+        if (OtherState.SceneId != SubjectState.SceneId)
+        {
+            continue;
+        }
+
+        QueueClientDownlink(OtherPlayer->GetSession()->GatewayConnectionId, EnterFunctionId, SubjectPayload);
+        QueueClientDownlink(SubjectSession->GatewayConnectionId, EnterFunctionId, BuildPayload(OtherState));
+    }
+}
+
+void MWorldServer::QueueScenePlayerUpdateBroadcast(uint64 PlayerId)
+{
+    MPlayer* SubjectPlayer = FindPlayerById(PlayerId);
+    if (!SubjectPlayer)
+    {
+        return;
+    }
+
+    SPlayerSceneStateMessage SubjectState;
+    if (!TryBuildSceneStateMessage(SubjectPlayer, SubjectState))
+    {
+        return;
+    }
+
+    const uint16 UpdateFunctionId = MGET_STABLE_RPC_FUNCTION_ID("MClientDownlink", "Client_ScenePlayerUpdate");
+    if (UpdateFunctionId == 0)
+    {
+        return;
+    }
+
+    const TByteArray Payload = BuildPayload(SubjectState);
+    for (const auto& [OtherPlayerId, OtherPlayer] : OnlinePlayers)
+    {
+        if (OtherPlayerId == PlayerId || !CanReceiveSceneDownlink(OtherPlayer))
+        {
+            continue;
+        }
+
+        if (OtherPlayer->ResolveCurrentSceneId() != SubjectState.SceneId)
+        {
+            continue;
+        }
+
+        QueueClientDownlink(OtherPlayer->GetSession()->GatewayConnectionId, UpdateFunctionId, Payload);
+    }
+}
+
+void MWorldServer::QueueScenePlayerLeaveBroadcast(uint64 PlayerId, uint32 SceneId)
+{
+    if (SceneId == 0)
+    {
+        return;
+    }
+
+    const uint16 LeaveFunctionId = MGET_STABLE_RPC_FUNCTION_ID("MClientDownlink", "Client_ScenePlayerLeave");
+    if (LeaveFunctionId == 0)
+    {
+        return;
+    }
+
+    SPlayerSceneLeaveMessage LeaveMessage;
+    LeaveMessage.PlayerId = PlayerId;
+    LeaveMessage.SceneId = static_cast<uint16>(SceneId);
+
+    const TByteArray Payload = BuildPayload(LeaveMessage);
+    for (const auto& [OtherPlayerId, OtherPlayer] : OnlinePlayers)
+    {
+        if (OtherPlayerId == PlayerId || !CanReceiveSceneDownlink(OtherPlayer))
+        {
+            continue;
+        }
+
+        if (OtherPlayer->ResolveCurrentSceneId() != SceneId)
+        {
+            continue;
+        }
+
+        QueueClientDownlink(OtherPlayer->GetSession()->GatewayConnectionId, LeaveFunctionId, Payload);
+    }
 }
 
 MFuture<TResult<FForwardedClientCallResponse, FAppError>> MWorldServer::ForwardClientCall(
@@ -366,6 +714,21 @@ MFuture<TResult<FObjectProxyInvokeResponse, FAppError>> MWorldServer::InvokeObje
 
 void MWorldServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
+    if (Data.empty())
+    {
+        return;
+    }
+
+    const uint8 PacketType = Data[0];
+    if (PacketType == static_cast<uint8>(EServerMessageType::MT_FunctionResponse))
+    {
+        if (!HandleServerCallResponse(TByteArray(Data.begin() + 1, Data.end())))
+        {
+            LOG_WARN("World failed to handle peer function response");
+        }
+        return;
+    }
+
     (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
 }
 

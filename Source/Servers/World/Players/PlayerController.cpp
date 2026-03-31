@@ -20,6 +20,43 @@ void MPlayerController::SetRoute(uint32 InSceneId, uint8 InTargetServerType)
     MarkPropertyDirty("TargetServerType");
 }
 
+MFuture<TResult<FPlayerMoveResponse, FAppError>> MPlayerController::PlayerMove(const FPlayerMoveRequest& Request)
+{
+    MPlayer* Player = dynamic_cast<MPlayer*>(GetOuter());
+    if (!Player)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerMoveResponse>(
+            "player_owner_missing",
+            "PlayerMove");
+    }
+
+    MPlayerPawn* Pawn = Player->GetPawn();
+    if (!Pawn)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerMoveResponse>(
+            "player_pawn_missing",
+            "PlayerMove");
+    }
+
+    if (!Pawn->IsSpawned())
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerMoveResponse>(
+            "player_pawn_not_spawned",
+            "PlayerMove");
+    }
+
+    Pawn->SetLocation(Request.X, Request.Y, Request.Z);
+
+    FPlayerMoveResponse Response;
+    Response.PlayerId = Player->PlayerId;
+    Response.SceneId = Pawn->SceneId;
+    Response.X = Pawn->X;
+    Response.Y = Pawn->Y;
+    Response.Z = Pawn->Z;
+    Response.Health = Pawn->Health;
+    return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
+}
+
 MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MPlayerController::PlayerUpdateRoute(
     const FPlayerUpdateRouteRequest& Request)
 {

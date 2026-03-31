@@ -210,6 +210,10 @@ def compute_stable_client_function_id(client_api_name: str) -> int:
     return compute_stable_id("MClientApi", client_api_name)
 
 
+def compute_stable_downlink_function_id(function_name: str) -> int:
+    return compute_stable_id("MClientDownlink", function_name)
+
+
 def next_call_id() -> int:
     global _NEXT_CALL_ID
     call_id = _NEXT_CALL_ID
@@ -239,6 +243,16 @@ def decode_client_call_packet(payload: bytes) -> Optional[tuple[int, int, bytes]
     if 14 + payload_size > len(payload):
         return None
     return function_id, call_id, payload[14:14 + payload_size]
+
+
+def decode_client_function_packet(payload: bytes) -> Optional[tuple[int, bytes]]:
+    if len(payload) < 2 + 4:
+        return None
+    function_id = struct.unpack("<H", payload[:2])[0]
+    payload_size = struct.unpack("<I", payload[2:6])[0]
+    if 6 + payload_size > len(payload):
+        return None
+    return function_id, payload[6:6 + payload_size]
 
 
 def recv_client_call_response(
@@ -271,6 +285,34 @@ def recv_client_call_response(
     )
 
 
+def recv_client_downlink(
+    sock: socket.socket,
+    expected_function_name: str,
+    timeout: float,
+) -> bytes:
+    expected_function_id = compute_stable_downlink_function_id(expected_function_name)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        remaining = max(0.1, deadline - time.time())
+        packet = recv_one_packet_raw(sock, timeout=min(remaining, 1.0))
+        if packet is None:
+            continue
+
+        msg_type, payload = packet
+        if msg_type != MT_FUNCTION_CALL:
+            continue
+
+        decoded = decode_client_function_packet(payload)
+        if decoded is None:
+            continue
+
+        function_id, response_payload = decoded
+        if function_id == expected_function_id:
+            return response_payload
+
+    raise TimeoutError(f"timeout waiting for client downlink: function_id={expected_function_id}")
+
+
 def call_client_function(
     sock: socket.socket,
     function_name: str,
@@ -299,6 +341,9 @@ class ReflectReader:
 
     def read_u32(self) -> int:
         return self._read("<I")
+
+    def read_u16(self) -> int:
+        return self._read("<H")
 
     def read_u64(self) -> int:
         return self._read("<Q")
@@ -415,6 +460,45 @@ def parse_query_progression_response(payload: bytes) -> dict:
         "Experience": reader.read_u32(),
         "Health": reader.read_u32(),
         "Error": reader.read_string(),
+    }
+    reader.ensure_consumed()
+    return result
+
+
+def parse_pawn_state_response(payload: bytes) -> dict:
+    reader = ReflectReader(payload)
+    result = {
+        "bSuccess": reader.read_bool(),
+        "PlayerId": reader.read_u64(),
+        "SceneId": reader.read_u32(),
+        "X": reader._read("<f"),
+        "Y": reader._read("<f"),
+        "Z": reader._read("<f"),
+        "Health": reader.read_u32(),
+        "Error": reader.read_string(),
+    }
+    reader.ensure_consumed()
+    return result
+
+
+def parse_scene_state_message(payload: bytes) -> dict:
+    reader = ReflectReader(payload)
+    result = {
+        "PlayerId": reader.read_u64(),
+        "SceneId": reader.read_u16(),
+        "X": reader._read("<f"),
+        "Y": reader._read("<f"),
+        "Z": reader._read("<f"),
+    }
+    reader.ensure_consumed()
+    return result
+
+
+def parse_scene_leave_message(payload: bytes) -> dict:
+    reader = ReflectReader(payload)
+    result = {
+        "PlayerId": reader.read_u64(),
+        "SceneId": reader.read_u16(),
     }
     reader.ensure_consumed()
     return result
@@ -558,12 +642,16 @@ def run_validation(
         time.sleep(2.0)
 
         player_id = int(time.time() * 1000) % 4000000000 + 10001
+        other_player_id = player_id + 1
         next_scene_id = 2
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5.0)
+        sock2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock2.settimeout(5.0)
         try:
             sock.connect(("127.0.0.1", GATEWAY_PORT))
+            sock2.connect(("127.0.0.1", GATEWAY_PORT))
 
             log("Test 1: Client_Login...")
             login_deadline = time.time() + max(timeout, 10.0)
@@ -641,7 +729,44 @@ def run_validation(
                 f"playerId={find_after_switch['PlayerId']} sceneId={find_after_switch['SceneId']}"
             )
 
-            log("Test 5: Client_ChangeGold...")
+            log("Test 5: Client_Move...")
+            move_payload = struct.pack("<Qfff", player_id, 128.5, 64.25, 7.0)
+            move_response = parse_pawn_state_response(
+                call_client_function(sock, "Client_Move", move_payload)
+            )
+            if not move_response["bSuccess"]:
+                log(f"  Client_Move failed: error={move_response['Error']}")
+                return False
+            if (
+                move_response["PlayerId"] != player_id
+                or move_response["SceneId"] != next_scene_id
+                or abs(move_response["X"] - 128.5) > 0.001
+                or abs(move_response["Y"] - 64.25) > 0.001
+                or abs(move_response["Z"] - 7.0) > 0.001
+                or move_response["Health"] != 100
+            ):
+                log(f"  Client_Move returned unexpected payload: {move_response}")
+                return False
+            log(f"  Client_Move OK: {move_response}")
+
+            log("Test 6: Client_QueryPawn...")
+            query_pawn_response = parse_pawn_state_response(
+                call_client_function(sock, "Client_QueryPawn", struct.pack("<Q", player_id))
+            )
+            if (
+                not query_pawn_response["bSuccess"]
+                or query_pawn_response["PlayerId"] != player_id
+                or query_pawn_response["SceneId"] != next_scene_id
+                or abs(query_pawn_response["X"] - 128.5) > 0.001
+                or abs(query_pawn_response["Y"] - 64.25) > 0.001
+                or abs(query_pawn_response["Z"] - 7.0) > 0.001
+                or query_pawn_response["Health"] != 100
+            ):
+                log(f"  Client_QueryPawn returned unexpected payload: {query_pawn_response}")
+                return False
+            log(f"  Client_QueryPawn OK: {query_pawn_response}")
+
+            log("Test 7: Client_ChangeGold...")
             change_gold_response = parse_change_gold_response(
                 call_client_function(sock, "Client_ChangeGold", struct.pack("<Qi", player_id, 50))
             )
@@ -659,7 +784,7 @@ def run_validation(
                 f"playerId={change_gold_response['PlayerId']} gold={change_gold_response['Gold']}"
             )
 
-            log("Test 6: Client_EquipItem...")
+            log("Test 8: Client_EquipItem...")
             equip_item_response = parse_equip_item_response(
                 call_client_function(
                     sock,
@@ -683,7 +808,7 @@ def run_validation(
                 f"equippedItem={equip_item_response['EquippedItem']}"
             )
 
-            log("Test 7: Client_GrantExperience...")
+            log("Test 9: Client_GrantExperience...")
             grant_experience_response = parse_grant_experience_response(
                 call_client_function(sock, "Client_GrantExperience", struct.pack("<QI", player_id, 250))
             )
@@ -709,7 +834,7 @@ def run_validation(
                 f"experience={grant_experience_response['Experience']}"
             )
 
-            log("Test 8: Client_ModifyHealth...")
+            log("Test 10: Client_ModifyHealth...")
             modify_health_response = parse_modify_health_response(
                 call_client_function(sock, "Client_ModifyHealth", struct.pack("<Qi", player_id, -25))
             )
@@ -727,7 +852,27 @@ def run_validation(
                 f"playerId={modify_health_response['PlayerId']} health={modify_health_response['Health']}"
             )
 
-            log("Test 9: Client_QueryProfile after writes...")
+            log("Test 11: Client_QueryPawn after health change...")
+            query_pawn_after_health = parse_pawn_state_response(
+                call_client_function(sock, "Client_QueryPawn", struct.pack("<Q", player_id))
+            )
+            if (
+                not query_pawn_after_health["bSuccess"]
+                or query_pawn_after_health["PlayerId"] != player_id
+                or query_pawn_after_health["SceneId"] != next_scene_id
+                or abs(query_pawn_after_health["X"] - 128.5) > 0.001
+                or abs(query_pawn_after_health["Y"] - 64.25) > 0.001
+                or abs(query_pawn_after_health["Z"] - 7.0) > 0.001
+                or query_pawn_after_health["Health"] != 75
+            ):
+                log(
+                    "  Client_QueryPawn after health change returned unexpected payload: "
+                    f"{query_pawn_after_health}"
+                )
+                return False
+            log(f"  Client_QueryPawn after health change OK: {query_pawn_after_health}")
+
+            log("Test 12: Client_QueryProfile after writes...")
             query_profile_response = parse_query_profile_response(
                 call_client_function(sock, "Client_QueryProfile", struct.pack("<Q", player_id))
             )
@@ -748,7 +893,7 @@ def run_validation(
                 return False
             log(f"  Client_QueryProfile OK: {query_profile_response}")
 
-            log("Test 10: Client_QueryInventory after writes...")
+            log("Test 13: Client_QueryInventory after writes...")
             query_inventory_response = parse_query_inventory_response(
                 call_client_function(sock, "Client_QueryInventory", struct.pack("<Q", player_id))
             )
@@ -765,7 +910,7 @@ def run_validation(
                 return False
             log(f"  Client_QueryInventory OK: {query_inventory_response}")
 
-            log("Test 11: Client_QueryProgression after writes...")
+            log("Test 14: Client_QueryProgression after writes...")
             query_progression_response = parse_query_progression_response(
                 call_client_function(sock, "Client_QueryProgression", struct.pack("<Q", player_id))
             )
@@ -783,7 +928,62 @@ def run_validation(
                 return False
             log(f"  Client_QueryProgression OK: {query_progression_response}")
 
-            log("Test 12: Client_Logout...")
+            log("Test 15: second player enter same scene and trigger downlink...")
+            other_login_response = wait_until(
+                time.time() + max(timeout, 10.0),
+                lambda: try_login(sock2, other_player_id),
+            )
+            if other_login_response is None:
+                log("  second player login failed: no valid response before timeout")
+                return False
+            if not other_login_response["bSuccess"]:
+                log(f"  second player login failed: error={other_login_response['Error']}")
+                return False
+
+            other_switch_response = parse_switch_scene_response(
+                call_client_function(sock2, "Client_SwitchScene", struct.pack("<QI", other_player_id, next_scene_id))
+            )
+            if not other_switch_response["bSuccess"]:
+                log(f"  second player switch failed: error={other_switch_response['Error']}")
+                return False
+
+            enter_downlink = parse_scene_state_message(
+                recv_client_downlink(sock, "Client_ScenePlayerEnter", 5.0)
+            )
+            if (
+                enter_downlink["PlayerId"] != other_player_id
+                or enter_downlink["SceneId"] != next_scene_id
+                or abs(enter_downlink["X"]) > 0.001
+                or abs(enter_downlink["Y"]) > 0.001
+                or abs(enter_downlink["Z"]) > 0.001
+            ):
+                log(f"  Client_ScenePlayerEnter returned unexpected payload: {enter_downlink}")
+                return False
+            log(f"  Client_ScenePlayerEnter OK: {enter_downlink}")
+
+            log("Test 16: second player receives first player move update...")
+            move_again_response = parse_pawn_state_response(
+                call_client_function(sock, "Client_Move", struct.pack("<Qfff", player_id, 256.0, 96.0, 11.0))
+            )
+            if not move_again_response["bSuccess"]:
+                log(f"  second move failed: error={move_again_response['Error']}")
+                return False
+
+            update_downlink = parse_scene_state_message(
+                recv_client_downlink(sock2, "Client_ScenePlayerUpdate", 5.0)
+            )
+            if (
+                update_downlink["PlayerId"] != player_id
+                or update_downlink["SceneId"] != next_scene_id
+                or abs(update_downlink["X"] - 256.0) > 0.001
+                or abs(update_downlink["Y"] - 96.0) > 0.001
+                or abs(update_downlink["Z"] - 11.0) > 0.001
+            ):
+                log(f"  Client_ScenePlayerUpdate returned unexpected payload: {update_downlink}")
+                return False
+            log(f"  Client_ScenePlayerUpdate OK: {update_downlink}")
+
+            log("Test 17: Client_Logout...")
             logout_response = parse_logout_response(
                 call_client_function(sock, "Client_Logout", struct.pack("<Q", player_id))
             )
@@ -795,7 +995,16 @@ def run_validation(
                 return False
             log(f"  Client_Logout OK: playerId={logout_response['PlayerId']}")
 
-            log("Test 13: Client_FindPlayer after logout...")
+            log("Test 18: second player receives leave downlink...")
+            leave_downlink = parse_scene_leave_message(
+                recv_client_downlink(sock2, "Client_ScenePlayerLeave", 5.0)
+            )
+            if leave_downlink["PlayerId"] != player_id or leave_downlink["SceneId"] != next_scene_id:
+                log(f"  Client_ScenePlayerLeave returned unexpected payload: {leave_downlink}")
+                return False
+            log(f"  Client_ScenePlayerLeave OK: {leave_downlink}")
+
+            log("Test 19: Client_FindPlayer after logout...")
             find_after_logout = parse_find_player_response(
                 call_client_function(sock, "Client_FindPlayer", struct.pack("<Q", player_id))
             )
@@ -807,7 +1016,7 @@ def run_validation(
                 return False
             log("  Client_FindPlayer after logout OK: player removed from World state")
 
-            log("Test 14: Client_Login again after logout...")
+            log("Test 20: Client_Login again after logout...")
             relogin_response = parse_login_response(
                 call_client_function(sock, "Client_Login", struct.pack("<Q", player_id))
             )
@@ -819,7 +1028,7 @@ def run_validation(
                 f"playerId={relogin_response['PlayerId']} sessionKey={relogin_response['SessionKey']}"
             )
 
-            log("Test 15: Client_FindPlayer after relogin...")
+            log("Test 21: Client_FindPlayer after relogin...")
             find_after_relogin = parse_find_player_response(
                 call_client_function(sock, "Client_FindPlayer", struct.pack("<Q", player_id))
             )
@@ -835,7 +1044,7 @@ def run_validation(
                 f"playerId={find_after_relogin['PlayerId']} sceneId={find_after_relogin['SceneId']}"
             )
 
-            log("Test 16: Client_QueryProfile after relogin...")
+            log("Test 22: Client_QueryProfile after relogin...")
             query_profile_after_relogin = parse_query_profile_response(
                 call_client_function(sock, "Client_QueryProfile", struct.pack("<Q", player_id))
             )
@@ -856,7 +1065,7 @@ def run_validation(
                 return False
             log(f"  Client_QueryProfile after relogin OK: {query_profile_after_relogin}")
 
-            log("Test 17: Client_QueryInventory after relogin...")
+            log("Test 23: Client_QueryInventory after relogin...")
             query_inventory_after_relogin = parse_query_inventory_response(
                 call_client_function(sock, "Client_QueryInventory", struct.pack("<Q", player_id))
             )
@@ -873,7 +1082,7 @@ def run_validation(
                 return False
             log(f"  Client_QueryInventory after relogin OK: {query_inventory_after_relogin}")
 
-            log("Test 18: Client_QueryProgression after relogin...")
+            log("Test 24: Client_QueryProgression after relogin...")
             query_progression_after_relogin = parse_query_progression_response(
                 call_client_function(sock, "Client_QueryProgression", struct.pack("<Q", player_id))
             )
@@ -891,7 +1100,7 @@ def run_validation(
                 return False
             log(f"  Client_QueryProgression after relogin OK: {query_progression_after_relogin}")
 
-            log("Test 19: forwarded Client_FindPlayer invalid payload...")
+            log("Test 25: forwarded Client_FindPlayer invalid payload...")
             invalid_payload_response = try_find_player(sock, struct.pack("<I", player_id))
             if invalid_payload_response is None:
                 log("  invalid payload test failed: no response")
@@ -904,7 +1113,7 @@ def run_validation(
                 return False
             log("  invalid payload OK: binder error surfaced through Gateway")
 
-            log("Test 20: forwarded Client_FindPlayer validation error...")
+            log("Test 26: forwarded Client_FindPlayer validation error...")
             zero_player_response = try_find_player(sock, struct.pack("<Q", 0))
             if zero_player_response is None:
                 log("  zero player id test failed: no response")
@@ -917,7 +1126,7 @@ def run_validation(
                 return False
             log("  validation error OK: world business error reached client")
 
-            log("Test 21: World unavailable after forward route...")
+            log("Test 27: World unavailable after forward route...")
             world_proc = proc_by_name.get("WorldServer")
             if world_proc is None:
                 log("  WorldServer process handle missing")
@@ -954,6 +1163,10 @@ def run_validation(
         finally:
             try:
                 sock.close()
+            except OSError:
+                pass
+            try:
+                sock2.close()
             except OSError:
                 pass
     finally:
