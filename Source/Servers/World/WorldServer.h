@@ -15,6 +15,7 @@
 #include "Protocol/Messages/Common/ControlPlaneMessages.h"
 #include "Protocol/Messages/Common/ForwardedClientCallMessages.h"
 #include "Protocol/Messages/Common/ObjectProxyMessages.h"
+#include "Protocol/Messages/Combat/CombatWorldMessages.h"
 #include "Protocol/Messages/Gateway/GatewayClientMessages.h"
 #include "Protocol/Messages/Scene/SceneSyncMessages.h"
 #include "Protocol/Messages/World/WorldPlayerMessages.h"
@@ -26,6 +27,7 @@
 #include "Servers/App/ObjectProxyServiceEndpoint.h"
 #include "Servers/World/Players/Player.h"
 #include "Servers/World/Rpc/WorldBackendRpc.h"
+#include "Servers/World/Services/WorldCombatServiceEndpoint.h"
 #include "Servers/World/Services/WorldClientServiceEndpoint.h"
 #include "Servers/World/Services/WorldPlayerServiceEndpoint.h"
 
@@ -145,6 +147,18 @@ public:
     MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> PlayerSwitchScene(const FPlayerSwitchSceneRequest& Request);
 
     MFUNCTION(ServerCall)
+    MFuture<TResult<FWorldCreateCombatAvatarResponse, FAppError>> CreateCombatAvatar(
+        const FWorldCreateCombatAvatarRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FWorldCommitCombatResultResponse, FAppError>> CommitCombatResult(
+        const FWorldCommitCombatResultRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FWorldCastSkillResponse, FAppError>> CastSkill(
+        const FWorldCastSkillRequest& Request);
+
+    MFUNCTION(ServerCall)
     MFuture<TResult<FForwardedClientCallResponse, FAppError>> ForwardClientCall(
         const FForwardedClientCallRequest& Request);
 
@@ -173,6 +187,7 @@ private:
     TSharedPtr<MServerConnection> RouterServerConn;
     TSharedPtr<MServerConnection> MgoServerConn;
     MWorldClientServiceEndpoint* ClientService = nullptr;
+    MWorldCombatServiceEndpoint* CombatService = nullptr;
     MWorldPlayerServiceEndpoint* PlayerService = nullptr;
     MWorldLoginRpc* LoginRpc = nullptr;
     MWorldMgoRpc* MgoRpc = nullptr;

@@ -2,6 +2,7 @@
 
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Protocol/Messages/Auth/AuthSessionMessages.h"
+#include "Protocol/Messages/Combat/CombatSceneMessages.h"
 #include "Protocol/Messages/Mgo/MgoPlayerStateMessages.h"
 #include "Protocol/Messages/Router/RouterServiceMessages.h"
 #include "Protocol/Messages/Scene/SceneServiceMessages.h"
@@ -50,6 +51,17 @@ public:
 
     MFUNCTION(ServerCall, Target=Scene)
     MFuture<TResult<FSceneLeaveResponse, FAppError>> LeaveScene(const FSceneLeaveRequest& Request);
+
+    MFUNCTION(ServerCall, Target=Scene)
+    MFuture<TResult<FSceneSpawnCombatAvatarResponse, FAppError>> SpawnCombatAvatar(
+        const FSceneSpawnCombatAvatarRequest& Request);
+
+    MFUNCTION(ServerCall, Target=Scene)
+    MFuture<TResult<FSceneDespawnCombatAvatarResponse, FAppError>> DespawnCombatAvatar(
+        const FSceneDespawnCombatAvatarRequest& Request);
+
+    MFUNCTION(ServerCall, Target=Scene)
+    MFuture<TResult<FSceneCastSkillResponse, FAppError>> CastSkill(const FSceneCastSkillRequest& Request);
 
 private:
     EServerType GetTargetServerType() const override;

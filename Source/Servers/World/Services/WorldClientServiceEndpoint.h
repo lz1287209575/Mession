@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Protocol/Messages/Combat/CombatClientMessages.h"
 #include "Protocol/Messages/Gateway/GatewayClientMessages.h"
 #include "Servers/App/ClientCallAsyncSupport.h"
 
@@ -66,6 +67,9 @@ public:
 
     MFUNCTION(ClientCall, Target=World)
     void Client_ModifyHealth(FClientModifyHealthRequest& Request, FClientModifyHealthResponse& Response);
+
+    MFUNCTION(ClientCall, Target=World)
+    void Client_CastSkill(FClientCastSkillRequest& Request, FClientCastSkillResponse& Response);
 
 private:
     friend class MWorldClientFlows::FClientLoginWorkflow;

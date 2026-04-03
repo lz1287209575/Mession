@@ -107,6 +107,10 @@ bool MWorldServer::Init(int InPort)
     {
         PlayerService = NewMObject<MWorldPlayerServiceEndpoint>(this, "PlayerService");
     }
+    if (!CombatService)
+    {
+        CombatService = NewMObject<MWorldCombatServiceEndpoint>(this, "CombatService");
+    }
     if (!ObjectProxyService)
     {
         ObjectProxyService = NewMObject<MObjectProxyServiceEndpoint>(this, "ObjectProxyService");
@@ -131,6 +135,7 @@ bool MWorldServer::Init(int InPort)
     ObjectProxyRegistry.RegisterResolver(PlayerRootResolver.get());
     ObjectProxyService->Initialize(&ObjectProxyRegistry);
     PlayerService->Initialize(&OnlinePlayers, &PersistenceSubsystem, LoginRpc, MgoRpc, SceneRpc, RouterRpc);
+    CombatService->Initialize(&OnlinePlayers, SceneRpc);
     ClientService->Initialize(this, LoginRpc);
 
     return true;
@@ -670,6 +675,60 @@ void MWorldServer::QueueScenePlayerLeaveBroadcast(uint64 PlayerId, uint32 SceneI
 
         QueueClientDownlink(OtherPlayer->GetSession()->GatewayConnectionId, LeaveFunctionId, Payload);
     }
+}
+
+MFuture<TResult<FWorldCreateCombatAvatarResponse, FAppError>> MWorldServer::CreateCombatAvatar(
+    const FWorldCreateCombatAvatarRequest& Request)
+{
+    if (!CombatService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FWorldCreateCombatAvatarResponse>(
+            "world_combat_service_missing",
+            "CreateCombatAvatar");
+    }
+
+    return CombatService->CreateCombatAvatar(Request);
+}
+
+MFuture<TResult<FWorldCommitCombatResultResponse, FAppError>> MWorldServer::CommitCombatResult(
+    const FWorldCommitCombatResultRequest& Request)
+{
+    if (!CombatService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FWorldCommitCombatResultResponse>(
+            "world_combat_service_missing",
+            "CommitCombatResult");
+    }
+
+    MFuture<TResult<FWorldCommitCombatResultResponse, FAppError>> Future = CombatService->CommitCombatResult(Request);
+    Future.Then([this, PlayerId = Request.PlayerId](MFuture<TResult<FWorldCommitCombatResultResponse, FAppError>> Completed)
+    {
+        try
+        {
+            const TResult<FWorldCommitCombatResultResponse, FAppError> Result = Completed.Get();
+            if (Result.IsOk())
+            {
+                QueueScenePlayerUpdateBroadcast(PlayerId);
+            }
+        }
+        catch (...)
+        {
+        }
+    });
+    return Future;
+}
+
+MFuture<TResult<FWorldCastSkillResponse, FAppError>> MWorldServer::CastSkill(
+    const FWorldCastSkillRequest& Request)
+{
+    if (!CombatService)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FWorldCastSkillResponse>(
+            "world_combat_service_missing",
+            "CastSkill");
+    }
+
+    return CombatService->CastSkill(Request);
 }
 
 MFuture<TResult<FForwardedClientCallResponse, FAppError>> MWorldServer::ForwardClientCall(

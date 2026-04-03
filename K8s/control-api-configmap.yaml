@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mession-control-api-config
+data:
+  MESSION_CONTROL_API_HOST: "0.0.0.0"
+  MESSION_CONTROL_API_PORT: "18080"
+  MESSION_BUILD_DIR: "/data/build"
+  MESSION_AGENT_NAME: "control-api-node-a"
+  MESSION_AGENT_GROUPS: "world,shard-a"
+  MESSION_CONTROL_API_ADVERTISE_HOST: "mession-control-api.mession-system.svc.cluster.local"
+  MESSION_CONTROL_API_ADVERTISE_PORT: "18080"
+  MESSION_REGISTRY_URL: "http://mession-registry.mession-system.svc.cluster.local:19080"
+  MESSION_REGISTRY_HEARTBEAT_INTERVAL: "5"

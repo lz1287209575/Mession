@@ -80,6 +80,7 @@ configure_mession_compile_options(mession_core)
 
 # Common 库（公共组件：日志/RPC/连接等中层能力）
 set(MESSION_COMMON_SOURCES
+    Source/Common/Asset/UAssetPackageReader.cpp
     Source/Common/Runtime/Log/Logger.cpp
     Source/Common/Runtime/Log/ConsoleLogSink.cpp
     Source/Common/Runtime/Log/FileLogSink.cpp
@@ -317,10 +318,12 @@ add_executable(WorldServer
     Source/Servers/World/Players/PlayerInventory.cpp
     Source/Servers/World/Players/PlayerProgression.cpp
     Source/Servers/World/Players/Player.cpp
+    Source/Servers/World/Players/PlayerCombatProfile.cpp
     Source/Servers/World/Players/PlayerController.cpp
     Source/Servers/World/Players/PlayerPawn.cpp
     Source/Servers/World/Players/PlayerProfile.cpp
     Source/Servers/World/Players/PlayerSession.cpp
+    Source/Servers/World/Services/WorldCombatServiceEndpoint.cpp
     Source/Servers/World/Services/WorldClientServiceEndpoint.cpp
     Source/Servers/World/Services/WorldPlayerServiceEndpoint.cpp
 )
@@ -336,6 +339,11 @@ add_executable(SceneServer
     Source/Servers/Scene/SceneServer.h
     Source/Servers/Scene/SceneServer.cpp
     Source/Servers/Scene/SceneServerMain.cpp
+    Source/Servers/Scene/Combat/SceneCombatRuntime.cpp
+    Source/Servers/Scene/Combat/SkillCatalog.cpp
+    Source/Servers/Scene/Combat/SkillStepExecutor.cpp
+    Source/Servers/Scene/Combat/UAssetSkillLoader.cpp
+    Source/Servers/Scene/Services/SceneCombatServiceEndpoint.cpp
     Source/Servers/Scene/Services/SceneSessionServiceEndpoint.cpp
 )
 target_link_libraries(SceneServer

@@ -4,6 +4,7 @@
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Protocol/Messages/World/WorldPlayerMessages.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
+#include "Servers/World/Players/PlayerCombatProfile.h"
 #include "Servers/World/Players/PlayerController.h"
 #include "Servers/World/Players/PlayerPawn.h"
 #include "Servers/World/Players/PlayerProfile.h"
@@ -45,6 +46,8 @@ public:
 
     MPlayerProfile* GetProfile() const;
 
+    MPlayerCombatProfile* GetCombatProfile() const;
+
     void VisitReferencedObjects(const TFunction<void(MObject*)>& Visitor) const override;
 
 private:
@@ -52,4 +55,5 @@ private:
     MPlayerController* Controller = nullptr;
     MPlayerPawn* Pawn = nullptr;
     MPlayerProfile* Profile = nullptr;
+    MPlayerCombatProfile* CombatProfile = nullptr;
 };

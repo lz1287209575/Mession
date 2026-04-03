@@ -21,12 +21,18 @@
 
 - [Tooling.md](/root/Mession/Docs/Tooling.md)
 - [Validation.md](/root/Mession/Docs/Validation.md)
+- [ServerControlApi.md](/root/Mession/Docs/ServerControlApi.md)
+- [ServerRegistry.md](/root/Mession/Docs/ServerRegistry.md)
+- [ServerManagerTui.md](/root/Mession/Docs/ServerManagerTui.md)
+- [K8sContainerPrep.md](/root/Mession/Docs/K8sContainerPrep.md)
 - [UE_LoginIntegrationGuide.md](/root/Mession/Docs/UE_LoginIntegrationGuide.md)
 - [UE_HeartbeatIntegrationGuide.md](/root/Mession/Docs/UE_HeartbeatIntegrationGuide.md)
 - [UE_PlayerSyncAgentGuide.md](/root/Mession/Docs/UE_PlayerSyncAgentGuide.md)
 - [UE_LoginAgentPrompt.md](/root/Mession/Docs/UE_LoginAgentPrompt.md)
 - [UE_ClientSkeletonDesign.md](/root/Mession/Docs/UE_ClientSkeletonDesign.md)
 - [UE_ServerProjectManagerSpec.md](/root/Mession/Docs/UE_ServerProjectManagerSpec.md)
+- [UE_SkillGraph_NodeSystem_Design.md](/root/Mession/Docs/UE_SkillGraph_NodeSystem_Design.md)
+- [UE_SkillGraph/README.md](/root/Mession/Docs/UE_SkillGraph/README.md)
 
 ## 对后续演进相关的文档
 

@@ -399,6 +399,54 @@ void MWorldClientServiceEndpoint::Client_Login(FClientLoginRequest& Request, FCl
         [](const FAppError& Error)
         {
             return BuildFailureResponse<FClientLoginResponse>(Error, "client_login_failed");
+    });
+}
+
+void MWorldClientServiceEndpoint::Client_CastSkill(FClientCastSkillRequest& Request, FClientCastSkillResponse& Response)
+{
+    if (Request.PlayerId == 0 || Request.TargetPlayerId == 0)
+    {
+        Response.Error = "combat_participants_required";
+        return;
+    }
+
+    if (!WorldServer)
+    {
+        Response.Error = "world_server_missing";
+        return;
+    }
+
+    const SClientCallContext Context = CaptureCurrentClientCallContext();
+    if (!Context.IsValid())
+    {
+        Response.Error = "client_call_context_missing";
+        return;
+    }
+
+    FWorldCastSkillRequest WorldRequest;
+    WorldRequest.PlayerId = Request.PlayerId;
+    WorldRequest.TargetPlayerId = Request.TargetPlayerId;
+    WorldRequest.SkillId = Request.SkillId;
+
+    (void)MClientCallAsyncSupport::StartDeferred<FClientCastSkillResponse>(
+        Context,
+        MClientCallAsyncSupport::Map(
+            WorldServer->CastSkill(WorldRequest),
+            [](const FWorldCastSkillResponse& WorldResponse)
+            {
+                FClientCastSkillResponse ClientResponse;
+                ClientResponse.bSuccess = true;
+                ClientResponse.PlayerId = WorldResponse.PlayerId;
+                ClientResponse.TargetPlayerId = WorldResponse.TargetPlayerId;
+                ClientResponse.SkillId = WorldResponse.SkillId;
+                ClientResponse.SceneId = WorldResponse.SceneId;
+                ClientResponse.AppliedDamage = WorldResponse.AppliedDamage;
+                ClientResponse.TargetHealth = WorldResponse.TargetHealth;
+                return ClientResponse;
+            }),
+        [](const FAppError& Error)
+        {
+            return BuildFailureResponse<FClientCastSkillResponse>(Error, "client_cast_skill_failed");
         });
 }
 

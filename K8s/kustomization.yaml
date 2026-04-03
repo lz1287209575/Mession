@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mession-system
+
+resources:
+  - namespace.yaml
+  - registry-pvc.yaml
+  - registry-configmap.yaml
+  - registry-secret.yaml
+  - registry-deployment.yaml
+  - control-api-configmap.yaml
+  - control-api-secret.yaml
+  - control-api-deployment.yaml

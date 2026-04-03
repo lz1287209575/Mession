@@ -8,12 +8,17 @@
 #include "Common/Net/ServerConnection.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Protocol/Messages/Common/AppMessages.h"
+#include "Protocol/Messages/Combat/CombatSceneMessages.h"
 #include "Protocol/Messages/Scene/SceneServiceMessages.h"
+#include "Servers/Scene/Combat/SceneCombatRuntime.h"
+#include "Servers/Scene/Combat/SkillCatalog.h"
+#include "Servers/Scene/Services/SceneCombatServiceEndpoint.h"
 #include "Servers/Scene/Services/SceneSessionServiceEndpoint.h"
 
 struct SSceneConfig
 {
     uint16 ListenPort = 8004;
+    MString SkillAssetDir = "Config/Skills";
 };
 
 MCLASS(Type=Server)
@@ -40,10 +45,24 @@ public:
     MFUNCTION(ServerCall)
     MFuture<TResult<FSceneLeaveResponse, FAppError>> LeaveScene(const FSceneLeaveRequest& Request);
 
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FSceneSpawnCombatAvatarResponse, FAppError>> SpawnCombatAvatar(
+        const FSceneSpawnCombatAvatarRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FSceneDespawnCombatAvatarResponse, FAppError>> DespawnCombatAvatar(
+        const FSceneDespawnCombatAvatarRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FSceneCastSkillResponse, FAppError>> CastSkill(const FSceneCastSkillRequest& Request);
+
 private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
     SSceneConfig Config;
+    MSkillCatalog SkillCatalog;
+    MSceneCombatRuntime CombatRuntime;
     TMap<uint64, uint32> PlayerScenes;
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
     MSceneSessionServiceEndpoint* SceneService = nullptr;
+    MSceneCombatServiceEndpoint* CombatService = nullptr;
 };

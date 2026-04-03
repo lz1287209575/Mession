@@ -1,0 +1,92 @@
+{
+  "registry": {
+    "url": "http://10.0.0.10:19080",
+    "auth_token": "replace-registry-token",
+    "auto_discover": true,
+    "default_agent_scheme": "http",
+    "default_agent_port": 18080,
+    "default_agent_auth_token": "replace-shared-agent-token",
+    "poll_interval": 2.0,
+    "timeout": 3.0
+  },
+  "nodes": [
+    {
+      "name": "local-dev",
+      "mode": "local",
+      "host": "127.0.0.1",
+      "project_root": "/root/Mession",
+      "build_dir": "Build",
+      "services": []
+    },
+    {
+      "name": "router-agent",
+      "mode": "agent",
+      "host": "10.0.0.11",
+      "agent_name": "router-agent",
+      "agent_scheme": "http",
+      "agent_port": 18080,
+      "auth_token": "replace-me",
+      "services": [
+        "RouterServer",
+        "LoginServer"
+      ]
+    },
+    {
+      "name": "world-agent",
+      "mode": "agent",
+      "host": "10.0.0.12",
+      "agent_name": "world-agent",
+      "agent_scheme": "http",
+      "agent_port": 18080,
+      "auth_token": "replace-me",
+      "services": [
+        "WorldServer",
+        "SceneServer",
+        "GatewayServer",
+        "MgoServer"
+      ]
+    }
+  ],
+  "topology": {
+    "version": "cluster-v1",
+    "node_services": {
+      "local-dev": [],
+      "router-agent": [
+        "RouterServer",
+        "LoginServer"
+      ],
+      "world-agent": [
+        "WorldServer",
+        "SceneServer",
+        "GatewayServer",
+        "MgoServer"
+      ]
+    },
+    "service_endpoints": {
+      "RouterServer": {
+        "host": "10.0.0.11",
+        "port": 8005
+      },
+      "LoginServer": {
+        "host": "10.0.0.11",
+        "port": 8002
+      },
+      "WorldServer": {
+        "host": "10.0.0.12",
+        "port": 8003
+      },
+      "SceneServer": {
+        "host": "10.0.0.12",
+        "port": 8004
+      },
+      "GatewayServer": {
+        "host": "10.0.0.12",
+        "port": 8001
+      },
+      "MgoServer": {
+        "host": "10.0.0.12",
+        "port": 8006
+      }
+    }
+  }
+}

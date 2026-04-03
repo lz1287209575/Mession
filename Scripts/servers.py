@@ -68,8 +68,86 @@ def get_executable_path(build_dir: Path, name: str) -> Optional[Path]:
     return None
 
 
+def normalize_build_dir(build_dir: Path) -> Path:
+    if build_dir.is_absolute():
+        return build_dir.resolve()
+    return (get_project_root() / build_dir).resolve()
+
+
+def get_server_port(name: str) -> int:
+    for server_name, port in SERVER_ORDER:
+        if server_name == name:
+            return port
+    raise ValueError(f"Unknown server: {name}")
+
+
 def get_pid_file_path(build_dir: Path) -> Path:
     return build_dir / PID_FILE_NAME
+
+
+def read_pid_registry(build_dir: Path) -> dict[str, int]:
+    pid_file = get_pid_file_path(build_dir)
+    if not pid_file.exists():
+        return {}
+
+    try:
+        content = pid_file.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+
+    registry: dict[str, int] = {}
+    unnamed_pids: list[int] = []
+
+    for line in content.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        parts = line.split()
+        if len(parts) == 1 and parts[0].isdigit():
+            unnamed_pids.append(int(parts[0]))
+            continue
+
+        if len(parts) >= 2 and parts[-1].isdigit():
+            registry[parts[0]] = int(parts[-1])
+
+    if unnamed_pids:
+        for index, pid in enumerate(unnamed_pids):
+            if index >= len(SERVER_ORDER):
+                break
+            registry.setdefault(SERVER_ORDER[index][0], pid)
+
+    return registry
+
+
+def write_pid_registry(build_dir: Path, registry: dict[str, int]) -> None:
+    pid_file = get_pid_file_path(build_dir)
+    lines = []
+    for name, _port in SERVER_ORDER:
+        pid = registry.get(name)
+        if pid:
+            lines.append(f"{name} {pid}")
+
+    if not lines:
+        try:
+            pid_file.unlink()
+        except OSError:
+            pass
+        return
+
+    pid_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def update_server_pid(build_dir: Path, name: str, pid: int) -> None:
+    registry = read_pid_registry(build_dir)
+    registry[name] = pid
+    write_pid_registry(build_dir, registry)
+
+
+def remove_server_pid(build_dir: Path, name: str) -> None:
+    registry = read_pid_registry(build_dir)
+    registry.pop(name, None)
+    write_pid_registry(build_dir, registry)
 
 
 def get_server_log_dir() -> Path:
@@ -175,6 +253,8 @@ def is_process_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
         return True
+    except PermissionError:
+        return True
     except OSError:
         return False
 
@@ -279,12 +359,22 @@ def wait_for_port(host: str, port: int, timeout: float) -> bool:
     return False
 
 
-def stop_processes(pids: list[int], kill_by_port: bool = True) -> int:
+def stop_processes(
+    pids: list[int],
+    kill_by_port: bool = True,
+    target_names: Optional[list[str]] = None,
+    target_ports: Optional[list[int]] = None,
+) -> int:
+    if target_names is None:
+        target_names = [name for name, _port in SERVER_ORDER]
+    if target_ports is None:
+        target_ports = [port for _name, port in SERVER_ORDER]
+
     if IS_WINDOWS:
         stopped_any = False
         graceful_requested = False
 
-        for name, _port in SERVER_ORDER:
+        for name in target_names:
             if request_window_close(name):
                 log(f"Requested graceful shutdown for {name}")
                 graceful_requested = True
@@ -311,7 +401,7 @@ def stop_processes(pids: list[int], kill_by_port: bool = True) -> int:
                 log(f"Could not kill {pid}: {e}")
 
         if kill_by_port:
-            for _name, port in SERVER_ORDER:
+            for port in target_ports:
                 for pid in find_pids_by_port(port):
                     if terminate_pid(pid, force=True):
                         log(f"Stopped PID {pid} on TCP port {port}")
@@ -346,7 +436,7 @@ def stop_processes(pids: list[int], kill_by_port: bool = True) -> int:
             pass
 
     if kill_by_port and not IS_WINDOWS:
-        for _name, port in SERVER_ORDER:
+        for port in target_ports:
             try:
                 subprocess.run(
                     ["fuser", "-k", f"{port}/tcp"],
@@ -360,6 +450,127 @@ def stop_processes(pids: list[int], kill_by_port: bool = True) -> int:
     return 0
 
 
+def start_server(
+    build_dir: Path,
+    name: str,
+    wait_ready: bool = True,
+    foreground: bool = False,
+    split_windows: bool = False,
+) -> int:
+    build_dir = normalize_build_dir(build_dir)
+    if not build_dir.exists():
+        log(f"Build dir does not exist: {build_dir}")
+        return 1
+
+    if split_windows and not IS_WINDOWS:
+        log("--split-windows is only supported on Windows")
+        return 1
+
+    if foreground and split_windows:
+        log("--foreground and --split-windows cannot be used together")
+        return 1
+
+    port = get_server_port(name)
+    registry = read_pid_registry(build_dir)
+    tracked_pid = registry.get(name)
+
+    if tracked_pid and is_process_alive(tracked_pid):
+        log(f"{name} already tracked as running with PID {tracked_pid}")
+        return 0
+
+    if wait_ready and port and wait_for_port("127.0.0.1", port, 0.2):
+        log(f"{name} already appears to be listening on port {port}")
+        return 0
+
+    log_dir = get_server_log_dir()
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        log(f"Could not create log dir {log_dir}: {e}")
+        return 1
+
+    exe = get_executable_path(build_dir, name)
+    if not exe:
+        log(f"Executable not found: {name}")
+        return 1
+
+    log_handle = None
+    try:
+        log(f"Starting {name} (port {port})...")
+        if foreground:
+            stdout_target = None
+            stderr_target = None
+            extra_kwargs = get_foreground_popen_kwargs()
+            command = [str(exe)]
+        elif split_windows:
+            stdout_target = None
+            stderr_target = None
+            extra_kwargs = get_split_window_popen_kwargs()
+            command = build_split_window_command(exe, build_dir, name)
+        else:
+            log_path = log_dir / f"{name}.log"
+            log_handle = open(log_path, "w", encoding="utf-8")
+            stdout_target = log_handle
+            stderr_target = log_handle
+            extra_kwargs = get_popen_kwargs()
+            command = [str(exe)]
+
+        proc = subprocess.Popen(
+            command,
+            cwd=str(build_dir),
+            stdout=stdout_target,
+            stderr=stderr_target,
+            env=os.environ.copy(),
+            **extra_kwargs,
+        )
+
+        update_server_pid(build_dir, name, proc.pid)
+
+        if wait_ready and port:
+            if not wait_for_port("127.0.0.1", port, 15.0):
+                log(f"{name} did not become ready on port {port}")
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                except Exception:
+                    proc.kill()
+                remove_server_pid(build_dir, name)
+                return 1
+            time.sleep(0.3)
+
+        log(f"{name} started with PID {proc.pid}")
+        return 0
+    finally:
+        if log_handle is not None:
+            log_handle.close()
+
+
+def stop_server(build_dir: Path, name: str, kill_by_port: bool = True) -> int:
+    build_dir = normalize_build_dir(build_dir)
+    registry = read_pid_registry(build_dir)
+    tracked_pid = registry.get(name)
+    port = get_server_port(name)
+
+    pids: list[int] = []
+    if tracked_pid:
+        pids.append(tracked_pid)
+
+    stop_processes(
+        pids,
+        kill_by_port=kill_by_port,
+        target_names=[name],
+        target_ports=[port],
+    )
+    remove_server_pid(build_dir, name)
+    log(f"{name} stop requested")
+    return 0
+
+
+def restart_server(build_dir: Path, name: str, wait_ready: bool = True) -> int:
+    stop_server(build_dir, name, kill_by_port=True)
+    return start_server(build_dir, name, wait_ready=wait_ready)
+
+
 def start_servers(
     build_dir: Path,
     wait_ready: bool = True,
@@ -367,8 +578,7 @@ def start_servers(
     split_windows: bool = False,
 ) -> int:
     project_root = get_project_root()
-    if not build_dir.is_absolute():
-        build_dir = (project_root / build_dir).resolve()
+    build_dir = normalize_build_dir(build_dir)
     if not build_dir.exists():
         log(f"Build dir does not exist: {build_dir}")
         return 1
@@ -388,6 +598,7 @@ def start_servers(
         log(f"Could not create log dir {log_dir}: {e}")
         return 1
 
+    registry = read_pid_registry(build_dir)
     pids: list[int] = []
     procs: list[subprocess.Popen] = []
     log_files = []
@@ -434,6 +645,7 @@ def start_servers(
         )
         procs.append(proc)
         pids.append(proc.pid)
+        registry[name] = proc.pid
 
         if wait_ready and port:
             if not wait_for_port("127.0.0.1", port, 15.0):
@@ -473,7 +685,7 @@ def start_servers(
 
     pid_file = get_pid_file_path(build_dir)
     try:
-        pid_file.write_text("\n".join(str(pid) for pid in pids), encoding="utf-8")
+        write_pid_registry(build_dir, registry)
     except OSError as e:
         log(f"Warning: could not write PID file: {e}")
 
@@ -490,28 +702,22 @@ def start_servers(
 
 
 def stop_servers(build_dir: Path, kill_by_port: bool = True) -> int:
-    project_root = get_project_root()
-    if not build_dir.is_absolute():
-        build_dir = (project_root / build_dir).resolve()
-    pid_file = get_pid_file_path(build_dir)
-
-    pids: list[int] = []
-    if pid_file.exists():
-        try:
-            content = pid_file.read_text(encoding="utf-8")
-            pids = [int(line.strip()) for line in content.splitlines() if line.strip()]
-        except (ValueError, OSError):
-            pids = []
-        try:
-            pid_file.unlink()
-        except OSError:
-            pass
-    return stop_processes(pids, kill_by_port=kill_by_port)
+    build_dir = normalize_build_dir(build_dir)
+    registry = read_pid_registry(build_dir)
+    pids = [registry[name] for name, _port in SERVER_ORDER if name in registry]
+    result = stop_processes(pids, kill_by_port=kill_by_port)
+    write_pid_registry(build_dir, {})
+    return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="One-click start/stop Mession servers")
-    parser.add_argument("command", choices=["start", "stop"], help="start or stop all servers")
+    parser.add_argument(
+        "command",
+        choices=["start", "stop", "start-server", "stop-server", "restart-server"],
+        help="server control command",
+    )
+    parser.add_argument("server_name", nargs="?", help="server name for single-server commands")
     parser.add_argument("--build-dir", type=Path, default=Path("Build"), help="Build output directory (default: Build)")
     parser.add_argument("--no-wait", action="store_true", help="(start only) Do not wait for each server port to be ready")
     parser.add_argument("--foreground", action="store_true", help="(start only) Run servers in the current terminal instead of the background")
@@ -525,7 +731,27 @@ def main() -> int:
             foreground=args.foreground,
             split_windows=args.split_windows,
         )
-    return stop_servers(args.build_dir)
+    if args.command == "stop":
+        return stop_servers(args.build_dir)
+
+    if not args.server_name:
+        parser.error("server_name is required for single-server commands")
+
+    server_names = {name for name, _port in SERVER_ORDER}
+    if args.server_name not in server_names:
+        parser.error(f"unknown server_name: {args.server_name}")
+
+    if args.command == "start-server":
+        return start_server(
+            args.build_dir,
+            args.server_name,
+            wait_ready=not args.no_wait,
+            foreground=args.foreground,
+            split_windows=args.split_windows,
+        )
+    if args.command == "stop-server":
+        return stop_server(args.build_dir, args.server_name)
+    return restart_server(args.build_dir, args.server_name, wait_ready=not args.no_wait)
 
 
 if __name__ == "__main__":

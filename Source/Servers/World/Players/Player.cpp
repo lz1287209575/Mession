@@ -6,6 +6,7 @@ MPlayer::MPlayer()
     Controller = CreateDefaultSubObject<MPlayerController>(this, "Controller");
     Pawn = CreateDefaultSubObject<MPlayerPawn>(this, "Pawn");
     Profile = CreateDefaultSubObject<MPlayerProfile>(this, "Profile");
+    CombatProfile = CreateDefaultSubObject<MPlayerCombatProfile>(this, "CombatProfile");
 }
 
 void MPlayer::InitializeForLogin(uint64 InPlayerId, uint64 InGatewayConnectionId, uint32 InSessionKey)
@@ -190,6 +191,11 @@ MPlayerProfile* MPlayer::GetProfile() const
     return Profile;
 }
 
+MPlayerCombatProfile* MPlayer::GetCombatProfile() const
+{
+    return CombatProfile;
+}
+
 void MPlayer::VisitReferencedObjects(const TFunction<void(MObject*)>& Visitor) const
 {
     MObject::VisitReferencedObjects(Visitor);
@@ -199,5 +205,6 @@ void MPlayer::VisitReferencedObjects(const TFunction<void(MObject*)>& Visitor) c
         Visitor(Controller);
         Visitor(Pawn);
         Visitor(Profile);
+        Visitor(CombatProfile);
     }
 }

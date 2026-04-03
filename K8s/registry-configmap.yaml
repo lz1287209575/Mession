@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mession-registry-config
+data:
+  MESSION_REGISTRY_HOST: "0.0.0.0"
+  MESSION_REGISTRY_PORT: "19080"
+  MESSION_REGISTRY_STALE_SECONDS: "15"
+  MESSION_REGISTRY_STATE_FILE: "/data/.mession_registry_state.json"

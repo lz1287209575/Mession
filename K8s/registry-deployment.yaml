@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mession-registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mession-registry
+  template:
+    metadata:
+      labels:
+        app: mession-registry
+    spec:
+      containers:
+        - name: registry
+          image: mession-registry:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 19080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: mession-registry-config
+            - secretRef:
+                name: mession-registry-secret
+          volumeMounts:
+            - name: registry-data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+      volumes:
+        - name: registry-data
+          persistentVolumeClaim:
+            claimName: mession-registry-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mession-registry
+spec:
+  selector:
+    app: mession-registry
+  ports:
+    - name: http
+      port: 19080
+      targetPort: http
