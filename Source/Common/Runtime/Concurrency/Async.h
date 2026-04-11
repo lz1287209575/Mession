@@ -8,6 +8,10 @@
 #include <stdexcept>
 #include <type_traits>
 
+#ifdef Yield
+    #undef Yield
+#endif
+
 namespace MAsync
 {
 

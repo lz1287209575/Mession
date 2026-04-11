@@ -2,11 +2,17 @@
 
 #include "Common/Runtime/MLib.h"
 #include <string>
-#if __cplusplus >= 201703L
+#if MESSION_CPLUSPLUS >= 201703L
 #include <string_view>
 #endif
 
 #if defined(_WIN32) || defined(_WIN64)
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
 #include <Windows.h>
 #endif
 
@@ -98,7 +104,7 @@ inline MString Join(const TVector<MString>& Parts, char Delim)
 }
 }
 
-#if __cplusplus >= 201703L
+#if MESSION_CPLUSPLUS >= 201703L
 // TStringView 工具：只读视图上的 Trim/转换/前后缀判断（不分配时用 View）
 namespace MStringView
 {
@@ -139,7 +145,7 @@ inline bool Contains(TStringView View, TStringView Needle)
 #endif
 
 #if defined(_WIN32) || defined(_WIN64)
-bool WriteUtf8LineToWindowsConsole(const MString& Line)
+inline bool WriteUtf8LineToWindowsConsole(const MString& Line)
 {
     HANDLE StdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
     if (StdoutHandle == nullptr || StdoutHandle == INVALID_HANDLE_VALUE)

@@ -148,21 +148,36 @@ configure_mession_compile_options(MHeaderTool)
 set(MESSION_HEADERTOOL_MANIFEST "${MESSION_GENERATED_DIR}/MHeaderToolTargets.cmake")
 file(MAKE_DIRECTORY "${MESSION_GENERATED_DIR}")
 
-set(MESSION_HEADERTOOL_EXE "${CMAKE_SOURCE_DIR}/Bin/MHeaderTool")
-set(MESSION_HEADERTOOL_BOOTSTRAP_EXE "${CMAKE_BINARY_DIR}/MHeaderTool.bootstrap")
+set(MESSION_HEADERTOOL_EXE "${CMAKE_SOURCE_DIR}/Bin/MHeaderTool${CMAKE_EXECUTABLE_SUFFIX}")
+set(MESSION_HEADERTOOL_BOOTSTRAP_EXE "${CMAKE_BINARY_DIR}/MHeaderTool.bootstrap${CMAKE_EXECUTABLE_SUFFIX}")
+
+set(MESSION_HEADERTOOL_BOOTSTRAP_COMMAND
+    "${CMAKE_CXX_COMPILER}"
+)
+if(MSVC)
+    list(APPEND MESSION_HEADERTOOL_BOOTSTRAP_COMMAND
+        /std:c++20
+        /EHsc
+        /utf-8
+        "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool.cpp"
+        "/Fe:${MESSION_HEADERTOOL_BOOTSTRAP_EXE}"
+    )
+else()
+    list(APPEND MESSION_HEADERTOOL_BOOTSTRAP_COMMAND
+        -std=c++20
+        -O2
+        "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool.cpp"
+        -o
+        "${MESSION_HEADERTOOL_BOOTSTRAP_EXE}"
+    )
+endif()
 
 # Fresh checkout bootstrap:
 # If Bin/MHeaderTool does not exist yet, compile a temporary host tool at configure-time
 # so generated reflection sources and manifest are available in the first build.
 if(NOT EXISTS "${MESSION_HEADERTOOL_EXE}")
     execute_process(
-        COMMAND
-            "${CMAKE_CXX_COMPILER}"
-            -std=c++20
-            -O2
-            "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool.cpp"
-            -o
-            "${MESSION_HEADERTOOL_BOOTSTRAP_EXE}"
+        COMMAND ${MESSION_HEADERTOOL_BOOTSTRAP_COMMAND}
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         RESULT_VARIABLE MESSION_HEADERTOOL_BOOTSTRAP_RESULT
         ERROR_VARIABLE MESSION_HEADERTOOL_BOOTSTRAP_ERROR

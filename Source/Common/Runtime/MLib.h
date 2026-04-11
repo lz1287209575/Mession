@@ -17,14 +17,21 @@
 #include <unordered_set>
 #include <stack>
 #include <optional>
-#if __cplusplus >= 201703L
-#include <string_view>
-#endif
 #include <utility>
 #include <atomic>
 #include <mutex>
 #include <chrono>
 #include <thread>
+
+#if defined(_MSVC_LANG)
+    #define MESSION_CPLUSPLUS _MSVC_LANG
+#else
+    #define MESSION_CPLUSPLUS __cplusplus
+#endif
+
+#if MESSION_CPLUSPLUS >= 201703L
+#include <string_view>
+#endif
 
 // 类型别名
 using uint8 = uint8_t;
@@ -106,7 +113,7 @@ using TUnorderedMultiMap = std::unordered_multimap<K, V, Hash, KeyEqual>;
 template<typename T, typename Hash = std::hash<T>, typename KeyEqual = std::equal_to<T>>
 using TUnorderedMultiSet = std::unordered_multiset<T, Hash, KeyEqual>;
 
-#if __cplusplus >= 201703L
+#if MESSION_CPLUSPLUS >= 201703L
 using TStringView = std::string_view;
 #endif
 
@@ -142,7 +149,7 @@ constexpr uint32 MAX_PLAYER_COUNT = 10000;
 constexpr float DEFAULT_TICK_RATE = 1.0f / 60.0f;
 
 // 只读缓冲区视图（C++20），协议解析等场景使用项目别名
-#if __cplusplus >= 202002L
+#if MESSION_CPLUSPLUS >= 202002L
 #include <span>
 template<typename T>
 using TSpan = std::span<const T>;
