@@ -4,7 +4,7 @@
 #include "Protocol/Messages/Scene/SceneServiceMessages.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
 
-class MSceneSessionService
+class FSceneSessionService
 {
 public:
     MFuture<TResult<FSceneEnterResponse, FAppError>> EnterScene(
@@ -40,3 +40,4 @@ public:
         return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
     }
 };
+

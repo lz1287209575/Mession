@@ -12,8 +12,8 @@
 #include "Protocol/Messages/Scene/SceneServiceMessages.h"
 #include "Servers/Scene/Combat/SceneCombatRuntime.h"
 #include "Servers/Scene/Combat/SkillCatalog.h"
-#include "Servers/Scene/Services/SceneCombatServiceEndpoint.h"
-#include "Servers/Scene/Services/SceneSessionServiceEndpoint.h"
+#include "Servers/Scene/SceneCombat.h"
+#include "Servers/Scene/SceneSession.h"
 
 struct SSceneConfig
 {
@@ -63,6 +63,7 @@ private:
     MSceneCombatRuntime CombatRuntime;
     TMap<uint64, uint32> PlayerScenes;
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
-    MSceneSessionServiceEndpoint* SceneService = nullptr;
-    MSceneCombatServiceEndpoint* CombatService = nullptr;
+    MSceneSession* Session = nullptr;
+    MSceneCombat* Combat = nullptr;
 };
+

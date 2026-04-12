@@ -12,7 +12,7 @@
 #include "Protocol/Messages/Common/ClientDownlinkMessages.h"
 #include "Protocol/Messages/Common/ControlPlaneMessages.h"
 #include "Protocol/Messages/Common/ForwardedClientCallMessages.h"
-#include "Protocol/Messages/Gateway/GatewayClientMessages.h"
+#include "Protocol/Messages/Gateway/GatewayBaseMessages.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
 
 struct SGatewayConfig

@@ -27,16 +27,16 @@ bool MSceneServer::Init(int InPort)
     }
     CombatRuntime.Initialize(&SkillCatalog);
 
-    if (!SceneService)
+    if (!Session)
     {
-        SceneService = NewMObject<MSceneSessionServiceEndpoint>(this, "SceneService");
+        Session = NewMObject<MSceneSession>(this, "Session");
     }
-    if (!CombatService)
+    if (!Combat)
     {
-        CombatService = NewMObject<MSceneCombatServiceEndpoint>(this, "CombatService");
+        Combat = NewMObject<MSceneCombat>(this, "Combat");
     }
-    SceneService->Initialize(&PlayerScenes);
-    CombatService->Initialize(&PlayerScenes, &CombatRuntime);
+    Session->Initialize(&PlayerScenes);
+    Combat->Initialize(&PlayerScenes, &CombatRuntime);
     return true;
 }
 
@@ -87,19 +87,19 @@ void MSceneServer::OnRunStarted()
 
 MFuture<TResult<FSceneEnterResponse, FAppError>> MSceneServer::EnterScene(const FSceneEnterRequest& Request)
 {
-    if (!SceneService)
+    if (!Session)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FSceneEnterResponse>(
             "scene_service_missing",
             "EnterScene");
     }
 
-    return SceneService->EnterScene(Request);
+    return Session->EnterScene(Request);
 }
 
 MFuture<TResult<FSceneLeaveResponse, FAppError>> MSceneServer::LeaveScene(const FSceneLeaveRequest& Request)
 {
-    if (!SceneService)
+    if (!Session)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FSceneLeaveResponse>(
             "scene_service_missing",
@@ -109,49 +109,50 @@ MFuture<TResult<FSceneLeaveResponse, FAppError>> MSceneServer::LeaveScene(const 
     MString IgnoredCombatError;
     (void)CombatRuntime.DespawnAvatar(Request.PlayerId, nullptr, IgnoredCombatError);
 
-    return SceneService->LeaveScene(Request);
+    return Session->LeaveScene(Request);
 }
 
 MFuture<TResult<FSceneSpawnCombatAvatarResponse, FAppError>> MSceneServer::SpawnCombatAvatar(
     const FSceneSpawnCombatAvatarRequest& Request)
 {
-    if (!CombatService)
+    if (!Combat)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FSceneSpawnCombatAvatarResponse>(
             "scene_combat_service_missing",
             "SpawnCombatAvatar");
     }
 
-    return CombatService->SpawnCombatAvatar(Request);
+    return Combat->SpawnCombatAvatar(Request);
 }
 
 MFuture<TResult<FSceneDespawnCombatAvatarResponse, FAppError>> MSceneServer::DespawnCombatAvatar(
     const FSceneDespawnCombatAvatarRequest& Request)
 {
-    if (!CombatService)
+    if (!Combat)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FSceneDespawnCombatAvatarResponse>(
             "scene_combat_service_missing",
             "DespawnCombatAvatar");
     }
 
-    return CombatService->DespawnCombatAvatar(Request);
+    return Combat->DespawnCombatAvatar(Request);
 }
 
 MFuture<TResult<FSceneCastSkillResponse, FAppError>> MSceneServer::CastSkill(
     const FSceneCastSkillRequest& Request)
 {
-    if (!CombatService)
+    if (!Combat)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FSceneCastSkillResponse>(
             "scene_combat_service_missing",
             "CastSkill");
     }
 
-    return CombatService->CastSkill(Request);
+    return Combat->CastSkill(Request);
 }
 
 void MSceneServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
     (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
 }
+

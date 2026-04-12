@@ -221,7 +221,7 @@ TAppFuture<TOutputResponse> Chain(TAppFuture<TInputResponse> Future, TBinder&& B
 }
 
 template<typename TDerived, typename TResponse>
-class TClientCallWorkflow : public MCoroutine<TAppResult<TResponse>>
+class TClientCallAction : public MCoroutine<TAppResult<TResponse>>
 {
 protected:
     template<typename TStepResponse>
@@ -276,9 +276,9 @@ protected:
     }
 };
 
-template<typename TWorkflow, typename... TArgs>
-auto StartWorkflow(TArgs&&... Args) -> TAppFuture<typename TWorkflow::TResponseType>
+template<typename TAction, typename... TArgs>
+auto StartAction(TArgs&&... Args) -> TAppFuture<typename TAction::TResponseType>
 {
-    return MAsync::StartCoroutine<TWorkflow>(std::forward<TArgs>(Args)...);
+    return MAsync::StartCoroutine<TAction>(std::forward<TArgs>(Args)...);
 }
 }

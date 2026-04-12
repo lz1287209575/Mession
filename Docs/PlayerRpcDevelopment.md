@@ -13,6 +13,7 @@
 - 查询玩家资料
 - 查询背包
 - 查询成长
+- 查询 Pawn 状态
 - 修改金币
 - 修改装备
 - 修改经验
@@ -21,7 +22,7 @@
 这类请求的共同点是：
 
 - 请求天然带 `PlayerId`
-- 最终会落到某个 `Player` 或其子对象上执行
+- 最终会落到某个 `MPlayer` 子对象上执行
 - 不需要在 World 层编排多个远端服务
 
 这类 RPC 应优先走当前的 Player RPC 标准链路。
@@ -34,6 +35,7 @@
 - 进世界
 - 切场景
 - 登出
+- 战斗技能调用
 - 任何需要跨 Login / World / Scene / Router / Mgo 多步编排的流程
 
 这类请求不要强行塞进普通 Player RPC 清单。
@@ -47,6 +49,7 @@
 - Router
 - Login Session
 - Mgo Persistence
+- Gateway Downlink
 
 这类调用不属于 Player 业务接口，不应混进 Player route list。
 
@@ -55,11 +58,46 @@
 当前普通 Player 业务 RPC 的结构是：
 
 1. 客户端协议定义在 [GatewayClientMessages.h](/root/Mession/Source/Protocol/Messages/Gateway/GatewayClientMessages.h)
-2. World 玩家协议定义在 [WorldPlayerMessages.h](/root/Mession/Source/Protocol/Messages/World/WorldPlayerMessages.h)
+2. World Player 协议定义在 [WorldPlayerMessages.h](/root/Mession/Source/Protocol/Messages/World/WorldPlayerMessages.h)
 3. 客户端入口显式声明在 [WorldClientServiceEndpoint.h](/root/Mession/Source/Servers/World/Services/WorldClientServiceEndpoint.h)
 4. World Player 服务入口显式声明在 [WorldPlayerServiceEndpoint.h](/root/Mession/Source/Servers/World/Services/WorldPlayerServiceEndpoint.h)
 5. 普通重复实现由 route list 驱动生成
 6. 真正业务逻辑落在 `Players/*` 对象上的 `MFUNCTION(ServerCall)`
+
+## 当前已经落地的普通 Player RPC
+
+当前主干已经接通的典型普通 Player RPC 包括：
+
+- `PlayerQueryProfile`
+- `PlayerQueryPawn`
+- `PlayerQueryInventory`
+- `PlayerQueryProgression`
+- `PlayerChangeGold`
+- `PlayerEquipItem`
+- `PlayerGrantExperience`
+- `PlayerModifyHealth`
+
+这说明当前这条链路已经不是模板设计，而是主干真实业务入口。
+
+## 当前 route list 的职责
+
+### `WorldClientPlayerRouteList.inl`
+
+负责把客户端 `Client_*` 请求接到 World Player 服务入口。
+
+### `WorldPlayerProxyRouteList.inl`
+
+负责把 `Player*` 请求绑定到具体 Player 子对象节点，例如：
+
+- `Controller`
+- `Profile`
+- `Inventory`
+- `Progression`
+- `Pawn`
+- `Session`
+- `Root`
+
+当前普通 Player RPC 的核心价值，就是把“入口适配”和“对象绑定”固化下来，减少 endpoint 手写胶水。
 
 ## 新增一个普通 Player Client RPC 的步骤
 
@@ -149,15 +187,7 @@ M_WORLD_CLIENT_PLAYER_ROUTE(Xxx, PlayerXxx, FClientXxxRequest, FClientXxxRespons
 M_WORLD_PLAYER_PROXY_ROUTE(PlayerXxx, FPlayerXxxRequest, FPlayerXxxResponse, Profile, "PlayerXxx")
 ```
 
-其中第四个参数表示目标 Player 子对象：
-
-- `Root`
-- `Controller`
-- `Profile`
-- `Inventory`
-- `Progression`
-- `Pawn`
-- `Session`
+其中第四个参数表示目标 Player 子对象。
 
 ### 6. 在 `Players/*` 上实现真正业务
 
@@ -186,6 +216,7 @@ MFuture<TResult<FPlayerXxxResponse, FAppError>> PlayerXxx(const FPlayerXxxReques
 - `WorldClientServiceEndpoint.h` 中的 `MFUNCTION(ClientCall)` 声明
 - `WorldPlayerServiceEndpoint.h` 中的 `MFUNCTION(ServerCall)` 声明
 - 登录、切场景、进世界、登出等 workflow
+- 战斗编排入口
 - ObjectProxy / Router / Login / Mgo 基础设施调用
 
 ## 当前推荐心智模型
@@ -210,16 +241,16 @@ MFuture<TResult<FPlayerXxxResponse, FAppError>> PlayerXxx(const FPlayerXxxReques
 
 - 在 `WorldClientServiceEndpoint.cpp` 手写大量普通 `Client_Xxx` 业务逻辑
 - 在 `WorldPlayerServiceEndpoint.cpp` 手写大量普通 `PlayerXxx` 分发参数
-- 把登录、切场景这类 workflow 强行塞进 route list
+- 把登录、切场景、战斗 workflow 强行塞进 route list
 - 让 Gateway 承担具体业务实现
 
 ## 修改后建议验证
 
-新增 RPC 后，至少执行：
+新增普通 Player RPC 后，至少执行：
 
 ```bash
 cmake --build Build -j4
 python3 Scripts/validate.py --build-dir Build --no-build
 ```
 
-如果新增的是 gameplay 逻辑，建议同时补一个对应的验证场景。
+如果新增的是 gameplay 逻辑，建议同时补一个对应验证场景。

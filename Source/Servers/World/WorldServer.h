@@ -1,12 +1,10 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
-#include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
 #include "Common/Net/Rpc/RpcRuntimeContext.h"
 #include "Common/Runtime/Concurrency/Promise.h"
-#include "Common/Runtime/Log/Logger.h"
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Object/Result.h"
 #include "Common/Runtime/Persistence/PersistenceSubsystem.h"
@@ -14,22 +12,9 @@
 #include "Protocol/Messages/Common/ClientDownlinkMessages.h"
 #include "Protocol/Messages/Common/ControlPlaneMessages.h"
 #include "Protocol/Messages/Common/ForwardedClientCallMessages.h"
-#include "Protocol/Messages/Common/ObjectProxyMessages.h"
-#include "Protocol/Messages/Combat/CombatWorldMessages.h"
-#include "Protocol/Messages/Gateway/GatewayClientMessages.h"
-#include "Protocol/Messages/Scene/SceneSyncMessages.h"
-#include "Protocol/Messages/World/WorldPlayerMessages.h"
-#include "Protocol/Messages/Auth/AuthSessionMessages.h"
-#include "Protocol/Messages/Mgo/MgoPlayerStateMessages.h"
-#include "Protocol/Messages/Router/RouterServiceMessages.h"
-#include "Protocol/Messages/Scene/SceneServiceMessages.h"
-#include "Servers/App/ObjectProxyRegistry.h"
-#include "Servers/App/ObjectProxyServiceEndpoint.h"
-#include "Servers/World/Players/Player.h"
-#include "Servers/World/Rpc/WorldBackendRpc.h"
-#include "Servers/World/Services/WorldCombatServiceEndpoint.h"
-#include "Servers/World/Services/WorldClientServiceEndpoint.h"
-#include "Servers/World/Services/WorldPlayerServiceEndpoint.h"
+#include "Protocol/Messages/Common/ObjectCallMessages.h"
+#include "Servers/App/ObjectCallRegistry.h"
+#include "Servers/App/ServerCallAsyncSupport.h"
 
 struct SWorldConfig
 {
@@ -44,46 +29,16 @@ struct SWorldConfig
     uint16 MgoServerPort = 8006;
 };
 
-class FPlayerObjectProxyRootResolver final : public IObjectProxyRootResolver
-{
-public:
-    explicit FPlayerObjectProxyRootResolver(const TMap<uint64, MPlayer*>* InOnlinePlayers = nullptr)
-        : OnlinePlayers(InOnlinePlayers)
-    {
-    }
-
-    void SetOnlinePlayers(const TMap<uint64, MPlayer*>* InOnlinePlayers)
-    {
-        OnlinePlayers = InOnlinePlayers;
-    }
-
-    EObjectProxyRootType GetRootType() const override
-    {
-        return EObjectProxyRootType::Player;
-    }
-
-    EServerType GetOwnerServerType() const override
-    {
-        return EServerType::World;
-    }
-
-    MObject* ResolveRootObject(uint64 RootId) const override
-    {
-        if (!OnlinePlayers)
-        {
-            return nullptr;
-        }
-
-        const auto It = OnlinePlayers->find(RootId);
-        return It != OnlinePlayers->end() ? It->second : nullptr;
-    }
-
-private:
-    const TMap<uint64, MPlayer*>* OnlinePlayers = nullptr;
-};
+class MPlayerService;
+class MObjectCallRouter;
+class MWorldClient;
+class MWorldLogin;
+class MWorldMgo;
+class MWorldRouter;
+class MWorldScene;
 
 MCLASS(Type=Server)
-class MWorldServer : public MNetServerBase, public MObject, public MServerRuntimeContext, public IObjectProxyRegistryProvider
+class MWorldServer : public MNetServerBase, public MObject, public MServerRuntimeContext, public IObjectCallRegistryProvider
 {
 public:
     MGENERATED_BODY(MWorldServer, MObject, 0)
@@ -102,99 +57,49 @@ public:
     void OnRunStarted() override;
 
     MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> PlayerEnterWorld(const FPlayerEnterWorldRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerFindResponse, FAppError>> PlayerFind(const FPlayerFindRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> PlayerUpdateRoute(const FPlayerUpdateRouteRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerMoveResponse, FAppError>> PlayerMove(const FPlayerMoveRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> PlayerQueryProfile(const FPlayerQueryProfileRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerQueryPawnResponse, FAppError>> PlayerQueryPawn(const FPlayerQueryPawnRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> PlayerQueryInventory(const FPlayerQueryInventoryRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> PlayerQueryProgression(
-        const FPlayerQueryProgressionRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerChangeGoldResponse, FAppError>> PlayerChangeGold(const FPlayerChangeGoldRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerEquipItemResponse, FAppError>> PlayerEquipItem(const FPlayerEquipItemRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> PlayerGrantExperience(
-        const FPlayerGrantExperienceRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> PlayerModifyHealth(
-        const FPlayerModifyHealthRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerLogoutResponse, FAppError>> PlayerLogout(const FPlayerLogoutRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> PlayerSwitchScene(const FPlayerSwitchSceneRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FWorldCreateCombatAvatarResponse, FAppError>> CreateCombatAvatar(
-        const FWorldCreateCombatAvatarRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FWorldCommitCombatResultResponse, FAppError>> CommitCombatResult(
-        const FWorldCommitCombatResultRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FWorldCastSkillResponse, FAppError>> CastSkill(
-        const FWorldCastSkillRequest& Request);
-
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FForwardedClientCallResponse, FAppError>> ForwardClientCall(
+    MFuture<TResult<FForwardedClientCallResponse, FAppError>> DispatchClientCall(
         const FForwardedClientCallRequest& Request);
 
     MFUNCTION(ServerCall)
-    MFuture<TResult<FObjectProxyInvokeResponse, FAppError>> InvokeObjectCall(const FObjectProxyInvokeRequest& Request);
+    MFuture<TResult<FObjectCallResponse, FAppError>> DispatchObjectCall(const FObjectCallRequest& Request);
 
-    MObjectProxyRegistry* GetObjectProxyRegistry() override { return &ObjectProxyRegistry; }
-    const MObjectProxyRegistry* GetObjectProxyRegistry() const override { return &ObjectProxyRegistry; }
+    MWorldClient* GetClient() const { return Client; }
+    MPlayerService* GetPlayerService() const { return Player; }
+    MWorldLogin* GetLogin() const { return Login; }
+    MWorldMgo* GetMgo() const { return Mgo; }
+    MWorldScene* GetScene() const { return Scene; }
+    MWorldRouter* GetRouter() const { return Router; }
+    MPersistenceSubsystem& GetPersistence() { return PersistenceSubsystem; }
+    const MPersistenceSubsystem& GetPersistence() const { return PersistenceSubsystem; }
+    MObjectCallRegistry* GetObjectCallRegistry() override { return &ObjectCallRegistry; }
+    const MObjectCallRegistry* GetObjectCallRegistry() const override { return &ObjectCallRegistry; }
+    void QueueClientNotify(uint64 GatewayConnectionId, uint16 FunctionId, const TByteArray& Payload) const;
 
 private:
-    MPlayer* FindPlayerById(uint64 PlayerId) const;
-    TSharedPtr<INetConnection> ResolveGatewayPeerConnection() const;
-    void QueueClientDownlink(uint64 GatewayConnectionId, uint16 FunctionId, const TByteArray& Payload) const;
-    void QueueScenePlayerEnterBroadcast(uint64 PlayerId);
-    void QueueScenePlayerUpdateBroadcast(uint64 PlayerId);
-    void QueueScenePlayerLeaveBroadcast(uint64 PlayerId, uint32 SceneId);
+    void InitBackendConnections();
+    void InitBackendHandlers();
+    void ConnectBackends();
+    void InitServices();
+    void RegisterBackendTransports();
 
-    void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
-    void HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* PeerName);
+    TSharedPtr<INetConnection> ResolveGatewayConnection() const;
+    void HandleGatewayPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
+    void HandleBackendPacket(uint8 PacketType, const TByteArray& Data, const char* ServerName);
     SWorldConfig Config;
-    TMap<uint64, MPlayer*> OnlinePlayers;
-    TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
+    TMap<uint64, TSharedPtr<INetConnection>> GatewayConnections;
     MServerConnectionManager BackendConnectionManager;
     TSharedPtr<MServerConnection> LoginServerConn;
     TSharedPtr<MServerConnection> SceneServerConn;
     TSharedPtr<MServerConnection> RouterServerConn;
     TSharedPtr<MServerConnection> MgoServerConn;
-    MWorldClientServiceEndpoint* ClientService = nullptr;
-    MWorldCombatServiceEndpoint* CombatService = nullptr;
-    MWorldPlayerServiceEndpoint* PlayerService = nullptr;
-    MWorldLoginRpc* LoginRpc = nullptr;
-    MWorldMgoRpc* MgoRpc = nullptr;
-    MWorldSceneRpc* SceneRpc = nullptr;
-    MWorldRouterRpc* RouterRpc = nullptr;
-    MObjectProxyServiceEndpoint* ObjectProxyService = nullptr;
+    MWorldClient* Client = nullptr;
+    MPlayerService* Player = nullptr;
+    MWorldLogin* Login = nullptr;
+    MWorldMgo* Mgo = nullptr;
+    MWorldScene* Scene = nullptr;
+    MWorldRouter* Router = nullptr;
+    MObjectCallRouter* ObjectCallRouter = nullptr;
     MPersistenceSubsystem PersistenceSubsystem;
-    MObjectProxyRegistry ObjectProxyRegistry;
-    TUniquePtr<FPlayerObjectProxyRootResolver> PlayerRootResolver;
+    MObjectCallRegistry ObjectCallRegistry;
 };
+

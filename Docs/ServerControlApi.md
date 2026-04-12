@@ -2,12 +2,16 @@
 
 `Scripts/server_control_api.py` 是面向本地开发工具和多机控制的轻量 Agent 入口。
 
-它的目标不是替代服务端运行时，而是给下面这些前端提供统一后端：
+它的目标不是替代服务端运行时，而是把当前仓库已经存在的这些能力统一暴露出来：
 
-- UE Editor 插件
-- 本地桌面管理工具
-- Web 管理台
-- 集群 TUI 控制台
+- 构建
+- 起停服
+- 单服控制
+- 验证
+- 任务查询
+- 日志尾部读取
+- 节点身份与拓扑状态
+- 向中心注册表上报心跳
 
 ## 启动
 
@@ -39,7 +43,7 @@ python3 Scripts/server_control_api.py --host 0.0.0.0 --port 18080 --agent-name n
 MESSION_CONTROL_API_TOKEN=<token> python3 Scripts/server_control_api.py --host 0.0.0.0
 ```
 
-常用环境变量：
+## 常用环境变量
 
 - `MESSION_CONTROL_API_HOST`
 - `MESSION_CONTROL_API_PORT`
@@ -81,10 +85,8 @@ python3 Scripts/server_control_api.py \
 - 触发 `validate`
 - 触发 `validate_with_build`
 - 读取单个服务日志尾部
+- 提供 Agent 身份和当前已应用拓扑摘要
 - 可作为多机常驻 Agent 被控制台轮询
-- 提供 Agent 身份信息
-- 提供可选的分组和控制地址自报信息
-- 接收拓扑下发并持久化当前拓扑版本
 - 可主动向中心注册服务上报心跳
 
 ## 路由
@@ -100,7 +102,7 @@ python3 Scripts/server_control_api.py \
 当前会检查：
 
 - `build_dir` 是否存在
-- 当前 registry 心跳线程状态摘要
+- registry 心跳线程状态摘要
 
 ### `GET /api/agent/info`
 
@@ -137,6 +139,10 @@ python3 Scripts/server_control_api.py \
 
 返回当前 Agent 已应用的拓扑摘要。
 
+默认状态文件位于：
+
+- `Build/.mession_agent_topology.json`
+
 ### `GET /api/tasks`
 
 返回当前 API 进程内维护的后台任务列表。
@@ -165,12 +171,7 @@ python3 Scripts/server_control_api.py \
 
 ### `POST /api/actions/build`
 
-后台执行：
-
-```bash
-cmake -S <project_root> -B <build_dir> -DCMAKE_BUILD_TYPE=Release
-cmake --build <build_dir> -j4
-```
+后台执行构建。
 
 ### `POST /api/actions/start`
 
@@ -208,15 +209,6 @@ python3 Scripts/validate.py --build-dir <build_dir>
 
 后台执行单服启动。
 
-当前支持：
-
-- `RouterServer`
-- `LoginServer`
-- `WorldServer`
-- `SceneServer`
-- `GatewayServer`
-- `MgoServer`
-
 ### `POST /api/actions/stop_server/<server>`
 
 后台执行单服停止。
@@ -229,18 +221,27 @@ python3 Scripts/validate.py --build-dir <build_dir>
 
 接收控制面下发的节点拓扑并写入 Agent 本地状态文件。
 
-当前会写入：
+## 当前任务模型
 
-- `Build/.mession_agent_topology.json`
+这个 API 当前的任务系统是“进程内后台任务队列”，不是分布式任务调度系统。
+
+当前特点：
+
+- 适合本地开发和轻量多机控制
+- 任务输出可以被控制台轮询查看
+- 进程重启后任务历史不会保留
+
+因此它当前更像一个“统一控制后端”，而不是完整运维平台。
 
 ## 适合作为管理端 MVP 的原因
 
-当前仓库里已经有：
+当前仓库已经有：
 
 - 进程控制脚本
 - 验证脚本
 - 日志目录约定
 - 固定端口约定
+- 注册表与 TUI
 
 所以先把这些能力通过一个本地 JSON API 暴露出来，比直接上完整 UI 更稳。
 
@@ -281,9 +282,9 @@ docker run --rm -p 18080:18080 \
 - `Authorization: Bearer <token>`
 - `X-Mession-Token: <token>`
 
-后续如果要继续做“服务器统筹管理 App”，推荐下一步优先补：
+## 当前限制
 
-1. 任务输出实时流式推送
-2. 统一健康信息接口
-3. 各服务接入结构化 debug status JSON
-4. 更细粒度的多机控制
+- 任务输出仍是轮询读取，不是实时流式推送
+- 任务历史不持久化
+- 健康信息仍偏轻量，尚未统一到更细粒度服务诊断
+- 更细粒度的多机控制和权限边界仍有继续演进空间

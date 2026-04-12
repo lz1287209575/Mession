@@ -18,11 +18,11 @@ bool MMgoServer::Init(int InPort)
     MLogger::LogStartupBanner("MgoServer", Config.ListenPort, 0);
     MServerConnection::SetLocalInfo(6, EServerType::Mgo, "MgoSkeleton");
 
-    if (!PlayerStateService)
+    if (!PlayerState)
     {
-        PlayerStateService = NewMObject<MMgoPlayerStateServiceEndpoint>(this, "PlayerStateService");
+        PlayerState = NewMObject<MMgoPlayerState>(this, "PlayerState");
     }
-    PlayerStateService->Initialize(&PlayerPersistenceRecords);
+    PlayerState->Initialize(&PlayerPersistenceRecords);
     return true;
 }
 
@@ -72,29 +72,30 @@ void MMgoServer::OnRunStarted()
 
 MFuture<TResult<FMgoLoadPlayerResponse, FAppError>> MMgoServer::LoadPlayer(const FMgoLoadPlayerRequest& Request)
 {
-    if (!PlayerStateService)
+    if (!PlayerState)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FMgoLoadPlayerResponse>(
             "mgo_service_missing",
             "LoadPlayer");
     }
 
-    return PlayerStateService->LoadPlayer(Request);
+    return PlayerState->LoadPlayer(Request);
 }
 
 MFuture<TResult<FMgoSavePlayerResponse, FAppError>> MMgoServer::SavePlayer(const FMgoSavePlayerRequest& Request)
 {
-    if (!PlayerStateService)
+    if (!PlayerState)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FMgoSavePlayerResponse>(
             "mgo_service_missing",
             "SavePlayer");
     }
 
-    return PlayerStateService->SavePlayer(Request);
+    return PlayerState->SavePlayer(Request);
 }
 
 void MMgoServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
     (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
 }
+

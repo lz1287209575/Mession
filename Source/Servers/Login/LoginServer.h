@@ -10,7 +10,7 @@
 #include "Common/Runtime/Object/Result.h"
 #include "Protocol/Messages/Common/AppMessages.h"
 #include "Protocol/Messages/Auth/AuthSessionMessages.h"
-#include "Servers/Login/Services/LoginSessionServiceEndpoint.h"
+#include "Servers/Login/LoginSession.h"
 
 struct SLoginConfig
 {
@@ -39,7 +39,7 @@ public:
     MFuture<TResult<FLoginIssueSessionResponse, FAppError>> IssueSession(const FLoginIssueSessionRequest& Request);
 
     MFUNCTION(ServerCall)
-    MFuture<TResult<FLoginValidateSessionResponse, FAppError>> ValidateSessionCall(const FLoginValidateSessionRequest& Request);
+    MFuture<TResult<FLoginValidateSessionResponse, FAppError>> ValidateSession(const FLoginValidateSessionRequest& Request);
 
 private:
     void HandlePeerPacket(uint64 ConnectionId, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data);
@@ -50,5 +50,6 @@ private:
     uint32 NextSessionKey = 1000;
     TMap<uint64, uint32> Sessions;
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
-    MLoginSessionServiceEndpoint* SessionService = nullptr;
+    MLoginSession* Session = nullptr;
 };
+

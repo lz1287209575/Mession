@@ -18,11 +18,11 @@ bool MLoginServer::Init(int InPort)
     MLogger::LogStartupBanner("LoginServer", Config.ListenPort, 0);
     MServerConnection::SetLocalInfo(2, EServerType::Login, "LoginSkeleton");
 
-    if (!SessionService)
+    if (!Session)
     {
-        SessionService = NewMObject<MLoginSessionServiceEndpoint>(this, "SessionService");
+        Session = NewMObject<MLoginSession>(this, "Session");
     }
-    SessionService->Initialize(&Sessions, &NextSessionKey);
+    Session->Initialize(&Sessions, &NextSessionKey);
     return true;
 }
 
@@ -74,27 +74,27 @@ void MLoginServer::OnRunStarted()
 MFuture<TResult<FLoginIssueSessionResponse, FAppError>> MLoginServer::IssueSession(
     const FLoginIssueSessionRequest& Request)
 {
-    if (!SessionService)
+    if (!Session)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FLoginIssueSessionResponse>(
             "login_service_missing",
             "IssueSession");
     }
 
-    return SessionService->IssueSession(Request);
+    return Session->IssueSession(Request);
 }
 
-MFuture<TResult<FLoginValidateSessionResponse, FAppError>> MLoginServer::ValidateSessionCall(
+MFuture<TResult<FLoginValidateSessionResponse, FAppError>> MLoginServer::ValidateSession(
     const FLoginValidateSessionRequest& Request)
 {
-    if (!SessionService)
+    if (!Session)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FLoginValidateSessionResponse>(
             "login_service_missing",
-            "ValidateSessionCall");
+            "ValidateSession");
     }
 
-    return SessionService->ValidateSessionCall(Request);
+    return Session->ValidateSession(Request);
 }
 
 uint32 MLoginServer::AllocateSessionKey()
@@ -106,3 +106,4 @@ void MLoginServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<IN
 {
     (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
 }
+

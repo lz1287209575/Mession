@@ -437,7 +437,7 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
     ForwardRequest.ClientCallId = CallId;
     ForwardRequest.Payload = Payload;
 
-    CallServerFunction<FForwardedClientCallResponse>(TargetConnection, TargetServerType, "ForwardClientCall", ForwardRequest)
+    CallServerFunction<FForwardedClientCallResponse>(TargetConnection, TargetServerType, "DispatchClientCall", ForwardRequest)
         .Then(
             [ResponseTarget, ConnectionId, FunctionId, CallId](MFuture<TResult<FForwardedClientCallResponse, FAppError>> Completed) mutable
             {
@@ -505,3 +505,4 @@ void MGatewayServer::HandleBackendPacket(
              PeerName ? PeerName : "backend",
              static_cast<unsigned>(PacketType));
 }
+

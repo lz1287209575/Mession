@@ -18,11 +18,11 @@ bool MRouterServer::Init(int InPort)
     MLogger::LogStartupBanner("RouterServer", Config.ListenPort, 0);
     MServerConnection::SetLocalInfo(5, EServerType::Router, "RouterSkeleton");
 
-    if (!RegistryService)
+    if (!Registry)
     {
-        RegistryService = NewMObject<MRouterRegistryServiceEndpoint>(this, "RegistryService");
+        Registry = NewMObject<MRouterRegistry>(this, "Registry");
     }
-    RegistryService->Initialize(&Routes);
+    Registry->Initialize(&Routes);
     return true;
 }
 
@@ -73,30 +73,31 @@ void MRouterServer::OnRunStarted()
 MFuture<TResult<FRouterResolvePlayerRouteResponse, FAppError>> MRouterServer::ResolvePlayerRoute(
     const FRouterResolvePlayerRouteRequest& Request)
 {
-    if (!RegistryService)
+    if (!Registry)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FRouterResolvePlayerRouteResponse>(
             "router_service_missing",
             "ResolvePlayerRoute");
     }
 
-    return RegistryService->ResolvePlayerRoute(Request);
+    return Registry->ResolvePlayerRoute(Request);
 }
 
 MFuture<TResult<FRouterUpsertPlayerRouteResponse, FAppError>> MRouterServer::UpsertPlayerRoute(
     const FRouterUpsertPlayerRouteRequest& Request)
 {
-    if (!RegistryService)
+    if (!Registry)
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FRouterUpsertPlayerRouteResponse>(
             "router_service_missing",
             "UpsertPlayerRoute");
     }
 
-    return RegistryService->UpsertPlayerRoute(Request);
+    return Registry->UpsertPlayerRoute(Request);
 }
 
 void MRouterServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<INetConnection>& Connection, const TByteArray& Data)
 {
     (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
 }
+

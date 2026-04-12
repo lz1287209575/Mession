@@ -8,7 +8,7 @@ template<typename T>
 class MCoroutine : public TEnableSharedFromThis<MCoroutine<T>>
 {
 public:
-    /** Workflow object：封装多步异步流程，内部通过 Promise/Future 完成结果传播。 */
+    /** Action object：封装多步异步流程，内部通过 Promise/Future 完成结果传播。 */
     using TResultType = T;
 
     MCoroutine()
@@ -120,7 +120,7 @@ template<>
 class MCoroutine<void> : public TEnableSharedFromThis<MCoroutine<void>>
 {
 public:
-    /** Workflow object：封装多步异步流程，内部通过 Promise/Future 完成结果传播。 */
+    /** Action object：封装多步异步流程，内部通过 Promise/Future 完成结果传播。 */
     using TResultType = void;
 
     MCoroutine()

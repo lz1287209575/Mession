@@ -2,7 +2,7 @@
 
 `Scripts/server_manager_tui.py` 是面向本地终端的服务器统筹管理界面。
 
-它直接复用当前仓库已有的控制逻辑，不要求额外安装第三方 Python 包。
+它直接复用当前仓库已有的脚本、Agent API 和注册表逻辑，不要求额外安装第三方 Python 包。
 
 ## 启动
 
@@ -33,13 +33,13 @@ python3 Scripts/server_manager_tui.py --cluster-config Config/server_cluster.exa
 - `Logs`
   当前选中服务的实时日志尾部
 - `Tasks`
-  任务列表与实时任务输出
+  任务列表与最近输出
 - `Fleet`
   注册表驱动的节点分组视图、搜索过滤、分组折叠与批量操作面板
 - `Help`
   键位与视图说明
 
-## 键位
+## 主要键位
 
 - `Tab / h / l / 1-5`
   切换视图
@@ -99,8 +99,6 @@ python3 Scripts/server_manager_tui.py --cluster-config Config/server_cluster.exa
   在 `Fleet` 视图里标记当前分组全部节点
 - `u`
   在 `Fleet` 视图里清空标记
-- `s / x / R`
-  在 `Fleet` 视图里对当前选中服务执行批量启停 / 重启
 
 ## 适合当前仓库的原因
 
@@ -110,9 +108,11 @@ python3 Scripts/server_manager_tui.py --cluster-config Config/server_cluster.exa
 - PID 文件约定
 - 起停服脚本
 - 验证脚本
+- Agent API
+- 中央注册表
 - 日志目录
 
-所以用一个零依赖 TUI 把这些入口聚起来，可以很快形成“服务器统筹管理”的第一版可用界面。
+所以用一个零依赖 TUI 把这些入口聚起来，可以很快形成可用的本地和多机控制面。
 
 ## 多机模式
 
@@ -127,7 +127,9 @@ TUI 当前支持三种节点：
 
 推荐优先使用 `agent`，因为它更适合长期在线的多机控制面。
 
-当前控制台会维护一份轻量节点注册表，记录：
+## 注册表与自动发现
+
+当前控制台会维护一份节点注册表视图，记录：
 
 - 首次见到时间
 - 最近一次心跳时间
@@ -154,13 +156,17 @@ TUI 当前支持三种节点：
 - `/api/logs/<server>`
 - `/api/topology`
 
-这样节点心跳由中心统一汇总，服务列表和具体操作仍由节点自身 API 提供。
+这样节点心跳由中心统一汇总，具体控制动作仍由节点自身 API 提供。
+
+## 集群配置
 
 示例配置见：
 
 - [`Config/server_cluster.example.json`](/root/Mession/Config/server_cluster.example.json)
 
 如果你准备完全走注册表自动发现，也可以把 `nodes` 留空，只保留 `registry` 配置。
+
+## 远端节点前提
 
 建议每台远端机器满足这些前提：
 
@@ -183,18 +189,6 @@ python3 Scripts/server_control_api.py \
 
 如果 Agent 监听在 `0.0.0.0`，建议额外传 `--advertise-host` 或 `--advertise-url`，否则注册表无法为自动发现节点生成可直连地址。
 
-控制台会从 Agent 拉取：
-
-- `/api/status`
-- `/api/tasks`
-- `/api/logs/<server>`
-- `/api/topology`
-
-并可通过：
-
-- `p` 向当前节点下发拓扑
-- `P` 向全部节点下发拓扑
-
 如果使用 `ssh`，还需要：
 
 - SSH key 已配置完成
@@ -208,7 +202,7 @@ python3 Scripts/server_control_api.py \
 
 ## 当前限制
 
-- 自动发现节点要想支持直接控制，需要 Agent 向注册表上报可达控制地址，且控制端知道对应 token（例如共享 token）
-- 中央注册表当前只负责心跳与节点清单，不负责代理实际控制指令
 - 日志视图是“实时 tail + 有限回看”，不是完整历史检索
-- 任务输出存在进程内内存里，重开 TUI 后不会保留
+- 任务输出是最近输出视图，不是完整任务归档
+- 中央注册表当前只负责心跳与节点清单，不代理实际控制指令
+- 自动发现节点能否直接控制，仍依赖 Agent 上报的可达地址和控制端掌握的 token

@@ -91,8 +91,8 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Net/Rpc/RpcManifest.cpp
     Source/Common/Net/Rpc/RpcServerCall.cpp
     Source/Common/Net/Rpc/RpcTransport.cpp
-    Source/Servers/App/ObjectProxyRegistry.cpp
-    Source/Servers/App/ObjectProxyServiceEndpoint.cpp
+    Source/Servers/App/ObjectCallRegistry.cpp
+    Source/Servers/App/ObjectCallRouter.cpp
 )
 
 add_library(mession_common STATIC
@@ -316,7 +316,7 @@ add_executable(LoginServer
     Source/Servers/Login/LoginServer.h
     Source/Servers/Login/LoginServer.cpp
     Source/Servers/Login/LoginServerMain.cpp
-    Source/Servers/Login/Services/LoginSessionServiceEndpoint.cpp
+    Source/Servers/Login/LoginSession.cpp
 )
 target_link_libraries(LoginServer
     PRIVATE
@@ -330,17 +330,28 @@ add_executable(WorldServer
     Source/Servers/World/WorldServer.h
     Source/Servers/World/WorldServer.cpp
     Source/Servers/World/WorldServerMain.cpp
-    Source/Servers/World/Players/PlayerInventory.cpp
-    Source/Servers/World/Players/PlayerProgression.cpp
-    Source/Servers/World/Players/Player.cpp
-    Source/Servers/World/Players/PlayerCombatProfile.cpp
-    Source/Servers/World/Players/PlayerController.cpp
-    Source/Servers/World/Players/PlayerPawn.cpp
-    Source/Servers/World/Players/PlayerProfile.cpp
-    Source/Servers/World/Players/PlayerSession.cpp
-    Source/Servers/World/Services/WorldCombatServiceEndpoint.cpp
-    Source/Servers/World/Services/WorldClientServiceEndpoint.cpp
-    Source/Servers/World/Services/WorldPlayerServiceEndpoint.cpp
+    Source/Servers/World/Player/PlayerEnter.cpp
+    Source/Servers/World/Player/PlayerCombat.cpp
+    Source/Servers/World/Player/PlayerLogout.cpp
+    Source/Servers/World/Player/PlayerNotify.cpp
+    Source/Servers/World/Player/PlayerServiceModify.cpp
+    Source/Servers/World/Player/PlayerServiceQuery.cpp
+    Source/Servers/World/Player/PlayerServiceRoute.cpp
+    Source/Servers/World/Player/PlayerServiceRuntime.cpp
+    Source/Servers/World/Player/PlayerSwitchScene.cpp
+    Source/Servers/World/Player/PlayerInventory.cpp
+    Source/Servers/World/Player/PlayerProgression.cpp
+    Source/Servers/World/Player/PlayerComponents.cpp
+    Source/Servers/World/Player/PlayerCombatProfile.cpp
+    Source/Servers/World/Player/PlayerController.cpp
+    Source/Servers/World/Player/PlayerPawn.cpp
+    Source/Servers/World/Player/PlayerProfile.cpp
+    Source/Servers/World/Player/PlayerSession.cpp
+    Source/Servers/World/Player/PlayerState.cpp
+    Source/Servers/World/WorldClient.cpp
+    Source/Servers/World/WorldClientLogin.cpp
+    Source/Servers/World/WorldClientPlayer.cpp
+    Source/Servers/World/WorldClientCombat.cpp
 )
 target_link_libraries(WorldServer
     PRIVATE
@@ -358,8 +369,8 @@ add_executable(SceneServer
     Source/Servers/Scene/Combat/SkillCatalog.cpp
     Source/Servers/Scene/Combat/SkillStepExecutor.cpp
     Source/Servers/Scene/Combat/UAssetSkillLoader.cpp
-    Source/Servers/Scene/Services/SceneCombatServiceEndpoint.cpp
-    Source/Servers/Scene/Services/SceneSessionServiceEndpoint.cpp
+    Source/Servers/Scene/SceneCombat.cpp
+    Source/Servers/Scene/SceneSession.cpp
 )
 target_link_libraries(SceneServer
     PRIVATE
@@ -373,7 +384,7 @@ add_executable(RouterServer
     Source/Servers/Router/RouterServer.h
     Source/Servers/Router/RouterServer.cpp
     Source/Servers/Router/RouterServerMain.cpp
-    Source/Servers/Router/Services/RouterRegistryServiceEndpoint.cpp
+    Source/Servers/Router/RouterRegistry.cpp
 )
 target_link_libraries(RouterServer
     PRIVATE
@@ -387,7 +398,7 @@ add_executable(MgoServer
     Source/Servers/Mgo/MgoServer.h
     Source/Servers/Mgo/MgoServer.cpp
     Source/Servers/Mgo/MgoServerMain.cpp
-    Source/Servers/Mgo/Services/MgoPlayerStateServiceEndpoint.cpp
+    Source/Servers/Mgo/MgoPlayerState.cpp
 )
 target_link_libraries(MgoServer
     PRIVATE
@@ -435,3 +446,6 @@ message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Servers: Gateway, Login, World, Scene, Router, Mgo")
 message(STATUS "=====================================")
+
+
+

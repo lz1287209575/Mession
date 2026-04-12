@@ -10,7 +10,7 @@ struct SPlayerRouteRecord
     uint32 SceneId = 0;
 };
 
-class MRouterRegistryService
+class FRouterRegistryService
 {
 public:
     MFuture<TResult<FRouterResolvePlayerRouteResponse, FAppError>> ResolvePlayerRoute(
@@ -53,3 +53,4 @@ public:
         return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
     }
 };
+

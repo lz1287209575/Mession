@@ -4,7 +4,7 @@
 #include "Protocol/Messages/Auth/AuthSessionMessages.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
 
-class MLoginSessionService
+class FLoginSessionService
 {
 public:
     MFuture<TResult<FLoginIssueSessionResponse, FAppError>> IssueSession(
@@ -32,7 +32,7 @@ public:
     {
         if (Request.PlayerId == 0 || Request.SessionKey == 0)
         {
-            return MServerCallAsyncSupport::MakeErrorFuture<FLoginValidateSessionResponse>("invalid_validate_request", "ValidateSessionCall");
+            return MServerCallAsyncSupport::MakeErrorFuture<FLoginValidateSessionResponse>("invalid_validate_request", "ValidateSession");
         }
 
         FLoginValidateSessionResponse Response;
@@ -42,3 +42,4 @@ public:
         return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
     }
 };
+

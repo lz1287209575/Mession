@@ -1,463 +1,378 @@
-# UE 客户端骨架设计稿
+# UE 客户端骨架设计
 
-本文档给 UE 侧一套最小可落地的 C++ 类骨架设计，目标是快速搭起 `Mession` 登录链路。
+本文档给 UE 侧一套面向当前主线协议的客户端骨架设计。
 
-适用日期：`2026-03-31`
+目标不是做一个“只够登录一次”的样板，而是先搭一套可以承接当前 16 个客户端入口、3 条场景下行、后续继续扩展的基础结构。
 
-说明：
+## 设计原则
 
-- 这里给的是“设计稿 + 可直接抄的头文件草案”
-- 不依赖当前仓库存在 UE 工程
-- 不保证直接复制后 100% 编译通过
-- 重点是帮助 UE Agent 快速建立合理的类边界
+当前 UE 骨架建议遵循以下原则：
 
-## 1. 推荐目录
+- 传输层和业务层分开
+- 请求/响应和下行推送分开
+- 反射编解码和 API 封装分开
+- 先支持当前仓库真实能力，不提前抽象完整复制框架
+- 保留稳定 `FunctionId` 算法，不依赖手写 magic number
 
-建议 UE 工程里新建模块或目录：
+## 推荐目录
 
 ```text
 Source/<YourGame>/Mession/
     MessionTypes.h
     MessionByteCodec.h
     MessionByteCodec.cpp
-    MessionGatewayProtocol.h
-    MessionGatewayProtocol.cpp
+    MessionReflectCodec.h
+    MessionReflectCodec.cpp
+    MessionProtocolCodec.h
+    MessionProtocolCodec.cpp
     MessionTcpClient.h
     MessionTcpClient.cpp
-    MessionLoginSubsystem.h
-    MessionLoginSubsystem.cpp
+    MessionGatewaySubsystem.h
+    MessionGatewaySubsystem.cpp
+    MessionPlayerSyncSubsystem.h
+    MessionPlayerSyncSubsystem.cpp
 ```
 
-如果想先更轻量，也可以都放进现有 Runtime 模块里，但建议至少保留这 5 个逻辑单元。
+如果项目不想拆两个 Subsystem，也可以合并到一个 `UMessionClientSubsystem`，但至少要保留“连接/协议/同步”三层边界。
 
-## 2. 类型定义
+## 推荐模块划分
 
-建议先有一个公共类型头，避免协议字段散落。
+### 1. `FMessionTcpClient`
+
+职责：
+
+- 建立和关闭 TCP 连接
+- 处理 `uint32` 长度前缀封包
+- 接收缓冲累积与拆包
+- 对上层输出完整 `PacketBody`
+
+它不负责：
+
+- 反射序列化
+- `FunctionId`
+- 业务状态
+- 重试和重登策略
+
+### 2. `FMessionProtocolCodec`
+
+职责：
+
+- 编解码客户端请求/响应包
+- 编解码客户端下行包
+- 管理 `CallId`
+- 计算稳定 `FunctionId`
+
+它至少要支持两种包：
+
+- ClientCall：
+  - `uint8 MsgType`
+  - `uint16 FunctionId`
+  - `uint64 CallId`
+  - `uint32 PayloadSize`
+  - `Payload`
+- ClientDownlink：
+  - `uint8 MsgType`
+  - `uint16 FunctionId`
+  - `uint32 PayloadSize`
+  - `Payload`
+
+### 3. `FMessionReflectCodec`
+
+职责：
+
+- 基础类型编码/解码
+- `MString <-> FString` 的 UTF-8 转换
+- 当前几个客户端结构的顺序编解码
+
+第一版至少支持：
+
+- `bool`
+- `uint16`
+- `uint32`
+- `uint64`
+- `int32`
+- `float`
+- `FString`
+
+### 4. `UMessionGatewaySubsystem`
+
+职责：
+
+- 维护连接状态
+- 发起心跳
+- 发起 `Client_Login / Query / Write` 请求
+- 跟踪 Pending Call
+- 保存本地玩家会话信息
+
+建议缓存：
+
+- `ConnectionState`
+- `NextCallId`
+- `LoggedInPlayerId`
+- `SessionKey`
+- `GatewayConnectionId`
+- `LastHeartbeatSequence`
+
+### 5. `UMessionPlayerSyncSubsystem`
+
+职责：
+
+- 处理 `Client_ScenePlayerEnter`
+- 处理 `Client_ScenePlayerUpdate`
+- 处理 `Client_ScenePlayerLeave`
+- 维护远端玩家缓存
+- 驱动远端玩家表现层
+
+建议缓存：
+
+- `TMap<uint64, FRemoteScenePlayerState>`
+
+## 类型建议
+
+建议把当前 UE 侧真正要用到的协议结构集中到一个头文件，不要散落在各个业务类里。
 
 ### `MessionTypes.h`
 
-```cpp
-#pragma once
+推荐至少包含：
 
-#include "CoreMinimal.h"
-#include "Subsystems/GameInstanceSubsystem.h"
-#include "MessionTypes.generated.h"
+- `FMessionLoginRequest`
+- `FMessionLoginResponse`
+- `FMessionHeartbeatRequest`
+- `FMessionHeartbeatResponse`
+- `FMessionFindPlayerRequest`
+- `FMessionFindPlayerResponse`
+- `FMessionQueryProfileResponse`
+- `FMessionQueryPawnResponse`
+- `FMessionQueryInventoryResponse`
+- `FMessionQueryProgressionResponse`
+- `FMessionMoveRequest`
+- `FMessionMoveResponse`
+- `FMessionSwitchSceneRequest`
+- `FMessionSwitchSceneResponse`
+- `FMessionChangeGoldRequest`
+- `FMessionChangeGoldResponse`
+- `FMessionEquipItemRequest`
+- `FMessionEquipItemResponse`
+- `FMessionGrantExperienceRequest`
+- `FMessionGrantExperienceResponse`
+- `FMessionModifyHealthRequest`
+- `FMessionModifyHealthResponse`
+- `FMessionCastSkillRequest`
+- `FMessionCastSkillResponse`
+- `FMessionScenePlayerState`
+- `FMessionScenePlayerLeave`
 
-USTRUCT(BlueprintType)
-struct FMessionLoginRequest
-{
-    GENERATED_BODY()
+第一版可以先只实现已接入到 UI/测试流程的那部分，但类型层建议一开始就把命名规范定稳。
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    uint64 PlayerId = 0;
-};
+## 协议层建议
 
-USTRUCT(BlueprintType)
-struct FMessionLoginResponse
-{
-    GENERATED_BODY()
+### 稳定 ID
 
-    UPROPERTY(BlueprintReadOnly)
-    bool bSuccess = false;
+`FunctionId` 不要长期硬编码。
 
-    UPROPERTY(BlueprintReadOnly)
-    uint64 PlayerId = 0;
-
-    UPROPERTY(BlueprintReadOnly)
-    uint32 SessionKey = 0;
-
-    UPROPERTY(BlueprintReadOnly)
-    FString Error;
-};
-
-USTRUCT(BlueprintType)
-struct FMessionFindPlayerRequest
-{
-    GENERATED_BODY()
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    uint64 PlayerId = 0;
-};
-
-USTRUCT(BlueprintType)
-struct FMessionFindPlayerResponse
-{
-    GENERATED_BODY()
-
-    UPROPERTY(BlueprintReadOnly)
-    bool bFound = false;
-
-    UPROPERTY(BlueprintReadOnly)
-    uint64 PlayerId = 0;
-
-    UPROPERTY(BlueprintReadOnly)
-    uint64 GatewayConnectionId = 0;
-
-    UPROPERTY(BlueprintReadOnly)
-    uint32 SceneId = 0;
-
-    UPROPERTY(BlueprintReadOnly)
-    FString Error;
-};
-
-UENUM(BlueprintType)
-enum class EMessionConnectionState : uint8
-{
-    Disconnected,
-    Connecting,
-    Connected
-};
-
-USTRUCT()
-struct FMessionFunctionCallPacket
-{
-    GENERATED_BODY()
-
-    uint8 MsgType = 13;
-    uint16 FunctionId = 0;
-    uint64 CallId = 0;
-    TArray<uint8> Payload;
-};
-```
-
-## 3. 字节编解码器
-
-建议单独做 `Reader / Writer`，避免协议层到处手写移位。
-
-### `MessionByteCodec.h`
+建议保留：
 
 ```cpp
-#pragma once
-
-#include "CoreMinimal.h"
-
-class FMessionByteWriter
-{
-public:
-    void WriteUInt8(uint8 Value);
-    void WriteUInt16LE(uint16 Value);
-    void WriteUInt32LE(uint32 Value);
-    void WriteUInt64LE(uint64 Value);
-    void WriteFloatLE(float Value);
-    void WriteUtf8String(const FString& Value);
-    void WriteBytes(const TArray<uint8>& Bytes);
-
-    const TArray<uint8>& GetData() const { return Data; }
-    TArray<uint8> MoveData() { return MoveTemp(Data); }
-
-private:
-    TArray<uint8> Data;
-};
-
-class FMessionByteReader
-{
-public:
-    explicit FMessionByteReader(const TArray<uint8>& InData);
-
-    bool ReadUInt8(uint8& OutValue);
-    bool ReadUInt16LE(uint16& OutValue);
-    bool ReadUInt32LE(uint32& OutValue);
-    bool ReadUInt64LE(uint64& OutValue);
-    bool ReadFloatLE(float& OutValue);
-    bool ReadUtf8String(FString& OutValue);
-    bool ReadBytes(int32 Count, TArray<uint8>& OutBytes);
-
-    bool IsValid() const { return bValid; }
-    bool IsFullyConsumed() const { return bValid && Offset == Data.Num(); }
-    int32 GetOffset() const { return Offset; }
-
-private:
-    template<typename T>
-    bool ReadPodLE(T& OutValue);
-
-private:
-    const TArray<uint8>& Data;
-    int32 Offset = 0;
-    bool bValid = true;
-};
+uint16 ComputeStableClientFunctionId(const FString& Name);
+uint16 ComputeStableDownlinkFunctionId(const FString& Name);
 ```
 
-### 实现要点
+对应规则：
 
-- `WriteUtf8String` 使用 `FTCHARToUTF8`
-- 先写 `uint32 ByteLen`
-- 再写 UTF-8 原始字节
-- `ReadUtf8String` 要做长度越界保护
+- Client API: `ComputeStableReflectId("MClientApi", Name)`
+- Downlink: `ComputeStableReflectId("MClientDownlink", Name)`
 
-## 4. 协议层
+### 包体判定
 
-建议把 FunctionId、CallId 和请求/响应结构编解码集中到协议层。
+收到一个完整 `PacketBody` 后，建议按以下顺序判断：
 
-### `MessionGatewayProtocol.h`
+1. `MsgType` 是否为 `13`
+2. 如果长度足够解析 `FunctionId + CallId + PayloadSize`，优先尝试按请求响应包解析
+3. 如果不满足，再尝试按 downlink 包解析
+4. 解析失败则记协议错误并丢弃
 
-```cpp
-#pragma once
+更稳妥的实现方式是：
 
-#include "CoreMinimal.h"
-#include "MessionTypes.h"
+- 先由 Pending Call 表判断该包是否可能属于一个响应
+- 再决定是否按 downlink 解释
 
-namespace MessionGatewayProtocol
-{
-    static constexpr uint8 MT_FunctionCall = 13;
+这样可以减少把异常响应误判成下行的风险。
 
-    static constexpr uint16 Client_Login = 528;
-    static constexpr uint16 Client_FindPlayer = 20722;
-    static constexpr uint16 Client_QueryProfile = 3609;
+## 请求分发建议
 
-    uint16 ComputeStableClientFunctionId(const FString& ApiName);
+不要一开始做一套通用模板元编程 RPC 框架。
 
-    TArray<uint8> BuildFunctionCallPacket(uint16 FunctionId, uint64 CallId, const TArray<uint8>& Payload);
-    bool ParseFunctionCallPacket(const TArray<uint8>& PacketBody, FMessionFunctionCallPacket& OutPacket);
+当前最实用的结构是：
 
-    TArray<uint8> EncodeLoginRequest(const FMessionLoginRequest& Request);
-    bool DecodeLoginResponse(const TArray<uint8>& Payload, FMessionLoginResponse& OutResponse);
+- `SendHeartbeat`
+- `Login`
+- `FindPlayer`
+- `QueryProfile`
+- `QueryPawn`
+- `QueryInventory`
+- `QueryProgression`
+- `Move`
+- `SwitchScene`
+- `ChangeGold`
+- `EquipItem`
+- `GrantExperience`
+- `ModifyHealth`
+- `CastSkill`
 
-    TArray<uint8> EncodeFindPlayerRequest(const FMessionFindPlayerRequest& Request);
-    bool DecodeFindPlayerResponse(const TArray<uint8>& Payload, FMessionFindPlayerResponse& OutResponse);
-}
-```
+每个公开方法：
 
-### 协议层职责边界
+1. 构造请求结构
+2. 编码 payload
+3. 分配 `CallId`
+4. 发送包
+5. 在 Pending Map 中登记回调
 
-- 它不管 Socket
-- 它不管线程
-- 它只管“字节 <-> 结构”
-- 所有 magic number 都集中在这里
+这样最贴近当前代码和联调需求。
 
-## 5. TCP 客户端
+## Pending Call 设计
 
-建议把纯连接层和业务层分开。
-
-### `MessionTcpClient.h`
-
-```cpp
-#pragma once
-
-#include "CoreMinimal.h"
-#include "HAL/Runnable.h"
-#include "Interfaces/IPv4/IPv4Address.h"
-
-class FSocket;
-
-DECLARE_DELEGATE(FMessionConnectedDelegate);
-DECLARE_DELEGATE_OneParam(FMessionDisconnectedDelegate, const FString& /*Reason*/);
-DECLARE_DELEGATE_OneParam(FMessionPacketReceivedDelegate, const TArray<uint8>& /*PacketBody*/);
-
-class FMessionTcpClient
-{
-public:
-    FMessionTcpClient();
-    ~FMessionTcpClient();
-
-    bool Connect(const FString& Host, int32 Port, FString& OutError);
-    void Disconnect(const FString& Reason = TEXT("ClientDisconnect"));
-    bool SendPacket(const TArray<uint8>& PacketWithLengthPrefix, FString& OutError);
-    void TickReceive();
-
-    bool IsConnected() const;
-
-    void SetOnConnected(FMessionConnectedDelegate InDelegate);
-    void SetOnDisconnected(FMessionDisconnectedDelegate InDelegate);
-    void SetOnPacketReceived(FMessionPacketReceivedDelegate InDelegate);
-
-private:
-    bool ReceiveIntoBuffer(FString& OutError);
-    bool TryDecodeOnePacket(TArray<uint8>& OutPacketBody);
-
-private:
-    FSocket* Socket = nullptr;
-    TArray<uint8> RecvBuffer;
-    FMessionConnectedDelegate OnConnected;
-    FMessionDisconnectedDelegate OnDisconnected;
-    FMessionPacketReceivedDelegate OnPacketReceived;
-};
-```
-
-### TCP 层实现建议
-
-- 可以先不单独开线程
-- 第一版直接在 `Subsystem::Tick` 或轮询点里调用 `TickReceive()`
-- 只要收包逻辑清晰即可
-
-### `TryDecodeOnePacket` 行为
-
-逻辑应与服务端完全对齐：
-
-1. 如果 `RecvBuffer` 小于 4 字节，返回 false
-2. 读出 `uint32 PacketLength`
-3. 如果长度非法，断开连接
-4. 如果当前缓冲还没收满整个包，返回 false
-5. 取出 `PacketBody`
-6. 从缓冲删除已消费数据
-
-## 6. 登录子系统
-
-建议用 `UGameInstanceSubsystem` 挂登录状态。
-
-### `MessionLoginSubsystem.h`
-
-```cpp
-#pragma once
-
-#include "CoreMinimal.h"
-#include "Subsystems/GameInstanceSubsystem.h"
-#include "MessionTypes.h"
-#include "MessionLoginSubsystem.generated.h"
-
-class FMessionTcpClient;
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMessionLoginResultDelegate, const FMessionLoginResponse&, Response);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMessionFindPlayerResultDelegate, const FMessionFindPlayerResponse&, Response);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMessionConnectionStateDelegate, EMessionConnectionState, NewState);
-
-UCLASS()
-class YOURGAME_API UMessionLoginSubsystem : public UGameInstanceSubsystem
-{
-    GENERATED_BODY()
-
-public:
-    virtual void Initialize(FSubsystemCollectionBase& Collection) override;
-    virtual void Deinitialize() override;
-
-    UFUNCTION(BlueprintCallable)
-    bool ConnectGateway(const FString& Host = TEXT("127.0.0.1"), int32 Port = 8001);
-
-    UFUNCTION(BlueprintCallable)
-    void DisconnectGateway();
-
-    UFUNCTION(BlueprintCallable)
-    bool Login(uint64 PlayerId);
-
-    UFUNCTION(BlueprintCallable)
-    bool FindPlayer(uint64 PlayerId);
-
-    UFUNCTION(BlueprintPure)
-    bool IsConnected() const;
-
-    UFUNCTION(BlueprintPure)
-    uint64 GetLoggedInPlayerId() const { return LoggedInPlayerId; }
-
-    UFUNCTION(BlueprintPure)
-    uint32 GetSessionKey() const { return SessionKey; }
-
-public:
-    UPROPERTY(BlueprintAssignable)
-    FMessionLoginResultDelegate OnLoginResult;
-
-    UPROPERTY(BlueprintAssignable)
-    FMessionFindPlayerResultDelegate OnFindPlayerResult;
-
-    UPROPERTY(BlueprintAssignable)
-    FMessionConnectionStateDelegate OnConnectionStateChanged;
-
-private:
-    bool SendFunctionCall(uint16 FunctionId, uint64 CallId, const TArray<uint8>& Payload);
-    uint64 AllocateCallId();
-
-    void HandlePacketBody(const TArray<uint8>& PacketBody);
-    void HandleLoginResponse(uint64 CallId, const TArray<uint8>& Payload);
-    void HandleFindPlayerResponse(uint64 CallId, const TArray<uint8>& Payload);
-    void HandleDisconnected(const FString& Reason);
-
-private:
-    TUniquePtr<FMessionTcpClient> TcpClient;
-    EMessionConnectionState ConnectionState = EMessionConnectionState::Disconnected;
-    uint64 NextCallId = 1;
-    uint64 PendingLoginCallId = 0;
-    uint64 PendingFindPlayerCallId = 0;
-    uint64 LoggedInPlayerId = 0;
-    uint32 SessionKey = 0;
-};
-```
-
-## 7. 最小调用流
-
-推荐在 `UMessionLoginSubsystem` 里按下面顺序实现：
-
-### 7.1 Connect
-
-1. 创建 `FMessionTcpClient`
-2. 建立连接
-3. 绑定收包回调
-4. 记录 `ConnectionState = Connected`
-
-### 7.2 Login
-
-1. 生成 `CallId`
-2. 编码 `FMessionLoginRequest`
-3. 发送 `Client_Login`
-4. 保存 `PendingLoginCallId`
-
-### 7.3 收到 LoginResponse
-
-1. 解析 `FMessionLoginResponse`
-2. 如果成功：
-   - 保存 `LoggedInPlayerId`
-   - 保存 `SessionKey`
-   - 自动再发一次 `FindPlayer(LoggedInPlayerId)`
-3. 广播 `OnLoginResult`
-
-### 7.4 收到 FindPlayerResponse
-
-1. 解析 `FMessionFindPlayerResponse`
-2. 广播 `OnFindPlayerResult`
-3. 日志打印 `GatewayConnectionId` / `SceneId`
-
-## 8. 日志建议
-
-建议统一日志分类：
-
-```cpp
-DECLARE_LOG_CATEGORY_EXTERN(LogMessionGateway, Log, All);
-```
-
-至少打印这些日志：
-
-```cpp
-UE_LOG(LogMessionGateway, Log, TEXT("Connected to %s:%d"), *Host, Port);
-UE_LOG(LogMessionGateway, Log, TEXT("Send Client_Login callId=%llu playerId=%llu"), CallId, PlayerId);
-UE_LOG(LogMessionGateway, Log, TEXT("Login response: success=%d playerId=%llu sessionKey=%u error=%s"),
-    Response.bSuccess, Response.PlayerId, Response.SessionKey, *Response.Error);
-UE_LOG(LogMessionGateway, Log, TEXT("FindPlayer response: found=%d gatewayConnectionId=%llu sceneId=%u error=%s"),
-    Response.bFound, Response.GatewayConnectionId, Response.SceneId, *Response.Error);
-```
-
-## 9. 第一版不要做的事情
-
-这几项很容易把接入复杂化，建议明确禁止：
-
-- 不要先做通用请求注册表
-- 不要先做模板化 RPC 框架
-- 不要先做独立工作线程池
-- 不要先接 UI Widget 复杂状态机
-- 不要先做自动重连
-- 不要先实现 `Client_Move`、`Client_SwitchScene` 全套玩法
-
-先把 `Login + FindPlayer` 跑通。
-
-## 10. 第二阶段自然扩展点
-
-等第一版跑通后，再按这个顺序扩展最自然：
-
-1. `Client_QueryProfile`
-2. `Client_QueryInventory`
-3. `Client_QueryProgression`
-4. `Client_QueryPawn`
-5. `Client_SwitchScene`
-6. `Client_Move`
-
-## 11. 可直接复制给 UE 同学的简述
-
-如果你不想发整篇设计稿，可以发下面这段：
+建议使用：
 
 ```text
-请在 UE 里按 5 个模块搭建 Mession 最小客户端：
-1. MessionTypes：定义 Login / FindPlayer 请求响应结构
-2. MessionByteCodec：实现 little-endian uint8/u16/u32/u64/float/string 编解码
-3. MessionGatewayProtocol：实现 MT_FunctionCall 封包解包，支持 Client_Login=528、Client_FindPlayer=20722
-4. MessionTcpClient：负责 TCP 连接、length-prefix 拆包、发送和接收
-5. MessionLoginSubsystem：对外暴露 ConnectGateway / Login / FindPlayer，并在登录成功后自动发 FindPlayer
+TMap<uint64, FPendingClientCall>
+```
 
-第一版只要求跑通 127.0.0.1:8001，PlayerId 可配置，日志能输出 PlayerId、SessionKey、GatewayConnectionId、SceneId。
-不要先做泛化框架，先把最小闭环打通。
+每个 `FPendingClientCall` 至少包含：
+
+- `FunctionId`
+- `Deadline`
+- 成功回调
+- 失败回调
+
+当前单连接模型下，只按 `CallId` 建表已经够用，不需要一上来就做复合 Key。
+
+## 心跳与会话状态
+
+`Client_Heartbeat` 当前在 Gateway 本地处理，不转发到 World。
+
+这意味着：
+
+- 心跳可以在尚未登录时工作
+- 心跳更像连接保活和连通性确认
+- 登录态是否有效，仍应以 `Client_Login` 和后续查询结果为准
+
+建议在 `UMessionGatewaySubsystem` 中维护：
+
+- 连接成功后定时心跳
+- 连续多次心跳失败触发断开
+- 断开后清空 `SessionKey` 与已登录玩家状态
+
+## 场景同步设计
+
+当前不建议 UE 侧直接以“完整对象复制系统”去吃服务端下行。
+
+更现实的第一版是：
+
+1. `Enter` 时创建远端玩家
+2. `Update` 时更新远端玩家位置
+3. `Leave` 时销毁或隐藏远端玩家
+
+`FRemoteScenePlayerState` 推荐至少包含：
+
+- `PlayerId`
+- `SceneId`
+- `FVector Position`
+- `double LastUpdateTime`
+- 关联的远端 Actor 指针
+
+## 推荐实现顺序
+
+### 第一轮
+
+先把基础连通性做稳：
+
+1. `FMessionTcpClient`
+2. `FMessionProtocolCodec`
+3. `FMessionReflectCodec`
+4. `Client_Heartbeat`
+5. `Client_Login`
+6. `Client_FindPlayer`
+
+### 第二轮
+
+补全查询：
+
+1. `Client_QueryProfile`
+2. `Client_QueryPawn`
+3. `Client_QueryInventory`
+4. `Client_QueryProgression`
+
+### 第三轮
+
+补全写操作：
+
+1. `Client_Move`
+2. `Client_SwitchScene`
+3. `Client_ChangeGold`
+4. `Client_EquipItem`
+5. `Client_GrantExperience`
+6. `Client_ModifyHealth`
+
+### 第四轮
+
+补全玩法和场景同步：
+
+1. `Client_CastSkill`
+2. `Client_ScenePlayerEnter`
+3. `Client_ScenePlayerUpdate`
+4. `Client_ScenePlayerLeave`
+
+## 不推荐的设计
+
+- 先做完整模板化 RPC 框架
+- 先做对象复制总线
+- 先做复杂自动重连状态机
+- 在 Socket 回调里直接写业务逻辑
+- 把下行消息和请求响应共用同一个不区分来源的处理器
+
+这些都会让第一轮 UE 接入复杂化，但不会更贴近当前仓库实际。
+
+## 验收标准
+
+这个骨架至少应支持：
+
+1. 同一连接上并发追踪多个 `CallId`
+2. 正确解析请求响应包和下行推送包
+3. 登录后能够继续查询资料和 Pawn 状态
+4. 写操作后能看到查询结果更新
+5. 双客户端时能看到场景玩家进入、更新、离开
+6. 所有失败路径都能落日志，而不是静默吞掉
+
+## 可直接给 UE Agent 的设计说明
+
+```text
+请在 UE 工程里搭一个面向当前 Mession 主线协议的客户端骨架，不要只做登录样板。
+
+代码结构建议：
+- FMessionTcpClient：TCP 与长度前缀拆包
+- FMessionProtocolCodec：FunctionCall 请求响应与 downlink 编解码，负责 FunctionId 和 CallId
+- FMessionReflectCodec：反射顺序序列化
+- UMessionGatewaySubsystem：连接、心跳、登录、查询、写操作
+- UMessionPlayerSyncSubsystem：ScenePlayerEnter/Update/Leave 和远端玩家缓存
+
+请优先支持：
+- Heartbeat
+- Login
+- FindPlayer
+- QueryProfile
+- QueryPawn
+- QueryInventory
+- QueryProgression
+- Move
+- SwitchScene
+
+然后再补：
+- ChangeGold
+- EquipItem
+- GrantExperience
+- ModifyHealth
+- CastSkill
+- ScenePlayerEnter/Update/Leave
+
+不要先做完整对象复制框架，也不要先做复杂模板化 RPC 抽象。
 ```

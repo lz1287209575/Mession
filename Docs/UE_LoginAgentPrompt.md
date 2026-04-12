@@ -1,114 +1,190 @@
-# UE 登录接入 Agent Prompt
+# UE 客户端接入 Agent Prompt
 
 本文档提供一份可以直接发给 UE 侧 Agent 的执行 Prompt。
-
-适用日期：`2026-03-31`
 
 建议配合阅读：
 
 - `Docs/UE_LoginIntegrationGuide.md`
+- `Docs/UE_ClientSkeletonDesign.md`
+- `Docs/UE_PlayerSyncAgentGuide.md`
+- `Docs/UE_HeartbeatIntegrationGuide.md`
 
 ## 可直接复制的 Prompt
 
 ```text
-你现在要在 Unreal Engine 工程里实现一个最小可运行的 Mession Gateway 登录客户端。
+你现在要在 Unreal Engine 工程里实现当前 Mession 主线协议的客户端接入，不要按旧的“最小登录样板”设计。
 
-目标不是做完整游戏客户端，而是先把“连接 Gateway -> 登录 -> 登录后做一次状态确认”的链路跑通。
+目标不是只做一次 Login smoke test，而是先搭一套可继续扩展的 UE 客户端基础层，能够承接当前主线的请求响应和场景下行。
 
-请严格按照下面约束实现：
-
-一、协议与网络边界
-1. 只直连 TCP Gateway：127.0.0.1:8001
-2. 只实现客户端统一消息类型 MT_FunctionCall = 13
-3. 所有 TCP 包都使用 length-prefixed framing：
+一、网络与协议边界
+1. 客户端只直连 TCP Gateway：127.0.0.1:8001
+2. 所有 TCP 包都使用 length-prefixed framing：
    - uint32 PacketLength
    - PacketBody bytes
-4. 当前协议必须按 little-endian 处理
-5. 当前不要实现 Web 登录、账号密码、JWT、心跳、重连、复制、战斗、聊天
+3. 当前主线客户端请求统一走 MT_FunctionCall = 13
+4. 当前场景同步下行也走 MsgType = 13，但 downlink 不带 CallId
+5. 当前协议按 little-endian 兼容现有实现
+6. 不要引入额外第三方网络库，优先使用 UE 自带 Socket 能力
 
-二、这次必须支持的客户端 API
-1. Client_Login
-   - FunctionId = 528
-   - Request payload = uint64 PlayerId
-   - Response = bool bSuccess + uint64 PlayerId + uint32 SessionKey + UTF-8 string Error
-2. Client_FindPlayer
-   - FunctionId = 20722
-   - Request payload = uint64 PlayerId
-   - Response = bool bFound + uint64 PlayerId + uint64 GatewayConnectionId + uint32 SceneId + UTF-8 string Error
-3. 可选加分：Client_QueryProfile
-   - FunctionId = 3609
+二、当前应按这组客户端 API 设计
+1. Gateway 本地：
+   - Client_Echo
+   - Client_Heartbeat
+2. World 转发：
+   - Client_Login
+   - Client_FindPlayer
+   - Client_Move
+   - Client_QueryProfile
+   - Client_QueryPawn
+   - Client_QueryInventory
+   - Client_QueryProgression
+   - Client_Logout
+   - Client_SwitchScene
+   - Client_ChangeGold
+   - Client_EquipItem
+   - Client_GrantExperience
+   - Client_ModifyHealth
+   - Client_CastSkill
 
-三、MT_FunctionCall 包体格式
-1. uint8 MsgType = 13
-2. uint16 FunctionId
-3. uint64 CallId
-4. uint32 PayloadSize
-5. Payload bytes
+三、这次至少先实现的能力
+第一阶段：
+1. TCP 连接与收发
+2. MT_FunctionCall 请求/响应编解码
+3. Client_Heartbeat
+4. Client_Login
+5. Client_FindPlayer
+6. Client_QueryProfile
 
-四、最小功能要求
-1. 可配置 Host / Port / PlayerId
-2. 能建立 TCP 连接
-3. 能发送 Client_Login
-4. 能按 CallId 匹配并解析响应
-5. 登录成功后自动发送 Client_FindPlayer
-6. UE 日志里必须打印：
-   - Connect success / fail
-   - Sent login callId
-   - Login result: bSuccess / PlayerId / SessionKey / Error
-   - FindPlayer result: bFound / GatewayConnectionId / SceneId / Error
+第二阶段：
+1. Client_QueryPawn
+2. Client_QueryInventory
+3. Client_QueryProgression
+4. Client_Move
+5. Client_SwitchScene
 
-五、推荐实现结构
+第三阶段：
+1. Client_ChangeGold
+2. Client_EquipItem
+3. Client_GrantExperience
+4. Client_ModifyHealth
+5. Client_CastSkill
+6. Client_ScenePlayerEnter
+7. Client_ScenePlayerUpdate
+8. Client_ScenePlayerLeave
+
+四、包体格式
+1. 客户端请求/响应：
+   - uint8 MsgType = 13
+   - uint16 FunctionId
+   - uint64 CallId
+   - uint32 PayloadSize
+   - Payload bytes
+2. 客户端 downlink：
+   - uint8 MsgType = 13
+   - uint16 FunctionId
+   - uint32 PayloadSize
+   - Payload bytes
+
+五、FunctionId 规则
+1. Client API 使用：
+   - ComputeStableReflectId("MClientApi", FunctionName)
+2. Downlink 使用：
+   - ComputeStableReflectId("MClientDownlink", FunctionName)
+3. 不要长期手写 magic number，建议把稳定 ID 算法一并实现
+4. 当前已验证的常用值：
+   - Client_Heartbeat = 8809
+   - Client_Login = 528
+   - Client_FindPlayer = 20722
+   - Client_QueryProfile = 3609
+   - Client_QueryPawn = 8455
+   - Client_QueryInventory = 42507
+   - Client_QueryProgression = 40214
+   - Client_Logout = 60160
+   - Client_SwitchScene = 53343
+   - Client_ChangeGold = 25343
+   - Client_EquipItem = 53234
+   - Client_GrantExperience = 26406
+   - Client_ModifyHealth = 29243
+   - Client_CastSkill = 30785
+   - Client_ScenePlayerEnter = 2660
+   - Client_ScenePlayerUpdate = 43756
+   - Client_ScenePlayerLeave = 1143
+
+六、序列化规则
+1. 当前不是 protobuf，也不是 JSON
+2. 当前是按字段声明顺序顺排的反射序列化
+3. 第一版至少支持：
+   - bool
+   - uint16
+   - uint32
+   - uint64
+   - int32
+   - float
+   - UTF-8 string
+
+七、推荐实现结构
 请拆成下面几个模块，不要把全部逻辑塞进一个类：
 1. FMessionTcpClient
-   - 负责 TCP 连接、发送、接收、拆 length prefix
-2. FMessionByteReader / FMessionByteWriter
-   - 负责 little-endian 基础类型和 UTF-8 string 编解码
-3. FMessionGatewayProtocol
-   - 负责封装 MT_FunctionCall
-   - 管理 NextCallId
-   - 根据 CallId 分发响应
-4. UMessionLoginSubsystem 或等价对象
-   - 对外提供 Connect / Login / FindPlayer
+   - TCP 连接、发送、接收、长度前缀拆包
+2. FMessionProtocolCodec
+   - FunctionCall 请求响应包与 downlink 包编解码
+   - 管理 CallId
+   - 计算 FunctionId
+3. FMessionReflectCodec
+   - little-endian 基础类型和 UTF-8 string 编解码
+   - 当前消息结构顺序编解码
+4. UMessionGatewaySubsystem
+   - Connect / Heartbeat / Login / Query / Write
+   - 缓存 LoggedInPlayerId / SessionKey / Pending Calls
+5. UMessionPlayerSyncSubsystem
+   - 处理 ScenePlayerEnter / Update / Leave
+   - 维护 RemotePlayers 映射
 
-六、最低交付标准
-1. 能在 PIE 或 GameInstance 启动后手工触发 Login(PlayerId)
-2. 登录成功后自动触发 FindPlayer(PlayerId)
-3. 能处理以下失败情况并打印日志：
-   - 连接失败
-   - 超时
-   - 包格式错误
-   - 业务错误码
+八、关键业务事实
+1. Client_Heartbeat 当前是 Gateway 本地调用，不转发到 World
+2. Client_Login 成功意味着玩家已进入当前 World 状态，而不只是拿到 SessionKey
+3. 当前 validate.py 已覆盖登录、查询、写操作、场景同步、登出后重登和错误透传
+4. ScenePlayerEnter/Update/Leave 已经是当前主线协议的一部分，不是占位设计
+5. SessionKey 当前只需要缓存，不需要在后续请求里回传
+6. TCP 断开后应视为连接态和登录态失效
 
-七、实现时必须遵守
-1. 第一版不要做“通用反射系统”
-2. 第一版只手写当前需要的结构体编解码
-3. 不要引入额外第三方网络库
-4. 优先用 UE 自带 Socket / Sockets / Networking 能力
-5. 代码结构要方便后续扩展更多 Client_* 请求
+九、最低交付标准
+1. 能配置 Host / Port / PlayerId
+2. 能建立 TCP 连接
+3. 能发送 Heartbeat / Login / FindPlayer / QueryProfile
+4. 能按 CallId 匹配请求响应
+5. 能正确区分 downlink 与普通响应
+6. 能处理 ScenePlayerEnter / Update / Leave
+7. 日志中必须打印：
+   - Connect success / fail
+   - FunctionId / CallId
+   - Login result: bSuccess / PlayerId / SessionKey / Error
+   - Query result
+   - Downlink result
+   - Timeout / ParseError / BusinessError
 
-八、验收方式
-完成后请提供：
-1. 你新增/修改的文件列表
+十、完成后请提供
+1. 你新增或修改的文件列表
 2. 关键类职责说明
-3. 如何在 UE 工程里触发一次登录
-4. 一段示例日志，展示 Login + FindPlayer 成功路径
-
-补充事实：
-1. 当前服务端已经在 2026-03-31 验证过 python3 Scripts/validate.py --build-dir Build --no-build 可通过
-2. SessionKey 当前只需要缓存，不需要带回后续请求
-3. 如果 TCP 断开，应认为登录态失效，需要重新登录
+3. 如何在 UE 工程里触发一次登录和一次玩家同步联调
+4. 一段示例日志，展示 Login + QueryProfile + ScenePlayerEnter 成功路径
 
 参考文档：
 - Docs/UE_LoginIntegrationGuide.md
+- Docs/UE_ClientSkeletonDesign.md
+- Docs/UE_PlayerSyncAgentGuide.md
+- Docs/UE_HeartbeatIntegrationGuide.md
 
-如果你要开始实现，请先输出你的文件规划，再开始写代码。
+如果你要开始实现，请先输出文件规划和模块边界，再开始写代码。
 ```
 
 ## 推荐使用方式
 
-如果你准备把任务转给 UE Agent，建议附带下面两项上下文一起给它：
+如果你准备把任务转给 UE Agent，建议把本文档和上面 4 份协议文档一起给它。
 
-1. `Docs/UE_LoginIntegrationGuide.md`
-2. 本文档里的完整 Prompt
+这样 UE Agent 能同时看到：
 
-这样 UE Agent 既有协议事实，也有明确的交付边界。
+- 当前协议事实
+- 推荐模块边界
+- 场景同步约束
+- 心跳语义

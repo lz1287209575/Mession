@@ -52,51 +52,111 @@
 
 它们直接依赖反射元数据，把 `MSTRUCT` 消息对象与二进制负载互转。
 
-## 客户端调用与服间调用
-
-### 客户端调用
+## 客户端调用
 
 客户端统一连到 `GatewayServer`，但业务 `ClientCall` 不再要求挂在 Gateway 本体上。
 
-当前模式是：
+当前主模式是：
 
-- Gateway 根据 `MClientManifest` 查函数 ID、目标服、绑定器
-- 若目标是本地网关能力，则本地派发
-- 若目标是业务服，则转发 `FForwardedClientCallRequest`
-- 业务服上的 `ServiceEndpoint` 真正执行 `ClientCall`
+1. Gateway 根据 `MClientManifest` 查函数 ID、目标服和绑定器
+2. 如果目标是网关本地能力，则本地派发
+3. 如果目标是业务服，则转发 `FForwardedClientCallRequest`
+4. 业务服上的 `ServiceEndpoint` 真正执行 `ClientCall`
 
-例如：
+当前 World 上的主要客户端入口位于 `MWorldClientServiceEndpoint`，已经覆盖：
 
-- `MGatewayServer::Client_Echo`
-- `MWorldClientServiceEndpoint::Client_Login`
-- `MWorldClientServiceEndpoint::Client_FindPlayer`
-- `MWorldClientServiceEndpoint::Client_SwitchScene`
-- `MWorldClientServiceEndpoint::Client_Logout`
+- `Client_Login`
+- `Client_FindPlayer`
+- `Client_Move`
+- `Client_QueryProfile`
+- `Client_QueryPawn`
+- `Client_QueryInventory`
+- `Client_QueryProgression`
+- `Client_Logout`
+- `Client_SwitchScene`
+- `Client_ChangeGold`
+- `Client_EquipItem`
+- `Client_GrantExperience`
+- `Client_ModifyHealth`
+- `Client_CastSkill`
 
-当前最小闭环统一走 `MT_FunctionCall`。
+## 普通 Player RPC 链路
 
-### Client API 稳定 ID
+当前普通 Player 业务调用已经不是“endpoint 手写胶水堆逻辑”，而是走一条相对标准化的绑定链：
 
-`ClientCall` 的稳定 ID 现在使用固定作用域 `MClientApi`，不再依赖 owner class 名。
+1. `MWorldClientServiceEndpoint::Client_*`
+2. `MWorldPlayerServiceEndpoint::Player*`
+3. `PlayerProxyCall`
+4. `MPlayer` 子对象上的 `MFUNCTION(ServerCall)`
+
+这条链路适合承载：
+
+- 查询型 Player RPC
+- 单玩家局部写操作
+- 不需要跨多个服务协作的业务
+
+不适合承载：
+
+- 登录
+- 进世界
+- 切场景
+- 登出
+- 任何需要 Login / Scene / Router / Mgo 多步协作的流程
+
+这些仍应保留在显式 workflow 里。
+
+## Client API 稳定 ID
+
+`ClientCall` 的稳定 ID 使用固定作用域 `MClientApi`，不依赖 owner class 名。
 
 - 默认稳定 ID 来源是函数名
 - 如果要在重命名函数或迁移 owner 时保持旧 ID，可显式指定 `Api=...`
-- 生成代码和脚本统一使用 `MGET_STABLE_CLIENT_FUNCTION_ID("Client_Login")`
+- 生成代码和脚本统一使用稳定 API 名计算 ID
 
-这意味着我们可以把 `Client_Login` 从 `MWorldServer` 迁到 `MWorldClientServiceEndpoint`，而客户端函数 ID 不变。
+这意味着把 `Client_Login` 从某个旧 owner 挪到 `MWorldClientServiceEndpoint`，客户端函数 ID 仍然可以不变。
 
-### 服间调用
+## 服间调用
 
 各服之间通过 `MFUNCTION(ServerCall)` 与对应的 `*Rpc` 包装类完成强类型调用，例如：
 
-- `MWorldServer::PlayerEnterWorld`
-- `MLoginServer::IssueSession`
-- `MSceneServer::EnterScene`
-- `MMgoServer::SavePlayer`
+- `Login` 会话签发与校验
+- `Router` 路由注册与查询
+- `Scene` 进出场景和战斗接口
+- `Mgo` 保存与加载玩家快照
+
+当前比较典型的跨服 workflow 包括：
+
+- `PlayerEnterWorld`
+- `PlayerSwitchScene`
+- `PlayerLogout`
+- `WorldCombatServiceEndpoint::CastSkill`
+
+## 客户端下行
+
+当前项目有两类客户端下行入口：
+
+### 1. `MClientDownlink`
+
+用于定义客户端可接收的反射函数，例如：
+
+- `Client_OnObjectCreate / Update / Destroy`
+- `Client_ScenePlayerEnter / Update / Leave`
+
+复制驱动和场景同步都会依赖这类 downlink 函数 ID。
+
+### 2. `PushClientDownlink`
+
+业务服不直接写客户端 socket，而是：
+
+1. 构造 payload
+2. 带着 `GatewayConnectionId` 调用 Gateway 的 `PushClientDownlink`
+3. Gateway 再推给客户端连接
+
+这条链路当前已经用于场景玩家进入、更新、离开等下行消息。
 
 ## 并发模型
 
-当前并发运行时分为三层，建议明确区分用途。
+当前并发运行时建议按三层理解。
 
 ### `MPromise`
 
@@ -121,9 +181,7 @@
 语义建议：
 
 - `Await()` 用在你明确要同步等结果的地方
-- `Then(...)` 用在你还想继续链式异步处理时
-
-这里的 `Await()` 是普通成员函数，不依赖 C++20 `co_await`，因此不会把项目锁死在协程语法糖上。
+- `Then(...)` 用在还想继续链式异步处理时
 
 ### `MCoroutine`
 
@@ -137,7 +195,7 @@
 
 ## `MAsync` 的定位
 
-`MAsync` 更偏“调度工具层”，不是业务工作流层。
+`MAsync` 更偏调度工具层，而不是业务工作流层。
 
 当前职责：
 
@@ -162,26 +220,25 @@
 
 当逻辑跨越多个 RPC、包含错误分支与状态推进时：
 
-- 用 `MCoroutine` 或独立 `Workflow` 类
-- Gateway 只做转发时，不要把业务链塞回 Gateway
-- World/Scene/Login 的业务 `ClientCall` 优先落在各自 `ServiceEndpoint`
+- 用显式 `Workflow` 或 `MCoroutine`
+- 把流程状态留在对象里，而不是叠很多 `Then(lambda)`
 
-## 新增一个 Client RPC 的推荐步骤
+### 普通 Player 业务
 
-1. 在目标业务服的 `Services/*Endpoint*` 上声明 `MFUNCTION(ClientCall, Target=目标服)`
-2. 请求/响应结构使用 `MSTRUCT + MPROPERTY`
-3. 如需保持旧客户端 ID，显式补 `Api=稳定名`
-4. 编译触发 `MHeaderTool` 更新 `MClientManifest.generated.h`
-5. 运行 `python3 Scripts/validate.py --build-dir Build --no-build`
+当请求天然带 `PlayerId`，并且最终会落到某个 Player 子对象上执行时：
+
+- 优先走当前的 Player RPC 标准链路
 
 ### 不推荐
 
 - 在 `Server.cpp` 里连续堆多层 `Then(lambda)` 嵌套
 - 为了等待结果强行引入 `co_await`
-- 将底层连接对象直接穿透到所有业务层
+- 将底层连接对象直接穿透到业务层
+- 把登录、切场这类 workflow 强行塞进普通 Player route list
 
-## 当前仍待收敛的点
+## 当前仍待继续收敛的点
 
 - `Then(...)` 只有基础形态，高阶链式组合还比较原始
-- 一些异步流程仍有 Lambda 残留，后续应继续向显式 Workflow 收敛
-- 任务执行上下文与主线程归属规则还可以再细化
+- 一些多步业务流程仍有 Lambda 残留
+- 主线程、事件循环、线程池三者的推荐边界还可以再细化
+- 客户端下行、复制驱动和业务场景同步之间的职责说明还值得继续压实

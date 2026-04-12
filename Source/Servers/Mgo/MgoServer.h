@@ -9,7 +9,7 @@
 #include "Common/Runtime/Log/Logger.h"
 #include "Protocol/Messages/Common/AppMessages.h"
 #include "Protocol/Messages/Mgo/MgoPlayerStateMessages.h"
-#include "Servers/Mgo/Services/MgoPlayerStateServiceEndpoint.h"
+#include "Servers/Mgo/MgoPlayerState.h"
 
 struct SMgoConfig
 {
@@ -45,5 +45,6 @@ private:
     SMgoConfig Config;
     TMap<uint64, TVector<FObjectPersistenceRecord>> PlayerPersistenceRecords;
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
-    MMgoPlayerStateServiceEndpoint* PlayerStateService = nullptr;
+    MMgoPlayerState* PlayerState = nullptr;
 };
+

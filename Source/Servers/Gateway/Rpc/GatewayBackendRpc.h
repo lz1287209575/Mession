@@ -2,14 +2,17 @@
 
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Protocol/Messages/Auth/AuthSessionMessages.h"
-#include "Protocol/Messages/World/WorldPlayerMessages.h"
+#include "Protocol/Messages/World/PlayerLifecycleMessages.h"
+#include "Protocol/Messages/World/PlayerModifyMessages.h"
+#include "Protocol/Messages/World/PlayerQueryMessages.h"
+#include "Protocol/Messages/World/PlayerRouteMessages.h"
 #include "Servers/App/ServerCallProxy.h"
 
 MCLASS(Type=Rpc)
-class MGatewayLoginRpc : public MServerCallProxyBase
+class MGatewayLogin : public MServerCallProxyBase
 {
 public:
-    MGENERATED_BODY(MGatewayLoginRpc, MServerCallProxyBase, 0)
+    MGENERATED_BODY(MGatewayLogin, MServerCallProxyBase, 0)
 public:
     MFUNCTION(ServerCall, Target=Login)
     MFuture<TResult<FLoginIssueSessionResponse, FAppError>> IssueSession(const FLoginIssueSessionRequest& Request);
@@ -19,10 +22,10 @@ private:
 };
 
 MCLASS(Type=Rpc)
-class MGatewayWorldRpc : public MServerCallProxyBase
+class MGatewayWorld : public MServerCallProxyBase
 {
 public:
-    MGENERATED_BODY(MGatewayWorldRpc, MServerCallProxyBase, 0)
+    MGENERATED_BODY(MGatewayWorld, MServerCallProxyBase, 0)
 public:
     MFUNCTION(ServerCall, Target=World)
     MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> PlayerEnterWorld(const FPlayerEnterWorldRequest& Request);
@@ -66,3 +69,5 @@ public:
 private:
     EServerType GetTargetServerType() const override;
 };
+
+

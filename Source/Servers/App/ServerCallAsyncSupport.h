@@ -144,7 +144,7 @@ TAppFuture<TOutputResponse> Map(TAppFuture<TInputResponse> Future, TMapper&& Map
 
 /**
  * 短链编排：适合 2 步以内的异步串联。
- * 如果流程超过 2-3 步、需要跨步骤状态，或分支很多，请改用 TServerCallWorkflow。
+ * 如果流程超过 2-3 步、需要跨步骤状态，或分支很多，请改用 TServerCallAction。
  */
 template<
     typename TInputResponse,
@@ -210,10 +210,10 @@ TAppFuture<TOutputResponse> Chain(TAppFuture<TInputResponse> Future, TBinder&& B
 
 /**
  * 长流程编排：只给“3 步以上 / 需要状态 / 分支明显”的服务流程使用。
- * 目标是把业务层从匿名 Lambda 提升成具名步骤函数，而不是让每个小异步都变成 Workflow。
+ * 目标是把业务层从匿名 Lambda 提升成具名步骤函数，而不是让每个小异步都变成 Action。
  */
 template<typename TDerived, typename TResponse>
-class TServerCallWorkflow : public MCoroutine<TAppResult<TResponse>>
+class TServerCallAction : public MCoroutine<TAppResult<TResponse>>
 {
 protected:
     template<typename TStepResponse>
@@ -268,10 +268,10 @@ protected:
     }
 };
 
-/** Workflow 启动入口：一般只在服务实现 .cpp 内部使用。 */
-template<typename TWorkflow, typename... TArgs>
-auto StartWorkflow(TArgs&&... Args) -> TAppFuture<typename TWorkflow::TResponseType>
+/** Action 启动入口：一般只在服务实现 .cpp 内部使用。 */
+template<typename TAction, typename... TArgs>
+auto StartAction(TArgs&&... Args) -> TAppFuture<typename TAction::TResponseType>
 {
-    return MAsync::StartCoroutine<TWorkflow>(std::forward<TArgs>(Args)...);
+    return MAsync::StartCoroutine<TAction>(std::forward<TArgs>(Args)...);
 }
 }

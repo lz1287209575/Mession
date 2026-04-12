@@ -9,7 +9,7 @@
 #include "Common/Runtime/Log/Logger.h"
 #include "Protocol/Messages/Common/AppMessages.h"
 #include "Protocol/Messages/Router/RouterServiceMessages.h"
-#include "Servers/Router/Services/RouterRegistryServiceEndpoint.h"
+#include "Servers/Router/RouterRegistry.h"
 
 struct SRouterConfig
 {
@@ -47,5 +47,6 @@ private:
     SRouterConfig Config;
     TMap<uint64, SPlayerRouteRecord> Routes;
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
-    MRouterRegistryServiceEndpoint* RegistryService = nullptr;
+    MRouterRegistry* Registry = nullptr;
 };
+

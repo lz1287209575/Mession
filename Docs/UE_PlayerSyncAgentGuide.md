@@ -1,54 +1,52 @@
-# UE Player 同步接入 Agent 文档
+# UE 场景玩家同步接入说明
 
-本文档面向 UE 侧 Agent，描述当前仓库已经落地的“场景内玩家同步”接入方式。
+本文档面向 UE 侧 Agent，描述当前仓库已经稳定落地的场景玩家同步方式。
 
-适用日期：`2026-03-31`
-
-## 1. 目标边界
-
-当前这套同步不是完整对象复制框架对接，也不是全量属性同步。
-
-当前已经稳定落地、适合 UE 先接的只有 3 条场景玩家下行：
+当前最适合 UE 第一轮接入的客户端下行只有 3 条：
 
 - `Client_ScenePlayerEnter`
 - `Client_ScenePlayerUpdate`
 - `Client_ScenePlayerLeave`
 
-它们的用途是：
+它们已经在 `WorldServer -> GatewayServer -> Client` 链路上工作，并被 `Scripts/validate.py` 覆盖验证。
 
-- 有其他玩家进入和你同一个场景时，通知你生成远端玩家表现
-- 有其他玩家在同场景内移动时，通知你刷新远端玩家位置
-- 有其他玩家离开当前场景或登出时，通知你移除远端玩家表现
+## 这套同步解决什么问题
 
-## 2. 当前真实链路
+它当前解决的是“同场景其他玩家的存在与位置同步”：
 
-当前服务端链路是：
+- 其他玩家进入你所在场景时，通知你创建远端表现
+- 其他玩家在同场景移动时，通知你更新远端位置
+- 其他玩家离开场景或登出时，通知你移除远端表现
 
-1. `WorldServer` 在玩家登录、切场、移动、登出时触发广播
-2. `WorldServer` 把下行消息打包成 `FClientDownlinkPushRequest`
-3. `GatewayServer::PushClientDownlink` 把消息推回客户端连接
-4. 客户端收到的是 `MT_FunctionCall`
-5. 但这是“客户端下行函数包”，不是普通上行请求包
+它还不是完整复制系统，也不是通用对象属性同步。
 
-也就是说，UE 侧要支持两种 `MT_FunctionCall`：
+## 当前真实链路
 
-1. 上行请求：有 `CallId`
-2. 下行推送：没有 `CallId`
+链路如下：
 
-## 3. 下行包格式
+1. `WorldServer` 在玩家进入、移动、切场、登出等时机决定是否广播
+2. `WorldServer` 调用 `QueueClientDownlink(...)`
+3. `WorldServer` 构造 `FClientDownlinkPushRequest`
+4. `GatewayServer::PushClientDownlink(...)` 把消息推回客户端连接
+5. 客户端收到 `MT_FunctionCall`
+6. UE 侧按 downlink 方式解包并分发给 PlayerSync 模块
 
-### 3.1 TCP 外层
+关键位置：
 
-仍然是 length-prefixed：
+- 下行声明：`Source/Common/Net/ClientDownlink.h`
+- 下行传输：`Source/Servers/Gateway/GatewayServer.cpp`
+- 广播逻辑：`Source/Servers/World/WorldServer.cpp`
+
+## 下行包格式
+
+TCP 最外层仍是长度前缀：
 
 ```text
 uint32 PacketLength
 PacketBody bytes...
 ```
 
-### 3.2 Player 同步下行的 `PacketBody`
-
-当前下行使用 `BuildClientFunctionPacket(...)`，格式是：
+场景同步使用的 `PacketBody` 为：
 
 ```text
 uint8  MsgType
@@ -63,38 +61,30 @@ Payload bytes...
 
 注意：
 
-- 这里没有 `CallId`
-- 所以 UE 不能按普通请求响应包去解这个下行
+- 下行推送没有 `CallId`
+- UE 不能按普通请求响应包去解析这三条消息
 
-## 4. FunctionId 计算规则
+## FunctionId 规则
 
-这 3 条下行函数不是按 `MClientApi` 计算，而是按 `MClientDownlink` 作用域计算：
+这三条下行不是 `MClientApi` 作用域，而是：
 
-```text
-StableId = ComputeStableReflectId("MClientDownlink", FunctionName)
+```cpp
+ComputeStableReflectId("MClientDownlink", FunctionName)
 ```
 
-当前可直接使用的 FunctionId：
+当前已验证 ID：
 
 - `Client_ScenePlayerEnter = 2660`
 - `Client_ScenePlayerUpdate = 43756`
 - `Client_ScenePlayerLeave = 1143`
 
-如果 UE 侧已经实现了稳定 ID 算法，也可以按 `MClientDownlink` 作用域动态计算。
+推荐 UE 侧把同样算法实现出来，而不是长期手写常量。
 
-## 5. 三条下行消息的 payload
+## Payload 结构
 
-### 5.1 `Client_ScenePlayerEnter`
-
-函数名：
-
-- `Client_ScenePlayerEnter`
+### `Client_ScenePlayerEnter`
 
 payload 类型：
-
-- `SPlayerSceneStateMessage`
-
-结构：
 
 ```cpp
 struct SPlayerSceneStateMessage
@@ -119,21 +109,13 @@ float  Z
 
 UE 侧语义：
 
-- 如果本地还没有这个 `PlayerId` 的远端表现，则创建
-- 把它放到 `SceneId` 对应的场景上下文中
-- 初始位置设为 `X/Y/Z`
+- 若本地没有该 `PlayerId` 的远端表现，则创建
+- 设置所属场景
+- 设置初始位置
 
-### 5.2 `Client_ScenePlayerUpdate`
+### `Client_ScenePlayerUpdate`
 
-函数名：
-
-- `Client_ScenePlayerUpdate`
-
-payload 类型仍然是：
-
-- `SPlayerSceneStateMessage`
-
-字段和 `Enter` 完全相同：
+payload 仍是 `SPlayerSceneStateMessage`，字段和 `Enter` 完全一致：
 
 ```text
 uint64 PlayerId
@@ -145,21 +127,14 @@ float  Z
 
 UE 侧语义：
 
-- 找到已有远端玩家
-- 更新其场景与位置
-- 如果本地还没建这个玩家，可记录 warning，或者退化成一次“补建 + 更新”
+- 更新远端玩家位置
+- 如果本地还没建这个远端玩家，可选择：
+  - 记 warning 后丢弃
+  - 或退化为一次补建
 
-### 5.3 `Client_ScenePlayerLeave`
-
-函数名：
-
-- `Client_ScenePlayerLeave`
+### `Client_ScenePlayerLeave`
 
 payload 类型：
-
-- `SPlayerSceneLeaveMessage`
-
-结构：
 
 ```cpp
 struct SPlayerSceneLeaveMessage
@@ -178,58 +153,69 @@ uint16 SceneId
 
 UE 侧语义：
 
-- 从当前远端玩家缓存中移除该 `PlayerId`
-- 销毁对应表现实体或标记离场
+- 从远端玩家缓存中移除该 `PlayerId`
+- 销毁或隐藏对应表现
 
-## 6. 当前服务端触发时机
+## 当前触发时机
 
-当前触发逻辑如下：
+### `Client_ScenePlayerEnter`
 
-### 6.1 `Client_ScenePlayerEnter`
+由 `WorldServer::QueueScenePlayerEnterBroadcast(...)` 发送。
 
-由 `WorldServer::QueueScenePlayerEnterBroadcast(...)` 触发，典型时机：
+当前触发时机：
 
 - 玩家登录成功进入世界后
 - 玩家切场成功后
 
-广播规则：
+广播语义是双向的：
 
-- 新进入的玩家会收到“同场景其他玩家”的 enter
-- 同场景其他玩家也会收到“这个新玩家”的 enter
+- 同场景其他玩家会收到“新玩家进入”
+- 新进入的玩家也会收到“当前场景已有其他玩家”
 
-所以 UE 侧不要假设 enter 只会发给别人，不会发给新登录者自己。
+UE 侧不要假设只有别人会收到 `Enter`。
 
-### 6.2 `Client_ScenePlayerUpdate`
+### `Client_ScenePlayerUpdate`
 
-由 `WorldServer::QueueScenePlayerUpdateBroadcast(...)` 触发，当前时机：
+由 `WorldServer::QueueScenePlayerUpdateBroadcast(...)` 发送。
+
+当前触发时机：
 
 - `Client_Move` 成功后
 - `Client_ModifyHealth` 成功后
 
-但当前 `SPlayerSceneStateMessage` 里并没有 `Health` 字段，所以对 UE 来说，当前主要可用的是位置刷新。
+但当前 payload 只包含位置与场景，不包含 `Health`。所以对 UE 表现层来说，当前实际主要用途仍是位置刷新。
 
-### 6.3 `Client_ScenePlayerLeave`
+### `Client_ScenePlayerLeave`
 
-由 `WorldServer::QueueScenePlayerLeaveBroadcast(...)` 触发，当前时机：
+由 `WorldServer::QueueScenePlayerLeaveBroadcast(...)` 发送。
+
+当前触发时机：
 
 - 玩家登出后
 - 玩家切场离开旧场景后
 
-## 7. UE 侧最低实现建议
+## 当前广播规则
 
-建议 UE Agent 最少做这几个模块：
+当前 World 侧广播时会跳过：
 
-### 7.1 Downlink 解包层
+- 自己给自己发 `Update`
+- 自己给自己发 `Leave`
+- 不在同场景的其他玩家
+- 没有有效会话或不能接收 scene downlink 的玩家
 
-识别：
+因此 UE 侧可以按“只同步同场景其他玩家”来设计远端玩家缓存。
 
-- `MsgType = 13`
-- 如果 body 是 `uint16 FunctionId + uint32 PayloadSize + Payload`
-- 且没有 `CallId`
+## UE 侧建议模块
 
-则按“客户端下行推送”处理。
+### Downlink 解包层
 
-### 7.2 PlayerSync 管理层
+职责：
+
+- 识别 `MsgType = 13`
+- 识别无 `CallId` 的 downlink 包
+- 按 `FunctionId` 分发到 PlayerSync
+
+### PlayerSync 状态层
 
 建议维护：
 
@@ -237,68 +223,90 @@ UE 侧语义：
 TMap<uint64, FRemoteScenePlayerState>
 ```
 
-其中至少保存：
+至少保存：
 
 - `PlayerId`
 - `SceneId`
-- `X`
-- `Y`
-- `Z`
+- `FVector Position`
+- 最后更新时间
 
-### 7.3 表现层
+### 表现层
 
-推荐先做简单版本：
+建议第一版直接做：
 
-- `Enter` -> Spawn/Show Remote Player
-- `Update` -> SetActorLocation 或插值移动
-- `Leave` -> Destroy/Hide Remote Player
+- `Enter` -> Spawn 或 Show
+- `Update` -> SetActorLocation 或插值更新
+- `Leave` -> Destroy 或 Hide
 
-## 8. 最小验收标准
+## 当前验证事实
 
-UE Agent 完成后，至少满足：
+`Scripts/validate.py` 目前已经覆盖：
 
-1. 登录玩家 A
-2. 登录玩家 B，并切到和 A 相同场景
-3. A 能收到 `Client_ScenePlayerEnter(B)`
-4. A 移动后，B 能收到 `Client_ScenePlayerUpdate(A)`
-5. A 登出后，B 能收到 `Client_ScenePlayerLeave(A)`
+1. 玩家 A 登录并进入场景
+2. 玩家 B 登录并切到相同场景
+3. A 收到 `Client_ScenePlayerEnter(B)`
+4. A 施法后，B 的状态在查询中体现变化
+5. A 再移动后，B 收到 `Client_ScenePlayerUpdate(A)`
+6. A 登出后，B 收到 `Client_ScenePlayerLeave(A)`
 
-## 9. 当前验证事实
+这说明这三条场景同步消息已经不是占位设计，而是当前主线协议的一部分。
 
-当前仓库的 `validate.py` 已经覆盖这 3 条同步：
+## 当前不建议一起做的内容
 
-- `Client_ScenePlayerEnter`
-- `Client_ScenePlayerUpdate`
-- `Client_ScenePlayerLeave`
+第一轮 UE 接入不建议把这些一起打包进来：
 
-所以 UE 侧接入时，建议直接对齐这三条消息做最小闭环。
+- `Client_OnObjectCreate`
+- `Client_OnObjectUpdate`
+- `Client_OnObjectDestroy`
+- 通用对象复制层
+- 全量属性插值框架
 
-## 10. 可直接发给 UE Agent 的 Prompt
+场景玩家同步先独立接好，复杂对象同步后面再做更稳。
+
+## 建议验收标准
+
+UE 侧完成后，至少应满足：
+
+1. 双客户端登录同一场景
+2. 能为远端玩家建立唯一 `PlayerId` 映射
+3. 收到 `Enter` 后正确创建表现
+4. 收到 `Update` 后正确更新位置
+5. 收到 `Leave` 后正确移除表现
+6. 任一消息解析失败时能落清晰日志
+
+## 可直接发给 UE Agent 的 Prompt
 
 ```text
-请在 UE 工程中接入 Mession 当前已经落地的场景玩家同步下行，只做 3 条消息：
-Client_ScenePlayerEnter、Client_ScenePlayerUpdate、Client_ScenePlayerLeave。
+请在 UE 工程中接入 Mession 当前已经落地的场景玩家同步，只处理：
+- Client_ScenePlayerEnter
+- Client_ScenePlayerUpdate
+- Client_ScenePlayerLeave
 
-注意这些消息虽然也是 MT_FunctionCall(MsgType=13)，但它们是客户端下行推送，不带 CallId。
-它们的包体格式是：
-uint16 FunctionId + uint32 PayloadSize + Payload。
+注意这些消息是客户端下行推送：
+- MsgType=13
+- 包格式为 uint16 FunctionId + uint32 PayloadSize + Payload
+- 不带 CallId
 
-FunctionId 固定为：
-- Client_ScenePlayerEnter = 2660
-- Client_ScenePlayerUpdate = 43756
-- Client_ScenePlayerLeave = 1143
+FunctionId 作用域为 MClientDownlink，当前已验证值为：
+- Enter=2660
+- Update=43756
+- Leave=1143
 
-Enter 和 Update 的 payload 都是：
-uint64 PlayerId + uint16 SceneId + float X + float Y + float Z
+Enter/Update 的 payload 为：
+- uint64 PlayerId
+- uint16 SceneId
+- float X
+- float Y
+- float Z
 
-Leave 的 payload 是：
-uint64 PlayerId + uint16 SceneId
+Leave 的 payload 为：
+- uint64 PlayerId
+- uint16 SceneId
 
-请在 UE 中维护一个 RemotePlayers 映射：
-- 收到 Enter -> 创建或显示远端玩家
-- 收到 Update -> 更新远端玩家位置
-- 收到 Leave -> 移除远端玩家
+请在 UE 里维护 RemotePlayers 映射：
+- Enter 时创建或显示远端玩家
+- Update 时更新远端位置
+- Leave 时移除远端玩家
 
-第一版不要接完整复制系统，不要做通用对象同步，只做这 3 条场景玩家消息。
-完成后请给出文件列表、类职责、触发方式，以及一段双玩家联调日志。
+第一版不要扩展到完整对象复制系统。
 ```
