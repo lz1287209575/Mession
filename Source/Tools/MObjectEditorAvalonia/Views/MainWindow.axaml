@@ -1,0 +1,241 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:Mession.Tools.MObjectEditorAvalonia.ViewModels"
+        x:Class="Mession.Tools.MObjectEditorAvalonia.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        x:CompileBindings="False"
+        Width="1680"
+        Height="960"
+        MinWidth="1280"
+        MinHeight="720"
+        Title="MObject Avalonia 编辑器"
+        mc:Ignorable="d">
+  <Design.DataContext>
+    <vm:MainWindowViewModel />
+  </Design.DataContext>
+
+  <Grid RowDefinitions="Auto,Auto,*" Margin="16">
+    <Border Grid.Row="0" Padding="16" CornerRadius="16" Background="#15202B">
+      <Grid ColumnDefinitions="260,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="16" RowSpacing="12">
+        <StackPanel Grid.RowSpan="2">
+          <TextBlock Text="MObject 编辑器" Foreground="#93A4B7" FontSize="13" />
+          <TextBlock Text="怪物配置桌面编辑器（Avalonia）" FontSize="24" FontWeight="Bold" />
+        </StackPanel>
+
+        <WrapPanel Grid.Column="1" Spacing="12">
+          <Border Padding="10,8" CornerRadius="10" Background="#1E2B36">
+            <StackPanel>
+              <TextBlock Text="服务地址" Foreground="#93A4B7" FontSize="12" />
+              <TextBlock Text="{Binding ServiceUrl}" />
+            </StackPanel>
+          </Border>
+          <Border Padding="10,8" CornerRadius="10" Background="#1E2B36">
+            <StackPanel>
+              <TextBlock Text="当前选择" Foreground="#93A4B7" FontSize="12" />
+              <TextBlock Text="{Binding SelectedSummary}" />
+            </StackPanel>
+          </Border>
+          <Border Padding="10,8" CornerRadius="10" Background="#1E2B36">
+            <StackPanel>
+              <TextBlock Text="选中行数" Foreground="#93A4B7" FontSize="12" />
+              <TextBlock Text="{Binding SelectedCount}" />
+            </StackPanel>
+          </Border>
+          <Border Padding="10,8" CornerRadius="10" Background="#1E2B36">
+            <StackPanel>
+              <TextBlock Text="脏行数" Foreground="#93A4B7" FontSize="12" />
+              <TextBlock Text="{Binding DirtyCount}" />
+            </StackPanel>
+          </Border>
+        </WrapPanel>
+
+        <WrapPanel Grid.Column="2" Grid.RowSpan="2" Spacing="10" VerticalAlignment="Center">
+          <Button Name="RefreshButton" MinWidth="110" Content="刷新" Click="OnRefreshClick" />
+          <Button Name="AddButton" MinWidth="110" Content="新增" Click="OnAddClick" />
+          <Button Name="DuplicateButton" MinWidth="110" Content="复制选中" Click="OnDuplicateClick" />
+          <Button Name="DeleteButton" MinWidth="110" Content="删除选中" Click="OnDeleteClick" />
+          <Button Name="SaveAllButton" MinWidth="110" Content="全部保存" Click="OnSaveAllClick" />
+          <Button Name="ValidateButton" MinWidth="110" Content="校验" Click="OnValidateClick" />
+          <Button Name="ExportButton" MinWidth="110" Content="导出" Click="OnExportClick" />
+          <Button Name="PublishButton" MinWidth="110" Content="发布" Click="OnPublishClick" />
+        </WrapPanel>
+
+        <Border Grid.Row="1" Grid.Column="1" Padding="10,8" CornerRadius="10" Background="#1E2B36">
+          <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" />
+        </Border>
+      </Grid>
+    </Border>
+
+    <StackPanel Grid.Row="1" Spacing="10" Margin="0,14,0,14">
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <Button Name="MonsterTabButton" Content="怪物配置" Click="OnMonsterTabClick" />
+        <Button Name="SkillTabButton" Content="技能配置" Click="OnSkillTabClick" />
+        <Button Name="BuffTabButton" Content="增益配置" Click="OnBuffTabClick" />
+        <Button Name="DropTabButton" Content="掉落配置" Click="OnDropTabClick" />
+        <Border Padding="10,6" CornerRadius="10" Background="#172330">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock VerticalAlignment="Center" Text="批量列" Foreground="#93A4B7" />
+            <ComboBox Width="140"
+                      ItemsSource="{Binding BatchFieldOptions}"
+                      SelectedItem="{Binding SelectedBatchField, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock VerticalAlignment="Center" Text="粘贴起始列" Foreground="#93A4B7" />
+            <ComboBox Width="140"
+                      ItemsSource="{Binding BatchFieldOptions}"
+                      SelectedItem="{Binding SelectedPasteStartField, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Content="向下填充" Click="OnFillDownClick" />
+            <Button Content="递增填充" Click="OnIncrementFillClick" />
+            <Button Content="清空列" Click="OnClearFieldClick" />
+            <Button Content="粘贴表格" Click="OnPasteClick" />
+            <TextBlock VerticalAlignment="Center" Foreground="#93A4B7" Text="快捷键: Ctrl+S / Ctrl+D / Ctrl+Shift+D / Delete / F5" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <Border Padding="12,10" CornerRadius="12" Background="#172330">
+        <WrapPanel Spacing="18">
+          <StackPanel>
+            <TextBlock Text="起始行" Foreground="#93A4B7" FontSize="12" />
+            <TextBlock Text="{Binding PasteAnchorRowSummary}" />
+          </StackPanel>
+          <StackPanel>
+            <TextBlock Text="起始列" Foreground="#93A4B7" FontSize="12" />
+            <TextBlock Text="{Binding PasteAnchorColumnSummary}" />
+          </StackPanel>
+          <StackPanel>
+            <TextBlock Text="选择范围" Foreground="#93A4B7" FontSize="12" />
+            <TextBlock Text="{Binding SelectionRangeSummary}" />
+          </StackPanel>
+          <StackPanel>
+            <TextBlock Text="最近一次粘贴" Foreground="#93A4B7" FontSize="12" />
+            <TextBlock Text="{Binding LastPasteSummary}" />
+          </StackPanel>
+        </WrapPanel>
+      </Border>
+    </StackPanel>
+
+    <Grid Grid.Row="2" ColumnDefinitions="*,420" ColumnSpacing="14">
+      <Border Grid.Column="0" CornerRadius="16" Background="#111922" Padding="12">
+        <DataGrid Name="MonsterTable"
+                  ItemsSource="{Binding Rows}"
+                  SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+                  SelectionMode="Extended"
+                  SelectionChanged="OnMonsterTableSelectionChanged"
+                  GridLinesVisibility="All"
+                  CanUserSortColumns="True"
+                  IsReadOnly="False"
+                  HeadersVisibility="All"
+                  RowHeight="34"
+                  FrozenColumnCount="2">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="资产" Binding="{Binding AssetName, Mode=TwoWay}" Width="180" />
+            <DataGridTextColumn Header="分类" Binding="{Binding CategoryPath, Mode=TwoWay}" Width="220" />
+            <DataGridTextColumn Header="模板" Binding="{Binding MonsterTemplateId, Mode=TwoWay}" Width="90" />
+            <DataGridTextColumn Header="调试名" Binding="{Binding DebugName, Mode=TwoWay}" Width="160" />
+            <DataGridTextColumn Header="场景" Binding="{Binding SceneId, Mode=TwoWay}" Width="90" />
+            <DataGridTextColumn Header="当前生命" Binding="{Binding CurrentHealth, Mode=TwoWay}" Width="100" />
+            <DataGridTextColumn Header="最大生命" Binding="{Binding MaxHealth, Mode=TwoWay}" Width="100" />
+            <DataGridTextColumn Header="攻击" Binding="{Binding AttackPower, Mode=TwoWay}" Width="90" />
+            <DataGridTextColumn Header="防御" Binding="{Binding DefensePower, Mode=TwoWay}" Width="90" />
+            <DataGridTextColumn Header="主技能" Binding="{Binding PrimarySkillId, Mode=TwoWay}" Width="100" />
+            <DataGridTextColumn Header="经验" Binding="{Binding ExperienceReward, Mode=TwoWay}" Width="90" />
+            <DataGridTextColumn Header="金币" Binding="{Binding GoldReward, Mode=TwoWay}" Width="90" />
+            <DataGridTextColumn Header="技能列表" Binding="{Binding SkillIdsText, Mode=TwoWay}" Width="180" />
+            <DataGridCheckBoxColumn Header="已修改" Binding="{Binding Dirty}" IsReadOnly="True" Width="80" />
+            <DataGridTextColumn Header="校验" Binding="{Binding ValidationSummary}" Width="100" />
+          </DataGrid.Columns>
+        </DataGrid>
+      </Border>
+
+      <Border Grid.Column="1" CornerRadius="16" Background="#111922" Padding="16">
+        <ScrollViewer>
+          <StackPanel Spacing="14">
+            <TextBlock Text="检查器" FontSize="22" FontWeight="Bold" />
+
+            <Border Padding="12" CornerRadius="12" Background="#172330">
+              <StackPanel Spacing="8">
+                <TextBlock Text="资产标识" FontWeight="SemiBold" />
+                <TextBlock Text="资产名" Foreground="#93A4B7" />
+                <TextBox Text="{Binding SelectedRow.AssetName, Mode=TwoWay}" Watermark="Slime" />
+                <TextBlock Text="分类路径" Foreground="#93A4B7" />
+                <TextBox Text="{Binding SelectedRow.CategoryPath, Mode=TwoWay}" Watermark="Combat/Monsters" />
+                <TextBlock Text="源路径" Foreground="#93A4B7" />
+                <SelectableTextBlock Text="{Binding SelectedRow.SourcePath}" />
+              </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="12" Background="#172330">
+              <StackPanel Spacing="8">
+                <TextBlock Text="战斗属性" FontWeight="SemiBold" />
+                <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                  <StackPanel Grid.Row="0" Grid.Column="0"><TextBlock Text="模板" Foreground="#93A4B7" /><TextBox Text="{Binding SelectedRow.MonsterTemplateId, Mode=TwoWay}" /></StackPanel>
+                  <StackPanel Grid.Row="0" Grid.Column="1"><TextBlock Text="调试名" Foreground="#93A4B7" /><TextBox Text="{Binding SelectedRow.DebugName, Mode=TwoWay}" /></StackPanel>
+                  <StackPanel Grid.Row="1" Grid.Column="0"><TextBlock Text="场景" Foreground="#93A4B7" /><TextBox Text="{Binding SelectedRow.SceneId, Mode=TwoWay}" /></StackPanel>
+                  <StackPanel Grid.Row="1" Grid.Column="1"><TextBlock Text="主技能" Foreground="#93A4B7" /><TextBox Text="{Binding SelectedRow.PrimarySkillId, Mode=TwoWay}" /></StackPanel>
+                  <StackPanel Grid.Row="2" Grid.Column="0"><TextBlock Text="当前生命" Foreground="#93A4B7" /><TextBox Text="{Binding SelectedRow.CurrentHealth, Mode=TwoWay}" /></StackPanel>
+                  <StackPanel Grid.Row="2" Grid.Column="1"><TextBlock Text="最大生命" Foreground="#93A4B7" /><TextBox Text="{Binding SelectedRow.MaxHealth, Mode=TwoWay}" /></StackPanel>
+                  <StackPanel Grid.Row="3" Grid.Column="0"><TextBlock Text="攻击" Foreground="#93A4B7" /><TextBox Text="{Binding SelectedRow.AttackPower, Mode=TwoWay}" /></StackPanel>
+                  <StackPanel Grid.Row="3" Grid.Column="1"><TextBlock Text="防御" Foreground="#93A4B7" /><TextBox Text="{Binding SelectedRow.DefensePower, Mode=TwoWay}" /></StackPanel>
+                  <StackPanel Grid.Row="4" Grid.Column="0"><TextBlock Text="经验" Foreground="#93A4B7" /><TextBox Text="{Binding SelectedRow.ExperienceReward, Mode=TwoWay}" /></StackPanel>
+                  <StackPanel Grid.Row="4" Grid.Column="1"><TextBlock Text="金币" Foreground="#93A4B7" /><TextBox Text="{Binding SelectedRow.GoldReward, Mode=TwoWay}" /></StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="12" Background="#172330">
+              <StackPanel Spacing="8">
+                <TextBlock Text="技能与导出" FontWeight="SemiBold" />
+                <TextBlock Text="技能列表（逗号分隔）" Foreground="#93A4B7" />
+                <TextBox Text="{Binding SelectedRow.SkillIdsText, Mode=TwoWay}" />
+                <TextBlock Text="JSON" Foreground="#93A4B7" />
+                <SelectableTextBlock Text="{Binding SelectedRow.ExportJsonPath}" />
+                <TextBlock Text="MOB" Foreground="#93A4B7" />
+                <SelectableTextBlock Text="{Binding SelectedRow.ExportMobPath}" />
+                <TextBlock Text="发布" Foreground="#93A4B7" />
+                <SelectableTextBlock Text="{Binding SelectedRow.PublishMobPath}" />
+              </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="12" Background="#172330">
+              <StackPanel Spacing="8">
+                <TextBlock Text="另存为 / 复制到分类" FontWeight="SemiBold" />
+                <TextBlock Text="目标分类" Foreground="#93A4B7" />
+                <TextBox Text="{Binding SaveAsCategoryPath, Mode=TwoWay}" Watermark="Combat/Monsters/Boss" />
+                <TextBlock Text="单条另存为名称" Foreground="#93A4B7" />
+                <TextBox Text="{Binding SaveAsAssetName, Mode=TwoWay}" Watermark="仅单选时生效" />
+                <TextBlock Text="批量后缀" Foreground="#93A4B7" />
+                <TextBox Text="{Binding SaveAsSuffix, Mode=TwoWay}" Watermark="_Copy" />
+                <TextBlock Text="预览" Foreground="#93A4B7" />
+                <SelectableTextBlock Text="{Binding SaveAsSummary}" TextWrapping="Wrap" />
+                <WrapPanel Spacing="8">
+                  <Button Content="另存为选中" Click="OnSaveAsClick" />
+                  <Button Content="复制到分类" Click="OnCopyToCategoryClick" />
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="12" Background="#172330">
+              <StackPanel Spacing="8">
+                <TextBlock Text="结果" FontWeight="SemiBold" />
+                <SelectableTextBlock Text="{Binding ResultText}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+  </Grid>
+</Window>

@@ -8,6 +8,7 @@
 - 本地验证：`validate.py`、`test_client.py`、`debug_replication.py`
 - 本地起停服：`servers.py`
 - 控制面与多机工具：`server_control_api.py`、`server_registry.py`、`server_manager_tui.py`
+- 桌面资产编辑器：`MObjectEditorAvalonia`（规划中）
 
 ## `MHeaderTool`
 
@@ -42,6 +43,32 @@
 
 它不是正式压测系统，更适合开发期快速验证。
 
+## `MObjectEditorAvalonia`
+
+新的桌面资产编辑器骨架，位于：
+
+- `Source/Tools/MObjectEditorAvalonia/`
+
+当前定位：
+
+- 用 Avalonia UI 替代现有 Web 原型
+- 复用 `MObjectEditorService` 作为本地资产服务
+- 先接怪物配置表，再逐步扩到技能 / Buff / 掉落
+
+当前已经接通的链路：
+
+- 读取怪物配置表
+- 批量保存
+- 校验
+- 导出 / 发布
+- 新增 / 复制 / 删除的基础操作
+
+当前推荐启动脚本：
+
+```bash
+Scripts/run_mobject_editor_avalonia.sh
+```
+
 ## `Scripts/validate.py`
 
 这是当前仓库最重要的自动验证脚本。
@@ -53,8 +80,26 @@
 - 通过 `MT_FunctionCall` 做客户端级回归
 - 验证玩家查询、写操作、场景同步、最小战斗链路
 - 验证错误链路和重登恢复
+- 支持按 suite 只跑某一组主链路
 
 如果你只打算执行一个脚本，优先执行它。
+
+常用命令：
+
+```bash
+python3 Scripts/validate.py --build-dir Build --no-build
+python3 Scripts/validate.py --build-dir Build --no-build --list-suites
+python3 Scripts/validate.py --build-dir Build --no-build --suite runtime_dispatch
+```
+
+当前 suite 约定：
+
+- `all`：全量验证
+- `player_state`：玩家状态、档案、背包、成长和重登恢复
+- `scene_downlink`：双玩家场景同步和下行广播
+- `combat_commit`：技能施放和战斗结果提交
+- `forward_errors`：forward 路径的错误模型
+- `runtime_dispatch`：World runtime 当前主链路覆盖集合
 
 ## `Scripts/servers.py`
 
@@ -141,6 +186,7 @@
 
 1. 改完代码先编译
 2. 先跑 `validate.py`
+   如果只改了 World runtime / 调度相关代码，先跑 `--suite runtime_dispatch`
 3. 需要长期盯服务时再用 `servers.py start`
 4. 改协议时补跑 `verify_protocol.py`
 5. 改复制、持久化、客户端链路时再用专项脚本定点排查
