@@ -81,7 +81,6 @@
       <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
       <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
       <Setter Property="RowBackground" Value="#132033" />
-      <Setter Property="AlternatingRowBackground" Value="#16253A" />
       <Setter Property="HorizontalGridLinesBrush" Value="#22354D" />
       <Setter Property="VerticalGridLinesBrush" Value="#22354D" />
     </Style>
