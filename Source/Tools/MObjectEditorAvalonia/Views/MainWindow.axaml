@@ -24,7 +24,7 @@
           <TextBlock Text="怪物配置桌面编辑器（Avalonia）" FontSize="24" FontWeight="Bold" />
         </StackPanel>
 
-        <WrapPanel Grid.Column="1" Spacing="12">
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12">
           <Border Padding="10,8" CornerRadius="10" Background="#1E2B36">
             <StackPanel>
               <TextBlock Text="服务地址" Foreground="#93A4B7" FontSize="12" />
@@ -49,9 +49,9 @@
               <TextBlock Text="{Binding DirtyCount}" />
             </StackPanel>
           </Border>
-        </WrapPanel>
+        </StackPanel>
 
-        <WrapPanel Grid.Column="2" Grid.RowSpan="2" Spacing="10" VerticalAlignment="Center">
+        <StackPanel Grid.Column="2" Grid.RowSpan="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
           <Button Name="RefreshButton" MinWidth="110" Content="刷新" Click="OnRefreshClick" />
           <Button Name="AddButton" MinWidth="110" Content="新增" Click="OnAddClick" />
           <Button Name="DuplicateButton" MinWidth="110" Content="复制选中" Click="OnDuplicateClick" />
@@ -60,7 +60,7 @@
           <Button Name="ValidateButton" MinWidth="110" Content="校验" Click="OnValidateClick" />
           <Button Name="ExportButton" MinWidth="110" Content="导出" Click="OnExportClick" />
           <Button Name="PublishButton" MinWidth="110" Content="发布" Click="OnPublishClick" />
-        </WrapPanel>
+        </StackPanel>
 
         <Border Grid.Row="1" Grid.Column="1" Padding="10,8" CornerRadius="10" Background="#1E2B36">
           <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" />
@@ -106,7 +106,7 @@
       </StackPanel>
 
       <Border Padding="12,10" CornerRadius="12" Background="#172330">
-        <WrapPanel Spacing="18">
+        <StackPanel Orientation="Horizontal" Spacing="18">
           <StackPanel>
             <TextBlock Text="起始行" Foreground="#93A4B7" FontSize="12" />
             <TextBlock Text="{Binding PasteAnchorRowSummary}" />
@@ -123,7 +123,7 @@
             <TextBlock Text="最近一次粘贴" Foreground="#93A4B7" FontSize="12" />
             <TextBlock Text="{Binding LastPasteSummary}" />
           </StackPanel>
-        </WrapPanel>
+        </StackPanel>
       </Border>
     </StackPanel>
 
@@ -220,10 +220,10 @@
                 <TextBox Text="{Binding SaveAsSuffix, Mode=TwoWay}" Watermark="_Copy" />
                 <TextBlock Text="预览" Foreground="#93A4B7" />
                 <SelectableTextBlock Text="{Binding SaveAsSummary}" TextWrapping="Wrap" />
-                <WrapPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="8">
                   <Button Content="另存为选中" Click="OnSaveAsClick" />
                   <Button Content="复制到分类" Click="OnCopyToCategoryClick" />
-                </WrapPanel>
+                </StackPanel>
               </StackPanel>
             </Border>
 
