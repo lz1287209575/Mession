@@ -1,13 +1,8 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Reflection.h"
-
-MSTRUCT()
-struct FClientFindPlayerRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-};
+#include "Protocol/Messages/World/PlayerQueryMessages.h"
+#include "Protocol/Messages/World/PlayerRouteMessages.h"
 
 MSTRUCT()
 struct FClientFindPlayerResponse
@@ -26,13 +21,6 @@ struct FClientFindPlayerResponse
 
     MPROPERTY()
     MString Error;
-};
-
-MSTRUCT()
-struct FClientQueryProfileRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
 };
 
 MSTRUCT()
@@ -67,13 +55,6 @@ struct FClientQueryProfileResponse
 };
 
 MSTRUCT()
-struct FClientQueryInventoryRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-};
-
-MSTRUCT()
 struct FClientQueryInventoryResponse
 {
     MPROPERTY()
@@ -90,13 +71,6 @@ struct FClientQueryInventoryResponse
 
     MPROPERTY()
     MString Error;
-};
-
-MSTRUCT()
-struct FClientQueryProgressionRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
 };
 
 MSTRUCT()
@@ -122,13 +96,6 @@ struct FClientQueryProgressionResponse
 };
 
 MSTRUCT()
-struct FClientQueryPawnRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-};
-
-MSTRUCT()
 struct FClientQueryPawnResponse
 {
     MPROPERTY()
@@ -151,6 +118,37 @@ struct FClientQueryPawnResponse
 
     MPROPERTY()
     uint32 Health = 0;
+
+    MPROPERTY()
+    MString Error;
+};
+
+MSTRUCT()
+struct FClientQueryCombatProfileResponse
+{
+    MPROPERTY()
+    bool bSuccess = false;
+
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint32 BaseAttack = 0;
+
+    MPROPERTY()
+    uint32 BaseDefense = 0;
+
+    MPROPERTY()
+    uint32 MaxHealth = 0;
+
+    MPROPERTY()
+    uint32 PrimarySkillId = 0;
+
+    MPROPERTY()
+    uint32 LastResolvedSceneId = 0;
+
+    MPROPERTY()
+    uint32 LastResolvedHealth = 0;
 
     MPROPERTY()
     MString Error;

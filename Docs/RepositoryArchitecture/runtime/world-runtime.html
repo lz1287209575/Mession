@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>World Runtime 设计</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css">
+</head>
+<body>
+  <div class="page">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="pill">Repository Architecture</span>
+        <h1>World Runtime 设计</h1>
+        <p>把“去 Workflow”之后 Runtime 层到底承担什么，单独讲清楚。</p>
+      </div>
+
+<nav class="nav">
+  <a href="../index.html">总览首页</a>
+  <div class="nav-group-title">模块</div>
+  <a href="../modules/index.html">模块导航</a>
+  <a href="../modules/foundation.html">基础层：Common / Protocol / App / Tooling</a>
+  <a href="../modules/servers.html">业务层：Gateway / Login / World / Scene / Router / Mgo</a>
+  <div class="nav-group-title">链路与评审</div>
+  <a href="../flows/index.html">主链路导航</a>
+  <a href="../flows/main-flows.html">跨模块主链路时序</a>
+  <a href="../review/index.html">Review 导航</a>
+  <a href="../review/priorities.html">分模块优先级清单</a>
+  <div class="nav-group-title">示例</div>
+  <a href="../examples/index.html">示例导航</a>
+  <a href="../examples/runtime-examples.html">运行与调用示例</a>
+  <a href="../examples/source-map.html">源码来源索引</a>
+  <div class="nav-group-title">Runtime</div>
+  <a href="../runtime/index.html">Runtime 导航</a>
+  <a href="../runtime/world-runtime.html">World Runtime 设计</a>
+</nav>
+
+      <div class="nav-note">现在这套文档已经按模块、链路、review、示例、runtime 五个维度拆开；后续再补子系统页时，直接往目录里加即可。</div>
+    </aside>
+    <main class="content">
+
+<section class="hero">
+  <span class="pill">World Runtime</span>
+  <h2>这套设计的核心，不是再发明一个新 Workflow，而是把异步和并发复杂度往 Runtime 层压</h2>
+  <p>你想要的不是“另一个流程对象”，而是让业务代码看起来像顺序代码；目前这套 C++17 Runtime / fiber / strand / epoch 的组合，本质上就是在做这件事。</p>
+</section>
+<section class="section">
+  <div class="section-head"><h3>设计目标</h3><p>这页先把 World Runtime 真正解决什么问题讲清楚。</p></div>
+  <div class="grid-3">
+    <div class="card"><h4>不要 Workflow</h4><p>避免业务逻辑再拆成一堆 <code>OnStep</code> / 状态跳转 / 回调链。</p></div>
+    <div class="card"><h4>要顺序代码</h4><p>让 <code>DoXxx(...)</code> 看起来像同步流程，业务意图能从上往下读。</p></div>
+    <div class="card"><h4>要运行时兜底</h4><p>并发互斥、过期命令剔除、异步挂起恢复，都由 Runtime 统一负责。</p></div>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>对外接口应该长什么样</h3><p>World 入口暴露的不是状态机接口，而是“校验 → 准备 → 排队执行”的 Runtime Dispatch 契约。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>World Dispatch Contract</span><span>Source/Servers/World/Player/PlayerService.h</span></div>
+<pre><code class="language-cpp">template&lt;typename TResponse, typename TRequest&gt;
+std::optional&lt;MFuture&lt;TResult&lt;TResponse, FAppError&gt;&gt;&gt; PrepareRuntimeDispatch(
+    const TRequest&amp; Request,
+    const char* FunctionName,
+    std::initializer_list&lt;EDependency&gt; Dependencies) const;
+
+template&lt;typename TResponse, typename TRequest, typename TMethod&gt;
+MFuture&lt;TResult&lt;TResponse, FAppError&gt;&gt; DispatchRuntimeCommand(
+    const TRequest&amp; Request,
+    const char* FunctionName,
+    std::initializer_list&lt;EDependency&gt; Dependencies,
+    TMethod Method);
+
+template&lt;typename TResponse, typename TRequest, typename TMethod&gt;
+MFuture&lt;TResult&lt;TResponse, FAppError&gt;&gt; DispatchRuntimeCommandMany(
+    const TRequest&amp; Request,
+    TVector&lt;SPlayerCommandParticipant&gt; Participants,
+    const char* FunctionName,
+    std::initializer_list&lt;EDependency&gt; Dependencies,
+    TMethod Method);</code></pre>
+        </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>Runtime 核心对象</h3><p><code>MPlayerCommandRuntime</code> 负责把单玩家或多玩家命令排进 strand，并对参与者 epoch 做快照。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Player Command Runtime API</span><span>Source/Servers/World/Player/PlayerCommandRuntime.h</span></div>
+<pre><code class="language-cpp">struct SPlayerCommandParticipant
+{
+    uint64 PlayerId = 0;
+    uint64 ExpectedEpoch = 0;
+    bool bCreateStrandIfMissing = true;
+};
+
+struct SPlayerCommandOptions
+{
+    const char* CommandName = &quot;&quot;;
+    uint64 ExpectedEpoch = 0;
+    bool bCreateStrandIfMissing = true;
+};
+
+template&lt;typename TResponse, typename TFunc&gt;
+TPlayerCommandFuture&lt;TResponse&gt; EnqueueMany(
+    TVector&lt;SPlayerCommandParticipant&gt; Participants,
+    const SPlayerCommandOptions&amp; Options,
+    TFunc&amp;&amp; Body);</code></pre>
+        </div>
+        <div style="height:14px;"></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Command Execution Context</span><span>Source/Common/Runtime/Concurrency/CommandExecutionContext.h</span></div>
+<pre><code class="language-cpp">struct SPlayerCommandEpoch
+{
+    uint64 PlayerId = 0;
+    uint64 Epoch = 0;
+};
+
+class MPlayerCommandContext
+{
+public:
+    MPlayerCommandContext(
+        TVector&lt;SPlayerCommandEpoch&gt; InParticipants,
+        const char* InCommandName,
+        ITaskRunner* InRunner,
+        MPlayerCommandRuntime* InRuntime = nullptr);
+
+    uint64 GetPlayerId() const;
+    uint64 GetEpoch() const;
+    const TVector&lt;SPlayerCommandEpoch&gt;&amp; GetParticipants() const;
+    const char* GetCommandName() const;
+    ITaskRunner* GetRunner() const;
+    MPlayerCommandRuntime* GetRuntime() const;
+};</code></pre>
+        </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>Fiber 与调度器负责什么</h3><p>命令真正跑起来之后，挂起 / 恢复由 fiber scheduler 接管，这样业务函数体才能写成顺序形式。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Fiber Scheduler Contract</span><span>Source/Common/Runtime/Concurrency/FiberScheduler.h</span></div>
+<pre><code class="language-cpp">struct SFiberStartParams
+{
+    TSharedPtr&lt;MPlayerCommandState&gt; CommandState;
+    MPlayerCommandContext Context;
+    TFunction&lt;void()&gt; Entry;
+    TFunction&lt;void()&gt; OnCompleted;
+    TFunction&lt;void(std::exception_ptr)&gt; OnUnhandledException;
+    size_t StackSize = 256 * 1024;
+};
+
+class MFiberScheduler
+{
+public:
+    static MFiberScheduler&amp; Get();
+
+    TSharedPtr&lt;MFiberExecution&gt; CreateExecution(SFiberStartParams Params);
+    void Start(const TSharedPtr&lt;MFiberExecution&gt;&amp; Execution);
+    void Resume(const TSharedPtr&lt;MFiberExecution&gt;&amp; Execution);
+    void SuspendCurrent();
+};</code></pre>
+        </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>当前已知边界</h3><p>这套 Runtime 已经可用，但当前仓库里仍有几条需要明确写出来的边界，避免误把“当前可跑”理解成“语义已经完全收口”。</p></div>
+  <div class="grid-2">
+    <div class="card"><h4>当前支持的语义</h4><ul><li><code>PlayerCommandRuntime</code> 负责按玩家串行化执行。</li><li>多参与者命令会先通过 strand barrier，再统一启动 fiber。</li><li><code>MAwait / MAwaitOk</code> 支持在当前 player command fiber 中挂起和恢复。</li><li>epoch 变化会把旧命令视为 stale，避免过期命令继续提交。</li></ul></div>
+    <div class="card"><h4>当前仍未完全收口的点</h4><ul><li><code>PlayerCommandRuntime</code> 现在同时承担串行化、多人 barrier、fiber 生命周期包装，职责还偏重。</li><li><code>FiberScheduler</code> 在不同平台上实现能力仍有差异。</li><li>运行时专项验证刚开始分层，当前更多还是从总回归里切出的 suite。</li></ul></div>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>World 调用边界现状</h3><p>近期这轮整理不只是收 Runtime，也在收 <code>WorldClient → PlayerService → ObjectCall</code> 这条调用边界，避免复杂度在几个入口之间来回漂移。</p></div>
+  <div class="grid-3">
+    <div class="card"><h4><code>WorldClient*</code></h4><ul><li>只负责 client-call 适配和回包。</li><li>普通 Player 请求通过 <code>WorldClientCommon::StartAsyncClientResponse</code> 统一进入运行时。</li><li>不再鼓励在 <code>Client_*</code> 里手写重复的 deferred glue。</li></ul></div>
+    <div class="card"><h4><code>PlayerService</code></h4><ul><li>暴露 Runtime Dispatch 契约。</li><li>统一承接校验、依赖检查、命令排队。</li><li>真实业务步骤继续下沉到 <code>DoXxx(...)</code>。</li></ul></div>
+    <div class="card"><h4><code>ObjectCall*</code></h4><ul><li>负责对象级本地调用和远端代理调用。</li><li>当前已拆出 target server resolve、本地 target resolve、payload parse helper。</li><li><code>ObjectCallRouter</code> 已与主调用层共用本地 resolve 语义。</li></ul></div>
+  </div>
+  <div class="callout-grid">
+    <div class="callout">当前要持续防的不是“缺少抽象”，而是同一条调用链在多个 owner 里各自再写一遍 transport glue。</div>
+    <div class="callout">如果后续新增命令，优先判断它属于 <code>WorldClient</code> 适配、<code>PlayerService</code> 调度，还是 <code>ObjectCall</code> 代理，不要混写。</div>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>当前风险与验证入口</h3><p>后续改 Runtime 相关代码时，不应该只看代码风格是否统一，更重要的是同步跑对应回归。</p></div>
+  <div class="callout-grid">
+    <div class="callout">已知最高风险点之一：Windows fiber backend 目前仍是占位实现，不应把它当作完整 stackful fiber 支持。</div>
+    <div class="callout">已知最高风险点之二：<code>PlayerCommandRuntime</code> 里串行化、barrier、epoch、异常传播的职责还缠在一起，后续拆分要谨慎。</div>
+    <div class="callout">已知最高风险点之三：<code>ObjectCall</code> 虽然已开始拆 helper，但本地 dispatch bridge 和远端 proxy 仍在同一层，后续继续收时要保持错误模型一致。</div>
+    <div class="callout">当前推荐先跑：<code>python3 Scripts/validate.py --build-dir Build --no-build --suite runtime_dispatch</code>，再跑全量 <code>all</code>。</div>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>为什么这套 Runtime 不会退化成另一种 Workflow</h3><p>关键不在于有没有多个异步步骤，而在于这些步骤是不是仍然由统一 Runtime 驱动，而不是回到业务层自己管理状态推进。</p></div>
+  <div class="callout-grid">
+    <div class="callout">多步异步本身不是问题，问题是让业务自己保存“下一步该做什么”。</div>
+    <div class="callout">现在这套设计里，业务只写 <code>MAwaitOk</code> 之前和之后的直线逻辑，挂起与恢复由 fiber runtime 负责。</div>
+    <div class="callout">所以复杂度沉到了 Runtime，而不是重新沉到 Workflow class 或 callback graph。</div>
+  </div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Start Barrier And Stale Check</span><span>Source/Servers/World/Player/PlayerCommandRuntime.cpp</span></div>
+<pre><code class="language-cpp">TSharedPtr&lt;MFiberExecution&gt; Execution = MFiberScheduler::Get().CreateExecution(
+    {
+        Command,
+        std::move(Context),
+        [Command, Start = std::move(Start)]() mutable
+        {
+            for (const SPlayerCommandEpoch&amp; Participant : Command-&gt;Participants)
+            {
+                if (Command-&gt;Runtime-&gt;SnapshotEpoch(Participant.PlayerId) != Participant.Epoch)
+                {
+                    throw std::runtime_error(&quot;player command became stale before execution&quot;);
+                }
+            }
+
+            Start(Command);
+        },
+        [Command]()
+        {
+            for (const TSharedPtr&lt;MPlayerStrand&gt;&amp; Strand : Command-&gt;Strands)
+            {
+                if (Strand)
+                {
+                    Strand-&gt;OnCommandCompleted();
+                }
+            }
+        },
+        [Command, FailureCallback](std::exception_ptr Exception) mutable
+        {
+            if (FailureCallback)
+            {
+                FailureCallback(FAppError::Make(&quot;player_command_exception&quot;, &quot;unknown&quot;));
+            }
+        },
+    });</code></pre>
+        </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>扩展一个新业务命令时的标准写法</h3><p>如果后续再接新业务，建议严格保持这一套接口形态，不要给新命令发明特例。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Recommended Extension Pattern</span><span>World Player Service Pattern</span></div>
+<pre><code class="language-cpp">MFuture&lt;TResult&lt;FYourResponse, FAppError&gt;&gt; MPlayerService::YourCommand(const FYourRequest&amp; Request)
+{
+    return DispatchRuntimeCommand&lt;FYourResponse&gt;(
+        Request,
+        &quot;YourCommand&quot;,
+        {
+            EDependency::Scene,
+            EDependency::Router,
+        },
+        &amp;MPlayerService::DoYourCommand);
+}
+
+TResult&lt;FYourResponse, FAppError&gt; MPlayerService::DoYourCommand(FYourRequest Request)
+{
+    const FSceneResponse SceneResponse = MAwaitOk(WorldServer-&gt;GetScene()-&gt;YourRpc(...));
+    const TResult&lt;FPlayerUpdateRouteResponse, FAppError&gt; RouteResult =
+        ApplySceneRouteForPlayer(Request.PlayerId, SceneResponse.SceneId);
+    return RouteResult.IsOk()
+        ? TResult&lt;FYourResponse, FAppError&gt;::Ok(FYourResponse{})
+        : MakeErrorResult&lt;FYourResponse&gt;(RouteResult.GetError());
+}</code></pre>
+        </div>
+  <div class="grid-2">
+    <div class="card"><h4>入口层职责</h4><ul><li>做 <code>ValidateRequest</code>、依赖可用性检查。</li><li>把命令统一交给 <code>DispatchRuntimeCommand</code> / <code>DispatchRuntimeCommandMany</code>。</li><li>不在入口层手工堆 callback graph。</li></ul></div>
+    <div class="card"><h4>业务体职责</h4><ul><li>只表达真正的领域步骤。</li><li>异步点用 <code>MAwait / MAwaitOk</code>。</li><li>错误通过 <code>TResult&lt;..., FAppError&gt;</code> 返回，不另外发明流程状态。</li></ul></div>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>我对这条路线的判断</h3><p>如果目标是在 C++17 下尽量逼近 <code>async / await</code> 的开发体验，而又不想退回 Workflow 类，这条路目前是合理的。</p></div>
+  <div class="grid-2">
+    <div class="card"><h4>为什么值得继续</h4><ul><li>它直接改善业务可读性。</li><li>它把复杂度放在少数 Runtime 文件里集中治理。</li><li>它天然鼓励 <code>Servers/App</code> 继续抽公共 helper。</li></ul></div>
+    <div class="card"><h4>真正要持续防守的点</h4><ul><li>不要让 <code>MPlayerService</code> 无限制长胖。</li><li>不要把 Runtime 特殊逻辑散落回每个业务函数。</li><li>不要用新的流程 owner 包一层把旧问题带回来。</li></ul></div>
+  </div>
+</section>
+    </main>
+  </div>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
+<script>window.addEventListener('DOMContentLoaded', () => hljs.highlightAll());</script>
+</body>
+</html>

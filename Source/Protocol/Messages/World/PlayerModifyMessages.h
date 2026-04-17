@@ -1,11 +1,12 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Servers/App/ServerCallRequestValidation.h"
 
 MSTRUCT()
 struct FPlayerChangeGoldRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerChangeGold"))
     uint64 PlayerId = 0;
 
     MPROPERTY()
@@ -25,10 +26,10 @@ struct FPlayerChangeGoldResponse
 MSTRUCT()
 struct FPlayerEquipItemRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerEquipItem"))
     uint64 PlayerId = 0;
 
-    MPROPERTY()
+    MPROPERTY(Meta=(NonEmpty, ErrorCode="equipped_item_required", ErrorContext="PlayerEquipItem"))
     MString EquippedItem;
 };
 
@@ -45,7 +46,7 @@ struct FPlayerEquipItemResponse
 MSTRUCT()
 struct FPlayerGrantExperienceRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerGrantExperience"))
     uint64 PlayerId = 0;
 
     MPROPERTY()
@@ -68,7 +69,7 @@ struct FPlayerGrantExperienceResponse
 MSTRUCT()
 struct FPlayerModifyHealthRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerModifyHealth"))
     uint64 PlayerId = 0;
 
     MPROPERTY()

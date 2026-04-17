@@ -7,6 +7,7 @@
 #include "Protocol/Messages/World/PlayerQueryMessages.h"
 #include "Protocol/Messages/World/PlayerRouteMessages.h"
 #include "Servers/App/ServerCallProxy.h"
+#include "Servers/World/Player/PlayerInventory.h"
 
 MCLASS(Type=Rpc)
 class MGatewayLogin : public MServerCallProxyBase
@@ -69,5 +70,4 @@ public:
 private:
     EServerType GetTargetServerType() const override;
 };
-
 

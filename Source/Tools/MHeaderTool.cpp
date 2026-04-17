@@ -51,12 +51,19 @@ struct SParsedFunction
 
 struct SParsedProperty
 {
+    struct SMetadataEntry
+    {
+        std::string Key;
+        std::string Value;
+    };
+
     std::string MacroArgs;
     std::string Type;
     std::string Name;
     std::string PropertyKind;
     std::string FlagsExpr;
     std::string Owner;
+    std::vector<SMetadataEntry> Metadata;
 };
 
 enum class EParsedTypeKind : uint8_t
@@ -110,6 +117,66 @@ std::optional<std::string> ExtractRpcClassTarget(const SParsedClass& ParsedClass
 std::vector<SParsedFunction::SParsedParameter> ParseFunctionParameters(const std::string& Signature);
 std::map<std::string, std::string> ParseTypeAliasesInBody(const std::string& ClassBody);
 std::string BuildClassKindExpr(const SParsedClass& ParsedClass);
+std::string Trim(std::string_view Text);
+
+std::string StripEnclosingPair(std::string Value, char Open, char Close)
+{
+    Value = Trim(Value);
+    if (Value.size() >= 2 && Value.front() == Open && Value.back() == Close)
+    {
+        return Trim(Value.substr(1, Value.size() - 2));
+    }
+    return Value;
+}
+
+std::string UnquoteStringLiteral(std::string Value)
+{
+    Value = Trim(Value);
+    if (Value.size() >= 2 && Value.front() == '"' && Value.back() == '"')
+    {
+        return Value.substr(1, Value.size() - 2);
+    }
+    return Value;
+}
+
+std::vector<SParsedProperty::SMetadataEntry> ParsePropertyMetadataEntries(const std::string& MacroArgs)
+{
+    const std::optional<std::string> MetaValue = ExtractMacroValue(MacroArgs, "Meta");
+    if (!MetaValue.has_value())
+    {
+        return {};
+    }
+
+    const std::string Inner = StripEnclosingPair(*MetaValue, '(', ')');
+    std::vector<SParsedProperty::SMetadataEntry> Entries;
+    for (const std::string& Part : SplitTopLevelArgs(Inner))
+    {
+        if (Part.empty())
+        {
+            continue;
+        }
+
+        const size_t EqualsPos = Part.find('=');
+        SParsedProperty::SMetadataEntry Entry;
+        if (EqualsPos == std::string::npos)
+        {
+            Entry.Key = Trim(Part);
+            Entry.Value = "true";
+        }
+        else
+        {
+            Entry.Key = Trim(Part.substr(0, EqualsPos));
+            Entry.Value = UnquoteStringLiteral(Trim(Part.substr(EqualsPos + 1)));
+        }
+
+        if (!Entry.Key.empty())
+        {
+            Entries.push_back(std::move(Entry));
+        }
+    }
+
+    return Entries;
+}
 
 bool StartsWith(std::string_view Text, std::string_view Prefix)
 {
@@ -471,6 +538,7 @@ std::optional<SParsedProperty> ParsePropertyDeclaration(
     {
         Parsed.Owner = *Owner;
     }
+    Parsed.Metadata = ParsePropertyMetadataEntries(Parsed.MacroArgs);
     return Parsed;
 }
 
@@ -709,19 +777,24 @@ std::string NormalizeReflectionType(std::string TypeName)
 
 std::string BuildPropertyFlagsExpr(const std::string& MacroArgs)
 {
-    const std::vector<std::string> Tokens = SplitTopLevelPipes(MacroArgs);
+    const std::vector<std::string> Args = SplitTopLevelArgs(MacroArgs);
     std::vector<std::string> Parts;
-    for (const std::string& Token : Tokens)
+    for (const std::string& Arg : Args)
     {
-        if (Token.empty())
+        if (Arg.empty() || Arg.find('=') != std::string::npos)
         {
             continue;
         }
-        if (Token.find('=') != std::string::npos)
+
+        const std::vector<std::string> Tokens = SplitTopLevelPipes(Arg);
+        for (const std::string& Token : Tokens)
         {
-            continue;
+            if (Token.empty())
+            {
+                continue;
+            }
+            Parts.push_back("static_cast<uint64>(EPropertyFlags::" + Token + ")");
         }
-        Parts.push_back("static_cast<uint64>(EPropertyFlags::" + Token + ")");
     }
 
     if (Parts.empty())
@@ -1348,6 +1421,14 @@ std::vector<SClassRegion> ParseClassRegions(const std::string& Contents)
         if (!ClassName)
         {
             SearchPos = BestPos + 1;
+            continue;
+        }
+
+        const size_t NameEnd = Cursor;
+        const size_t SuffixCursor = SkipWhitespace(Masked, NameEnd);
+        if (SuffixCursor < Masked.size() && Masked[SuffixCursor] == '<')
+        {
+            SearchPos = SuffixCursor + 1;
             continue;
         }
 
@@ -2151,7 +2232,16 @@ std::vector<SParsedClass> DiscoverReflectedClasses(const std::vector<fs::path>& 
 
 std::string BuildPropertyRegistrationLine(const SParsedProperty& Property)
 {
-    return "    MREGISTER_PROPERTY(" + Property.Type + ", " + Property.PropertyKind + ", " + Property.Name + ", " + Property.FlagsExpr + ");";
+    std::string Line;
+    Line += "    do { auto* Prop = new TMemberProperty<ThisClass, " + Property.Type + ", &ThisClass::" + Property.Name + ">";
+    Line += "(\"" + Property.Name + "\", EPropertyType::" + Property.PropertyKind + ", " + Property.FlagsExpr + ");";
+    for (const SParsedProperty::SMetadataEntry& Entry : Property.Metadata)
+    {
+        Line += " Prop->SetMetadata(\"" + EscapeCppStringLiteral(Entry.Key) + "\", \"" +
+                EscapeCppStringLiteral(Entry.Value) + "\");";
+    }
+    Line += " InClass->RegisterProperty(Prop); } while(0);";
+    return Line;
 }
 
 std::string BuildPropertyAccessorFunctionName(const SParsedClass& ParsedClass, const SParsedProperty& Property)
@@ -2283,6 +2373,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
     Out << "\n";
     Out << "#include \"Common/Net/Rpc/RpcClientCall.h\"\n";
     Out << "#include \"Common/Net/Rpc/RpcServerCall.h\"\n";
+    Out << "#include \"Servers/App/ServerCallRequestValidation.h\"\n";
     Out << "\n";
     if (ParsedClass.Kind == EParsedTypeKind::Enum)
     {
@@ -2504,6 +2595,12 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
             Out << "    if (!Context.IsValid())\n";
             Out << "    {\n";
             Out << "        return false;\n";
+            Out << "    }\n";
+            Out << "    if (auto ValidationError = MServerCallRequestValidation::ValidateRequest(RequestValue); ValidationError.has_value())\n";
+            Out << "    {\n";
+            Out << "        return MServerCallAsyncSupport::StartDeferredServerCall(Context, "
+                << "MServerCallAsyncSupport::MakeErrorFuture<" << *ResponseType << ">("
+                << "ValidationError->Code.c_str(), ValidationError->Message.c_str()), \"" << Function.Name << "\");\n";
             Out << "    }\n";
             Out << "    return MServerCallAsyncSupport::StartDeferredServerCall(Context, TypedObject->" << Function.Name
                 << "(RequestValue), \"" << Function.Name << "\");\n";

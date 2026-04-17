@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mession 仓库整体架构设计</title>
+  <link rel="stylesheet" href="assets/styles.css">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css">
+</head>
+<body>
+  <div class="page">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="pill">Repository Architecture</span>
+        <h1>Mession 仓库整体架构设计</h1>
+        <p>从这里进入模块页、主链路页、review 页、示例页和 runtime 页。</p>
+      </div>
+
+<nav class="nav">
+  <a href="index.html">总览首页</a>
+  <div class="nav-group-title">模块</div>
+  <a href="modules/index.html">模块导航</a>
+  <a href="modules/foundation.html">基础层：Common / Protocol / App / Tooling</a>
+  <a href="modules/servers.html">业务层：Gateway / Login / World / Scene / Router / Mgo</a>
+  <div class="nav-group-title">链路与评审</div>
+  <a href="flows/index.html">主链路导航</a>
+  <a href="flows/main-flows.html">跨模块主链路时序</a>
+  <a href="review/index.html">Review 导航</a>
+  <a href="review/priorities.html">分模块优先级清单</a>
+  <div class="nav-group-title">示例</div>
+  <a href="examples/index.html">示例导航</a>
+  <a href="examples/runtime-examples.html">运行与调用示例</a>
+  <a href="examples/source-map.html">源码来源索引</a>
+  <div class="nav-group-title">Runtime</div>
+  <a href="runtime/index.html">Runtime 导航</a>
+  <a href="runtime/world-runtime.html">World Runtime 设计</a>
+</nav>
+
+      <div class="nav-note">现在这套文档已经按模块、链路、review、示例、runtime 五个维度拆开；后续再补子系统页时，直接往目录里加即可。</div>
+    </aside>
+    <main class="content">
+
+<section class="hero">
+  <span class="pill">Architecture Hub</span>
+  <h2>Mession 仓库整体架构已经拆成按模块、按链路、按 review、按示例、按 runtime 查阅的文档目录</h2>
+  <p>现在可以分别从模块设计、跨模块时序、架构优先级、真实接口示例和 World Runtime 设计五个入口进入，不需要再在一个超长 HTML 里来回滚动。</p>
+  <div class="hero-grid">
+    <div class="card">
+      <h4>这次目录化后的结构</h4>
+      <ul>
+        <li><code>modules/</code>：按模块看基础层与业务层。</li>
+        <li><code>flows/</code>：按跨模块主链路看系统行为。</li>
+        <li><code>review/</code>：按优先级和 review 视角看问题清单。</li>
+        <li><code>examples/</code>：真实接口、运行示例、源码来源索引。</li>
+        <li><code>runtime/</code>：World Runtime 设计说明。</li>
+        <li><code>assets/</code>：共享样式资源。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>推荐阅读顺序</h4>
+      <ol>
+        <li>先看模块导航，建立整体地图。</li>
+        <li>再看主链路页，理解系统怎么跑。</li>
+        <li>然后看示例页和源码来源索引，把抽象设计与真实文件对上。</li>
+        <li>最后看 World Runtime 设计页，确认“去 Workflow”后的长期路线。</li>
+      </ol>
+    </div>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head">
+    <h3>文档入口</h3>
+    <p>每一页都只讲一类问题，避免一页里同时塞目录、时序、review 和实现细节。</p>
+  </div>
+  <div class="quick-grid">
+    <a class="link-card" href="modules/index.html"><h4>模块导航</h4><p>按基础层 / 业务层拆开查阅。</p></a>
+    <a class="link-card" href="modules/foundation.html"><h4>基础层</h4><p>Common、Protocol、App、Tooling。</p></a>
+    <a class="link-card" href="modules/servers.html"><h4>业务层</h4><p>Gateway、Login、World、Scene、Router、Mgo。</p></a>
+    <a class="link-card" href="flows/main-flows.html"><h4>主链路</h4><p>登录、切场、战斗、登出时序。</p></a>
+    <a class="link-card" href="examples/index.html"><h4>示例导航</h4><p>从真实代码和运行片段进入。</p></a>
+    <a class="link-card" href="examples/runtime-examples.html"><h4>运行与调用示例</h4><p>Bash / JSON / C++ 混合示例。</p></a>
+    <a class="link-card" href="examples/source-map.html"><h4>源码来源索引</h4><p>按模块标注示例对应文件。</p></a>
+    <a class="link-card" href="runtime/world-runtime.html"><h4>World Runtime 设计</h4><p>把 Runtime 下沉路线单独讲清楚。</p></a>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head">
+    <h3>当前总判断</h3>
+    <p>这页保留最浓缩的结论，方便你快速确认当前设计重心。</p>
+  </div>
+  <div class="grid-2">
+    <div class="card">
+      <h4>优点</h4>
+      <ul>
+        <li>仓库分层已经很清楚：底座、协议、桥接、业务 server。</li>
+        <li>World 的显式 Workflow 已基本收掉，业务主链路可读性明显提升。</li>
+        <li>App 层已经开始承担通用 async glue 的复用责任。</li>
+        <li>文档现在也能从真实接口示例和源码索引反推整体设计，不再停留在概念层。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>当前主矛盾</h4>
+      <ul>
+        <li>World 仍然是复杂度最大汇聚点。</li>
+        <li>跨模块异步边界虽然已收敛，但仍需要持续保持公共化。</li>
+        <li>后续重点应该是 Runtime 能力和边界收口，而不是回到流程对象设计。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+    </main>
+  </div>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
+<script>window.addEventListener('DOMContentLoaded', () => hljs.highlightAll());</script>
+</body>
+</html>

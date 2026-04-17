@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review 导航</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css">
+</head>
+<body>
+  <div class="page">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="pill">Repository Architecture</span>
+        <h1>Review 导航</h1>
+        <p>从问题优先级视角看整体架构。</p>
+      </div>
+
+<nav class="nav">
+  <a href="../index.html">总览首页</a>
+  <div class="nav-group-title">模块</div>
+  <a href="../modules/index.html">模块导航</a>
+  <a href="../modules/foundation.html">基础层：Common / Protocol / App / Tooling</a>
+  <a href="../modules/servers.html">业务层：Gateway / Login / World / Scene / Router / Mgo</a>
+  <div class="nav-group-title">链路与评审</div>
+  <a href="../flows/index.html">主链路导航</a>
+  <a href="../flows/main-flows.html">跨模块主链路时序</a>
+  <a href="../review/index.html">Review 导航</a>
+  <a href="../review/priorities.html">分模块优先级清单</a>
+  <div class="nav-group-title">示例</div>
+  <a href="../examples/index.html">示例导航</a>
+  <a href="../examples/runtime-examples.html">运行与调用示例</a>
+  <a href="../examples/source-map.html">源码来源索引</a>
+  <div class="nav-group-title">Runtime</div>
+  <a href="../runtime/index.html">Runtime 导航</a>
+  <a href="../runtime/world-runtime.html">World Runtime 设计</a>
+</nav>
+
+      <div class="nav-note">现在这套文档已经按模块、链路、review、示例、runtime 五个维度拆开；后续再补子系统页时，直接往目录里加即可。</div>
+    </aside>
+    <main class="content">
+
+<section class="hero">
+  <span class="pill">Review</span>
+  <h2>把整体架构判断拆成可行动的 review 清单</h2>
+  <p>这里不是单纯复述优缺点，而是把“接下来最该改什么”按优先级和模块落地。</p>
+</section>
+<section class="section">
+  <div class="grid-2">
+    <a class="link-card" href="priorities.html"><h4>分模块优先级清单</h4><p>按 P0 / P1 / P2 / P3 看后续重点。</p></a>
+    <a class="link-card" href="../runtime/world-runtime.html"><h4>World Runtime 设计</h4><p>先看 Runtime 设计，再回来排优先级会更稳。</p></a>
+  </div>
+</section>
+    </main>
+  </div>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
+<script>window.addEventListener('DOMContentLoaded', () => hljs.highlightAll());</script>
+</body>
+</html>

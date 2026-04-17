@@ -1,13 +1,13 @@
 #include "Servers/World/Player/PlayerService.h"
 
+#include "Servers/World/Player/PlayerCombatProfile.h"
 #include "Servers/World/Player/PlayerInventory.h"
 #include "Servers/World/Player/PlayerProgression.h"
 
 MFuture<TResult<FPlayerChangeGoldResponse, FAppError>> MPlayerService::PlayerChangeGold(
     const FPlayerChangeGoldRequest& Request)
 {
-    return MPlayerServiceDetail::DispatchPlayerComponent<MPlayerInventory, FPlayerChangeGoldResponse>(
-        this,
+    return DispatchPlayerComponent<MPlayerInventory, FPlayerChangeGoldResponse>(
         Request,
         &MPlayerService::FindInventory,
         &MPlayerInventory::PlayerChangeGold,
@@ -18,8 +18,7 @@ MFuture<TResult<FPlayerChangeGoldResponse, FAppError>> MPlayerService::PlayerCha
 MFuture<TResult<FPlayerEquipItemResponse, FAppError>> MPlayerService::PlayerEquipItem(
     const FPlayerEquipItemRequest& Request)
 {
-    return MPlayerServiceDetail::DispatchPlayerComponent<MPlayerInventory, FPlayerEquipItemResponse>(
-        this,
+    return DispatchPlayerComponent<MPlayerInventory, FPlayerEquipItemResponse>(
         Request,
         &MPlayerService::FindInventory,
         &MPlayerInventory::PlayerEquipItem,
@@ -30,8 +29,7 @@ MFuture<TResult<FPlayerEquipItemResponse, FAppError>> MPlayerService::PlayerEqui
 MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> MPlayerService::PlayerGrantExperience(
     const FPlayerGrantExperienceRequest& Request)
 {
-    return MPlayerServiceDetail::DispatchPlayerComponent<MPlayerProgression, FPlayerGrantExperienceResponse>(
-        this,
+    return DispatchPlayerComponent<MPlayerProgression, FPlayerGrantExperienceResponse>(
         Request,
         &MPlayerService::FindProgression,
         &MPlayerProgression::PlayerGrantExperience,
@@ -42,37 +40,21 @@ MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> MPlayerService::Play
 MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> MPlayerService::PlayerModifyHealth(
     const FPlayerModifyHealthRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerModifyHealthResponse>(
-            "player_id_required",
-            "PlayerModifyHealth");
-    }
+    return DispatchPlayerComponentWithSceneUpdate<MPlayerProgression, FPlayerModifyHealthResponse>(
+        Request,
+        &MPlayerService::FindProgression,
+        &MPlayerProgression::PlayerModifyHealth,
+        "player_progression_missing",
+        "PlayerModifyHealth");
+}
 
-    MPlayerProgression* Progression = FindProgression(Request.PlayerId);
-    if (!Progression)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerModifyHealthResponse>(
-            "player_progression_missing",
-            "PlayerModifyHealth");
-    }
-
-    MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> Future = Progression->PlayerModifyHealth(Request);
-
-    Future.Then([this, PlayerId = Request.PlayerId](MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> Completed)
-    {
-        try
-        {
-            const TResult<FPlayerModifyHealthResponse, FAppError> Result = Completed.Get();
-            if (Result.IsOk())
-            {
-                QueueScenePlayerUpdateNotify(PlayerId);
-            }
-        }
-        catch (...)
-        {
-        }
-    });
-
-    return Future;
+MFuture<TResult<FPlayerSetPrimarySkillResponse, FAppError>> MPlayerService::PlayerSetPrimarySkill(
+    const FPlayerSetPrimarySkillRequest& Request)
+{
+    return DispatchPlayerComponent<MPlayerCombatProfile, FPlayerSetPrimarySkillResponse>(
+        Request,
+        &MPlayerService::FindCombatProfile,
+        &MPlayerCombatProfile::PlayerSetPrimarySkill,
+        "player_combat_profile_missing",
+        "PlayerSetPrimarySkill");
 }

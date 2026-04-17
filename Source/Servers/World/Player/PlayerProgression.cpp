@@ -29,37 +29,19 @@ void MPlayerProgression::LoadState(uint32 InLevel, uint32 InExperience, uint32 I
     Health = InHealth;
 }
 
-MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> MPlayerProgression::PlayerQueryProgression(
-    const FPlayerQueryProgressionRequest& /*Request*/)
+TResult<FPlayerGrantExperienceResponse, FAppError> MPlayerProgression::ApplyExperienceDelta(uint32 ExperienceDelta)
 {
-    FPlayerQueryProgressionResponse Response;
-    if (const MPlayerProfile* Profile = dynamic_cast<const MPlayerProfile*>(GetOuter()))
+    if (ExperienceDelta == 0)
     {
-        Response.PlayerId = Profile->PlayerId;
+        return TResult<FPlayerGrantExperienceResponse, FAppError>::Ok(FPlayerGrantExperienceResponse{});
     }
 
-    Response.Level = Level;
-    Response.Experience = Experience;
-    Response.Health = Health;
-    return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
-}
-
-MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> MPlayerProgression::PlayerGrantExperience(
-    const FPlayerGrantExperienceRequest& Request)
-{
-    if (Request.ExperienceDelta == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerGrantExperienceResponse>(
-            "experience_delta_required",
-            "PlayerGrantExperience");
-    }
-
-    const uint64 TotalExperience = static_cast<uint64>(Experience) + static_cast<uint64>(Request.ExperienceDelta);
+    const uint64 TotalExperience = static_cast<uint64>(Experience) + static_cast<uint64>(ExperienceDelta);
     if (TotalExperience > static_cast<uint64>(std::numeric_limits<uint32>::max()))
     {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerGrantExperienceResponse>(
+        return MakeErrorResult<FPlayerGrantExperienceResponse>(FAppError::Make(
             "player_experience_overflow",
-            "PlayerGrantExperience");
+            "PlayerGrantExperience"));
     }
 
     Experience = static_cast<uint32>(TotalExperience);
@@ -81,16 +63,54 @@ MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> MPlayerProgression::
     }
     Response.Level = Level;
     Response.Experience = Experience;
+    return TResult<FPlayerGrantExperienceResponse, FAppError>::Ok(std::move(Response));
+}
+
+MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> MPlayerProgression::PlayerQueryProgression(
+    const FPlayerQueryProgressionRequest& /*Request*/)
+{
+    FPlayerQueryProgressionResponse Response;
+    if (const MPlayerProfile* Profile = dynamic_cast<const MPlayerProfile*>(GetOuter()))
+    {
+        Response.PlayerId = Profile->PlayerId;
+    }
+
+    Response.Level = Level;
+    Response.Experience = Experience;
+    Response.Health = Health;
+
+    if (const MPlayerProfile* Profile = dynamic_cast<const MPlayerProfile*>(GetOuter()))
+    {
+        if (const MPlayer* Player = dynamic_cast<const MPlayer*>(Profile->GetOuter()))
+        {
+            Response.Health = Player->ResolveCurrentHealth();
+        }
+    }
+
     return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
+}
+
+MFuture<TResult<FPlayerGrantExperienceResponse, FAppError>> MPlayerProgression::PlayerGrantExperience(
+    const FPlayerGrantExperienceRequest& Request)
+{
+    if (Request.ExperienceDelta == 0)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerGrantExperienceResponse>(
+            "experience_delta_required",
+            "PlayerGrantExperience");
+    }
+
+    return MServerCallAsyncSupport::MakeResultFuture(ApplyExperienceDelta(Request.ExperienceDelta));
 }
 
 MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> MPlayerProgression::PlayerModifyHealth(
     const FPlayerModifyHealthRequest& Request)
 {
     const int64 NextHealth = static_cast<int64>(Health) + static_cast<int64>(Request.HealthDelta);
+    uint32 ResolvedHealth = Health;
     if (NextHealth < 0)
     {
-        Health = 0;
+        ResolvedHealth = 0;
     }
     else if (NextHealth > static_cast<int64>(std::numeric_limits<uint32>::max()))
     {
@@ -100,20 +120,23 @@ MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> MPlayerProgression::Pla
     }
     else
     {
-        Health = static_cast<uint32>(NextHealth);
+        ResolvedHealth = static_cast<uint32>(NextHealth);
     }
-
-    MarkPropertyDirty("Health");
 
     if (MPlayerProfile* Profile = dynamic_cast<MPlayerProfile*>(GetOuter()))
     {
         if (MPlayer* Player = dynamic_cast<MPlayer*>(Profile->GetOuter()))
         {
-            if (MPlayerPawn* Pawn = Player->GetPawn(); Pawn && Pawn->IsSpawned())
-            {
-                Pawn->SetHealth(Health);
-            }
+            Player->ApplyResolvedHealth(ResolvedHealth);
         }
+        else
+        {
+            SetHealth(ResolvedHealth);
+        }
+    }
+    else
+    {
+        SetHealth(ResolvedHealth);
     }
 
     FPlayerModifyHealthResponse Response;

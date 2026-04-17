@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MObject 表格编辑器</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="topbar-title">
+        <span class="topbar-kicker">MObject 编辑器</span>
+        <strong>怪物配置表</strong>
+      </div>
+
+      <div class="topbar-summary">
+        <div class="summary-card">
+          <span class="summary-label">当前选择</span>
+          <strong id="selected-asset-label">未选择任何行</strong>
+        </div>
+        <div class="summary-card compact">
+          <span class="summary-label">选中行数</span>
+          <span id="selected-count-label">0</span>
+        </div>
+        <div class="summary-card compact">
+          <span class="summary-label">连接状态</span>
+          <span id="connection-badge" class="status-pill warn">离线</span>
+        </div>
+        <div class="summary-card compact">
+          <span class="summary-label">脏行数</span>
+          <span id="dirty-count-label">0</span>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <button id="reload-table" class="toolbar-button ghost" type="button">刷新</button>
+        <button id="add-row" class="toolbar-button ghost" type="button">新增</button>
+        <button id="duplicate-selected" class="toolbar-button ghost" type="button">复制</button>
+        <button id="save-as-selected" class="toolbar-button ghost" type="button">另存为</button>
+        <button id="delete-selected" class="toolbar-button strong" type="button">删除</button>
+        <button id="save-all" class="toolbar-button accent" type="button">全部保存</button>
+        <button id="validate-selected" class="toolbar-button accent" type="button">校验</button>
+        <button id="export-selected" class="toolbar-button strong" type="button">导出</button>
+        <button id="publish-selected" class="toolbar-button strong alt" type="button">发布</button>
+      </div>
+    </header>
+
+    <nav class="asset-tabs" aria-label="资产类型">
+      <button class="asset-tab active" type="button" data-asset-tab="monster">怪物配置</button>
+      <button class="asset-tab" type="button" data-asset-tab="skill">技能配置</button>
+      <button class="asset-tab" type="button" data-asset-tab="buff">增益配置</button>
+      <button class="asset-tab" type="button" data-asset-tab="drop">掉落配置</button>
+    </nav>
+
+    <main class="workspace">
+      <section class="panel table-pane">
+        <div class="panel-header panel-header-stack">
+          <div class="panel-header-main">
+            <div>
+              <span class="section-kicker">主视图</span>
+              <h1>配置列表</h1>
+            </div>
+            <div class="table-tools">
+              <label class="table-filter">
+                <span>筛选</span>
+                <input id="table-filter" type="search" placeholder="资产名 / 调试名 / 分类 / 场景">
+              </label>
+            </div>
+          </div>
+          <div class="table-ops-bar">
+            <div class="ops-group">
+              <button id="select-all-visible" class="mini-button" type="button">选中可见</button>
+              <button id="clear-selection" class="mini-button" type="button">清空选择</button>
+              <button id="clear-selected-cells" class="mini-button" type="button">清空单元格</button>
+              <button id="fill-down" class="mini-button" type="button">向下填充</button>
+              <button id="increment-fill" class="mini-button" type="button">递增填充</button>
+              <button id="undo-action" class="mini-button" type="button">撤销</button>
+              <button id="redo-action" class="mini-button" type="button">重做</button>
+            </div>
+            <div class="ops-group">
+              <span class="shortcut-hint">Ctrl/Cmd+点击多选</span>
+              <span class="shortcut-hint">Shift+点击范围选中</span>
+              <span class="shortcut-hint">支持粘贴 TSV</span>
+              <span class="shortcut-hint">方向键 / Enter 移动单元格</span>
+              <span class="shortcut-hint">点击表头排序</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="config-table">
+            <colgroup id="table-colgroup"></colgroup>
+            <thead>
+              <tr>
+                <th class="select-column sticky-col sticky-col-select" data-column-key="select">
+                  <input id="select-all-checkbox" type="checkbox" aria-label="选择所有可见行">
+                  <span class="column-resizer" data-resize-column="select"></span>
+                </th>
+                <th class="sticky-col sticky-col-asset" data-column-key="asset">
+                  <button class="header-button" type="button" data-sort-field="asset">资产</button>
+                  <span class="column-resizer" data-resize-column="asset"></span>
+                </th>
+                <th data-column-key="monsterTemplateId">
+                  <button class="header-button" type="button" data-sort-field="monsterTemplateId">模板</button>
+                  <span class="column-resizer" data-resize-column="monsterTemplateId"></span>
+                </th>
+                <th data-column-key="debugName">
+                  <button class="header-button" type="button" data-sort-field="debugName">调试名</button>
+                  <span class="column-resizer" data-resize-column="debugName"></span>
+                </th>
+                <th data-column-key="sceneId">
+                  <button class="header-button" type="button" data-sort-field="sceneId">场景</button>
+                  <span class="column-resizer" data-resize-column="sceneId"></span>
+                </th>
+                <th data-column-key="currentHealth">
+                  <button class="header-button" type="button" data-sort-field="currentHealth">当前生命</button>
+                  <span class="column-resizer" data-resize-column="currentHealth"></span>
+                </th>
+                <th data-column-key="maxHealth">
+                  <button class="header-button" type="button" data-sort-field="maxHealth">最大生命</button>
+                  <span class="column-resizer" data-resize-column="maxHealth"></span>
+                </th>
+                <th data-column-key="attackPower">
+                  <button class="header-button" type="button" data-sort-field="attackPower">攻击</button>
+                  <span class="column-resizer" data-resize-column="attackPower"></span>
+                </th>
+                <th data-column-key="defensePower">
+                  <button class="header-button" type="button" data-sort-field="defensePower">防御</button>
+                  <span class="column-resizer" data-resize-column="defensePower"></span>
+                </th>
+                <th data-column-key="primarySkillId">
+                  <button class="header-button" type="button" data-sort-field="primarySkillId">主技能</button>
+                  <span class="column-resizer" data-resize-column="primarySkillId"></span>
+                </th>
+                <th data-column-key="experienceReward">
+                  <button class="header-button" type="button" data-sort-field="experienceReward">经验</button>
+                  <span class="column-resizer" data-resize-column="experienceReward"></span>
+                </th>
+                <th data-column-key="goldReward">
+                  <button class="header-button" type="button" data-sort-field="goldReward">金币</button>
+                  <span class="column-resizer" data-resize-column="goldReward"></span>
+                </th>
+                <th data-column-key="skills">
+                  <button class="header-button" type="button" data-sort-field="skills">技能列表</button>
+                  <span class="column-resizer" data-resize-column="skills"></span>
+                </th>
+                <th data-column-key="dirty">
+                  <button class="header-button" type="button" data-sort-field="dirty">修改</button>
+                  <span class="column-resizer" data-resize-column="dirty"></span>
+                </th>
+                <th data-column-key="validation">
+                  <button class="header-button" type="button" data-sort-field="validation">校验</button>
+                  <span class="column-resizer" data-resize-column="validation"></span>
+                </th>
+              </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside class="panel inspector-pane">
+        <div class="panel-header">
+          <div>
+            <span class="section-kicker">检查器</span>
+            <h2 id="inspector-title">未选择任何行</h2>
+          </div>
+        </div>
+
+        <div class="inspector-scroll">
+          <section class="inspector-section">
+            <div class="section-header-row">
+              <span class="section-kicker">标识</span>
+              <h3>资产标识</h3>
+            </div>
+            <div class="form-grid two-columns">
+              <label class="field">
+                <span>资产名</span>
+                <input id="asset-name" type="text" placeholder="Slime">
+              </label>
+              <label class="field">
+                <span>分类路径</span>
+                <input id="category-path" type="text" placeholder="Combat/Monsters">
+              </label>
+              <label class="field full-width">
+                <span>源路径</span>
+                <input id="source-path" type="text" readonly>
+              </label>
+            </div>
+          </section>
+
+          <section class="inspector-section">
+            <div class="section-header-row">
+              <span class="section-kicker">核心</span>
+              <h3>怪物基础</h3>
+            </div>
+            <div class="form-grid two-columns">
+              <label class="field">
+                <span>怪物模板 Id</span>
+                <input id="monster-template-id" type="number" min="0" step="1">
+              </label>
+              <label class="field">
+                <span>调试名</span>
+                <input id="debug-name" type="text" placeholder="ForestSlime">
+              </label>
+            </div>
+          </section>
+
+          <section class="inspector-section">
+            <div class="section-header-row">
+              <span class="section-kicker">战斗</span>
+              <h3>生成参数</h3>
+            </div>
+            <div class="form-grid two-columns">
+              <label class="field"><span>场景 Id</span><input id="scene-id" type="number" min="0" step="1"></label>
+              <label class="field"><span>主技能 Id</span><input id="primary-skill-id" type="number" min="0" step="1"></label>
+              <label class="field"><span>当前生命</span><input id="current-health" type="number" min="0" step="1"></label>
+              <label class="field"><span>最大生命</span><input id="max-health" type="number" min="0" step="1"></label>
+              <label class="field"><span>攻击力</span><input id="attack-power" type="number" min="0" step="1"></label>
+              <label class="field"><span>防御力</span><input id="defense-power" type="number" min="0" step="1"></label>
+            </div>
+          </section>
+
+          <section class="inspector-section">
+            <div class="section-header-row">
+              <span class="section-kicker">奖励</span>
+              <h3>奖励数值</h3>
+            </div>
+            <div class="form-grid two-columns">
+              <label class="field"><span>经验奖励</span><input id="experience-reward" type="number" min="0" step="1"></label>
+              <label class="field"><span>金币奖励</span><input id="gold-reward" type="number" min="0" step="1"></label>
+            </div>
+          </section>
+
+          <section class="inspector-section">
+            <div class="section-header-row skills-row">
+              <div>
+                <span class="section-kicker">技能</span>
+                <h3>技能 Id 列表</h3>
+              </div>
+              <div class="skill-adder">
+                <input id="skill-id-input" type="number" min="1" step="1" placeholder="1001">
+                <button id="add-skill-id" class="mini-button accent" type="button">添加</button>
+              </div>
+            </div>
+            <div id="skill-id-list" class="skill-chip-list"></div>
+          </section>
+
+          <section class="inspector-section">
+            <div class="section-header-row">
+              <span class="section-kicker">生成产物</span>
+              <h3>输出路径</h3>
+            </div>
+            <div class="path-stack">
+              <div class="path-item"><span>JSON</span><code id="generated-json-path">Build/Generated/Assets/...</code></div>
+              <div class="path-item"><span>MOB</span><code id="generated-mob-path">Build/Generated/Assets/...</code></div>
+              <div class="path-item"><span>回读</span><code id="generated-roundtrip-path">Build/Generated/Assets/...</code></div>
+              <div class="path-item"><span>发布</span><code id="publish-mob-path">GameData/...</code></div>
+            </div>
+          </section>
+
+          <section class="inspector-section">
+            <div class="section-header-row">
+              <span class="section-kicker">状态</span>
+              <h3>执行状态</h3>
+            </div>
+            <div id="status-card" class="status-card info">等待服务连接...</div>
+            <pre id="result-card" class="result-card"></pre>
+          </section>
+
+          <section class="inspector-section">
+            <div class="section-header-row">
+              <span class="section-kicker">校验</span>
+              <h3>问题列表</h3>
+            </div>
+            <div id="issue-list" class="issue-list empty">选择一行后查看校验结果。</div>
+          </section>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

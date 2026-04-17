@@ -1,11 +1,12 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Servers/App/ServerCallRequestValidation.h"
 
 MSTRUCT()
 struct FPlayerMoveRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerMove"))
     uint64 PlayerId = 0;
 
     MPROPERTY()

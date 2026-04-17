@@ -64,14 +64,24 @@ MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MPlayerController::Playe
     FPlayerApplyRouteRequest ApplyRequest;
     ApplyRequest.SceneId = Request.SceneId;
     ApplyRequest.TargetServerType = Request.TargetServerType;
-    return MServerCallAsyncSupport::Map(
-        ApplyRouteCall(ApplyRequest),
-        [](const FPlayerApplyRouteResponse& ApplyValue)
-        {
-            FPlayerUpdateRouteResponse Response;
-            Response.PlayerId = ApplyValue.PlayerId;
-            return Response;
-        });
+    MFuture<TResult<FPlayerApplyRouteResponse, FAppError>> ApplyFuture = ApplyRouteCall(ApplyRequest);
+    if (!ApplyFuture.Valid())
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerUpdateRouteResponse>(
+            "player_apply_route_invalid_future",
+            "PlayerUpdateRoute");
+    }
+
+    const TResult<FPlayerApplyRouteResponse, FAppError> ApplyResult = ApplyFuture.Get();
+    if (!ApplyResult.IsOk())
+    {
+        return MServerCallAsyncSupport::MakeResultFuture(
+            MakeErrorResult<FPlayerUpdateRouteResponse>(ApplyResult.GetError()));
+    }
+
+    FPlayerUpdateRouteResponse Response;
+    Response.PlayerId = ApplyResult.GetValue().PlayerId;
+    return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
 }
 
 MFuture<TResult<FPlayerApplyRouteResponse, FAppError>> MPlayerController::ApplyRouteCall(

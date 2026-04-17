@@ -87,6 +87,24 @@ MProperty* MClass::FindPropertyById(uint16 InId) const
     return nullptr;
 }
 
+MProperty* MClass::FindPropertyByAssetFieldId(uint32 InAssetFieldId) const
+{
+    for (MProperty* Prop : Properties)
+    {
+        if (Prop && Prop->AssetFieldId == InAssetFieldId)
+        {
+            return Prop;
+        }
+    }
+
+    if (ParentClass)
+    {
+        return ParentClass->FindPropertyByAssetFieldId(InAssetFieldId);
+    }
+
+    return nullptr;
+}
+
 MFunction* MClass::FindFunction(const MString& InName) const
 {
     for (MFunction* Func : Functions)

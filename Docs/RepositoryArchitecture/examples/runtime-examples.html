@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>运行与调用示例</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css">
+</head>
+<body>
+  <div class="page">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="pill">Repository Architecture</span>
+        <h1>运行与调用示例</h1>
+        <p>把 Bash、JSON、C++ 放到同一页里，更容易看出系统是怎么装起来的。</p>
+      </div>
+
+<nav class="nav">
+  <a href="../index.html">总览首页</a>
+  <div class="nav-group-title">模块</div>
+  <a href="../modules/index.html">模块导航</a>
+  <a href="../modules/foundation.html">基础层：Common / Protocol / App / Tooling</a>
+  <a href="../modules/servers.html">业务层：Gateway / Login / World / Scene / Router / Mgo</a>
+  <div class="nav-group-title">链路与评审</div>
+  <a href="../flows/index.html">主链路导航</a>
+  <a href="../flows/main-flows.html">跨模块主链路时序</a>
+  <a href="../review/index.html">Review 导航</a>
+  <a href="../review/priorities.html">分模块优先级清单</a>
+  <div class="nav-group-title">示例</div>
+  <a href="../examples/index.html">示例导航</a>
+  <a href="../examples/runtime-examples.html">运行与调用示例</a>
+  <a href="../examples/source-map.html">源码来源索引</a>
+  <div class="nav-group-title">Runtime</div>
+  <a href="../runtime/index.html">Runtime 导航</a>
+  <a href="../runtime/world-runtime.html">World Runtime 设计</a>
+</nav>
+
+      <div class="nav-note">现在这套文档已经按模块、链路、review、示例、runtime 五个维度拆开；后续再补子系统页时，直接往目录里加即可。</div>
+    </aside>
+    <main class="content">
+
+<section class="section">
+  <div class="section-head"><h3>示例 1：本地最小闭环验证</h3><p>这个 Bash 片段对应当前仓库最实用的一套本地验证动作：编译、启动、跑统一最小链路。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Local Validate Script</span><span>Scripts/validate.py</span></div>
+<pre><code class="language-bash">cmake -S . -B Build -DCMAKE_BUILD_TYPE=Release
+cmake --build Build -j4
+python3 Scripts/validate.py --build-dir Build --no-build</code></pre>
+        </div>
+  <div class="tag-row"><span class="tag">Build</span><span class="tag">Smoke Test</span><span class="tag">Gateway / Login / World / Scene / Router / Mgo</span></div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>示例 2：Cluster 配置形态</h3><p>这个 JSON 结构直接对应 <code>Scripts/server_cluster.py</code> 里 <code>ClusterConfig / RegistryConfig / TopologyConfig</code> 的装配方式。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Cluster Config Shape</span><span>Scripts/server_cluster.py</span></div>
+<pre><code class="language-json">{
+  &quot;registry&quot;: {
+    &quot;url&quot;: &quot;http://127.0.0.1:19083&quot;,
+    &quot;auth_token&quot;: &quot;reg-token&quot;,
+    &quot;auto_discover&quot;: true,
+    &quot;default_agent_auth_token&quot;: &quot;agent-token&quot;,
+    &quot;poll_interval&quot;: 0.5
+  },
+  &quot;nodes&quot;: [
+    {
+      &quot;name&quot;: &quot;local&quot;,
+      &quot;mode&quot;: &quot;local&quot;,
+      &quot;host&quot;: &quot;127.0.0.1&quot;,
+      &quot;build_dir&quot;: &quot;Build&quot;,
+      &quot;services&quot;: [
+        &quot;GatewayServer&quot;,
+        &quot;LoginServer&quot;,
+        &quot;WorldServer&quot;,
+        &quot;SceneServer&quot;,
+        &quot;RouterServer&quot;,
+        &quot;MgoServer&quot;
+      ]
+    }
+  ],
+  &quot;topology&quot;: {
+    &quot;version&quot;: &quot;local-dev&quot;,
+    &quot;node_services&quot;: {
+      &quot;local&quot;: [
+        &quot;GatewayServer&quot;,
+        &quot;LoginServer&quot;,
+        &quot;WorldServer&quot;,
+        &quot;SceneServer&quot;,
+        &quot;RouterServer&quot;,
+        &quot;MgoServer&quot;
+      ]
+    }
+  }
+}</code></pre>
+        </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>示例 3：World Runtime Dispatch 入口</h3><p>这里能看到 World 对外暴露的不是 Workflow 类，而是 Runtime Dispatch 契约：先校验和准备，再把业务体排进 player command runtime。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Dispatch Runtime Command</span><span>Source/Servers/World/Player/PlayerSwitchScene.cpp</span></div>
+<pre><code class="language-cpp">MFuture&lt;TResult&lt;FPlayerSwitchSceneResponse, FAppError&gt;&gt; MPlayerService::PlayerSwitchScene(
+    const FPlayerSwitchSceneRequest&amp; Request)
+{
+    return DispatchRuntimeCommand&lt;FPlayerSwitchSceneResponse&gt;(
+        Request,
+        &quot;PlayerSwitchScene&quot;,
+        { EDependency::Scene, EDependency::Router },
+        &amp;MPlayerService::DoPlayerSwitchScene);
+}</code></pre>
+        </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>示例 4：Fiber 风格异步业务函数体</h3><p>这段代码最能说明你想要的方向：写业务的人看到的是顺序代码，异步复杂度被 Runtime 吃掉，而不是再回到 Callback Hell。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Scene Call with MAwaitOk</span><span>Source/Servers/World/Player/PlayerCombat.cpp</span></div>
+<pre><code class="language-cpp">return MServerCallAsyncSupport::StartFiber&lt;FWorldCreateCombatAvatarResponse&gt;(
+    WorldServer-&gt;GetTaskRunner(),
+    [this, SceneRequest = std::move(SceneRequest)]() mutable
+    {
+        const FSceneSpawnCombatAvatarResponse Value =
+            MAwaitOk(WorldServer-&gt;GetScene()-&gt;SpawnCombatAvatar(SceneRequest));
+
+        FWorldCreateCombatAvatarResponse Response;
+        Response.PlayerId = Value.PlayerId;
+        Response.SceneId = Value.SceneId;
+        Response.CombatEntityId = Value.CombatEntityId;
+        return TResult&lt;FWorldCreateCombatAvatarResponse, FAppError&gt;::Ok(std::move(Response));
+    });</code></pre>
+        </div>
+  <div class="callout-grid">
+    <div class="callout">从写法上看，这更像 <code>async / await</code> 的降阶版体验，只是底层依赖的是你们自己在 C++17 上做的 fiber runtime。</div>
+    <div class="callout">如果后续新业务也能保持这种风格，Workflow 类就没有必要再长回来。</div>
+    <div class="callout">真正应该继续投资的是 Runtime 能力、请求校验和 shared async glue，而不是再发明新的流程对象层。</div>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>源码路径说明</h3><p>这一页的示例不只是给你“看个感觉”，而是明确告诉你对应文件在哪里，方便你继续深挖。</p></div>
+  <table>
+    <thead><tr><th>示例</th><th>模块</th><th>主要源码文件</th><th>建议继续看什么</th></tr></thead>
+    <tbody>
+      <tr><td>本地闭环验证</td><td><code>Scripts</code></td><td><code>Scripts/validate.py</code></td><td><code>Scripts/README.md</code>、<code>Scripts/servers.py</code></td></tr>
+      <tr><td>Cluster 配置</td><td><code>Scripts</code></td><td><code>Scripts/server_cluster.py</code></td><td><code>Scripts/server_control_api.py</code>、<code>Scripts/server_registry.py</code></td></tr>
+      <tr><td>Runtime Dispatch</td><td><code>World</code></td><td><code>Source/Servers/World/Player/PlayerService.h</code>、<code>Source/Servers/World/Player/PlayerSwitchScene.cpp</code></td><td><code>Source/Servers/World/Player/PlayerServiceRuntime.cpp</code></td></tr>
+      <tr><td>Fiber 异步函数体</td><td><code>World / Common</code></td><td><code>Source/Servers/World/Player/PlayerCombat.cpp</code>、<code>Source/Common/Runtime/Concurrency/FiberAwait.h</code></td><td><code>runtime/world-runtime.html</code></td></tr>
+    </tbody>
+  </table>
+</section>
+    </main>
+  </div>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
+<script>window.addEventListener('DOMContentLoaded', () => hljs.highlightAll());</script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
+#include <cstring>
 
 // 如果定义了 USE_NLOHMANN_JSON，则内部实现委托给 nlohmann::json；
 // 否则回退到轻量自研实现，保证不引入外部依赖。
@@ -642,4 +643,3 @@ private:
     size_t Index = 0;
     MString ErrorMessage;
 };
-

@@ -1,5 +1,7 @@
 #include "Servers/World/Player/PlayerProfile.h"
 
+#include "Servers/World/Player/Player.h"
+
 MPlayerProfile::MPlayerProfile()
 {
     Inventory = CreateDefaultSubObject<MPlayerInventory>(this, "Inventory");
@@ -30,13 +32,9 @@ uint32 MPlayerProfile::ResolveCurrentHealth() const
     return Progression ? Progression->Health : 100;
 }
 
-void MPlayerProfile::SyncRuntimeState(uint32 InCurrentSceneId, uint32 InHealth)
+void MPlayerProfile::SyncRuntimeState(uint32 InCurrentSceneId)
 {
     SetCurrentSceneId(InCurrentSceneId != 0 ? InCurrentSceneId : ResolveCurrentSceneId());
-    if (Progression)
-    {
-        Progression->SetHealth(InHealth);
-    }
 }
 
 void MPlayerProfile::LoadPersistenceState(
@@ -76,6 +74,12 @@ MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> MPlayerProfile::PlayerQ
         Response.Level = Progression->Level;
         Response.Experience = Progression->Experience;
         Response.Health = Progression->Health;
+    }
+
+    if (const MPlayer* Player = dynamic_cast<const MPlayer*>(GetOuter()))
+    {
+        Response.CurrentSceneId = Player->ResolveCurrentSceneId();
+        Response.Health = Player->ResolveCurrentHealth();
     }
 
     return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));

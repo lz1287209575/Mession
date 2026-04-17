@@ -10,13 +10,6 @@ void MObjectCallRouter::Initialize(MObjectCallRegistry* InRegistry)
 MFuture<TResult<FObjectCallResponse, FAppError>> MObjectCallRouter::DispatchObjectCall(
     const FObjectCallRequest& Request)
 {
-    if (!Registry)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FObjectCallResponse>(
-            "object_proxy_registry_missing",
-            "DispatchObjectCall");
-    }
-
     if (Request.FunctionName.empty())
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FObjectCallResponse>(
@@ -24,7 +17,7 @@ MFuture<TResult<FObjectCallResponse, FAppError>> MObjectCallRouter::DispatchObje
             "DispatchObjectCall");
     }
 
-    TResult<MObject*, FAppError> ResolveResult = Registry->ResolveTargetObject(Request.Target);
+    TResult<MObject*, FAppError> ResolveResult = MObjectCall::MDetail::ResolveLocalTargetObject(Request.Target, Registry);
     if (!ResolveResult.IsOk())
     {
         return MServerCallAsyncSupport::MakeResultFuture(
@@ -36,4 +29,3 @@ MFuture<TResult<FObjectCallResponse, FAppError>> MObjectCallRouter::DispatchObje
         Request.FunctionName.c_str(),
         Request.Payload);
 }
-

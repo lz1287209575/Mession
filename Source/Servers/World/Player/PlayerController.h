@@ -15,7 +15,8 @@ public:
 public:
     MPlayerController();
 
-    MPROPERTY(PersistentData | Replicated)
+    // Route state is runtime-owned by World and reconstructed during login/load.
+    MPROPERTY(Replicated)
     uint32 SceneId = 0;
 
     MPROPERTY(Replicated)

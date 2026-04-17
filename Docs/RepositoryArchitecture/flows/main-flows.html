@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>跨模块主链路</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css">
+</head>
+<body>
+  <div class="page">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="pill">Repository Architecture</span>
+        <h1>跨模块主链路</h1>
+        <p>聚焦系统真正的跨模块时序。</p>
+      </div>
+
+<nav class="nav">
+  <a href="../index.html">总览首页</a>
+  <div class="nav-group-title">模块</div>
+  <a href="../modules/index.html">模块导航</a>
+  <a href="../modules/foundation.html">基础层：Common / Protocol / App / Tooling</a>
+  <a href="../modules/servers.html">业务层：Gateway / Login / World / Scene / Router / Mgo</a>
+  <div class="nav-group-title">链路与评审</div>
+  <a href="../flows/index.html">主链路导航</a>
+  <a href="../flows/main-flows.html">跨模块主链路时序</a>
+  <a href="../review/index.html">Review 导航</a>
+  <a href="../review/priorities.html">分模块优先级清单</a>
+  <div class="nav-group-title">示例</div>
+  <a href="../examples/index.html">示例导航</a>
+  <a href="../examples/runtime-examples.html">运行与调用示例</a>
+  <a href="../examples/source-map.html">源码来源索引</a>
+  <div class="nav-group-title">Runtime</div>
+  <a href="../runtime/index.html">Runtime 导航</a>
+  <a href="../runtime/world-runtime.html">World Runtime 设计</a>
+</nav>
+
+      <div class="nav-note">现在这套文档已经按模块、链路、review、示例、runtime 五个维度拆开；后续再补子系统页时，直接往目录里加即可。</div>
+    </aside>
+    <main class="content">
+
+<section class="section"><div class="section-head"><h3>主链路 1：登录并进入世界</h3><p>这是最能代表系统总装配关系的一条链路。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Client Login Flow</span><span>C++-style Runtime Call Chain</span></div>
+<pre><code class="language-cpp">Client
+  -&gt; Gateway.Client_Login
+      -&gt; World.WorldClient::Client_Login
+          -&gt; StartDeferredFiber(...)
+              -&gt; DoClientLogin(...)
+                  -&gt; Login.IssueSession(...)
+                  -&gt; PlayerService.PlayerEnterWorld(...)
+                      -&gt; DispatchRuntimeCommand(...)
+                          -&gt; DoPlayerEnterWorld(...)
+                              -&gt; Login.ValidateSession(...)
+                              -&gt; Mgo.LoadPlayer(...)
+                              -&gt; Scene.EnterScene(...)
+                              -&gt; Router.UpsertPlayerRoute(...)
+                              -&gt; QueueScenePlayerEnterNotify(...)
+  &lt;- ClientLoginResponse</code></pre>
+        </div>
+</section>
+<section class="section"><div class="section-head"><h3>主链路 2：切场</h3><p>World 负责编排，Scene 负责执行，Router 负责投影。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Switch Scene Flow</span><span>C++-style Runtime Call Chain</span></div>
+<pre><code class="language-cpp">Client
+  -&gt; Gateway.Client_SwitchScene
+      -&gt; World.WorldClientCommon
+          -&gt; StartDeferredFiber(...)
+              -&gt; PlayerService.PlayerSwitchScene(...)
+                  -&gt; DispatchRuntimeCommand(...)
+                      -&gt; DoPlayerSwitchScene(...)
+                          -&gt; Scene.LeaveScene(old)
+                          -&gt; Scene.EnterScene(target)
+                          -&gt; Router.UpsertPlayerRoute(target)
+                          -&gt; QueueScenePlayerLeave / Enter / Update Notify(...)
+  &lt;- ClientSwitchSceneResponse</code></pre>
+        </div>
+</section>
+<section class="section"><div class="section-head"><h3>主链路 3：战斗施法</h3><p>World 负责跨玩家顺序和结果提交，Scene 负责战斗执行。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Combat Flow</span><span>C++-style Runtime Call Chain</span></div>
+<pre><code class="language-cpp">Client
+  -&gt; Gateway.Client_CastSkill
+      -&gt; World.WorldClientCombat
+          -&gt; StartDeferredFiber(...)
+              -&gt; PlayerService.CastSkill(...)
+                  -&gt; DispatchRuntimeCommandMany(caster, target)
+                      -&gt; DoCastSkill(...)
+                          -&gt; EnsureCombatAvatar(caster)
+                          -&gt; EnsureCombatAvatar(target)
+                          -&gt; Scene.CastSkill(...)
+                          -&gt; CommitCombatResult(...)
+  &lt;- ClientCastSkillResponse</code></pre>
+        </div>
+</section>
+<section class="section"><div class="section-head"><h3>主链路 4：登出</h3><p>登出已经不是简单的离线，而是一个状态收敛过程。</p></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Logout Flow</span><span>C++-style Runtime Call Chain</span></div>
+<pre><code class="language-cpp">Client
+  -&gt; Gateway.Client_Logout
+      -&gt; World.WorldClientCommon
+          -&gt; StartDeferredFiber(...)
+              -&gt; PlayerService.PlayerLogout(...)
+                  -&gt; BuildLogoutParticipants(...)
+                  -&gt; DispatchRuntimeCommandMany(...)
+                      -&gt; DoPlayerLogout(...)
+                          -&gt; CleanupPlayerSocialState(...)
+                          -&gt; Scene.LeaveScene(...)
+                          -&gt; Mgo.SavePlayer(...)
+                          -&gt; PlayerCommandRuntime.BumpEpoch(...)
+                          -&gt; RemovePlayer(...)
+  &lt;- ClientLogoutResponse</code></pre>
+        </div>
+      </section>
+    </main>
+  </div>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
+<script>window.addEventListener('DOMContentLoaded', () => hljs.highlightAll());</script>
+</body>
+</html>

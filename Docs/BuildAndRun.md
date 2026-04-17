@@ -44,6 +44,32 @@ Scripts\Build.bat Release
 2. 生成 `Build/`
 3. 编译 `Release`
 
+## 自定义 BuildSystem
+
+当前 Python 工具链支持可配置的 `BuildSystem`，默认仍然是内置的 `cmake`。
+
+如果你想定义自己的构建流程，可以创建：
+
+- `Config/build_systems.json`
+
+示例配置见：
+
+- `Config/build_systems.example.json`
+
+当前支持的占位符：
+
+- `{project_root}`
+- `{build_dir}`
+- `{python}`
+
+单独执行构建入口：
+
+```bash
+python3 Scripts/build_project.py --build-dir Build --build-system custom-ninja --build-system-config Config/build_systems.json
+```
+
+同一套 `BuildSystem` 也可以传给 `validate.py`、`server_control_api.py` 和 `server_manager_tui.py`。
+
 ## 反射代码生成
 
 首次配置时，CMake 会尝试引导生成 `MHeaderTool`，用于反射代码生成。正常情况下不需要手动先跑一次工具。
@@ -110,6 +136,12 @@ python3 Scripts/validate.py --build-dir Build --no-build
 python3 Scripts/validate.py --build-dir Build
 ```
 
+如果要指定自定义构建系统：
+
+```bash
+python3 Scripts/validate.py --build-dir Build --build-system custom-ninja --build-system-config Config/build_systems.json
+```
+
 `validate.py` 当前会执行：
 
 1. 可选编译
@@ -133,6 +165,23 @@ python3 Scripts/validate.py --build-dir Build
    登出后重登恢复
    forwarded `ClientCall` 的参数错误 / 业务错误 / 后端不可用错误
 5. 清理进程
+
+如果你只想先过某一条主链路，而不是直接跑全量，也可以先查看并选择 suite：
+
+```bash
+python3 Scripts/validate.py --build-dir Build --no-build --list-suites
+python3 Scripts/validate.py --build-dir Build --no-build --suite runtime_dispatch
+python3 Scripts/validate.py --build-dir Build --no-build --suite scene_downlink
+```
+
+当前常用 suite：
+
+- `all`：全量验证
+- `player_state`：玩家状态写入、查询、重登恢复
+- `scene_downlink`：场景 enter / move / leave 下行链路
+- `combat_commit`：战斗提交与血量落账
+- `forward_errors`：forwarded `ClientCall` 的参数错误、业务错误、后端不可用
+- `runtime_dispatch`：当前主运行时链路集合，适合作为改 World runtime 后的第一道回归
 
 ## 端口约定
 
@@ -169,5 +218,7 @@ cmake -S . -B Build -DCMAKE_BUILD_TYPE=Release -DMESSION_USE_MONGOCXX=ON
 - `--no-mgo`
 - `--mongo-db`
 - `--mongo-collection`
+- `--list-suites`
+- `--suite <name>`
 
 适合把验证数据隔离到单独 sandbox 库里。

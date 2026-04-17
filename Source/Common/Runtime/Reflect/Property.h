@@ -6,6 +6,7 @@
 #include <typeindex>
 
 class MReflectArchive;
+struct MJsonValue;
 
 // 属性类型
 enum class EPropertyType : uint8
@@ -50,6 +51,7 @@ enum class EPropertyFlags : uint64
     RepNotify = 1 << 10,
     PersistentData = 1 << 11,
     RepToClient = 1 << 12,
+    Asset = 1 << 13,
 };
 
 // 属性域
@@ -58,6 +60,7 @@ enum class EPropertyDomainFlags : uint64
     None = 0,
     Replication = 1 << 0,
     Persistence = 1 << 1,
+    Asset = 1 << 2,
 };
 
 inline constexpr uint64 ToMask(EPropertyFlags Flags)
@@ -92,10 +95,12 @@ public:
     size_t Offset = 0;
     size_t Size = 0;
     uint16 PropertyId = 0;
+    uint32 AssetFieldId = 0;
     uint64 DomainFlags = ToMask(EPropertyDomainFlags::None);
     std::type_index CppTypeIndex = typeid(void);
     MutableAccessor MutableValueAccessor = nullptr;
     ConstAccessor ConstValueAccessor = nullptr;
+    TMap<MString, MString> Metadata;
 
     MProperty() = default;
     MProperty(const MString& InName, EPropertyType InType, size_t InOffset, size_t InSize)
@@ -104,6 +109,7 @@ public:
         , Offset(InOffset)
         , Size(InSize)
         , PropertyId(0)
+        , AssetFieldId(0)
         , CppTypeIndex(typeid(void))
     {
     }
@@ -115,6 +121,7 @@ public:
         , Offset(InOffset)
         , Size(InSize)
         , PropertyId(0)
+        , AssetFieldId(0)
         , CppTypeIndex(InCppTypeIndex)
     {
     }
@@ -133,6 +140,7 @@ public:
         , Offset(InOffset)
         , Size(InSize)
         , PropertyId(0)
+        , AssetFieldId(0)
         , CppTypeIndex(InCppTypeIndex)
         , MutableValueAccessor(InMutableAccessor)
         , ConstValueAccessor(InConstAccessor)
@@ -143,6 +151,10 @@ public:
 
     virtual void WriteValue(void* Object, MReflectArchive& Ar) const;
     virtual MString ExportValueToString(const void* Object) const;
+    virtual bool ExportJsonValue(const void* Object, MJsonValue& OutValue, MString* OutError = nullptr) const;
+    virtual bool ImportJsonValue(void* Object, const MJsonValue& InValue, MString* OutError = nullptr) const;
+    virtual bool ExportBinaryValue(const void* Object, TByteArray& OutData, MString* OutError = nullptr) const;
+    virtual bool ImportBinaryValue(void* Object, const TByteArray& InData, MString* OutError = nullptr) const;
 
     template<typename T>
     T* GetValuePtr(void* Object) const
@@ -206,5 +218,21 @@ public:
     bool HasAnyDomains(EPropertyDomainFlags InFlags) const
     {
         return HasAnyPropertyDomains(DomainFlags, InFlags);
+    }
+
+    void SetMetadata(const MString& InKey, const MString& InValue)
+    {
+        Metadata[InKey] = InValue;
+    }
+
+    const MString* FindMetadata(const MString& InKey) const
+    {
+        const auto It = Metadata.find(InKey);
+        return (It != Metadata.end()) ? &It->second : nullptr;
+    }
+
+    bool HasMetadata(const MString& InKey) const
+    {
+        return Metadata.find(InKey) != Metadata.end();
     }
 };

@@ -52,8 +52,8 @@ Mession 当前的目标不是继续堆单点玩法，而是把游戏服务端项
   监听、连接管理、运行时上下文、对外 RPC 入口。
 - `Rpc/*`
   指向其他服务器的强类型 RPC 包装。
-- `Services/*Endpoint*`
-  编排业务流程，不直接承担底层网络细节。
+- `WorldClient.*`、`Player/PlayerService.*`、`Backend/*`
+  服务编排、客户端入口和后端依赖装配。
 - `Players/*`
   玩家对象树与玩家主状态归属。
 - `Combat/*`
@@ -87,12 +87,12 @@ Mession 当前的目标不是继续堆单点玩法，而是把游戏服务端项
 
 当前 `World` 内部已经分出几条比较清晰的职责线：
 
-- `MWorldClientServiceEndpoint`
-  客户端 `Client_*` 入口。
-- `MWorldPlayerServiceEndpoint`
-  玩家进入世界、切场、登出等多步 workflow。
-- `MWorldCombatServiceEndpoint`
-  战斗 Avatar 创建、技能调用、结果提交。
+- `MWorldClient`
+  客户端 `Client_*` 入口，以及到 `MPlayerService` 的薄适配层。
+- `MPlayerService`
+  玩家进入世界、切场、登出、普通 Player RPC，以及最小战斗链路编排。
+- `MPlayerManager`
+  在线玩家索引、对象查找、持久化刷新与生命周期管理。
 - `MPlayer` 对象树
   真正承载玩家状态和普通 Player 业务实现。
 
@@ -124,15 +124,23 @@ Mession 当前的目标不是继续堆单点玩法，而是把游戏服务端项
 1. 客户端连接 `Gateway`
 2. 发送统一 `MT_FunctionCall`
 3. Gateway 依据 `MClientManifest` 判断目标服
-4. World 上的 `MWorldClientServiceEndpoint` 接收 `Client_*`
-5. 普通 Player 请求继续进入 `MWorldPlayerServiceEndpoint`
-6. `PlayerProxyCall` 把请求路由到 `MPlayer` 子对象
+4. World 上的 `MWorldClient` 接收 `Client_*`
+5. `WorldClientPlayerList.inl` 生成的薄适配把请求转给 `MPlayerService`
+6. `MPlayerService` 根据请求找到 `MPlayer` 或具体子对象
 7. 子对象上的 `MFUNCTION(ServerCall)` 实现真正业务
 
 这条链路已经覆盖：
 
 - 查询：`Profile / Pawn / Inventory / Progression`
 - 写操作：`ChangeGold / EquipItem / GrantExperience / ModifyHealth`
+- 社交：`Trade / Party`
+
+普通业务请求现在只保留一份定义：
+
+- `FPlayer*Request` / `FWorld*Request`
+  作为真正的业务 request，由 World 侧入口和服务侧共同复用。
+- `FClient*`
+  主要保留给客户端 response、notify，以及 `Login / Echo / Heartbeat` 这类真正的客户端侧请求。
 
 ### 跨服流程链
 
@@ -209,7 +217,7 @@ Mession 当前的目标不是继续堆单点玩法，而是把游戏服务端项
 
 ### 约束 2
 
-业务流程优先放在 `ServiceEndpoint` 或显式 `Workflow` 中，不把大量链式逻辑塞回 `Server` 类。
+业务流程优先放在 `MWorldClient`、`MPlayerService` 或显式 `Workflow` 中，不把大量链式逻辑塞回 `Server` 类。
 
 ### 约束 3
 

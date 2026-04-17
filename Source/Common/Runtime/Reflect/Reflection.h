@@ -8,6 +8,7 @@
 #include <typeinfo>
 #include <typeindex>
 #include <type_traits>
+#include <stdexcept>
 #include <tuple>
 // ============================================
 // 反射系统核心 - 仿UE风格
@@ -50,6 +51,12 @@ private:
         return Map;
     }
 
+    inline static TMap<uint32, MClass*>& GetClassAssetTypeMap()
+    {
+        static TMap<uint32, MClass*> Map;
+        return Map;
+    }
+
     inline static TMap<MString, MEnum*>& GetEnumMap()
     {
         static TMap<MString, MEnum*> Map;
@@ -77,6 +84,12 @@ private:
     inline static TMap<uint16, MClass*>& GetStructIdMap()
     {
         static TMap<uint16, MClass*> Map;
+        return Map;
+    }
+
+    inline static TMap<uint32, MClass*>& GetStructAssetTypeMap()
+    {
+        static TMap<uint32, MClass*> Map;
         return Map;
     }
 
@@ -206,6 +219,12 @@ public:
         return (It != GetClassIdMap().end()) ? It->second : nullptr;
     }
 
+    static MClass* FindClassByAssetTypeId(uint32 InAssetTypeId)
+    {
+        auto It = GetClassAssetTypeMap().find(InAssetTypeId);
+        return (It != GetClassAssetTypeMap().end()) ? It->second : nullptr;
+    }
+
     static TVector<MClass*> GetAllClasses()
     {
         TVector<MClass*> Result;
@@ -222,8 +241,25 @@ public:
     
     static void RegisterClass(MClass* InClass)
     {
+        if (!InClass)
+        {
+            return;
+        }
+
+        if (MClass* ExistingClass = FindClassByAssetTypeId(InClass->GetAssetTypeId());
+            ExistingClass && ExistingClass != InClass)
+        {
+            const MString Message =
+                "Reflection asset type id collision: class=" + InClass->GetName() +
+                " existing=" + ExistingClass->GetName() +
+                " asset_type_id=" + std::to_string(InClass->GetAssetTypeId());
+            LOG_FATAL("%s", Message.c_str());
+            throw std::runtime_error(Message);
+        }
+
         GetClassMap()[InClass->GetName()] = InClass;
         GetClassIdMap()[InClass->GetId()] = InClass;
+        GetClassAssetTypeMap()[InClass->GetAssetTypeId()] = InClass;
     }
 
     static MObject* FindObject(uint64 InObjectId)
@@ -291,6 +327,12 @@ public:
         return (It != GetStructIdMap().end()) ? It->second : nullptr;
     }
 
+    static MClass* FindStructByAssetTypeId(uint32 InAssetTypeId)
+    {
+        auto It = GetStructAssetTypeMap().find(InAssetTypeId);
+        return (It != GetStructAssetTypeMap().end()) ? It->second : nullptr;
+    }
+
     static MClass* FindStruct(const std::type_index& InCppTypeIndex)
     {
         auto It = GetStructTypeMap().find(InCppTypeIndex);
@@ -304,8 +346,20 @@ public:
             return;
         }
 
+        if (MClass* ExistingStruct = FindStructByAssetTypeId(InStruct->GetAssetTypeId());
+            ExistingStruct && ExistingStruct != InStruct)
+        {
+            const MString Message =
+                "Reflection asset type id collision: struct=" + InStruct->GetName() +
+                " existing=" + ExistingStruct->GetName() +
+                " asset_type_id=" + std::to_string(InStruct->GetAssetTypeId());
+            LOG_FATAL("%s", Message.c_str());
+            throw std::runtime_error(Message);
+        }
+
         GetStructMap()[InStruct->GetName()] = InStruct;
         GetStructIdMap()[InStruct->GetId()] = InStruct;
+        GetStructAssetTypeMap()[InStruct->GetAssetTypeId()] = InStruct;
         if (InStruct->GetCppTypeIndex() != std::type_index(typeid(void)))
         {
             GetStructTypeMap()[InStruct->GetCppTypeIndex()] = InStruct;

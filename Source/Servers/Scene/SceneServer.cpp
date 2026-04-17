@@ -25,7 +25,6 @@ bool MSceneServer::Init(int InPort)
     {
         LOG_WARN("Scene skill catalog warning: %s", Warning.c_str());
     }
-    CombatRuntime.Initialize(&SkillCatalog);
 
     if (!Session)
     {
@@ -35,6 +34,11 @@ bool MSceneServer::Init(int InPort)
     {
         Combat = NewMObject<MSceneCombat>(this, "Combat");
     }
+    if (!MonsterManager)
+    {
+        MonsterManager = NewMObject<MMonsterManager>(this, "MonsterManager");
+    }
+    CombatRuntime.Initialize(&SkillCatalog, MonsterManager);
     Session->Initialize(&PlayerScenes);
     Combat->Initialize(&PlayerScenes, &CombatRuntime);
     return true;
@@ -125,6 +129,19 @@ MFuture<TResult<FSceneSpawnCombatAvatarResponse, FAppError>> MSceneServer::Spawn
     return Combat->SpawnCombatAvatar(Request);
 }
 
+MFuture<TResult<FSceneSpawnMonsterResponse, FAppError>> MSceneServer::SpawnMonster(
+    const FSceneSpawnMonsterRequest& Request)
+{
+    if (!Combat)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FSceneSpawnMonsterResponse>(
+            "scene_combat_service_missing",
+            "SpawnMonster");
+    }
+
+    return Combat->SpawnMonster(Request);
+}
+
 MFuture<TResult<FSceneDespawnCombatAvatarResponse, FAppError>> MSceneServer::DespawnCombatAvatar(
     const FSceneDespawnCombatAvatarRequest& Request)
 {
@@ -136,6 +153,19 @@ MFuture<TResult<FSceneDespawnCombatAvatarResponse, FAppError>> MSceneServer::Des
     }
 
     return Combat->DespawnCombatAvatar(Request);
+}
+
+MFuture<TResult<FSceneDespawnCombatUnitResponse, FAppError>> MSceneServer::DespawnCombatUnit(
+    const FSceneDespawnCombatUnitRequest& Request)
+{
+    if (!Combat)
+    {
+        return MServerCallAsyncSupport::MakeErrorFuture<FSceneDespawnCombatUnitResponse>(
+            "scene_combat_service_missing",
+            "DespawnCombatUnit");
+    }
+
+    return Combat->DespawnCombatUnit(Request);
 }
 
 MFuture<TResult<FSceneCastSkillResponse, FAppError>> MSceneServer::CastSkill(
@@ -155,4 +185,3 @@ void MSceneServer::HandlePeerPacket(uint64 /*ConnectionId*/, const TSharedPtr<IN
 {
     (void)MServerRpcSupport::DispatchServerCallPacket(this, Connection, Data);
 }
-

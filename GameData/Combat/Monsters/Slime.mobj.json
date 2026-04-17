@@ -1,0 +1,22 @@
+{
+  "$class": "MMonsterConfig",
+  "$name": "Slime",
+  "MonsterTemplateId": 10001,
+  "DebugName": "ForestSlime",
+  "SpawnParams": {
+    "SceneId": 1001,
+    "MonsterTemplateId": 0,
+    "DebugName": "",
+    "CurrentHealth": 120,
+    "MaxHealth": 120,
+    "AttackPower": 18,
+    "DefensePower": 6,
+    "PrimarySkillId": 1001,
+    "ExperienceReward": 24,
+    "GoldReward": 9
+  },
+  "SkillIds": [
+    1001,
+    1002
+  ]
+}

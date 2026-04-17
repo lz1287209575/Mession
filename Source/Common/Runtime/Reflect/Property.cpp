@@ -1,5 +1,6 @@
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Common/Runtime/HexUtils.h"
+#include "Common/Runtime/Json.h"
 #include "Common/Runtime/Log/Logger.h"
 
 namespace
@@ -230,4 +231,40 @@ MString MProperty::ExportValueToString(const void* Object) const
     default:
         return "<unsupported>";
     }
+}
+
+bool MProperty::ExportJsonValue(const void* /*Object*/, MJsonValue& /*OutValue*/, MString* OutError) const
+{
+    if (OutError)
+    {
+        *OutError = "json_export_unsupported:" + Name;
+    }
+    return false;
+}
+
+bool MProperty::ImportJsonValue(void* /*Object*/, const MJsonValue& /*InValue*/, MString* OutError) const
+{
+    if (OutError)
+    {
+        *OutError = "json_import_unsupported:" + Name;
+    }
+    return false;
+}
+
+bool MProperty::ExportBinaryValue(const void* /*Object*/, TByteArray& /*OutData*/, MString* OutError) const
+{
+    if (OutError)
+    {
+        *OutError = "binary_export_unsupported:" + Name;
+    }
+    return false;
+}
+
+bool MProperty::ImportBinaryValue(void* /*Object*/, const TByteArray& /*InData*/, MString* OutError) const
+{
+    if (OutError)
+    {
+        *OutError = "binary_import_unsupported:" + Name;
+    }
+    return false;
 }

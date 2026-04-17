@@ -81,6 +81,8 @@ configure_mession_compile_options(mession_core)
 # Common 库（公共组件：日志/RPC/连接等中层能力）
 set(MESSION_COMMON_SOURCES
     Source/Common/Asset/UAssetPackageReader.cpp
+    Source/Common/Runtime/Concurrency/FiberAwait.cpp
+    Source/Common/Runtime/Concurrency/FiberScheduler.cpp
     Source/Common/Runtime/Log/Logger.cpp
     Source/Common/Runtime/Log/ConsoleLogSink.cpp
     Source/Common/Runtime/Log/FileLogSink.cpp
@@ -112,6 +114,10 @@ configure_mession_compile_options(mession_common)
 
 # NetDriver 库（游戏侧复制与对象能力，物理文件已迁入 Common/Runtime/*）
 set(MESSION_NETDRIVER_SOURCES
+    Source/Common/Runtime/Asset/MObjectAssetJson.cpp
+    Source/Common/Runtime/Asset/MObjectAssetBinary.cpp
+    Source/Common/Runtime/Asset/MObjectAssetCompiler.cpp
+    Source/Common/Runtime/Asset/MObjectAssetLoader.cpp
     Source/Common/Runtime/Object/NetObject.cpp
     Source/Common/Runtime/Persistence/MongoPersistenceSink.cpp
     Source/Common/Runtime/Replication/ReplicationDriver.cpp
@@ -298,6 +304,58 @@ function(mession_attach_generated_groups TargetName)
     endforeach()
 endfunction()
 
+add_executable(MObjectAssetSmokeTool
+    Source/Tools/MObjectAssetSmokeTool.cpp
+    Source/Servers/Scene/Combat/MonsterConfig.cpp
+    Source/Servers/Scene/Combat/Monster.cpp
+    Source/Servers/Scene/Combat/MonsterCombatProfile.cpp
+    Source/Servers/Scene/Combat/MonsterCombatState.cpp
+    Source/Servers/Scene/Combat/MonsterFactory.cpp
+    Source/Servers/Scene/Combat/MonsterManager.cpp
+)
+target_link_libraries(MObjectAssetSmokeTool
+    PRIVATE
+        mession_netdriver
+)
+configure_mession_target(MObjectAssetSmokeTool)
+target_sources(MObjectAssetSmokeTool
+    PRIVATE
+        ${MESSION_GENERATED_DIR}/FCombatUnitRef.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/FSceneCombatAvatarSnapshot.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/FSceneCombatMonsterSpawnParams.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/MMonster.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/MMonsterCombatProfile.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/MMonsterCombatState.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/MMonsterConfig.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/MMonsterFactory.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/MMonsterManager.mgenerated.cpp
+)
+add_dependencies(MObjectAssetSmokeTool mession_reflection_codegen)
+
+add_executable(MObjectEditorService
+    Source/Tools/MObjectEditorService/App/MObjectEditorServiceApp.cpp
+    Source/Tools/MObjectEditorService/Core/EditorPaths.cpp
+    Source/Tools/MObjectEditorService/Documents/MonsterConfigDocument.cpp
+    Source/Tools/MObjectEditorService/Export/AssetExportService.cpp
+    Source/Tools/MObjectEditorService/Http/EditorApiController.cpp
+    Source/Tools/MObjectEditorService/Http/HttpServer.cpp
+    Source/Tools/MObjectEditorService/Models/MonsterConfigEditorModel.cpp
+    Source/Tools/MObjectEditorService/Validation/MonsterConfigValidator.cpp
+    Source/Tools/MObjectEditorService/MObjectEditorServiceMain.cpp
+    Source/Servers/Scene/Combat/MonsterConfig.cpp
+)
+target_link_libraries(MObjectEditorService
+    PRIVATE
+        mession_netdriver
+)
+configure_mession_target(MObjectEditorService)
+target_sources(MObjectEditorService
+    PRIVATE
+        ${MESSION_GENERATED_DIR}/FSceneCombatMonsterSpawnParams.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/MMonsterConfig.mgenerated.cpp
+)
+add_dependencies(MObjectEditorService mession_reflection_codegen)
+
 # 1. Gateway Server - 网关服务器
 add_executable(GatewayServer 
     Source/Servers/Gateway/GatewayServer.h
@@ -334,9 +392,12 @@ add_executable(WorldServer
     Source/Servers/World/Player/PlayerCombat.cpp
     Source/Servers/World/Player/PlayerLogout.cpp
     Source/Servers/World/Player/PlayerNotify.cpp
+    Source/Servers/World/Player/PlayerManager.cpp
+    Source/Servers/World/Player/PlayerCommandRuntime.cpp
     Source/Servers/World/Player/PlayerServiceModify.cpp
     Source/Servers/World/Player/PlayerServiceQuery.cpp
     Source/Servers/World/Player/PlayerServiceRoute.cpp
+    Source/Servers/World/Player/PlayerServiceSocial.cpp
     Source/Servers/World/Player/PlayerServiceRuntime.cpp
     Source/Servers/World/Player/PlayerSwitchScene.cpp
     Source/Servers/World/Player/PlayerInventory.cpp
@@ -365,6 +426,12 @@ add_executable(SceneServer
     Source/Servers/Scene/SceneServer.h
     Source/Servers/Scene/SceneServer.cpp
     Source/Servers/Scene/SceneServerMain.cpp
+    Source/Servers/Scene/Combat/MonsterConfig.cpp
+    Source/Servers/Scene/Combat/Monster.cpp
+    Source/Servers/Scene/Combat/MonsterCombatProfile.cpp
+    Source/Servers/Scene/Combat/MonsterCombatState.cpp
+    Source/Servers/Scene/Combat/MonsterFactory.cpp
+    Source/Servers/Scene/Combat/MonsterManager.cpp
     Source/Servers/Scene/Combat/SceneCombatRuntime.cpp
     Source/Servers/Scene/Combat/SkillCatalog.cpp
     Source/Servers/Scene/Combat/SkillStepExecutor.cpp
@@ -446,6 +513,3 @@ message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Servers: Gateway, Login, World, Scene, Router, Mgo")
 message(STATUS "=====================================")
-
-
-

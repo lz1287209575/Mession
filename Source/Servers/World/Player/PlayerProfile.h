@@ -30,7 +30,7 @@ public:
 
     uint32 ResolveCurrentHealth() const;
 
-    void SyncRuntimeState(uint32 InCurrentSceneId, uint32 InHealth);
+    void SyncRuntimeState(uint32 InCurrentSceneId);
 
     void LoadPersistenceState(
         uint32 InCurrentSceneId,

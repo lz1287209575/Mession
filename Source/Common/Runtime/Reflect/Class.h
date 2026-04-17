@@ -3,12 +3,13 @@
 #include "Common/Runtime/Reflect/Property.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Common/Net/ServerConnection.h"
+#include <stdexcept>
 #include <typeindex>
 
 class MObject;
 class MReflectArchive;
 
-inline uint16 ComputeStableReflectId(const char* ScopeName, const char* MemberName)
+inline uint32 ComputeStableReflectHash32(const char* ScopeName, const char* MemberName, const char* Separator = "::")
 {
     constexpr uint32 OffsetBasis = 2166136261u;
     constexpr uint32 Prime = 16777619u;
@@ -30,12 +31,18 @@ inline uint16 ComputeStableReflectId(const char* ScopeName, const char* MemberNa
     };
 
     MixString(ScopeName);
-    Hash ^= static_cast<uint8>(':');
-    Hash *= Prime;
-    Hash ^= static_cast<uint8>(':');
-    Hash *= Prime;
-    MixString(MemberName);
+    if (MemberName)
+    {
+        MixString(Separator);
+        MixString(MemberName);
+    }
 
+    return (Hash == 0) ? 1u : Hash;
+}
+
+inline uint16 ComputeStableReflectId(const char* ScopeName, const char* MemberName)
+{
+    const uint32 Hash = ComputeStableReflectHash32(ScopeName, MemberName);
     uint16 Folded = static_cast<uint16>((Hash >> 16) ^ (Hash & 0xFFFFu));
     return (Folded == 0) ? 1u : Folded;
 }
@@ -43,6 +50,16 @@ inline uint16 ComputeStableReflectId(const char* ScopeName, const char* MemberNa
 inline uint16 ComputeStableClientFunctionId(const char* ClientApiName)
 {
     return ComputeStableReflectId("MClientApi", ClientApiName);
+}
+
+inline uint32 ComputeStableAssetTypeId(const char* TypeName)
+{
+    return ComputeStableReflectHash32(TypeName, nullptr, nullptr);
+}
+
+inline uint32 ComputeStableAssetFieldId(const char* TypeName, const char* FieldName)
+{
+    return ComputeStableReflectHash32(TypeName, FieldName, ".");
 }
 
 // 函数标志
@@ -206,6 +223,7 @@ protected:
     MString ClassName;
     MString ClassPath;
     uint16 ClassId = 0;
+    uint32 AssetTypeId = 0;
     std::type_index CppTypeIndex = typeid(void);
 
     TVector<MProperty*> Properties;
@@ -226,12 +244,14 @@ public:
     const MString& GetName() const { return ClassName; }
     const MString& GetPath() const { return ClassPath; }
     uint16 GetId() const { return ClassId; }
+    uint32 GetAssetTypeId() const { return AssetTypeId; }
     const std::type_index& GetCppTypeIndex() const { return CppTypeIndex; }
     const MClass* GetParentClass() const { return ParentClass; }
 
     const TVector<MProperty*>& GetProperties() const { return Properties; }
     MProperty* FindProperty(const MString& InName) const;
     MProperty* FindPropertyById(uint16 InId) const;
+    MProperty* FindPropertyByAssetFieldId(uint32 InAssetFieldId) const;
 
     const TVector<MFunction*>& GetFunctions() const { return Functions; }
     MFunction* FindFunction(const MString& InName) const;
@@ -270,6 +290,7 @@ public:
         ClassPath = InPath;
         ParentClass = InParent;
         ClassFlags = InFlags;
+        AssetTypeId = ComputeStableAssetTypeId(ClassName.c_str());
     }
 
     void SetKind(EClassKind InKind)
@@ -284,7 +305,23 @@ public:
 
     void RegisterProperty(MProperty* InProperty)
     {
+        if (!InProperty)
+        {
+            return;
+        }
+
         InProperty->PropertyId = ++GlobalPropertyId;
+        InProperty->AssetFieldId = ComputeStableAssetFieldId(ClassName.c_str(), InProperty->Name.c_str());
+
+        if (FindPropertyByAssetFieldId(InProperty->AssetFieldId))
+        {
+            const MString Message =
+                "Reflection asset field id collision: class=" + ClassName +
+                " property=" + InProperty->Name +
+                " asset_field_id=" + std::to_string(InProperty->AssetFieldId);
+            LOG_FATAL("%s", Message.c_str());
+            throw std::runtime_error(Message);
+        }
 
         uint64 InferredDomains = ToMask(EPropertyDomainFlags::None);
         if (InProperty->HasAnyFlags(EPropertyFlags::Replicated) ||
@@ -297,6 +334,10 @@ public:
             InProperty->HasAnyFlags(EPropertyFlags::PersistentData))
         {
             InferredDomains |= ToMask(EPropertyDomainFlags::Persistence);
+        }
+        if (InProperty->HasAnyFlags(EPropertyFlags::Asset))
+        {
+            InferredDomains |= ToMask(EPropertyDomainFlags::Asset);
         }
         InProperty->DomainFlags = InferredDomains;
         Properties.push_back(InProperty);

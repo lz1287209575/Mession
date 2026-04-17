@@ -125,6 +125,113 @@ inline MObjectCallRegistry* FindObjectCallRegistry(MObject* ContextObject)
     return nullptr;
 }
 
+inline EServerType ResolveTargetServerType(
+    const FObjectCallTarget& Target,
+    const MObjectCallRegistry* Registry)
+{
+    if (Target.TargetServerType != EServerType::Unknown)
+    {
+        return Target.TargetServerType;
+    }
+
+    return Registry
+        ? Registry->ResolveOwnerServerType(Target.RootType)
+        : EServerType::Unknown;
+}
+
+inline TResult<MObject*, FAppError> ResolveLocalTargetObject(
+    const FObjectCallTarget& Target,
+    MObjectCallRegistry* Registry)
+{
+    if (!Registry)
+    {
+        return MakeErrorResult<MObject*>(FAppError::Make(
+            "object_proxy_registry_missing",
+            ""));
+    }
+
+    return Registry->ResolveTargetObject(Target);
+}
+
+template<typename TResponse>
+inline TResult<TResponse, FAppError> ParsePayloadResult(
+    const TByteArray& Payload,
+    const char* ParseContext,
+    const char* ParseErrorCode)
+{
+    TResponse ResponseValue {};
+    auto ParseResult = ParsePayload(Payload, ResponseValue, ParseContext ? ParseContext : "");
+    if (!ParseResult.IsOk())
+    {
+        return MakeErrorResult<TResponse>(FAppError::Make(
+            ParseErrorCode ? ParseErrorCode : "object_proxy_response_parse_failed",
+            ParseResult.GetError().c_str()));
+    }
+
+    return TResult<TResponse, FAppError>::Ok(std::move(ResponseValue));
+}
+
+inline TSharedPtr<IServerCallResponseTarget> MakeLocalObjectCallResponseTarget(
+    MPromise<TResult<FObjectCallResponse, FAppError>> Promise,
+    const TSharedPtr<std::atomic_bool>& bCompleted,
+    MString FunctionNameValue)
+{
+    return MakeShared<MServerCallResponseTarget>(
+        []() -> bool
+        {
+            return true;
+        },
+        [Promise, bCompleted, FunctionNameValue = std::move(FunctionNameValue)](
+            uint16,
+            uint64,
+            bool bSuccess,
+            const TByteArray& ResponsePayload) mutable -> bool
+        {
+            bool bExpected = false;
+            if (!bCompleted || !bCompleted->compare_exchange_strong(bExpected, true))
+            {
+                return true;
+            }
+
+            if (bSuccess)
+            {
+                FObjectCallResponse ResponseValue;
+                ResponseValue.Payload = ResponsePayload;
+                Promise.SetValue(TResult<FObjectCallResponse, FAppError>::Ok(std::move(ResponseValue)));
+                return true;
+            }
+
+            const TResult<FAppError, FAppError> ParsedError = ParsePayloadResult<FAppError>(
+                ResponsePayload,
+                FunctionNameValue.c_str(),
+                "object_proxy_error_parse_failed");
+            if (!ParsedError.IsOk())
+            {
+                Promise.SetValue(MakeErrorResult<FObjectCallResponse>(ParsedError.GetError()));
+                return true;
+            }
+
+            Promise.SetValue(MakeErrorResult<FObjectCallResponse>(ParsedError.GetValue()));
+            return true;
+        });
+}
+
+inline void CompleteLocalObjectCallDispatchFailure(
+    const TSharedPtr<std::atomic_bool>& bCompleted,
+    MPromise<TResult<FObjectCallResponse, FAppError>> Promise,
+    const char* FunctionName)
+{
+    bool bExpected = false;
+    if (!bCompleted || !bCompleted->compare_exchange_strong(bExpected, true))
+    {
+        return;
+    }
+
+    Promise.SetValue(MakeErrorResult<FObjectCallResponse>(FAppError::Make(
+        "object_proxy_dispatch_failed",
+        FunctionName ? FunctionName : "")));
+}
+
 inline MFuture<TResult<FObjectCallResponse, FAppError>> DispatchLocalRaw(
     MObject* TargetObject,
     const char* FunctionName,
@@ -170,56 +277,14 @@ inline MFuture<TResult<FObjectCallResponse, FAppError>> DispatchLocalRaw(
     MPromise<TResult<FObjectCallResponse, FAppError>> Promise;
     MFuture<TResult<FObjectCallResponse, FAppError>> Future = Promise.GetFuture();
     const TSharedPtr<std::atomic_bool> bCompleted = MakeShared<std::atomic_bool>(false);
-
-    const TSharedPtr<IServerCallResponseTarget> ResponseTarget =
-        MakeShared<MServerCallResponseTarget>(
-            []() -> bool
-            {
-                return true;
-            },
-            [Promise, bCompleted, FunctionNameValue = MString(FunctionName)](
-                uint16,
-                uint64,
-                bool bSuccess,
-                const TByteArray& ResponsePayload) mutable -> bool
-            {
-                bool bExpected = false;
-                if (!bCompleted || !bCompleted->compare_exchange_strong(bExpected, true))
-                {
-                    return true;
-                }
-
-                if (bSuccess)
-                {
-                    FObjectCallResponse ResponseValue;
-                    ResponseValue.Payload = ResponsePayload;
-                    Promise.SetValue(TResult<FObjectCallResponse, FAppError>::Ok(std::move(ResponseValue)));
-                    return true;
-                }
-
-                FAppError ErrorValue;
-                auto ParseResult = ParsePayload(ResponsePayload, ErrorValue, FunctionNameValue.c_str());
-                if (!ParseResult.IsOk())
-                {
-                    Promise.SetValue(MakeErrorResult<FObjectCallResponse>(FAppError::Make(
-                        "object_proxy_error_parse_failed",
-                        ParseResult.GetError().c_str())));
-                    return true;
-                }
-
-                Promise.SetValue(MakeErrorResult<FObjectCallResponse>(std::move(ErrorValue)));
-                return true;
-            });
+    const TSharedPtr<IServerCallResponseTarget> ResponseTarget = MakeLocalObjectCallResponseTarget(
+        Promise,
+        bCompleted,
+        MString(FunctionName));
 
     if (!DispatchServerCall(TargetObject, Function->FunctionId, AllocateLocalCallId(), Payload, ResponseTarget))
     {
-        bool bExpected = false;
-        if (bCompleted && bCompleted->compare_exchange_strong(bExpected, true))
-        {
-            Promise.SetValue(MakeErrorResult<FObjectCallResponse>(FAppError::Make(
-                "object_proxy_dispatch_failed",
-                FunctionName)));
-        }
+        CompleteLocalObjectCallDispatchFailure(bCompleted, Promise, FunctionName);
     }
 
     return Future;
@@ -230,57 +295,16 @@ inline MFuture<TResult<TResponse, FAppError>> ParseRawResponse(
     MFuture<TResult<FObjectCallResponse, FAppError>> RawFuture,
     const char* FunctionName)
 {
-    if (!RawFuture.Valid())
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<TResponse>(
-            "object_proxy_invalid_future",
-            FunctionName ? FunctionName : "");
-    }
-
-    MPromise<TResult<TResponse, FAppError>> Promise;
-    MFuture<TResult<TResponse, FAppError>> Future = Promise.GetFuture();
-    RawFuture.Then(
-        [Promise, FunctionNameValue = MString(FunctionName ? FunctionName : "")](
-            MFuture<TResult<FObjectCallResponse, FAppError>> Completed) mutable
+    return MServerCallAsyncSupport::Map(
+        std::move(RawFuture),
+        [FunctionNameValue = MString(FunctionName ? FunctionName : "")](
+            const FObjectCallResponse& RawResponse) -> TResult<TResponse, FAppError>
         {
-            try
-            {
-                TResult<FObjectCallResponse, FAppError> Result = Completed.Get();
-                if (!Result.IsOk())
-                {
-                    Promise.SetValue(MakeErrorResult<TResponse>(Result.GetError()));
-                    return;
-                }
-
-                TResponse ResponseValue {};
-                auto ParseResult = ParsePayload(
-                    Result.GetValue().Payload,
-                    ResponseValue,
-                    FunctionNameValue.c_str());
-                if (!ParseResult.IsOk())
-                {
-                    Promise.SetValue(MakeErrorResult<TResponse>(FAppError::Make(
-                        "object_proxy_response_parse_failed",
-                        ParseResult.GetError().c_str())));
-                    return;
-                }
-
-                Promise.SetValue(TResult<TResponse, FAppError>::Ok(std::move(ResponseValue)));
-            }
-            catch (const std::exception& Ex)
-            {
-                Promise.SetValue(MakeErrorResult<TResponse>(FAppError::Make(
-                    "object_proxy_exception",
-                    Ex.what())));
-            }
-            catch (...)
-            {
-                Promise.SetValue(MakeErrorResult<TResponse>(FAppError::Make(
-                    "object_proxy_exception",
-                    "unknown")));
-            }
+            return ParsePayloadResult<TResponse>(
+                RawResponse.Payload,
+                FunctionNameValue.c_str(),
+                "object_proxy_response_parse_failed");
         });
-    return Future;
 }
 } // namespace MDetail
 
@@ -323,11 +347,7 @@ inline MFuture<TResult<FObjectCallResponse, FAppError>> CallRaw(
     }
 
     MObjectCallRegistry* Registry = MDetail::FindObjectCallRegistry(ContextObject);
-    EServerType TargetServerType = Target.TargetServerType;
-    if (TargetServerType == EServerType::Unknown && Registry)
-    {
-        TargetServerType = Registry->ResolveOwnerServerType(Target.RootType);
-    }
+    EServerType TargetServerType = MDetail::ResolveTargetServerType(Target, Registry);
 
     if (TargetServerType == EServerType::Unknown)
     {
@@ -345,7 +365,7 @@ inline MFuture<TResult<FObjectCallResponse, FAppError>> CallRaw(
                 FunctionName);
         }
 
-        TResult<MObject*, FAppError> ResolveResult = Registry->ResolveTargetObject(Target);
+        TResult<MObject*, FAppError> ResolveResult = MDetail::ResolveLocalTargetObject(Target, Registry);
         if (!ResolveResult.IsOk())
         {
             return MServerCallAsyncSupport::MakeResultFuture(
@@ -403,4 +423,3 @@ inline FBoundTarget Bind(const FObjectCallTarget& Target, MObject* ContextObject
     return FBoundTarget(Target, ContextObject);
 }
 } // namespace MObjectCall
-

@@ -18,6 +18,24 @@
 
 `MHeaderTool` 会扫描 `Source/` 下使用这些宏的头文件，生成反射 glue code 到 `Build/Generated/`。
 
+### 请求校验元数据
+
+`MPROPERTY` 现在不仅承载序列化和属性域信息，也开始承载 `ServerCall` 请求的字段级校验约束。
+
+当前 `ServerCallRequestValidation` 会优先读取字段上的 `Meta`，再执行少量保留的自定义 `TRequestValidator<>`。
+
+已经接入的常见规则包括：
+
+- `NonZero`
+- `NonEmpty`
+- `Required`
+- `Min`
+- `Max`
+- `ErrorCode`
+- `ErrorContext`
+
+更完整的写法约定见 `Docs/RequestValidation.md`。
+
 ## RPC 运行时分层
 
 ### 1. 传输层
@@ -63,7 +81,7 @@
 3. 如果目标是业务服，则转发 `FForwardedClientCallRequest`
 4. 业务服上的 `ServiceEndpoint` 真正执行 `ClientCall`
 
-当前 World 上的主要客户端入口位于 `MWorldClientServiceEndpoint`，已经覆盖：
+当前 World 上的主要客户端入口位于 `MWorldClient`，已经覆盖：
 
 - `Client_Login`
 - `Client_FindPlayer`
@@ -80,14 +98,23 @@
 - `Client_ModifyHealth`
 - `Client_CastSkill`
 
+这些 `ClientCall` 入口现在不再额外维护一套 `FClient*Request` 业务请求类型。
+
+当前约定是：
+
+- Player 业务请求直接使用 `FPlayer*Request`
+- World 编排请求直接使用 `FWorld*Request`
+- `FClient*` 主要保留给客户端 response / notify，以及少数纯客户端语义请求（如登录）
+
 ## 普通 Player RPC 链路
 
-当前普通 Player 业务调用已经不是“endpoint 手写胶水堆逻辑”，而是走一条相对标准化的绑定链：
+当前普通 Player 业务调用已经不是“入口层手写胶水堆逻辑”，而是走一条相对标准化的绑定链：
 
-1. `MWorldClientServiceEndpoint::Client_*`
-2. `MWorldPlayerServiceEndpoint::Player*`
-3. `PlayerProxyCall`
-4. `MPlayer` 子对象上的 `MFUNCTION(ServerCall)`
+1. `MWorldClient::Client_*`
+2. `MWorldClientCommon::StartAsyncClientResponse / FRequest::Dispatch`
+3. `MPlayerService::Player*`
+4. `DispatchRuntimeCommand / DispatchRuntimeCommandMany`
+5. `MPlayer` 子对象或 `MPlayerService::DoXxx(...)`
 
 这条链路适合承载：
 
@@ -103,7 +130,7 @@
 - 登出
 - 任何需要 Login / Scene / Router / Mgo 多步协作的流程
 
-这些仍应保留在显式 workflow 里。
+这些仍应保留在 World 的显式编排入口里，而不是回退成普通 Player route。
 
 ## Client API 稳定 ID
 
@@ -113,7 +140,7 @@
 - 如果要在重命名函数或迁移 owner 时保持旧 ID，可显式指定 `Api=...`
 - 生成代码和脚本统一使用稳定 API 名计算 ID
 
-这意味着把 `Client_Login` 从某个旧 owner 挪到 `MWorldClientServiceEndpoint`，客户端函数 ID 仍然可以不变。
+这意味着把 `Client_Login` 从某个旧 owner 挪到 `MWorldClient`，客户端函数 ID 仍然可以不变。
 
 ## 服间调用
 
@@ -129,7 +156,65 @@
 - `PlayerEnterWorld`
 - `PlayerSwitchScene`
 - `PlayerLogout`
-- `WorldCombatServiceEndpoint::CastSkill`
+- `MPlayerService::CastSkill`
+
+## 当前调用边界收敛状态
+
+这一轮仓库已经把 World 相关调用边界进一步收口到三层：
+
+### 1. `WorldClient*` 只做 client-call 适配
+
+- `MWorldClient`
+- `MWorldClientCommon`
+
+当前职责：
+
+- 捕获 `ClientCall` 上下文
+- 把客户端请求投影到 `PlayerService` 或少数显式编排入口
+- 把 `TResult<..., FAppError>` 投影回客户端响应
+
+当前已经收口：
+
+- `StartAsyncClientResponse(...)` 统一了承接 `CaptureCurrentClientCallContext + StartDeferredFiber + failure mapping`
+- 普通 Player 请求和 `Client_CastSkill` 已复用统一投影路径
+
+### 2. `PlayerService` 负责 Runtime Dispatch 契约
+
+- `PrepareRuntimeDispatch`
+- `DispatchRuntimeCommand`
+- `DispatchRuntimeCommandMany`
+
+当前职责：
+
+- 请求校验
+- 依赖可用性检查
+- 进入 `PlayerCommandRuntime`
+- 把真正业务步骤下沉到 `DoXxx(...)`
+- `FiberAwait` 现在会先检查 backend 能力；不支持 suspend/resume 的平台会显式 fail-fast，而不是把 null backend 异常直接漏给业务层
+
+### 3. `ObjectCall*` 负责对象级本地/远端调用
+
+- `MObjectCall::CallRaw / Call / CallLocalRaw`
+- `MObjectCallRouter`
+
+当前职责：
+
+- 目标 server 判定
+- 本地对象 resolve
+- 本地 `ServerCall` 响应桥接
+- 远端对象代理调用
+
+当前已经收口：
+
+- `ResolveTargetServerType / ResolveLocalTargetObject / ParsePayloadResult`
+- `DispatchLocalRaw(...)` 内的本地 response bridge 已拆成局部 helper
+- `MObjectCallRouter` 已对齐到同一套本地 target resolve 语义
+
+这三层的目标不是继续发明新 owner，而是明确：
+
+- `WorldClient` 不长成业务层
+- `PlayerService` 不长成 transport glue
+- `ObjectCall` 不长回“大函数包所有细节”
 
 ## 客户端下行
 

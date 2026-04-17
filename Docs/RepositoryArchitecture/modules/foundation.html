@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>基础层模块设计</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css">
+</head>
+<body>
+  <div class="page">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="pill">Repository Architecture</span>
+        <h1>基础层模块设计</h1>
+        <p>聚焦 Common、Protocol、App 和 Tooling。</p>
+      </div>
+
+<nav class="nav">
+  <a href="../index.html">总览首页</a>
+  <div class="nav-group-title">模块</div>
+  <a href="../modules/index.html">模块导航</a>
+  <a href="../modules/foundation.html">基础层：Common / Protocol / App / Tooling</a>
+  <a href="../modules/servers.html">业务层：Gateway / Login / World / Scene / Router / Mgo</a>
+  <div class="nav-group-title">链路与评审</div>
+  <a href="../flows/index.html">主链路导航</a>
+  <a href="../flows/main-flows.html">跨模块主链路时序</a>
+  <a href="../review/index.html">Review 导航</a>
+  <a href="../review/priorities.html">分模块优先级清单</a>
+  <div class="nav-group-title">示例</div>
+  <a href="../examples/index.html">示例导航</a>
+  <a href="../examples/runtime-examples.html">运行与调用示例</a>
+  <a href="../examples/source-map.html">源码来源索引</a>
+  <div class="nav-group-title">Runtime</div>
+  <a href="../runtime/index.html">Runtime 导航</a>
+  <a href="../runtime/world-runtime.html">World Runtime 设计</a>
+</nav>
+
+      <div class="nav-note">现在这套文档已经按模块、链路、review、示例、runtime 五个维度拆开；后续再补子系统页时，直接往目录里加即可。</div>
+    </aside>
+    <main class="content">
+
+<section class="section">
+  <div class="section-head">
+    <h3>基础层总览</h3>
+    <p>这一层决定的是系统“怎么跑”，而不是具体业务“做什么”。</p>
+  </div>
+  <div class="grid-2">
+    <div class="card"><h4>Common</h4><ul><li><code>Runtime/Concurrency</code>：线程池、task queue、fiber scheduler、await。</li><li><code>Net</code>：连接、server base、RPC transport。</li><li><code>Runtime/Object / Reflect / Replication</code>：对象、反射、复制。</li><li><code>Serialization</code>：消息编解码。</li></ul></div>
+    <div class="card"><h4>Protocol</h4><ul><li>按 <code>Auth / Gateway / World / Scene / Combat / Router / Mgo</code> 切分消息。</li><li>它是跨模块边界的契约层，不应被业务实现反向污染。</li><li>后续要继续防止 <code>Messages/World</code> 过胖。</li></ul></div>
+  </div>
+  <div class="grid-2" style="margin-top:14px;">
+    <div class="card"><h4>Servers/App</h4><ul><li><code>ServerCallAsyncSupport</code> / <code>ClientCallAsyncSupport</code>：server/client 调用边界。</li><li><code>FiberCallSupport</code>：统一 fiber bootstrap。</li><li><code>ResultFutureSupport</code>：统一 future/result combinator。</li><li><code>ObjectCall*</code>：对象级路由调用。</li></ul></div>
+    <div class="card"><h4>Tooling / Build</h4><ul><li><code>MHeaderTool</code> 生成反射与 dispatch glue。</li><li><code>CMakeLists.txt</code> 把仓库拆成 core/common/netdriver 和各 server。</li><li>当前难点不是能力不够，而是生成链理解门槛较高。</li></ul></div>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head">
+    <h3>基础层评价</h3>
+    <p>这几层现在整体是健康的，但也最适合继续做“公共化”和“去重复”。</p>
+  </div>
+  <div class="grid-3">
+    <div class="card"><h4>优点</h4><ul><li>已经形成了独立于业务 server 的通用底座。</li><li>并发与异步能力正在逐步从 World 抽回 Common/App。</li></ul></div>
+    <div class="card"><h4>风险</h4><ul><li>若命名继续带 World 语义，会限制公共层进一步抽象。</li><li>生成链和反射链调试成本偏高。</li></ul></div>
+    <div class="card"><h4>建议</h4><ul><li>继续公共化命名和 helper。</li><li>补一页生成链说明，降低理解门槛。</li></ul></div>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head">
+    <h3>真实接口摘录</h3>
+    <p>这里不再只讲抽象概念，而是直接放一些来自仓库的真实接口形态，帮助你确认 Runtime / App 层到底承担了什么责任。</p>
+  </div>
+  <div class="callout-grid">
+    <div class="callout"><code>Source/Common/Runtime/Concurrency/FiberAwait.h</code> 暴露了 player command fiber 的 await 契约。</div>
+    <div class="callout"><code>Source/Servers/App/ServerCallRequestValidation.h</code> 负责把请求前置校验做成可复用 helper。</div>
+    <div class="callout"><code>Source/Servers/App/ServerCallAsyncSupport.h</code> 把短链式 async glue 收敛成统一组合子。</div>
+  </div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Fiber Await API</span><span>Source/Common/Runtime/Concurrency/FiberAwait.h</span></div>
+<pre><code class="language-cpp">template&lt;typename T&gt;
+using TPlayerCommandFuture = MFuture&lt;TResult&lt;T, FAppError&gt;&gt;;
+
+bool MHasCurrentPlayerCommand();
+MPlayerCommandContext&amp; MCurrentPlayerCommand();
+void MCheckPoint();
+void MYield();
+
+template&lt;typename T&gt;
+T MAwait(MFuture&lt;T&gt; Future);
+
+template&lt;typename T&gt;
+T MAwaitOk(TPlayerCommandFuture&lt;T&gt; Future);</code></pre>
+        </div>
+        <div style="height:14px;"></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Request Validation Helper</span><span>Source/Servers/App/ServerCallRequestValidation.h</span></div>
+<pre><code class="language-cpp">template&lt;typename TRequest&gt;
+TOptional&lt;FAppError&gt; ValidateRequest(const TRequest&amp; Request)
+{
+    return TRequestValidator&lt;std::decay_t&lt;TRequest&gt;&gt;::Validate(Request);
+}
+
+inline TOptional&lt;FAppError&gt; RequireNonZero(uint64 Value, const char* Code, const char* Message = &quot;&quot;)
+{
+    if (Value == 0)
+    {
+        return FAppError::Make(Code ? Code : &quot;request_field_required&quot;, Message ? Message : &quot;&quot;);
+    }
+
+    return std::nullopt;
+}</code></pre>
+        </div>
+        <div style="height:14px;"></div>
+
+        <div class="code-pane">
+          <div class="code-head"><span>Server Call Chain Helper</span><span>Source/Servers/App/ServerCallAsyncSupport.h</span></div>
+<pre><code class="language-cpp">template&lt;typename TInputResponse, typename TBinder, typename TNextFuture, typename TOutputResponse&gt;
+TAppFuture&lt;TOutputResponse&gt; Chain(TAppFuture&lt;TInputResponse&gt; Future, TBinder&amp;&amp; Binder)
+{
+    return MAppResultFutureSupport::Chain(
+        std::move(Future),
+        std::forward&lt;TBinder&gt;(Binder),
+        [](const char* Message)
+        {
+            return MDetail::MakeExceptionFuture&lt;TOutputResponse&gt;(Message ? Message : &quot;invalid_future&quot;);
+        },
+        [](const char* Message)
+        {
+            return MDetail::MakeAsyncExceptionError(Message);
+        });
+}</code></pre>
+        </div>
+<section class="section">
+  <div class="section-head">
+    <h3>源码定位提示</h3>
+    <p>如果你想顺着这些例子继续往下看实现细节，推荐的入口顺序是 <code>FiberAwait.h → ServerCallRequestValidation.h → ServerCallAsyncSupport.h</code>，然后再跳到 <code>runtime/world-runtime.html</code> 看它们如何在 World 里组合起来。</p>
+  </div>
+  <div class="callout-grid">
+    <div class="callout">Common 负责 await 能力与 fiber 运行时。</div>
+    <div class="callout">Servers/App 负责请求校验和 async glue 的统一抽象。</div>
+    <div class="callout">World 则把这些底座能力装配成玩家命令执行模型。</div>
+  </div>
+</section>
+    </main>
+  </div>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
+<script>window.addEventListener('DOMContentLoaded', () => hljs.highlightAll());</script>
+</body>
+</html>

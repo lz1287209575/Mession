@@ -10,6 +10,7 @@
 #include "Protocol/Messages/Common/AppMessages.h"
 #include "Protocol/Messages/Combat/CombatSceneMessages.h"
 #include "Protocol/Messages/Scene/SceneServiceMessages.h"
+#include "Servers/Scene/Combat/MonsterManager.h"
 #include "Servers/Scene/Combat/SceneCombatRuntime.h"
 #include "Servers/Scene/Combat/SkillCatalog.h"
 #include "Servers/Scene/SceneCombat.h"
@@ -50,8 +51,16 @@ public:
         const FSceneSpawnCombatAvatarRequest& Request);
 
     MFUNCTION(ServerCall)
+    MFuture<TResult<FSceneSpawnMonsterResponse, FAppError>> SpawnMonster(
+        const FSceneSpawnMonsterRequest& Request);
+
+    MFUNCTION(ServerCall)
     MFuture<TResult<FSceneDespawnCombatAvatarResponse, FAppError>> DespawnCombatAvatar(
         const FSceneDespawnCombatAvatarRequest& Request);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<FSceneDespawnCombatUnitResponse, FAppError>> DespawnCombatUnit(
+        const FSceneDespawnCombatUnitRequest& Request);
 
     MFUNCTION(ServerCall)
     MFuture<TResult<FSceneCastSkillResponse, FAppError>> CastSkill(const FSceneCastSkillRequest& Request);
@@ -65,5 +74,5 @@ private:
     TMap<uint64, TSharedPtr<INetConnection>> PeerConnections;
     MSceneSession* Session = nullptr;
     MSceneCombat* Combat = nullptr;
+    MMonsterManager* MonsterManager = nullptr;
 };
-

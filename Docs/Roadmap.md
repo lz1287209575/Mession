@@ -18,6 +18,14 @@
 - 减少 `SyncRuntimeState`、fallback 解析和跨对象桥接
 - 让登录、切场、登出、战斗结算都走更清晰的状态边界
 
+当前已经收口到的阶段性结论：
+
+- `SceneId` 的恢复主权可以更多落到 `Profile.CurrentSceneId`
+- `Controller.SceneId` 保留运行时 route 语义，不再需要持久化桥
+- `Progression.Health` 是长期血量主状态
+- `Pawn.Health` 是运行时镜像
+- `CombatProfile.LastResolvedSceneId / LastResolvedHealth` 是战斗结算快照，不参与主状态决策
+
 ## 2. 完善验证与可观测性
 
 当前主链路验证已经能覆盖查询、写操作、场景同步、最小战斗链路，但还不够系统。
@@ -32,12 +40,12 @@
 
 ## 3. 收敛异步流程表达
 
-`MFuture / MPromise / MCoroutine / Workflow` 已经形成基础分层，但业务编排风格仍需要继续统一。
+`MFuture / MPromise / Fiber Await / Runtime Dispatch` 已经形成基础分层，但业务编排风格仍需要继续统一。
 
 方向包括：
 
 - 继续减少散落的链式 lambda
-- 让复杂服间流程更多落到显式 `Workflow`
+- 让复杂服间流程继续留在统一 Runtime 驱动里，而不是重新长回显式 `Workflow`
 - 明确“同步等待”“异步串联”“跨线程调度”的推荐边界
 
 ## 4. 继续压缩 `Server` 和 Endpoint 胶水

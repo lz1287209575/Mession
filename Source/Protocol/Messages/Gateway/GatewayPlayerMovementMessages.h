@@ -1,22 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Reflection.h"
-
-MSTRUCT()
-struct FClientMoveRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-
-    MPROPERTY()
-    float X = 0.0f;
-
-    MPROPERTY()
-    float Y = 0.0f;
-
-    MPROPERTY()
-    float Z = 0.0f;
-};
+#include "Protocol/Messages/World/PlayerMovementMessages.h"
 
 MSTRUCT()
 struct FClientMoveResponse

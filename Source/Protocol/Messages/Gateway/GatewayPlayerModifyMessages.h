@@ -1,16 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Reflection.h"
-
-MSTRUCT()
-struct FClientChangeGoldRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-
-    MPROPERTY()
-    int32 DeltaGold = 0;
-};
+#include "Protocol/Messages/World/PlayerModifyMessages.h"
 
 MSTRUCT()
 struct FClientChangeGoldResponse
@@ -26,16 +17,6 @@ struct FClientChangeGoldResponse
 
     MPROPERTY()
     MString Error;
-};
-
-MSTRUCT()
-struct FClientEquipItemRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-
-    MPROPERTY()
-    MString EquippedItem;
 };
 
 MSTRUCT()
@@ -55,16 +36,6 @@ struct FClientEquipItemResponse
 };
 
 MSTRUCT()
-struct FClientGrantExperienceRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-
-    MPROPERTY()
-    uint32 ExperienceDelta = 0;
-};
-
-MSTRUCT()
 struct FClientGrantExperienceResponse
 {
     MPROPERTY()
@@ -81,16 +52,6 @@ struct FClientGrantExperienceResponse
 
     MPROPERTY()
     MString Error;
-};
-
-MSTRUCT()
-struct FClientModifyHealthRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-
-    MPROPERTY()
-    int32 HealthDelta = 0;
 };
 
 MSTRUCT()

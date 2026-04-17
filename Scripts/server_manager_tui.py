@@ -11,7 +11,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from server_cluster import BaseNodeController, ClusterManager, NodeRegistryEntry
+from build_systems import add_build_system_arguments
+from server_cluster import BaseNodeController, ClusterManager, NodeConfig, NodeRegistryEntry
 from server_control_api import resolve_build_dir
 
 
@@ -76,10 +77,26 @@ class TuiColors:
 
 
 class ServerManagerTui:
-    def __init__(self, build_dir: Path, refresh_interval: float, cluster_config: Optional[Path]):
+    def __init__(
+        self,
+        build_dir: Path,
+        refresh_interval: float,
+        cluster_config: Optional[Path],
+        build_system_name: Optional[str],
+        build_system_config: Optional[Path],
+    ):
         self.build_dir = build_dir
         self.refresh_interval = max(0.2, refresh_interval)
-        self.cluster = ClusterManager(cluster_config)
+        default_local_node = NodeConfig(
+            name="local",
+            mode="local",
+            host="127.0.0.1",
+            project_root=str(build_dir.parent),
+            build_dir=str(build_dir),
+            build_system=build_system_name,
+            build_system_config=str(build_system_config) if build_system_config else None,
+        )
+        self.cluster = ClusterManager(cluster_config, default_local_node=default_local_node)
         self.selected_node_index = 0
 
         self.snapshot: dict = {}
@@ -1218,6 +1235,7 @@ class ServerManagerTui:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Terminal UI for local Mession server management")
     parser.add_argument("--build-dir", type=Path, default=Path("Build"), help="Build directory (default: Build)")
+    add_build_system_arguments(parser)
     parser.add_argument("--cluster-config", type=Path, help="Optional cluster config JSON path")
     parser.add_argument(
         "--refresh-interval",
@@ -1232,6 +1250,8 @@ def main() -> int:
         build_dir=build_dir,
         refresh_interval=args.refresh_interval,
         cluster_config=args.cluster_config,
+        build_system_name=args.build_system,
+        build_system_config=args.build_system_config,
     )
     return curses.wrapper(app.run)
 

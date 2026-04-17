@@ -1,143 +1,77 @@
 #include "Servers/World/Player/PlayerService.h"
 
+#include "Common/Runtime/Concurrency/FiberAwait.h"
 #include "Servers/World/Player/Player.h"
 
-namespace MPlayerActions
+namespace
 {
-class FPlayerSwitchSceneAction final
-    : public MServerCallAsyncSupport::TServerCallAction<FPlayerSwitchSceneAction, FPlayerSwitchSceneResponse>
+TResult<FPlayerSwitchSceneResponse, FAppError> MakePlayerSwitchSceneError(const char* Code, const char* Message = "")
 {
-public:
-    using TResponseType = FPlayerSwitchSceneResponse;
-
-    FPlayerSwitchSceneAction(MPlayerService* InPlayerService, FPlayerSwitchSceneRequest InRequest)
-        : PlayerService(InPlayerService)
-        , Request(std::move(InRequest))
-    {
-    }
-
-protected:
-    void OnStart() override
-    {
-        Player = PlayerService->FindPlayer(Request.PlayerId);
-        if (!Player)
-        {
-            Fail("player_not_found", "PlayerSwitchScene");
-            return;
-        }
-
-        CurrentSceneId = Player->ResolveCurrentSceneId();
-        TargetSceneId = Request.SceneId;
-
-        if (CurrentSceneId == TargetSceneId)
-        {
-            OnSceneEntered(FSceneEnterResponse{Request.PlayerId, TargetSceneId});
-            return;
-        }
-
-        if (CurrentSceneId != 0)
-        {
-            Continue(PlayerService->LeaveSceneForPlayer(Request.PlayerId, CurrentSceneId), &FPlayerSwitchSceneAction::OnSceneLeft);
-            return;
-        }
-
-        EnterTargetScene();
-    }
-
-private:
-    void OnSceneLeft(const FSceneLeaveResponse&)
-    {
-        EnterTargetScene();
-    }
-
-    void EnterTargetScene()
-    {
-        Continue(PlayerService->EnterSceneForPlayer(Request.PlayerId, TargetSceneId), &FPlayerSwitchSceneAction::OnSceneEntered);
-    }
-
-    void OnSceneEntered(const FSceneEnterResponse& SceneResponse)
-    {
-        TargetSceneId = SceneResponse.SceneId;
-        Continue(
-            PlayerService->ApplySceneRouteForPlayer(Request.PlayerId, TargetSceneId),
-            &FPlayerSwitchSceneAction::OnRouteApplied);
-    }
-
-    void OnRouteApplied(const FPlayerUpdateRouteResponse&)
-    {
-        if (!Player)
-        {
-            Fail("player_missing", "PlayerSwitchScene");
-            return;
-        }
-
-        FPlayerSwitchSceneResponse Response;
-        Response.PlayerId = Request.PlayerId;
-        Response.SceneId = TargetSceneId;
-        Succeed(std::move(Response));
-    }
-
-    MPlayerService* PlayerService = nullptr;
-    FPlayerSwitchSceneRequest Request;
-    MPlayer* Player = nullptr;
-    uint32 CurrentSceneId = 0;
-    uint32 TargetSceneId = 0;
-};
+    return MakeErrorResult<FPlayerSwitchSceneResponse>(FAppError::Make(
+        Code ? Code : "player_command_failed",
+        Message ? Message : ""));
+}
 }
 
 MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> MPlayerService::PlayerSwitchScene(
     const FPlayerSwitchSceneRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("player_id_required", "PlayerSwitchScene");
-    }
-
-    if (Request.SceneId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerSwitchSceneResponse>("scene_id_required", "PlayerSwitchScene");
-    }
-
-    if (auto Error = ValidateDependencies<FPlayerSwitchSceneResponse>(
-            "PlayerSwitchScene",
-            {
-                EDependency::Scene,
-                EDependency::Router,
-            });
-        Error.has_value())
-    {
-        return std::move(*Error);
-    }
-
-    uint32 PreviousSceneId = 0;
-    if (const MPlayer* Player = FindPlayer(Request.PlayerId))
-    {
-        PreviousSceneId = Player->ResolveCurrentSceneId();
-    }
-
-    MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> Future =
-        MServerCallAsyncSupport::StartAction<MPlayerActions::FPlayerSwitchSceneAction>(this, Request);
-    Future.Then([this, PlayerId = Request.PlayerId, PreviousSceneId](MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> Completed)
-    {
-        try
+    return DispatchRuntimeCommand<FPlayerSwitchSceneResponse>(
+        Request,
+        "PlayerSwitchScene",
         {
-            const TResult<FPlayerSwitchSceneResponse, FAppError> Result = Completed.Get();
-            if (!Result.IsOk())
-            {
-                return;
-            }
+            EDependency::Scene,
+            EDependency::Router,
+        },
+        &MPlayerService::DoPlayerSwitchScene);
+}
 
-            const uint32 NewSceneId = Result.GetValue().SceneId;
-            if (PreviousSceneId != 0 && PreviousSceneId != NewSceneId)
-            {
-                QueueScenePlayerLeaveNotify(PlayerId, PreviousSceneId);
-            }
+TResult<FPlayerSwitchSceneResponse, FAppError> MPlayerService::DoPlayerSwitchScene(FPlayerSwitchSceneRequest Request)
+{
+    MPlayer* Player = FindPlayer(Request.PlayerId);
+    if (!Player)
+    {
+        return MakePlayerSwitchSceneError("player_not_found", "PlayerSwitchScene");
+    }
 
-            QueueScenePlayerEnterNotify(PlayerId);
-        }
-        catch (...)
+    const uint32 PreviousSceneId = Player->ResolveCurrentSceneId();
+    uint32 TargetSceneId = Request.SceneId;
+
+    if (PreviousSceneId != TargetSceneId)
+    {
+        if (PreviousSceneId != 0)
         {
+            (void)MAwaitOk(LeaveSceneForPlayer(Request.PlayerId, PreviousSceneId));
         }
-    });
-    return Future;
+
+        const FSceneEnterResponse SceneResponse =
+            MAwaitOk(EnterSceneForPlayer(Request.PlayerId, TargetSceneId));
+        TargetSceneId = SceneResponse.SceneId;
+    }
+
+    if (const TResult<FPlayerUpdateRouteResponse, FAppError> RouteResult =
+            ApplySceneRouteForPlayer(Request.PlayerId, TargetSceneId);
+        !RouteResult.IsOk())
+    {
+        return MakeErrorResult<FPlayerSwitchSceneResponse>(RouteResult.GetError());
+    }
+
+    Player = FindPlayer(Request.PlayerId);
+    if (!Player)
+    {
+        return MakePlayerSwitchSceneError("player_missing", "PlayerSwitchScene");
+    }
+
+    Player->SyncRuntimeStateToProfile();
+
+    if (PreviousSceneId != 0 && PreviousSceneId != TargetSceneId)
+    {
+        QueueScenePlayerLeaveNotify(Request.PlayerId, PreviousSceneId);
+    }
+    QueueScenePlayerEnterNotify(Request.PlayerId);
+
+    FPlayerSwitchSceneResponse Response;
+    Response.PlayerId = Request.PlayerId;
+    Response.SceneId = TargetSceneId;
+    return TResult<FPlayerSwitchSceneResponse, FAppError>::Ok(std::move(Response));
 }

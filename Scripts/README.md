@@ -30,6 +30,8 @@ python3 Scripts/servers.py stop --build-dir Build
 ```bash
 python3 Scripts/validate.py --build-dir Build
 python3 Scripts/validate.py --build-dir Build --no-build
+python3 Scripts/validate.py --build-dir Build --no-build --suite player_state
+python3 Scripts/validate.py --build-dir Build --no-build --suite scene_downlink
 ```
 
 它会启动：
@@ -52,6 +54,51 @@ python3 Scripts/validate.py --build-dir Build --no-build
 - forwarded `ClientCall` 异常链路
 
 脚本内部按 `Client API` 稳定名计算函数 ID，不依赖 owner class 名。
+
+当前支持的 suite：
+
+- `all`：完整回归
+- `player_state`：登录、查询、写操作、登出重登恢复
+- `scene_downlink`：场景 enter/update/leave 下行链路
+- `combat_commit`：双玩家入场后最小战斗提交链路
+- `forward_errors`：转发参数绑定、业务校验、后端不可用错误链路
+- `runtime_dispatch`：当前主运行时链路覆盖集合，包含登录到重登恢复的主要 World 流程
+
+### `compile_assets.py`
+
+统一编译 `*.mobj.json -> *.mob` 的资产工具：
+
+```bash
+python3 Scripts/compile_assets.py --build GameData/Combat/Monsters/Slime.mobj.json
+python3 Scripts/compile_assets.py GameData/Combat/Monsters
+python3 Scripts/compile_assets.py --no-roundtrip
+python3 Scripts/compile_assets.py --publish GameData/Combat/Monsters/Slime.mobj.json
+```
+
+默认行为：
+
+- 输入源：`*.mobj.json`
+- 生成目录：`Build/Generated/Assets/...`
+- 输出产物：`Build/Generated/Assets/.../*.mob`
+- 验证输出：`Build/Generated/Assets/.../*.roundtrip.json`
+- 可选发布：`--publish` 后再把 `.mob` 同步到 `GameData/...`
+- 每次编译前会先清掉该资产旧的生成物，避免残留脏文件
+
+命名规则固定为：
+
+- `GameData/Combat/Monsters/Slime.mobj.json`
+  -> `Build/Generated/Assets/Combat/Monsters/Slime.mob`
+- `GameData/Combat/Monsters/Slime.mobj.json`
+  -> `Build/Generated/Assets/Combat/Monsters/Slime.roundtrip.json`
+- `--publish`
+  -> `GameData/Combat/Monsters/Slime.mob`
+
+内部调用 `MObjectAssetSmokeTool`，所以除了编译 `.mob`，也会顺手验证：
+
+- `JSON -> .mob`
+- `.mob -> Load`
+- `Load -> Export JSON`
+- 如果是 `MMonsterConfig`，额外验证一次 `MonsterManager` 生成 Monster
 
 ### `verify_protocol.py`
 
@@ -80,9 +127,10 @@ python3 Scripts/validate.py --build-dir Build --no-build
 ## 推荐使用顺序
 
 1. 编译项目
-2. 跑 `validate.py`
-3. 需要长期观察服务时，再用 `servers.py start`
-4. 协议变更时补跑 `verify_protocol.py`
+2. 跑 `python3 Scripts/compile_assets.py --build`
+3. 跑 `validate.py`
+4. 需要长期观察服务时，再用 `servers.py start`
+5. 协议变更时补跑 `verify_protocol.py`
 
 ## 相关文档
 

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>源码来源索引</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css">
+</head>
+<body>
+  <div class="page">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="pill">Repository Architecture</span>
+        <h1>源码来源索引</h1>
+        <p>按模块标注示例、判断和真实源码文件的对应关系。</p>
+      </div>
+
+<nav class="nav">
+  <a href="../index.html">总览首页</a>
+  <div class="nav-group-title">模块</div>
+  <a href="../modules/index.html">模块导航</a>
+  <a href="../modules/foundation.html">基础层：Common / Protocol / App / Tooling</a>
+  <a href="../modules/servers.html">业务层：Gateway / Login / World / Scene / Router / Mgo</a>
+  <div class="nav-group-title">链路与评审</div>
+  <a href="../flows/index.html">主链路导航</a>
+  <a href="../flows/main-flows.html">跨模块主链路时序</a>
+  <a href="../review/index.html">Review 导航</a>
+  <a href="../review/priorities.html">分模块优先级清单</a>
+  <div class="nav-group-title">示例</div>
+  <a href="../examples/index.html">示例导航</a>
+  <a href="../examples/runtime-examples.html">运行与调用示例</a>
+  <a href="../examples/source-map.html">源码来源索引</a>
+  <div class="nav-group-title">Runtime</div>
+  <a href="../runtime/index.html">Runtime 导航</a>
+  <a href="../runtime/world-runtime.html">World Runtime 设计</a>
+</nav>
+
+      <div class="nav-note">现在这套文档已经按模块、链路、review、示例、runtime 五个维度拆开；后续再补子系统页时，直接往目录里加即可。</div>
+    </aside>
+    <main class="content">
+
+<section class="hero">
+  <span class="pill">Source Map</span>
+  <h2>把示例、模块判断和真实源码文件一一对上，查阅时就不会再丢上下文</h2>
+  <p>这一页专门回答一个问题：你在文档里看到的每个设计判断，应该回仓库里的哪个文件去验证。</p>
+</section>
+<section class="section">
+  <div class="section-head"><h3>按模块标注来源</h3><p>建议你把这页当成索引页来用：先看模块，再决定跳到哪一类源码。</p></div>
+  <table>
+    <thead><tr><th>模块</th><th>设计关注点</th><th>源码入口</th><th>关联文档</th></tr></thead>
+    <tbody>
+      <tr><td><code>Common / Runtime</code></td><td>fiber、await、执行上下文</td><td><code>Source/Common/Runtime/Concurrency/FiberAwait.h</code><br><code>Source/Common/Runtime/Concurrency/FiberScheduler.h</code><br><code>Source/Common/Runtime/Concurrency/CommandExecutionContext.h</code></td><td><code>modules/foundation.html</code><br><code>runtime/world-runtime.html</code></td></tr>
+      <tr><td><code>Servers/App</code></td><td>请求校验、async glue、server/client call bridge</td><td><code>Source/Servers/App/ServerCallRequestValidation.h</code><br><code>Source/Servers/App/ServerCallAsyncSupport.h</code><br><code>Source/Servers/App/ClientCallAsyncSupport.h</code><br><code>Source/Servers/App/ResultFutureSupport.h</code></td><td><code>modules/foundation.html</code><br><code>review/priorities.html</code></td></tr>
+      <tr><td><code>World</code></td><td>Runtime Dispatch、业务主链路、玩家聚合</td><td><code>Source/Servers/World/Player/PlayerService.h</code><br><code>Source/Servers/World/Player/PlayerServiceRuntime.cpp</code><br><code>Source/Servers/World/Player/PlayerEnter.cpp</code><br><code>Source/Servers/World/Player/PlayerSwitchScene.cpp</code><br><code>Source/Servers/World/Player/PlayerCombat.cpp</code></td><td><code>modules/servers.html</code><br><code>flows/main-flows.html</code><br><code>runtime/world-runtime.html</code></td></tr>
+      <tr><td><code>Scene / Router / Mgo / Login</code></td><td>被 World 编排的能力边界</td><td><code>Source/Servers/Scene/SceneServer.cpp</code><br><code>Source/Servers/Router/RouterServer.cpp</code><br><code>Source/Servers/Mgo/MgoServer.cpp</code><br><code>Source/Servers/Login/LoginServer.cpp</code></td><td><code>modules/servers.html</code><br><code>flows/main-flows.html</code></td></tr>
+      <tr><td><code>Scripts</code></td><td>本地验证、集群编排、控制接口</td><td><code>Scripts/validate.py</code><br><code>Scripts/server_cluster.py</code><br><code>Scripts/server_control_api.py</code><br><code>Scripts/server_registry.py</code></td><td><code>examples/runtime-examples.html</code></td></tr>
+      <tr><td><code>Build / Tooling</code></td><td>目标划分、代码生成、二进制组织</td><td><code>CMakeLists.txt</code><br><code>Source/Tools/MHeaderTool.cpp</code></td><td><code>modules/foundation.html</code></td></tr>
+    </tbody>
+  </table>
+</section>
+<section class="section">
+  <div class="section-head"><h3>顺着“去 Workflow”这条线怎么读</h3><p>如果你的核心关注点还是“Workflow 已经被 Runtime 替掉了吗”，建议按下面顺序读源码。</p></div>
+  <div class="grid-2">
+    <div class="card"><h4>第一步：看入口是否统一</h4><p>从 <code>Source/Servers/World/Player/PlayerService.h</code> 开始，确认入口是不是统一收敛到了 <code>PrepareRuntimeDispatch / DispatchRuntimeCommand</code> 这一套契约。</p></div>
+    <div class="card"><h4>第二步：看业务体是否顺序化</h4><p>再看 <code>PlayerEnter.cpp</code>、<code>PlayerSwitchScene.cpp</code>、<code>PlayerCombat.cpp</code>，确认业务体是不是主要靠 <code>MAwaitOk</code> 顺序串起来，而不是回到 callback / workflow graph。</p></div>
+    <div class="card"><h4>第三步：看 Runtime 是否真的兜底</h4><p>最后看 <code>PlayerCommandRuntime.h/.cpp</code>、<code>CommandExecutionContext.h</code>、<code>FiberScheduler.h</code>，确认 strand、epoch、fiber continuation 有没有把复杂度吃掉。</p></div>
+    <div class="card"><h4>第四步：看公共层是否继续抽象</h4><p>如果未来还要继续做，就回头看 <code>Servers/App</code> 里的请求校验和 async glue 有没有继续沉淀为复用 helper。</p></div>
+  </div>
+</section>
+    </main>
+  </div>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
+<script>window.addEventListener('DOMContentLoaded', () => hljs.highlightAll());</script>
+</body>
+</html>

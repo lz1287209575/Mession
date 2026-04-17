@@ -12,5 +12,7 @@ void MWorldClient::Initialize(
 
 MWorldClientPlayer::FRequest MWorldClient::PlayerRequest() const
 {
-    return MWorldClientPlayer::FRequest(WorldServer ? WorldServer->GetPlayerService() : nullptr);
+    return MWorldClientPlayer::FRequest(
+        WorldServer ? WorldServer->GetPlayerService() : nullptr,
+        WorldServer ? WorldServer->GetTaskRunner() : nullptr);
 }

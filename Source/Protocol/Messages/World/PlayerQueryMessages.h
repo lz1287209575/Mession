@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Servers/App/ServerCallRequestValidation.h"
 
 MSTRUCT()
 struct FPlayerQueryStateRequest
@@ -23,7 +24,7 @@ struct FPlayerQueryStateResponse
 MSTRUCT()
 struct FPlayerQueryProfileRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerQueryProfile"))
     uint64 PlayerId = 0;
 };
 
@@ -53,29 +54,9 @@ struct FPlayerQueryProfileResponse
 };
 
 MSTRUCT()
-struct FPlayerQueryInventoryRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-};
-
-MSTRUCT()
-struct FPlayerQueryInventoryResponse
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-
-    MPROPERTY()
-    uint32 Gold = 0;
-
-    MPROPERTY()
-    MString EquippedItem;
-};
-
-MSTRUCT()
 struct FPlayerQueryProgressionRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerQueryProgression"))
     uint64 PlayerId = 0;
 };
 
@@ -98,7 +79,7 @@ struct FPlayerQueryProgressionResponse
 MSTRUCT()
 struct FPlayerQueryPawnRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerQueryPawn"))
     uint64 PlayerId = 0;
 };
 

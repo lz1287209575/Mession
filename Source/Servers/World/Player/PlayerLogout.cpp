@@ -1,5 +1,6 @@
 #include "Servers/World/Player/PlayerService.h"
 
+#include "Common/Runtime/Concurrency/FiberAwait.h"
 #include "Common/Runtime/Persistence/PersistenceSubsystem.h"
 #include "Protocol/Messages/Mgo/MgoPlayerStateMessages.h"
 #include "Servers/World/Player/Player.h"
@@ -35,115 +36,60 @@ TVector<FObjectPersistenceRecord> ToProtocolPersistenceRecords(const TVector<SPe
 }
 }
 
-namespace MPlayerActions
-{
-class FPlayerLogoutAction final
-    : public MServerCallAsyncSupport::TServerCallAction<FPlayerLogoutAction, FPlayerLogoutResponse>
-{
-public:
-    using TResponseType = FPlayerLogoutResponse;
-
-    FPlayerLogoutAction(MPlayerService* InPlayerService, FPlayerLogoutRequest InRequest)
-        : PlayerService(InPlayerService)
-        , Request(std::move(InRequest))
-    {
-    }
-
-protected:
-    void OnStart() override
-    {
-        Player = PlayerService->FindPlayer(Request.PlayerId);
-        if (!Player)
-        {
-            FPlayerLogoutResponse Response;
-            Response.PlayerId = Request.PlayerId;
-            Succeed(std::move(Response));
-            return;
-        }
-
-        if (Player->ResolveCurrentSceneId() != 0 &&
-            PlayerService->WorldServer->GetScene() &&
-            PlayerService->WorldServer->GetScene()->IsAvailable())
-        {
-            Continue(PlayerService->LeaveSceneForPlayer(Request.PlayerId, Player->ResolveCurrentSceneId()), &FPlayerLogoutAction::OnSceneLeft);
-            return;
-        }
-
-        OnSceneLeft(FSceneLeaveResponse{Request.PlayerId});
-    }
-
-private:
-    void OnSceneLeft(const FSceneLeaveResponse&)
-    {
-        if (Player)
-        {
-            Player->PrepareForLogout();
-            SaveRequest.PlayerId = Request.PlayerId;
-            SaveRequest.Records = ToProtocolPersistenceRecords(
-                PlayerService->WorldServer->GetPersistence().BuildRecordsForRoot(Player, false));
-        }
-
-        Continue(PlayerService->WorldServer->GetMgo()->SavePlayer(SaveRequest), &FPlayerLogoutAction::OnPlayerSaved);
-    }
-
-    void OnPlayerSaved(const FMgoSavePlayerResponse&)
-    {
-        PlayerService->RemovePlayer(Request.PlayerId);
-        Succeed(BuildPlayerOnlyResponse<FPlayerLogoutResponse>(Request.PlayerId));
-    }
-
-    MPlayerService* PlayerService = nullptr;
-    FPlayerLogoutRequest Request;
-    MPlayer* Player = nullptr;
-    FMgoSavePlayerRequest SaveRequest;
-};
-}
-
 MFuture<TResult<FPlayerLogoutResponse, FAppError>> MPlayerService::PlayerLogout(const FPlayerLogoutRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerLogoutResponse>("player_id_required", "PlayerLogout");
-    }
-
-    if (auto Error = ValidateDependencies<FPlayerLogoutResponse>(
-            "PlayerLogout",
-            {
-                EDependency::Persistence,
-                EDependency::Mgo,
-            });
-        Error.has_value())
-    {
-        return std::move(*Error);
-    }
-
-    if (!FindPlayer(Request.PlayerId))
-    {
-        return MServerCallAsyncSupport::MakeSuccessFuture(BuildPlayerOnlyResponse<FPlayerLogoutResponse>(Request.PlayerId));
-    }
-
-    uint32 SceneIdBeforeLogout = 0;
-    if (const MPlayer* Player = FindPlayer(Request.PlayerId))
-    {
-        SceneIdBeforeLogout = Player->ResolveCurrentSceneId();
-    }
-
-    MFuture<TResult<FPlayerLogoutResponse, FAppError>> Future =
-        MServerCallAsyncSupport::StartAction<MPlayerActions::FPlayerLogoutAction>(this, Request);
-    Future.Then([this, PlayerId = Request.PlayerId, SceneIdBeforeLogout](MFuture<TResult<FPlayerLogoutResponse, FAppError>> Completed)
-    {
-        try
+    return DispatchRuntimeCommandMany<FPlayerLogoutResponse>(
+        Request,
+        BuildLogoutParticipants(Request.PlayerId),
+        "PlayerLogout",
         {
-            const TResult<FPlayerLogoutResponse, FAppError> Result = Completed.Get();
-            if (Result.IsOk() && SceneIdBeforeLogout != 0)
-            {
-                QueueScenePlayerLeaveNotify(PlayerId, SceneIdBeforeLogout);
-            }
-        }
-        catch (...)
-        {
-        }
-    });
-    return Future;
+            EDependency::Persistence,
+            EDependency::Mgo,
+        },
+        &MPlayerService::DoPlayerLogout);
 }
 
+TResult<FPlayerLogoutResponse, FAppError> MPlayerService::DoPlayerLogout(FPlayerLogoutRequest Request)
+{
+    MPlayer* Player = FindPlayer(Request.PlayerId);
+    if (!Player)
+    {
+        return TResult<FPlayerLogoutResponse, FAppError>::Ok(
+            BuildPlayerOnlyResponse<FPlayerLogoutResponse>(Request.PlayerId));
+    }
+
+    const uint32 SceneIdBeforeLogout = Player->ResolveCurrentSceneId();
+    if (SceneIdBeforeLogout != 0 &&
+        WorldServer->GetScene() &&
+        WorldServer->GetScene()->IsAvailable())
+    {
+        (void)MAwaitOk(LeaveSceneForPlayer(Request.PlayerId, SceneIdBeforeLogout));
+    }
+
+    Player = FindPlayer(Request.PlayerId);
+    if (!Player)
+    {
+        return TResult<FPlayerLogoutResponse, FAppError>::Ok(
+            BuildPlayerOnlyResponse<FPlayerLogoutResponse>(Request.PlayerId));
+    }
+
+    CleanupPlayerSocialState(Request.PlayerId);
+    Player->PrepareForLogout();
+
+    FMgoSavePlayerRequest SaveRequest;
+    SaveRequest.PlayerId = Request.PlayerId;
+    SaveRequest.Records = ToProtocolPersistenceRecords(
+        WorldServer->GetPersistence().BuildRecordsForRoot(Player, false));
+    (void)MAwaitOk(WorldServer->GetMgo()->SavePlayer(SaveRequest));
+
+    PlayerCommandRuntime->BumpEpoch(Request.PlayerId);
+    RemovePlayer(Request.PlayerId);
+
+    if (SceneIdBeforeLogout != 0)
+    {
+        QueueScenePlayerLeaveNotify(Request.PlayerId, SceneIdBeforeLogout);
+    }
+
+    return TResult<FPlayerLogoutResponse, FAppError>::Ok(
+        BuildPlayerOnlyResponse<FPlayerLogoutResponse>(Request.PlayerId));
+}

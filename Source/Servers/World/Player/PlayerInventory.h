@@ -3,8 +3,28 @@
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Protocol/Messages/World/PlayerModifyMessages.h"
-#include "Protocol/Messages/World/PlayerQueryMessages.h"
+#include "Servers/App/ServerCallRequestValidation.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
+
+MSTRUCT()
+struct FPlayerQueryInventoryRequest
+{
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerQueryInventory"))
+    uint64 PlayerId = 0;
+};
+
+MSTRUCT()
+struct FPlayerQueryInventoryResponse
+{
+    MPROPERTY()
+    uint64 PlayerId = 0;
+
+    MPROPERTY()
+    uint32 Gold = 0;
+
+    MPROPERTY()
+    MString EquippedItem;
+};
 
 MCLASS(Type=Object)
 class MPlayerInventory : public MObject
@@ -21,6 +41,8 @@ public:
     void SetState(uint32 InGold, const MString& InEquippedItem);
 
     void LoadState(uint32 InGold, const MString& InEquippedItem);
+
+    TResult<FPlayerChangeGoldResponse, FAppError> ApplyGoldDelta(int32 DeltaGold);
 
     MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> PlayerQueryInventory(

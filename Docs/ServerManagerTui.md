@@ -15,13 +15,19 @@ python3 Scripts/server_manager_tui.py
 可选参数：
 
 ```bash
-python3 Scripts/server_manager_tui.py --build-dir Build --refresh-interval 1.0
+python3 Scripts/server_manager_tui.py --build-dir Build --build-system cmake --refresh-interval 1.0
 ```
 
 多机场景可传集群配置：
 
 ```bash
 python3 Scripts/server_manager_tui.py --cluster-config Config/server_cluster.example.json
+```
+
+本地模式也可以显式指定自定义构建系统：
+
+```bash
+python3 Scripts/server_manager_tui.py --build-dir Build --build-system custom-ninja --build-system-config Config/build_systems.json
 ```
 
 ## 界面内容
@@ -163,6 +169,11 @@ TUI 当前支持三种节点：
 示例配置见：
 
 - [`Config/server_cluster.example.json`](/root/Mession/Config/server_cluster.example.json)
+
+节点配置额外支持：
+
+- `build_system`
+- `build_system_config`
 
 如果你准备完全走注册表自动发现，也可以把 `nodes` 留空，只保留 `registry` 配置。
 

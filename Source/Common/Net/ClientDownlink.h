@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/Object/Object.h"
+#include "Protocol/Messages/Gateway/GatewayPlayerSocialMessages.h"
 #include "Protocol/Messages/Scene/SceneSyncMessages.h"
 #include "Protocol/Messages/World/WorldInventoryMessages.h"
 
@@ -46,4 +47,28 @@ public:
 
     MFUNCTION()
     void Client_ScenePlayerLeave(const SPlayerSceneLeaveMessage&) {}
+
+    MFUNCTION()
+    void Client_TradeSessionOpened(const FClientTradeSessionOpenedNotify&) {}
+
+    MFUNCTION()
+    void Client_TradeSessionUpdated(const FClientTradeSessionUpdatedNotify&) {}
+
+    MFUNCTION()
+    void Client_TradeSessionClosed(const FClientTradeSessionClosedNotify&) {}
+
+    MFUNCTION()
+    void Client_PartyCreated(const FClientPartyCreatedNotify&) {}
+
+    MFUNCTION()
+    void Client_PartyInviteReceived(const FClientPartyInviteReceivedNotify&) {}
+
+    MFUNCTION()
+    void Client_PartyMemberJoined(const FClientPartyMemberJoinedNotify&) {}
+
+    MFUNCTION()
+    void Client_PartyMemberRemoved(const FClientPartyMemberRemovedNotify&) {}
+
+    MFUNCTION()
+    void Client_PartyDisbanded(const FClientPartyDisbandedNotify&) {}
 };

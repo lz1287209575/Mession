@@ -12,11 +12,14 @@
    说明反射、RPC、Promise/Future/Coroutine、异步流程组织方式。
 4. [Validation.md](/root/Mession/Docs/Validation.md)
    说明当前自动验证覆盖到什么程度，以及改动后应该怎么验。
+5. [RequestValidation.md](/root/Mession/Docs/RequestValidation.md)
+   说明 `ServerCall` 请求的字段级 Meta 校验约定，以及什么时候仍然需要自定义 validator。
 
 ## 与玩法和状态相关
 
 - [GameplayAndState.md](/root/Mession/Docs/GameplayAndState.md)
 - [PersistenceAndReplication.md](/root/Mession/Docs/PersistenceAndReplication.md)
+- [MObjectAssetSerialization.md](/root/Mession/Docs/MObjectAssetSerialization.md)
 - [PlayerRpcDevelopment.md](/root/Mession/Docs/PlayerRpcDevelopment.md)
 
 ## 与工具和脚本相关

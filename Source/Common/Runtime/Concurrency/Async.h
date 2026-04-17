@@ -1,8 +1,8 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
-#include "Common/Runtime/Concurrency/Coroutine.h"
 #include "Common/Runtime/Concurrency/ITaskRunner.h"
+#include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Concurrency/ThreadPool.h"
 
 #include <stdexcept>
@@ -93,17 +93,6 @@ MFuture<TResult> Post(ITaskRunner* Runner, TFunc&& Func)
             }
         });
 
-    return Future;
-}
-
-/** 协程入口：构造流程对象、托管其生命周期并返回结果 Future。 */
-template<typename TCoroutine, typename... TArgs>
-auto StartCoroutine(TArgs&&... Args) -> MFuture<typename TCoroutine::TResultType>
-{
-    TSharedPtr<TCoroutine> Coroutine = MakeShared<TCoroutine>(std::forward<TArgs>(Args)...);
-    Coroutine->RetainUntilCompletion(Coroutine);
-    MFuture<typename TCoroutine::TResultType> Future = Coroutine->GetFuture();
-    Coroutine->Start();
     return Future;
 }
 

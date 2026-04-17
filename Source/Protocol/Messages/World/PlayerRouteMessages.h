@@ -1,11 +1,12 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Servers/App/ServerCallRequestValidation.h"
 
 MSTRUCT()
 struct FPlayerFindRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerFind"))
     uint64 PlayerId = 0;
 };
 
@@ -28,13 +29,13 @@ struct FPlayerFindResponse
 MSTRUCT()
 struct FPlayerUpdateRouteRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerUpdateRoute"))
     uint64 PlayerId = 0;
 
     MPROPERTY()
     uint8 TargetServerType = 0;
 
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="scene_id_required", ErrorContext="PlayerUpdateRoute"))
     uint32 SceneId = 0;
 };
 

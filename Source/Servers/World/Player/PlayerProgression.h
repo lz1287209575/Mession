@@ -22,6 +22,8 @@ public:
     MPROPERTY(PersistentData | Replicated)
     uint32 Health = 100;
 
+    TResult<FPlayerGrantExperienceResponse, FAppError> ApplyExperienceDelta(uint32 ExperienceDelta);
+
     void SetState(uint32 InLevel, uint32 InExperience, uint32 InHealth);
 
     void SetHealth(uint32 InHealth);

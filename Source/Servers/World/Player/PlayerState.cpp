@@ -24,11 +24,6 @@ void MPlayer::InitializeForLogin(uint64 InPlayerId, uint64 InGatewayConnectionId
         Profile->InitializeForPlayer(PlayerId, Profile->CurrentSceneId);
     }
 
-    if (Controller)
-    {
-        Controller->InitializeForLogin(ResolveCurrentSceneId());
-    }
-
     if (Pawn)
     {
         Pawn->InitializeForLogin(0, ResolveCurrentHealth());
@@ -53,11 +48,6 @@ void MPlayer::SetRoute(uint32 InSceneId, uint8 InTargetServerType)
             Pawn->Despawn();
         }
     }
-
-    if (Profile && InSceneId != 0)
-    {
-        Profile->SetCurrentSceneId(InSceneId);
-    }
 }
 
 void MPlayer::FinalizeLoadedState()
@@ -77,7 +67,7 @@ void MPlayer::FinalizeLoadedState()
     const uint32 ResolvedSceneId = ResolveCurrentSceneId();
     const uint32 ResolvedHealth = ResolveCurrentHealth();
 
-    if (Controller && Controller->SceneId == 0)
+    if (Controller)
     {
         Controller->InitializeForLogin(ResolvedSceneId);
     }
@@ -115,17 +105,12 @@ uint32 MPlayer::ResolveCurrentSceneId() const
 
 uint32 MPlayer::ResolveCurrentHealth() const
 {
-    if (Pawn && Pawn->IsSpawned())
-    {
-        return Pawn->Health;
-    }
-
     if (Profile)
     {
         return Profile->ResolveCurrentHealth();
     }
 
-    if (Pawn && Pawn->Health != 0)
+    if (Pawn && Pawn->IsSpawned())
     {
         return Pawn->Health;
     }
@@ -174,8 +159,7 @@ uint32 MPlayer::ApplyCombatResult(const FWorldCommitCombatResultRequest& Request
     uint32 ResolvedHealth = Request.CommittedHealth;
     if (CombatProfile)
     {
-        CombatProfile->ApplyCommittedCombatResult(Request);
-        ResolvedHealth = CombatProfile->LastResolvedHealth;
+        ResolvedHealth = CombatProfile->RecordCommittedCombatResult(Request);
     }
 
     ApplyResolvedHealth(ResolvedHealth);
@@ -192,7 +176,7 @@ void MPlayer::ApplyResolvedHealth(uint32 InHealth)
         }
     }
 
-    if (Pawn)
+    if (Pawn && Pawn->IsSpawned())
     {
         Pawn->SetHealth(InHealth);
     }
@@ -202,7 +186,7 @@ void MPlayer::SyncRuntimeStateToProfile()
 {
     if (Profile)
     {
-        Profile->SyncRuntimeState(ResolveCurrentSceneId(), ResolveCurrentHealth());
+        Profile->SyncRuntimeState(ResolveCurrentSceneId());
     }
 }
 

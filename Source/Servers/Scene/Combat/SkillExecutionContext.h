@@ -5,8 +5,8 @@
 
 struct FSkillExecutionContext
 {
-    uint64 CasterPlayerId = 0;
-    uint64 PrimaryTargetPlayerId = 0;
+    FCombatUnitRef CasterUnit;
+    FCombatUnitRef PrimaryTargetUnit;
     uint32 SceneId = 0;
 
     const FSceneCombatAvatarSnapshot* CasterSnapshot = nullptr;

@@ -87,6 +87,13 @@ python3 Scripts/servers.py start --build-dir Build
 python3 Scripts/validate.py --build-dir Build --no-build
 ```
 
+如果只想先过某条主链路，可以先看 suite，再跑专项回归：
+
+```bash
+python3 Scripts/validate.py --build-dir Build --no-build --list-suites
+python3 Scripts/validate.py --build-dir Build --no-build --suite runtime_dispatch
+```
+
 5. 停服
 
 ```bash

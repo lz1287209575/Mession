@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Common/Runtime/Concurrency/FiberAwait.h"
 #include "Servers/World/WorldClient.h"
 #include "Servers/World/Player/PlayerService.h"
 
@@ -8,12 +9,100 @@
 
 namespace MWorldClientCommon
 {
+namespace MBinding
+{
+template<typename TDest, typename TSrc>
+void CopyMatchingProperties(TDest& Dest, const TSrc& Src);
+
+template<typename TResponse>
+void MarkSuccessIfPresent(TResponse& Response);
+}
+
 template<typename TResponse>
 TResponse BuildFailureResponse(const FAppError& Error, const char* FallbackCode)
 {
     TResponse Failed;
     Failed.Error = Error.Code.empty() ? (FallbackCode ? FallbackCode : "client_call_failed") : Error.Code;
     return Failed;
+}
+
+template<typename TResponse>
+TResult<TResponse, FAppError> BuildSuccessResult(TResponse Response)
+{
+    MBinding::MarkSuccessIfPresent(Response);
+    return TResult<TResponse, FAppError>::Ok(std::move(Response));
+}
+
+template<typename TResponse, typename TBody, typename TErrorMapper>
+bool StartAsyncClientResponse(
+    TResponse& Response,
+    ITaskRunner* Runner,
+    TBody&& Body,
+    TErrorMapper&& ErrorMapper)
+{
+    if (!Runner)
+    {
+        Response.Error = "task_runner_missing";
+        return false;
+    }
+
+    const SClientCallContext Context = CaptureCurrentClientCallContext();
+    if (!Context.IsValid())
+    {
+        Response.Error = "client_call_context_missing";
+        return false;
+    }
+
+    return MClientCallAsyncSupport::StartDeferredFiber<TResponse>(
+        Context,
+        Runner,
+        std::forward<TBody>(Body),
+        std::forward<TErrorMapper>(ErrorMapper));
+}
+
+template<typename TResponse, typename TBody>
+bool StartAsyncClientResponse(
+    TResponse& Response,
+    ITaskRunner* Runner,
+    const char* FailureCode,
+    TBody&& Body)
+{
+    return StartAsyncClientResponse(
+        Response,
+        Runner,
+        std::forward<TBody>(Body),
+        [FailureCode](const FAppError& Error)
+        {
+            return BuildFailureResponse<TResponse>(Error, FailureCode);
+        });
+}
+
+template<typename TClientResponse, typename TPlayerResponse>
+TResult<TClientResponse, FAppError> BuildProjectedSuccessResult(const TPlayerResponse& PlayerResponse)
+{
+    TClientResponse ClientResponse {};
+    MBinding::CopyMatchingProperties(ClientResponse, PlayerResponse);
+    MBinding::MarkSuccessIfPresent(ClientResponse);
+    return TResult<TClientResponse, FAppError>::Ok(std::move(ClientResponse));
+}
+
+template<typename TProjected, typename TSource>
+TProjected BuildProjectedValue(const TSource& Source)
+{
+    TProjected Projected {};
+    MBinding::CopyMatchingProperties(Projected, Source);
+    return Projected;
+}
+
+template<typename TClientResponse, typename TSourceResponse>
+TResult<TClientResponse, FAppError> BuildProjectedResult(TResult<TSourceResponse, FAppError> SourceResult)
+{
+    if (!SourceResult.IsOk())
+    {
+        return MakeErrorResult<TClientResponse>(SourceResult.GetError());
+    }
+
+    return BuildProjectedSuccessResult<TClientResponse>(SourceResult.GetValue());
 }
 
 template<typename TMethod>
@@ -83,7 +172,8 @@ inline bool CopyStructValue(
     MClass* StructClass = MObject::FindStruct(DestProperty->CppTypeIndex);
     if (!StructClass)
     {
-        return false;
+        std::memcpy(DestValue, SrcValue, DestProperty->Size);
+        return true;
     }
 
     for (const MProperty* ChildDestProperty : StructClass->GetProperties())
@@ -172,6 +262,11 @@ inline bool CopyPropertyValue(
         std::memcpy(DestValue, SrcValue, DestProperty->Size);
         return true;
     case EPropertyType::Struct:
+        if (MObject::FindEnum(DestProperty->CppTypeIndex))
+        {
+            std::memcpy(DestValue, SrcValue, DestProperty->Size);
+            return true;
+        }
         return CopyStructValue(DestProperty, DestObject, SrcProperty, SrcObject);
     default:
         return false;
@@ -236,8 +331,9 @@ namespace MWorldClientPlayer
 class FRequest
 {
 public:
-    explicit FRequest(MPlayerService* InPlayerService)
+    FRequest(MPlayerService* InPlayerService, ITaskRunner* InRunner)
         : PlayerService(InPlayerService)
+        , Runner(InRunner)
     {
     }
 
@@ -258,7 +354,6 @@ private:
     {
         using TMethodTraits = MWorldClientCommon::TPlayerMethodTraits<decltype(TPlayerMethod)>;
         using TPlayerRequest = typename TMethodTraits::TPlayerRequest;
-        using TPlayerResponse = typename TMethodTraits::TPlayerResponse;
 
         if (Request.PlayerId == 0)
         {
@@ -272,34 +367,27 @@ private:
             return;
         }
 
-        const SClientCallContext Context = CaptureCurrentClientCallContext();
-        if (!Context.IsValid())
+        if (!Runner)
         {
-            Response.Error = "client_call_context_missing";
+            Response.Error = "task_runner_missing";
             return;
         }
 
-        TPlayerRequest PlayerRequestValue {};
-        MWorldClientCommon::MBinding::CopyMatchingProperties(PlayerRequestValue, Request);
+        TPlayerRequest PlayerRequestValue = MWorldClientCommon::BuildProjectedValue<TPlayerRequest>(Request);
 
-        (void)MClientCallAsyncSupport::StartDeferred<TClientResponse>(
-            Context,
-            MClientCallAsyncSupport::Map(
-                (PlayerService->*TPlayerMethod)(PlayerRequestValue),
-                [](const TPlayerResponse& PlayerResponse)
-                {
-                    TClientResponse ClientResponse {};
-                    MWorldClientCommon::MBinding::CopyMatchingProperties(ClientResponse, PlayerResponse);
-                    MWorldClientCommon::MBinding::MarkSuccessIfPresent(ClientResponse);
-                    return ClientResponse;
-                }),
-            [FailureCode](const FAppError& Error)
+        (void)MWorldClientCommon::StartAsyncClientResponse(
+            Response,
+            Runner,
+            FailureCode,
+            [PlayerService = PlayerService, PlayerRequestValue = std::move(PlayerRequestValue)]() mutable
             {
-                return MWorldClientCommon::BuildFailureResponse<TClientResponse>(Error, FailureCode);
+                return MWorldClientCommon::BuildProjectedResult<TClientResponse>(
+                    MAwait((PlayerService->*TPlayerMethod)(PlayerRequestValue)));
             });
     }
 
 private:
     MPlayerService* PlayerService = nullptr;
+    ITaskRunner* Runner = nullptr;
 };
 } // namespace MWorldClientPlayer

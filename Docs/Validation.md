@@ -15,6 +15,17 @@ cmake --build Build -j4
 python3 Scripts/validate.py --build-dir Build --no-build
 ```
 
+### 第 2.5 层：按专项 suite 过子链路
+
+```bash
+python3 Scripts/validate.py --build-dir Build --no-build --list-suites
+python3 Scripts/validate.py --build-dir Build --no-build --suite player_state
+python3 Scripts/validate.py --build-dir Build --no-build --suite scene_downlink
+python3 Scripts/validate.py --build-dir Build --no-build --suite combat_commit
+python3 Scripts/validate.py --build-dir Build --no-build --suite forward_errors
+python3 Scripts/validate.py --build-dir Build --no-build --suite runtime_dispatch
+```
+
 ### 第 3 层：需要长期观察时手工起服
 
 ```bash
@@ -52,6 +63,24 @@ python3 Scripts/servers.py start --build-dir Build
 - forwarded `ClientCall` 的参数绑定失败
 - forwarded `ClientCall` 的业务校验失败
 - World 不可用时 Gateway 的错误返回
+
+## `validate.py` 当前 suite 分组
+
+- `all`
+  默认完整回归，覆盖当前主链路
+- `player_state`
+  聚焦登录、查询、写操作、登出重登恢复
+- `scene_downlink`
+  聚焦双玩家同场景 enter / update / leave 下行
+- `combat_commit`
+  聚焦双玩家入场后的最小战斗提交链路，并检查战斗结果是否同步回 `Profile / Progression`
+- `forward_errors`
+  聚焦 Gateway forward 后的参数绑定、业务校验、后端不可用错误链路
+- `runtime_dispatch`
+  聚焦当前 World 主运行时链路覆盖集合，用来观察 Runtime Dispatch 主干回归
+
+当前这些 suite 还不是完全解耦的单元级测试，而是从总回归脚本里切出的专项入口。
+它们的作用是让我们先有“可快速定位的分层回归”，再继续往更细粒度专项测试演进。
 
 ## 为什么当前以这条链路为主
 
@@ -118,11 +147,19 @@ python3 Scripts/servers.py start --build-dir Build
 - 多玩家、多服故障、多节点拓扑场景还未形成固定自动化回归集
 - 控制面脚本缺少更系统的接口级测试
 
+当前已经新增一层更明确的运行时回归入口：
+
+- `runtime_social`
+  覆盖 `CreateParty / InviteParty / AcceptPartyInvite / KickPartyMember`
+  用来回归多参与者 `PlayerCommandRuntime` barrier 与下行通知链路
+- `runtime_dispatch`
+  当前也已额外检查战斗后目标玩家的 `QueryProfile / QueryProgression`，用于回归 Health 主状态是否仍落在 `Progression`
+
 ## 当前建议
 
 后续如果继续迭代当前仓库，验证层面的优先级建议是：
 
 1. 保持 `validate.py` 与主链路能力同步
-2. 把已经稳定的子链路拆成更细粒度用例
-3. 补对象域、并发、复制、持久化专项测试
+2. 先把当前 suite 入口维持可用，再逐步拆成更细粒度用例
+3. 优先补运行时、对象域、复制、持久化专项测试
 4. 再去扩展更多玩法或多机控制场景

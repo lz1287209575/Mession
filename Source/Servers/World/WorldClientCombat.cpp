@@ -1,16 +1,11 @@
 #include "Servers/World/WorldClient.h"
+#include "Common/Runtime/Concurrency/FiberAwait.h"
 #include "Servers/World/WorldClientCommon.h"
 #include "Servers/World/Player/PlayerService.h"
 #include "Servers/World/WorldServer.h"
 
-void MWorldClient::Client_CastSkill(FClientCastSkillRequest& Request, FClientCastSkillResponse& Response)
+void MWorldClient::Client_CastSkill(FWorldCastSkillRequest& Request, FClientCastSkillResponse& Response)
 {
-    if (Request.PlayerId == 0 || Request.TargetPlayerId == 0)
-    {
-        Response.Error = "combat_participants_required";
-        return;
-    }
-
     if (!WorldServer)
     {
         Response.Error = "world_server_missing";
@@ -24,36 +19,69 @@ void MWorldClient::Client_CastSkill(FClientCastSkillRequest& Request, FClientCas
         return;
     }
 
-    const SClientCallContext Context = CaptureCurrentClientCallContext();
-    if (!Context.IsValid())
+    (void)MWorldClientCommon::StartAsyncClientResponse(
+        Response,
+        WorldServer->GetTaskRunner(),
+        "client_cast_skill_failed",
+        [PlayerService, Request = FWorldCastSkillRequest(Request)]() mutable
+        {
+            return MWorldClientCommon::BuildProjectedResult<FClientCastSkillResponse>(
+                MAwait(PlayerService->CastSkill(Request)));
+        });
+}
+
+void MWorldClient::Client_DebugSpawnMonster(
+    FWorldSpawnMonsterRequest& Request,
+    FClientDebugSpawnMonsterResponse& Response)
+{
+    if (!WorldServer)
     {
-        Response.Error = "client_call_context_missing";
+        Response.Error = "world_server_missing";
         return;
     }
 
-    FWorldCastSkillRequest WorldRequest;
-    WorldRequest.PlayerId = Request.PlayerId;
-    WorldRequest.TargetPlayerId = Request.TargetPlayerId;
-    WorldRequest.SkillId = Request.SkillId;
+    MPlayerService* PlayerService = WorldServer->GetPlayerService();
+    if (!PlayerService)
+    {
+        Response.Error = "player_service_missing";
+        return;
+    }
 
-    (void)MClientCallAsyncSupport::StartDeferred<FClientCastSkillResponse>(
-        Context,
-        MClientCallAsyncSupport::Map(
-            PlayerService->CastSkill(WorldRequest),
-            [](const FWorldCastSkillResponse& WorldResponse)
-            {
-                FClientCastSkillResponse ClientResponse;
-                ClientResponse.bSuccess = true;
-                ClientResponse.PlayerId = WorldResponse.PlayerId;
-                ClientResponse.TargetPlayerId = WorldResponse.TargetPlayerId;
-                ClientResponse.SkillId = WorldResponse.SkillId;
-                ClientResponse.SceneId = WorldResponse.SceneId;
-                ClientResponse.AppliedDamage = WorldResponse.AppliedDamage;
-                ClientResponse.TargetHealth = WorldResponse.TargetHealth;
-                return ClientResponse;
-            }),
-        [](const FAppError& Error)
+    (void)MWorldClientCommon::StartAsyncClientResponse(
+        Response,
+        WorldServer->GetTaskRunner(),
+        "client_debug_spawn_monster_failed",
+        [PlayerService, Request = FWorldSpawnMonsterRequest(Request)]() mutable
         {
-            return MWorldClientCommon::BuildFailureResponse<FClientCastSkillResponse>(Error, "client_cast_skill_failed");
+            return MWorldClientCommon::BuildProjectedResult<FClientDebugSpawnMonsterResponse>(
+                MAwait(PlayerService->SpawnMonster(Request)));
+        });
+}
+
+void MWorldClient::Client_CastSkillAtUnit(
+    FWorldCastSkillAtUnitRequest& Request,
+    FClientCastSkillAtUnitResponse& Response)
+{
+    if (!WorldServer)
+    {
+        Response.Error = "world_server_missing";
+        return;
+    }
+
+    MPlayerService* PlayerService = WorldServer->GetPlayerService();
+    if (!PlayerService)
+    {
+        Response.Error = "player_service_missing";
+        return;
+    }
+
+    (void)MWorldClientCommon::StartAsyncClientResponse(
+        Response,
+        WorldServer->GetTaskRunner(),
+        "client_cast_skill_at_unit_failed",
+        [PlayerService, Request = FWorldCastSkillAtUnitRequest(Request)]() mutable
+        {
+            return MWorldClientCommon::BuildProjectedResult<FClientCastSkillAtUnitResponse>(
+                MAwait(PlayerService->CastSkillAtUnit(Request)));
         });
 }

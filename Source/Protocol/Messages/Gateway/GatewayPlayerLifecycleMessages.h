@@ -1,13 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Reflection.h"
-
-MSTRUCT()
-struct FClientLogoutRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-};
+#include "Protocol/Messages/World/PlayerLifecycleMessages.h"
 
 MSTRUCT()
 struct FClientLogoutResponse
@@ -20,16 +14,6 @@ struct FClientLogoutResponse
 
     MPROPERTY()
     MString Error;
-};
-
-MSTRUCT()
-struct FClientSwitchSceneRequest
-{
-    MPROPERTY()
-    uint64 PlayerId = 0;
-
-    MPROPERTY()
-    uint32 SceneId = 0;
 };
 
 MSTRUCT()

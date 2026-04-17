@@ -24,7 +24,7 @@ python3 Scripts/server_control_api.py
 可选参数：
 
 ```bash
-python3 Scripts/server_control_api.py --host 127.0.0.1 --port 18080 --build-dir Build
+python3 Scripts/server_control_api.py --host 127.0.0.1 --port 18080 --build-dir Build --build-system cmake
 ```
 
 默认监听：
@@ -48,6 +48,8 @@ MESSION_CONTROL_API_TOKEN=<token> python3 Scripts/server_control_api.py --host 0
 - `MESSION_CONTROL_API_HOST`
 - `MESSION_CONTROL_API_PORT`
 - `MESSION_BUILD_DIR`
+- `MESSION_BUILD_SYSTEM`
+- `MESSION_BUILD_SYSTEM_CONFIG`
 - `MESSION_AGENT_NAME`
 - `MESSION_AGENT_GROUPS`
 - `MESSION_CONTROL_API_TOKEN`
@@ -112,6 +114,7 @@ python3 Scripts/server_control_api.py \
 - `agent_id`
 - `started_at`
 - `build_dir`
+- `build_system`
 - `project_root`
 - `auth_enabled`
 - 当前已应用拓扑摘要
@@ -129,6 +132,7 @@ python3 Scripts/server_control_api.py \
 
 - 仓库路径
 - Build 路径
+- 当前 BuildSystem
 - PID 文件位置
 - 日志目录
 - 各服务状态
@@ -171,7 +175,16 @@ python3 Scripts/server_control_api.py \
 
 ### `POST /api/actions/build`
 
-后台执行构建。
+后台执行当前 Agent 配置的 BuildSystem。
+
+例如：
+
+```bash
+python3 Scripts/server_control_api.py \
+  --build-dir Build \
+  --build-system custom-ninja \
+  --build-system-config Config/build_systems.json
+```
 
 ### `POST /api/actions/start`
 
@@ -204,6 +217,8 @@ python3 Scripts/validate.py --build-dir <build_dir> --no-build
 ```bash
 python3 Scripts/validate.py --build-dir <build_dir>
 ```
+
+如果 Agent 配置了自定义 BuildSystem，则这里会自动沿用该构建系统。
 
 ### `POST /api/actions/start_server/<server>`
 

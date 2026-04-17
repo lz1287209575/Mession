@@ -142,12 +142,34 @@
 - `Pawn.Health`
 - `CombatProfile.LastResolvedHealth`
 
-代码里已经有一些桥接逻辑，例如：
+当前已经明确下来的边界是：
 
-- 登录或切场时从 `Profile / Controller` 推导当前场景
-- 修改生命值时从 `Progression` 同步到 `Pawn`
-- 登出时把运行时状态回写到 `Profile`
-- 战斗结算后同时更新 `CombatProfile / Progression / Pawn`
+- `Profile.CurrentSceneId`
+  是离线恢复和持久化视角下的主场景状态
+- `Controller.SceneId`
+  是运行时 route / 调度视角下的场景状态，不再需要单独承担持久化桥
+- `Pawn.SceneId`
+  是场景存在态镜像，只在玩家真正驻留 Scene 时有效
+- `Progression.Health`
+  是玩家长期血量主状态
+- `Pawn.Health`
+  是场景运行时镜像，跟随主状态更新
+- `CombatProfile.LastResolvedHealth`
+  是战斗结算快照，不再反向充当血量主状态
+- `CombatProfile.LastResolvedSceneId`
+  与 `LastResolvedHealth` 一样，属于最近一次战斗结算快照，只服务审计、诊断和回放
+- `ExperienceReward`
+  属于成长结果，已经开始直接落到 `Progression`，不应继续挂在战斗快照层里充当“待处理状态”
+
+代码里仍有一些桥接逻辑，例如：
+
+- 登录恢复后统一回填 `Controller`，而不是在加载前抢先写默认值
+- 修改生命值时统一走 `Player::ApplyResolvedHealth()`，由 `Progression` 持有主状态、`Pawn` 只在 spawned 时同步镜像
+- `SyncRuntimeState()` 现在只负责收口 `SceneId`，不再重复把血量回写到 `Progression`
+- 战斗结算时先记录 `CombatProfile` 快照，再把规范化后的血量落回主状态
+
+目前代码中 `LastResolvedSceneId / LastResolvedHealth` 只被写入，不被业务逻辑读取。
+这意味着它们当前已经是纯快照字段，后续不应再被重新引入为主状态判断条件。
 
 这部分当前是主干里最需要继续收口的状态问题。
 
@@ -167,27 +189,27 @@
 
 - `MWorldServer`
   负责连接、运行时上下文、跨模块装配。
-- `MWorldClientServiceEndpoint`
-  承担客户端入口。
-- `MWorldPlayerServiceEndpoint`
-  承担多步玩家 workflow。
-- `MWorldCombatServiceEndpoint`
-  承担最小战斗编排。
+- `MWorldClient`
+  承担客户端入口，以及到 `MPlayerService` 的薄适配。
+- `MPlayerService`
+  承担玩家 workflow、普通 Player RPC 与最小战斗编排。
+- `MPlayerManager`
+  承担在线玩家对象索引、子对象查找与生命周期管理。
 - `MPlayer` 及子对象
   承担真正的领域状态和普通 Player 业务逻辑。
 
 这个拆分的重点是：
 
 - `Server` 不再是万能 God Object
-- `Endpoint` 承担流程
+- `Client / Service / Manager` 各自承担清晰边界
 - `Player Object Tree` 承担状态
 
 ## 当前扩展建议
 
 - 新玩法组件优先挂到对象树里，而不是平铺到 `WorldServer`
 - 新的普通 Player 业务优先落到 Player 子对象
-- 新的跨服流程优先进入对应 `ServiceEndpoint` 或独立 `Workflow`
-- 新的战斗属性优先判断它属于 `Pawn`、`Progression` 还是 `CombatProfile`
+- 新的跨服流程优先进入 `MWorldClient`、`MPlayerService` 或独立 `Workflow`
+- 新的战斗属性优先判断它属于“长期主状态”“运行时镜像”还是“战斗快照”
 
 ## 现在最值得继续做的事
 

@@ -16,6 +16,8 @@
       "host": "127.0.0.1",
       "project_root": "/root/Mession",
       "build_dir": "Build",
+      "build_system": "cmake",
+      "build_system_config": "Config/build_systems.json",
       "services": []
     },
     {
@@ -26,6 +28,8 @@
       "agent_scheme": "http",
       "agent_port": 18080,
       "auth_token": "replace-me",
+      "build_system": "cmake",
+      "build_system_config": "Config/build_systems.json",
       "services": [
         "RouterServer",
         "LoginServer"
@@ -39,6 +43,8 @@
       "agent_scheme": "http",
       "agent_port": 18080,
       "auth_token": "replace-me",
+      "build_system": "cmake",
+      "build_system_config": "Config/build_systems.json",
       "services": [
         "WorldServer",
         "SceneServer",

@@ -1,11 +1,12 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Servers/App/ServerCallRequestValidation.h"
 
 MSTRUCT()
 struct FPlayerEnterWorldRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerEnterWorld"))
     uint64 PlayerId = 0;
 
     MPROPERTY()
@@ -25,7 +26,7 @@ struct FPlayerEnterWorldResponse
 MSTRUCT()
 struct FPlayerLogoutRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerLogout"))
     uint64 PlayerId = 0;
 };
 
@@ -39,10 +40,10 @@ struct FPlayerLogoutResponse
 MSTRUCT()
 struct FPlayerSwitchSceneRequest
 {
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="player_id_required", ErrorContext="PlayerSwitchScene"))
     uint64 PlayerId = 0;
 
-    MPROPERTY()
+    MPROPERTY(Meta=(NonZero, ErrorCode="scene_id_required", ErrorContext="PlayerSwitchScene"))
     uint32 SceneId = 0;
 };
 

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>分模块优先级清单</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css">
+</head>
+<body>
+  <div class="page">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="pill">Repository Architecture</span>
+        <h1>分模块优先级清单</h1>
+        <p>用 review 视角给出下一步真正该动的重点。</p>
+      </div>
+
+<nav class="nav">
+  <a href="../index.html">总览首页</a>
+  <div class="nav-group-title">模块</div>
+  <a href="../modules/index.html">模块导航</a>
+  <a href="../modules/foundation.html">基础层：Common / Protocol / App / Tooling</a>
+  <a href="../modules/servers.html">业务层：Gateway / Login / World / Scene / Router / Mgo</a>
+  <div class="nav-group-title">链路与评审</div>
+  <a href="../flows/index.html">主链路导航</a>
+  <a href="../flows/main-flows.html">跨模块主链路时序</a>
+  <a href="../review/index.html">Review 导航</a>
+  <a href="../review/priorities.html">分模块优先级清单</a>
+  <div class="nav-group-title">示例</div>
+  <a href="../examples/index.html">示例导航</a>
+  <a href="../examples/runtime-examples.html">运行与调用示例</a>
+  <a href="../examples/source-map.html">源码来源索引</a>
+  <div class="nav-group-title">Runtime</div>
+  <a href="../runtime/index.html">Runtime 导航</a>
+  <a href="../runtime/world-runtime.html">World Runtime 设计</a>
+</nav>
+
+      <div class="nav-note">现在这套文档已经按模块、链路、review、示例、runtime 五个维度拆开；后续再补子系统页时，直接往目录里加即可。</div>
+    </aside>
+    <main class="content">
+
+<section class="section">
+  <div class="section-head"><h3>优先级总表</h3><p>这个表更接近架构 review 清单，而不是功能待办表。</p></div>
+  <table>
+    <thead><tr><th>模块</th><th>优先级</th><th>当前主要问题</th><th>原因</th></tr></thead>
+    <tbody>
+      <tr><td><code>World</code></td><td>P0</td><td>中心复杂度持续累积，<code>MPlayerService</code> 仍有继续膨胀风险。</td><td>所有玩家主链路都会汇聚到这里。</td></tr>
+      <tr><td><code>Servers/App</code></td><td>P0</td><td>边界 glue 仍是全仓库复用收益最大的地方。</td><td>每减少一份重复代码，所有 server 都受益。</td></tr>
+      <tr><td><code>Common</code></td><td>P1</td><td>runtime 基础设施仍残留少量偏业务命名。</td><td>会限制下一轮公共抽象。</td></tr>
+      <tr><td><code>Scene</code></td><td>P1</td><td>复杂技能和执行阶段未来会快速放大战斗 runtime 复杂度。</td><td>战斗执行域天然容易爆炸。</td></tr>
+      <tr><td><code>Protocol</code></td><td>P2</td><td><code>Messages/World</code> 未来可能增胖。</td><td>契约层一旦混乱会拖累所有 server。</td></tr>
+      <tr><td><code>Gateway</code></td><td>P2</td><td>当前健康，主要风险是业务前置化。</td><td>它应该继续保持无状态接入层。</td></tr>
+      <tr><td><code>Login</code></td><td>P2</td><td>会话模型仍偏简单。</td><td>这是能力边界问题，不是当前主矛盾。</td></tr>
+      <tr><td><code>Router</code> / <code>Mgo</code></td><td>P2</td><td>职责清晰，但数据模型未来仍需深化。</td><td>当前主矛盾不在这里。</td></tr>
+      <tr><td><code>Tooling</code></td><td>P3</td><td>生成链复杂但收益明确。</td><td>短期更适合补文档和可观测性。</td></tr>
+    </tbody>
+  </table>
+</section>
+<section class="section">
+  <div class="grid-2">
+    <div class="card"><h4>P0：现在最值得继续做的</h4><ul><li>World 新业务继续强制走 <code>ValidateRequest → PrepareRuntimeDispatch → DispatchRuntimeCommand</code>。</li><li>App 层剩余边界桥接继续回收成共享 helper。</li><li>不让业务逻辑重新长回流程 owner / callback graph。</li></ul></div>
+    <div class="card"><h4>P1 / P2：中期应对的风险</h4><ul><li>Scene Combat Runtime 需要继续关注执行阶段边界。</li><li>Protocol 需要提前控制目录膨胀。</li><li>Gateway / Login / Router / Mgo 主要是守边界和增强能力。</li></ul></div>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head"><h3>怎么结合源码索引和 Runtime 页一起看</h3><p>优先级判断并不是凭感觉拍出来的，而是直接对应到你现在仓库里最关键的接口形态。</p></div>
+  <div class="callout-grid">
+    <div class="callout">如果 <code>DispatchRuntimeCommand</code> 持续稳定，说明 Runtime 下沉方向是对的，World 就还能继续瘦身。</div>
+    <div class="callout">如果请求校验 helper 和 async glue 继续复用，<code>Servers/App</code> 的 P0 价值会持续放大。</div>
+    <div class="callout">如果主链路页、示例页和 Runtime 页开始出现新的 callback graph 味道，就说明设计在倒退。</div>
+  </div>
+</section>
+    </main>
+  </div>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
+<script>window.addEventListener('DOMContentLoaded', () => hljs.highlightAll());</script>
+</body>
+</html>

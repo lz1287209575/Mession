@@ -30,6 +30,7 @@ struct SWorldConfig
 };
 
 class MPlayerService;
+class MPlayerManager;
 class MObjectCallRouter;
 class MWorldClient;
 class MWorldLogin;
@@ -65,6 +66,7 @@ public:
 
     MWorldClient* GetClient() const { return Client; }
     MPlayerService* GetPlayerService() const { return Player; }
+    MPlayerManager* GetPlayerManager() const { return PlayerManager; }
     MWorldLogin* GetLogin() const { return Login; }
     MWorldMgo* GetMgo() const { return Mgo; }
     MWorldScene* GetScene() const { return Scene; }
@@ -94,6 +96,7 @@ private:
     TSharedPtr<MServerConnection> MgoServerConn;
     MWorldClient* Client = nullptr;
     MPlayerService* Player = nullptr;
+    MPlayerManager* PlayerManager = nullptr;
     MWorldLogin* Login = nullptr;
     MWorldMgo* Mgo = nullptr;
     MWorldScene* Scene = nullptr;
@@ -102,4 +105,3 @@ private:
     MPersistenceSubsystem PersistenceSubsystem;
     MObjectCallRegistry ObjectCallRegistry;
 };
-

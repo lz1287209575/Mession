@@ -1,5 +1,6 @@
 #include "Servers/World/Player/PlayerService.h"
 
+#include "Common/Runtime/Concurrency/FiberAwait.h"
 #include "Common/Runtime/Persistence/PersistenceSubsystem.h"
 #include "Common/Runtime/StringUtils.h"
 #include "Protocol/Messages/Auth/AuthSessionMessages.h"
@@ -14,6 +15,14 @@ TResponse BuildPlayerOnlyResponse(uint64 PlayerId)
     TResponse Response;
     Response.PlayerId = PlayerId;
     return Response;
+}
+
+template<typename TResponse>
+TResult<TResponse, FAppError> MakePlayerServiceError(const char* Code, const char* Message = "")
+{
+    return MakeErrorResult<TResponse>(FAppError::Make(
+        Code ? Code : "player_command_failed",
+        Message ? Message : ""));
 }
 
 TVector<SObjectDomainSnapshotRecord> FilterCompatiblePlayerRecords(const TVector<FObjectPersistenceRecord>& Records)
@@ -75,137 +84,81 @@ TVector<SObjectDomainSnapshotRecord> FilterCompatiblePlayerRecords(const TVector
 }
 }
 
-namespace MPlayerActions
-{
-class FPlayerEnterAction final
-    : public MServerCallAsyncSupport::TServerCallAction<FPlayerEnterAction, FPlayerEnterWorldResponse>
-{
-public:
-    using TResponseType = FPlayerEnterWorldResponse;
-
-    FPlayerEnterAction(MPlayerService* InPlayerService, FPlayerEnterWorldRequest InRequest)
-        : PlayerService(InPlayerService)
-        , Request(std::move(InRequest))
-    {
-    }
-
-protected:
-    void OnStart() override
-    {
-        FLoginValidateSessionRequest ValidateRequest;
-        ValidateRequest.PlayerId = Request.PlayerId;
-        ValidateRequest.SessionKey = Request.SessionKey;
-        Continue(PlayerService->WorldServer->GetLogin()->ValidateSession(ValidateRequest), &FPlayerEnterAction::OnSessionValidated);
-    }
-
-private:
-    void OnSessionValidated(const FLoginValidateSessionResponse& ValidateResponse)
-    {
-        if (!ValidateResponse.bValid)
-        {
-            Fail("session_invalid", "PlayerEnterWorld");
-            return;
-        }
-
-        FMgoLoadPlayerRequest LoadRequest;
-        LoadRequest.PlayerId = Request.PlayerId;
-        Continue(PlayerService->WorldServer->GetMgo()->LoadPlayer(LoadRequest), &FPlayerEnterAction::OnPlayerLoaded);
-    }
-
-    void OnPlayerLoaded(const FMgoLoadPlayerResponse& LoadResponse)
-    {
-        MPlayer* Player = PlayerService->FindOrCreatePlayer(Request.PlayerId);
-        if (!Player)
-        {
-            Fail("player_create_failed", "PlayerEnterWorld");
-            return;
-        }
-
-        Player->InitializeForLogin(Request.PlayerId, Request.GatewayConnectionId, Request.SessionKey);
-        if (!LoadResponse.Records.empty())
-        {
-            MString ApplyError;
-            if (!MObjectDomainUtils::ApplyObjectDomainSnapshotRecords(
-                    Player,
-                    FilterCompatiblePlayerRecords(LoadResponse.Records),
-                    EPropertyDomainFlags::Persistence,
-                    &ApplyError))
-            {
-                Fail("player_state_apply_failed", ApplyError.c_str());
-                return;
-            }
-        }
-
-        Player->FinalizeLoadedState();
-
-        Continue(
-            PlayerService->EnterSceneForPlayer(Request.PlayerId, Player->ResolveCurrentSceneId()),
-            &FPlayerEnterAction::OnSceneEntered);
-    }
-
-    void OnSceneEntered(const FSceneEnterResponse& SceneResponse)
-    {
-        TargetSceneId = SceneResponse.SceneId;
-        Continue(
-            PlayerService->ApplySceneRouteForPlayer(Request.PlayerId, TargetSceneId),
-            &FPlayerEnterAction::OnRouteApplied);
-    }
-
-    void OnRouteApplied(const FPlayerUpdateRouteResponse&)
-    {
-        if (!PlayerService->FindPlayer(Request.PlayerId))
-        {
-            Fail("player_missing", "PlayerEnterWorld");
-            return;
-        }
-
-        Succeed(BuildPlayerOnlyResponse<FPlayerEnterWorldResponse>(Request.PlayerId));
-    }
-
-    MPlayerService* PlayerService = nullptr;
-    FPlayerEnterWorldRequest Request;
-    uint32 TargetSceneId = 0;
-};
-}
-
 MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> MPlayerService::PlayerEnterWorld(
     const FPlayerEnterWorldRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerEnterWorldResponse>("player_id_required", "PlayerEnterWorld");
-    }
-
-    if (auto Error = ValidateDependencies<FPlayerEnterWorldResponse>(
-            "PlayerEnterWorld",
-            {
-                EDependency::Login,
-                EDependency::Mgo,
-                EDependency::Scene,
-                EDependency::Router,
-            });
-        Error.has_value())
-    {
-        return std::move(*Error);
-    }
-
-    MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> Future =
-        MServerCallAsyncSupport::StartAction<MPlayerActions::FPlayerEnterAction>(this, Request);
-    Future.Then([this, PlayerId = Request.PlayerId](MFuture<TResult<FPlayerEnterWorldResponse, FAppError>> Completed)
-    {
-        try
+    return DispatchRuntimeCommand<FPlayerEnterWorldResponse>(
+        Request,
+        "PlayerEnterWorld",
         {
-            const TResult<FPlayerEnterWorldResponse, FAppError> Result = Completed.Get();
-            if (Result.IsOk())
-            {
-                QueueScenePlayerEnterNotify(PlayerId);
-            }
-        }
-        catch (...)
-        {
-        }
-    });
-    return Future;
+            EDependency::Login,
+            EDependency::Mgo,
+            EDependency::Scene,
+            EDependency::Router,
+        },
+        &MPlayerService::DoPlayerEnterWorld);
 }
 
+TResult<FPlayerEnterWorldResponse, FAppError> MPlayerService::DoPlayerEnterWorld(FPlayerEnterWorldRequest Request)
+{
+    FLoginValidateSessionRequest ValidateRequest;
+    ValidateRequest.PlayerId = Request.PlayerId;
+    ValidateRequest.SessionKey = Request.SessionKey;
 
+    const FLoginValidateSessionResponse ValidateResponse =
+        MAwaitOk(WorldServer->GetLogin()->ValidateSession(ValidateRequest));
+    if (!ValidateResponse.bValid)
+    {
+        return MakePlayerServiceError<FPlayerEnterWorldResponse>("session_invalid", "PlayerEnterWorld");
+    }
+
+    FMgoLoadPlayerRequest LoadRequest;
+    LoadRequest.PlayerId = Request.PlayerId;
+    const FMgoLoadPlayerResponse LoadResponse =
+        MAwaitOk(WorldServer->GetMgo()->LoadPlayer(LoadRequest));
+
+    MPlayer* Player = FindOrCreatePlayer(Request.PlayerId);
+    if (!Player)
+    {
+        return MakePlayerServiceError<FPlayerEnterWorldResponse>("player_create_failed", "PlayerEnterWorld");
+    }
+
+    Player->InitializeForLogin(Request.PlayerId, Request.GatewayConnectionId, Request.SessionKey);
+    if (!LoadResponse.Records.empty())
+    {
+        MString ApplyError;
+        if (!MObjectDomainUtils::ApplyObjectDomainSnapshotRecords(
+                Player,
+                FilterCompatiblePlayerRecords(LoadResponse.Records),
+                EPropertyDomainFlags::Persistence,
+                &ApplyError))
+        {
+            return MakePlayerServiceError<FPlayerEnterWorldResponse>(
+                "player_state_apply_failed",
+                ApplyError.c_str());
+        }
+    }
+
+    Player->FinalizeLoadedState();
+
+    const FSceneEnterResponse SceneResponse =
+        MAwaitOk(EnterSceneForPlayer(Request.PlayerId, Player->ResolveCurrentSceneId()));
+    if (const TResult<FPlayerUpdateRouteResponse, FAppError> RouteResult =
+            ApplySceneRouteForPlayer(Request.PlayerId, SceneResponse.SceneId);
+        !RouteResult.IsOk())
+    {
+        return MakeErrorResult<FPlayerEnterWorldResponse>(RouteResult.GetError());
+    }
+
+    Player = FindPlayer(Request.PlayerId);
+    if (!Player)
+    {
+        return MakePlayerServiceError<FPlayerEnterWorldResponse>("player_missing", "PlayerEnterWorld");
+    }
+
+    Player->SyncRuntimeStateToProfile();
+
+    QueueScenePlayerEnterNotify(Request.PlayerId);
+    return TResult<FPlayerEnterWorldResponse, FAppError>::Ok(
+        BuildPlayerOnlyResponse<FPlayerEnterWorldResponse>(Request.PlayerId));
+}

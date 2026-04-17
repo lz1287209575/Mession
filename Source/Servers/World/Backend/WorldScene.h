@@ -22,8 +22,16 @@ public:
         const FSceneSpawnCombatAvatarRequest& Request);
 
     MFUNCTION(ServerCall, Target=Scene)
+    MFuture<TResult<FSceneSpawnMonsterResponse, FAppError>> SpawnMonster(
+        const FSceneSpawnMonsterRequest& Request);
+
+    MFUNCTION(ServerCall, Target=Scene)
     MFuture<TResult<FSceneDespawnCombatAvatarResponse, FAppError>> DespawnCombatAvatar(
         const FSceneDespawnCombatAvatarRequest& Request);
+
+    MFUNCTION(ServerCall, Target=Scene)
+    MFuture<TResult<FSceneDespawnCombatUnitResponse, FAppError>> DespawnCombatUnit(
+        const FSceneDespawnCombatUnitRequest& Request);
 
     MFUNCTION(ServerCall, Target=Scene)
     MFuture<TResult<FSceneCastSkillResponse, FAppError>> CastSkill(const FSceneCastSkillRequest& Request);
@@ -31,4 +39,3 @@ public:
 private:
     EServerType GetTargetServerType() const override;
 };
-

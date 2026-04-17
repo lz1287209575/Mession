@@ -43,6 +43,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import servers
+from build_systems import add_build_system_arguments, build_system_cli_args, describe_build_system, resolve_build_system_config_path
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -280,8 +281,15 @@ class TaskRecord:
 
 
 class TaskManager:
-    def __init__(self, build_dir: Path):
+    def __init__(
+        self,
+        build_dir: Path,
+        build_system_name: Optional[str] = None,
+        build_system_config: Optional[Path] = None,
+    ):
         self.build_dir = build_dir
+        self.build_system_name = build_system_name
+        self.build_system_config = build_system_config
         self._lock = threading.Lock()
         self._tasks: dict[str, TaskRecord] = {}
 
@@ -384,56 +392,32 @@ class TaskManager:
         return task
 
     def run_build(self) -> TaskRecord:
-        task = self._create_task(
+        return self.run_build_with_options(self.build_system_name, self.build_system_config)
+
+    def run_build_with_options(
+        self,
+        build_system_name: Optional[str],
+        build_system_config: Optional[Path],
+    ) -> TaskRecord:
+        return self.run_subprocess_task(
             name="build",
-            command=["cmake", "-S", str(servers.get_project_root()), "-B", str(self.build_dir), "..."],
+            command=[
+                sys.executable,
+                str(servers.get_project_root() / "Scripts" / "build_project.py"),
+                "--build-dir",
+                str(self.build_dir),
+                *build_system_cli_args(build_system_name, build_system_config),
+            ],
+            cwd=servers.get_project_root(),
         )
-
-        def worker() -> None:
-            self._mark_task_running(task)
-
-            try:
-                for command in (
-                    [
-                        "cmake",
-                        "-S",
-                        str(servers.get_project_root()),
-                        "-B",
-                        str(self.build_dir),
-                        "-DCMAKE_BUILD_TYPE=Release",
-                    ],
-                    ["cmake", "--build", str(self.build_dir), "-j4"],
-                ):
-                    self._append_task_output(task, f"$ {' '.join(command)}\n")
-                    process = subprocess.Popen(
-                        command,
-                        cwd=str(servers.get_project_root()),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1,
-                    )
-                    assert process.stdout is not None
-                    for line in process.stdout:
-                        self._append_task_output(task, line)
-                    process.wait()
-                    if process.returncode != 0:
-                        self._finish_task(task, process.returncode)
-                        return
-
-                self._finish_task(task, 0)
-            except Exception as exc:
-                self._append_task_output(task, traceback.format_exc())
-                self._finish_task(task, 1, str(exc))
-
-        threading.Thread(target=worker, daemon=True).start()
-        return task
 
 
 class ControlApiState:
     def __init__(
         self,
         build_dir: Path,
+        build_system_name: Optional[str] = None,
+        build_system_config: Optional[Path] = None,
         auth_token: Optional[str] = None,
         agent_name: Optional[str] = None,
         registry_url: Optional[str] = None,
@@ -443,7 +427,18 @@ class ControlApiState:
         agent_groups: Optional[list[str]] = None,
     ):
         self.build_dir = build_dir
-        self.task_manager = TaskManager(build_dir=build_dir)
+        self.build_system_name = build_system_name
+        self.build_system_config = resolve_build_system_config_path(build_system_config)
+        self.build_system_info = describe_build_system(
+            build_dir=build_dir,
+            build_system_name=build_system_name,
+            config_path=self.build_system_config,
+        )
+        self.task_manager = TaskManager(
+            build_dir=build_dir,
+            build_system_name=build_system_name,
+            build_system_config=self.build_system_config,
+        )
         self.auth_token = auth_token
         self.agent_name = agent_name or socket.gethostname()
         self.agent_id = uuid.uuid4().hex
@@ -498,6 +493,7 @@ class ControlApiState:
             "agent_started_at": self.started_at,
             "project_root": str(servers.get_project_root()),
             "build_dir": str(self.build_dir),
+            "build_system": dict(self.build_system_info),
             "host": socket.gethostname(),
             "heartbeat_at": utc_now_iso(),
             "groups": list(self.agent_groups),
@@ -533,12 +529,25 @@ class ControlApiState:
             "agent_name": self.agent_name,
             "build_dir": str(self.build_dir),
             "build_dir_exists": build_dir_exists,
+            "build_system": dict(self.build_system_info),
             "registry": registry,
             "time": utc_now_iso(),
         }
 
-    def queue_action(self, action: str, server_name: Optional[str] = None) -> TaskRecord:
+    def queue_action(
+        self,
+        action: str,
+        server_name: Optional[str] = None,
+        build_system_name: Optional[str] = None,
+        build_system_config: Optional[Path] = None,
+    ) -> TaskRecord:
         project_root = servers.get_project_root()
+        selected_build_system = build_system_name if build_system_name is not None else self.build_system_name
+        selected_build_system_config = (
+            resolve_build_system_config_path(build_system_config)
+            if build_system_config is not None
+            else self.build_system_config
+        )
 
         if action == "start":
             return self.task_manager.run_callable_task(
@@ -584,6 +593,7 @@ class ControlApiState:
                     str(project_root / "Scripts" / "validate.py"),
                     "--build-dir",
                     str(self.build_dir),
+                    *build_system_cli_args(selected_build_system, selected_build_system_config),
                     "--no-build",
                 ],
                 cwd=project_root,
@@ -596,11 +606,12 @@ class ControlApiState:
                     str(project_root / "Scripts" / "validate.py"),
                     "--build-dir",
                     str(self.build_dir),
+                    *build_system_cli_args(selected_build_system, selected_build_system_config),
                 ],
                 cwd=project_root,
             )
         if action == "build":
-            return self.task_manager.run_build()
+            return self.task_manager.run_build_with_options(selected_build_system, selected_build_system_config)
         raise ValueError(f"unsupported action: {action}")
 
 
@@ -669,6 +680,7 @@ class ControlRequestHandler(BaseHTTPRequestHandler):
                     "agent_id": self.state.agent_id,
                     "started_at": self.state.started_at,
                     "build_dir": str(self.state.build_dir),
+                    "build_system": dict(self.state.build_system_info),
                     "project_root": str(servers.get_project_root()),
                     "auth_enabled": bool(self.state.auth_token),
                     "groups": list(self.state.agent_groups),
@@ -684,6 +696,7 @@ class ControlRequestHandler(BaseHTTPRequestHandler):
             payload["agent_name"] = self.state.agent_name
             payload["agent_id"] = self.state.agent_id
             payload["agent_started_at"] = self.state.started_at
+            payload["build_system"] = dict(self.state.build_system_info)
             payload["groups"] = list(self.state.agent_groups)
             payload["control_api"] = dict(self.state.control_api_advertisement)
             payload["topology"] = self.state.get_topology_summary()
@@ -779,9 +792,20 @@ class ControlRequestHandler(BaseHTTPRequestHandler):
             if len(parts) >= 4:
                 action = parts[2]
                 server_name = parts[3]
+            payload = self._read_json_body()
+            if payload is None:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+                return
+            build_system_name = payload.get("build_system")
+            build_system_config = payload.get("build_system_config")
             try:
-                task = self.state.queue_action(action, server_name=server_name)
-            except ValueError as exc:
+                task = self.state.queue_action(
+                    action,
+                    server_name=server_name,
+                    build_system_name=str(build_system_name) if build_system_name is not None else None,
+                    build_system_config=Path(str(build_system_config)) if build_system_config else None,
+                )
+            except (ValueError, FileNotFoundError) as exc:
                 self._write_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
             self._write_json(HTTPStatus.ACCEPTED, {"task": task.to_dict()})
@@ -881,6 +905,7 @@ def main() -> int:
     parser.add_argument("--host", default=env_or_default("MESSION_CONTROL_API_HOST", DEFAULT_HOST), help=f"listen host (default: {DEFAULT_HOST})")
     parser.add_argument("--port", type=int, default=env_int("MESSION_CONTROL_API_PORT", DEFAULT_PORT), help=f"listen port (default: {DEFAULT_PORT})")
     parser.add_argument("--build-dir", type=Path, default=Path(env_or_default("MESSION_BUILD_DIR", "Build") or "Build"), help="Build directory (default: Build)")
+    add_build_system_arguments(parser)
     parser.add_argument("--agent-name", default=env_or_default("MESSION_AGENT_NAME"), help="Optional logical agent name shown in status output")
     parser.add_argument(
         "--group",
@@ -922,6 +947,8 @@ def main() -> int:
 
     state = ControlApiState(
         build_dir=build_dir,
+        build_system_name=args.build_system,
+        build_system_config=args.build_system_config,
         auth_token=auth_token or None,
         agent_name=args.agent_name,
         registry_url=args.registry_url,
@@ -933,7 +960,8 @@ def main() -> int:
     server = ControlApiServer((args.host, args.port), state=state)
 
     print(
-        f"[server_control_api] listening on http://{args.host}:{args.port}/ with build dir {build_dir}",
+        f"[server_control_api] listening on http://{args.host}:{args.port}/ with build dir {build_dir}"
+        f" using build system {state.build_system_info['name']}",
         flush=True,
     )
 

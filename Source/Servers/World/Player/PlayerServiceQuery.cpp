@@ -1,5 +1,6 @@
 #include "Servers/World/Player/PlayerService.h"
 
+#include "Servers/World/Player/PlayerCombatProfile.h"
 #include "Servers/World/Player/PlayerInventory.h"
 #include "Servers/World/Player/PlayerPawn.h"
 #include "Servers/World/Player/PlayerProfile.h"
@@ -7,11 +8,6 @@
 
 MFuture<TResult<FPlayerFindResponse, FAppError>> MPlayerService::PlayerFind(const FPlayerFindRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerFindResponse>("player_id_required", "PlayerFind");
-    }
-
     if (MPlayer* Player = FindPlayer(Request.PlayerId))
     {
         return Player->PlayerFind(Request);
@@ -26,8 +22,7 @@ MFuture<TResult<FPlayerFindResponse, FAppError>> MPlayerService::PlayerFind(cons
 MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> MPlayerService::PlayerQueryProfile(
     const FPlayerQueryProfileRequest& Request)
 {
-    return MPlayerServiceDetail::DispatchPlayerComponent<MPlayerProfile, FPlayerQueryProfileResponse>(
-        this,
+    return DispatchPlayerComponent<MPlayerProfile, FPlayerQueryProfileResponse>(
         Request,
         &MPlayerService::FindProfile,
         &MPlayerProfile::PlayerQueryProfile,
@@ -38,8 +33,7 @@ MFuture<TResult<FPlayerQueryProfileResponse, FAppError>> MPlayerService::PlayerQ
 MFuture<TResult<FPlayerQueryPawnResponse, FAppError>> MPlayerService::PlayerQueryPawn(
     const FPlayerQueryPawnRequest& Request)
 {
-    return MPlayerServiceDetail::DispatchPlayerComponent<MPlayerPawn, FPlayerQueryPawnResponse>(
-        this,
+    return DispatchPlayerComponent<MPlayerPawn, FPlayerQueryPawnResponse>(
         Request,
         &MPlayerService::FindPawn,
         &MPlayerPawn::PlayerQueryPawn,
@@ -50,8 +44,7 @@ MFuture<TResult<FPlayerQueryPawnResponse, FAppError>> MPlayerService::PlayerQuer
 MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> MPlayerService::PlayerQueryInventory(
     const FPlayerQueryInventoryRequest& Request)
 {
-    return MPlayerServiceDetail::DispatchPlayerComponent<MPlayerInventory, FPlayerQueryInventoryResponse>(
-        this,
+    return DispatchPlayerComponent<MPlayerInventory, FPlayerQueryInventoryResponse>(
         Request,
         &MPlayerService::FindInventory,
         &MPlayerInventory::PlayerQueryInventory,
@@ -62,11 +55,21 @@ MFuture<TResult<FPlayerQueryInventoryResponse, FAppError>> MPlayerService::Playe
 MFuture<TResult<FPlayerQueryProgressionResponse, FAppError>> MPlayerService::PlayerQueryProgression(
     const FPlayerQueryProgressionRequest& Request)
 {
-    return MPlayerServiceDetail::DispatchPlayerComponent<MPlayerProgression, FPlayerQueryProgressionResponse>(
-        this,
+    return DispatchPlayerComponent<MPlayerProgression, FPlayerQueryProgressionResponse>(
         Request,
         &MPlayerService::FindProgression,
         &MPlayerProgression::PlayerQueryProgression,
         "player_progression_missing",
         "PlayerQueryProgression");
+}
+
+MFuture<TResult<FPlayerQueryCombatProfileResponse, FAppError>> MPlayerService::PlayerQueryCombatProfile(
+    const FPlayerQueryCombatProfileRequest& Request)
+{
+    return DispatchPlayerComponent<MPlayerCombatProfile, FPlayerQueryCombatProfileResponse>(
+        Request,
+        &MPlayerService::FindCombatProfile,
+        &MPlayerCombatProfile::PlayerQueryCombatProfile,
+        "player_combat_profile_missing",
+        "PlayerQueryCombatProfile");
 }

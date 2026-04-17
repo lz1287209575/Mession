@@ -1,156 +1,107 @@
 #include "Servers/World/Player/PlayerService.h"
 
-#include "Common/Runtime/Persistence/PersistenceSubsystem.h"
-#include "Common/Runtime/StringUtils.h"
-#include "Servers/World/Player/Player.h"
+#include "Servers/World/Player/PlayerCombatProfile.h"
 #include "Servers/World/Player/PlayerController.h"
-#include "Servers/World/Player/PlayerProfile.h"
+#include "Servers/World/Player/PlayerManager.h"
 
 void MPlayerService::Initialize(MWorldServer* InWorldServer)
 {
     WorldServer = InWorldServer;
+    PlayerManager = WorldServer ? WorldServer->GetPlayerManager() : nullptr;
+    if (!PlayerCommandRuntime && WorldServer)
+    {
+        PlayerCommandRuntime = std::make_unique<MPlayerCommandRuntime>(WorldServer->GetTaskRunner());
+    }
     if (!PlayerRootResolver)
     {
-        PlayerRootResolver = std::make_unique<FPlayerObjectCallRootResolver>(&OnlinePlayers);
+        PlayerRootResolver = std::make_unique<FPlayerObjectCallRootResolver>(
+            PlayerManager ? &PlayerManager->GetOnlinePlayers() : nullptr);
     }
     else
     {
-        PlayerRootResolver->SetOnlinePlayers(&OnlinePlayers);
+        PlayerRootResolver->SetOnlinePlayers(PlayerManager ? &PlayerManager->GetOnlinePlayers() : nullptr);
     }
 }
 
 const TMap<uint64, MPlayer*>& MPlayerService::GetOnlinePlayers() const
 {
-    return OnlinePlayers;
+    static const TMap<uint64, MPlayer*> EmptyPlayers;
+    return PlayerManager ? PlayerManager->GetOnlinePlayers() : EmptyPlayers;
 }
 
 void MPlayerService::FlushPersistence() const
 {
-    if (!WorldServer)
+    if (!PlayerManager)
     {
         return;
     }
-
-    for (const auto& [PlayerId, Player] : OnlinePlayers)
-    {
-        (void)PlayerId;
-        (void)WorldServer->GetPersistence().EnqueueRootIfDirty(Player);
-    }
-
-    (void)WorldServer->GetPersistence().Flush(64);
+    PlayerManager->FlushPersistence();
 }
 
 void MPlayerService::ShutdownPlayers()
 {
-    if (!WorldServer)
+    if (!PlayerManager)
     {
         return;
     }
-
-    for (auto& [PlayerId, Player] : OnlinePlayers)
-    {
-        (void)PlayerId;
-        DestroyMObject(Player);
-    }
-
-    OnlinePlayers.clear();
+    PlayerManager->ShutdownPlayers();
 }
 
 MPlayer* MPlayerService::FindPlayer(uint64 PlayerId) const
 {
-    if (!WorldServer)
-    {
-        return nullptr;
-    }
-
-    const auto It = OnlinePlayers.find(PlayerId);
-    return It != OnlinePlayers.end() ? It->second : nullptr;
+    return PlayerManager ? PlayerManager->FindPlayer(PlayerId) : nullptr;
 }
 
 MPlayerController* MPlayerService::FindController(uint64 PlayerId) const
 {
-    MPlayer* Player = FindPlayer(PlayerId);
-    return Player ? Player->GetController() : nullptr;
+    return PlayerManager ? PlayerManager->FindController(PlayerId) : nullptr;
 }
 
 MPlayerPawn* MPlayerService::FindPawn(uint64 PlayerId) const
 {
-    MPlayer* Player = FindPlayer(PlayerId);
-    return Player ? Player->GetPawn() : nullptr;
+    return PlayerManager ? PlayerManager->FindPawn(PlayerId) : nullptr;
 }
 
 MPlayerProfile* MPlayerService::FindProfile(uint64 PlayerId) const
 {
-    MPlayer* Player = FindPlayer(PlayerId);
-    return Player ? Player->GetProfile() : nullptr;
+    return PlayerManager ? PlayerManager->FindProfile(PlayerId) : nullptr;
 }
 
 MPlayerInventory* MPlayerService::FindInventory(uint64 PlayerId) const
 {
-    MPlayerProfile* Profile = FindProfile(PlayerId);
-    return Profile ? Profile->GetInventory() : nullptr;
+    return PlayerManager ? PlayerManager->FindInventory(PlayerId) : nullptr;
 }
 
 MPlayerProgression* MPlayerService::FindProgression(uint64 PlayerId) const
 {
-    MPlayerProfile* Profile = FindProfile(PlayerId);
-    return Profile ? Profile->GetProgression() : nullptr;
+    return PlayerManager ? PlayerManager->FindProgression(PlayerId) : nullptr;
+}
+
+MPlayerCombatProfile* MPlayerService::FindCombatProfile(uint64 PlayerId) const
+{
+    return PlayerManager ? PlayerManager->FindCombatProfile(PlayerId) : nullptr;
 }
 
 MFuture<TResult<FPlayerMoveResponse, FAppError>> MPlayerService::PlayerMove(const FPlayerMoveRequest& Request)
 {
-    if (Request.PlayerId == 0)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerMoveResponse>("player_id_required", "PlayerMove");
-    }
-
-    MPlayerController* Controller = FindController(Request.PlayerId);
-    if (!Controller)
-    {
-        return MServerCallAsyncSupport::MakeErrorFuture<FPlayerMoveResponse>("player_controller_missing", "PlayerMove");
-    }
-
-    MFuture<TResult<FPlayerMoveResponse, FAppError>> Future = Controller->PlayerMove(Request);
-
-    Future.Then([this, PlayerId = Request.PlayerId](MFuture<TResult<FPlayerMoveResponse, FAppError>> Completed)
-    {
-        try
-        {
-            const TResult<FPlayerMoveResponse, FAppError> Result = Completed.Get();
-            if (Result.IsOk())
-            {
-                QueueScenePlayerUpdateNotify(PlayerId);
-            }
-        }
-        catch (...)
-        {
-        }
-    });
-
-    return Future;
+    return DispatchPlayerComponentWithSceneUpdate<MPlayerController, FPlayerMoveResponse>(
+        Request,
+        &MPlayerService::FindController,
+        &MPlayerController::PlayerMove,
+        "player_controller_missing",
+        "PlayerMove");
 }
 
 MPlayer* MPlayerService::FindOrCreatePlayer(uint64 PlayerId)
 {
-    if (MPlayer* Player = FindPlayer(PlayerId))
-    {
-        return Player;
-    }
-
-    MPlayer* Player = NewMObject<MPlayer>(WorldServer, "Player_" + MStringUtil::ToString(PlayerId));
-    OnlinePlayers[PlayerId] = Player;
-    return Player;
+    return PlayerManager ? PlayerManager->FindOrCreatePlayer(PlayerId) : nullptr;
 }
 
 void MPlayerService::RemovePlayer(uint64 PlayerId)
 {
-    auto It = OnlinePlayers.find(PlayerId);
-    if (It == OnlinePlayers.end())
+    if (!PlayerManager)
     {
         return;
     }
-
-    MPlayer* Player = It->second;
-    OnlinePlayers.erase(It);
-    DestroyMObject(Player);
+    PlayerManager->RemovePlayer(PlayerId);
 }

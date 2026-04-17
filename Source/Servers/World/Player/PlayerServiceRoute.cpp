@@ -1,5 +1,6 @@
 #include "Servers/World/Player/PlayerService.h"
 
+#include "Common/Runtime/Concurrency/FiberAwait.h"
 #include "Protocol/Messages/Router/RouterServiceMessages.h"
 #include "Servers/World/Player/PlayerController.h"
 
@@ -42,8 +43,7 @@ FSceneLeaveRequest BuildSceneLeaveRequest(uint64 PlayerId)
 MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MPlayerService::PlayerUpdateRoute(
     const FPlayerUpdateRouteRequest& Request)
 {
-    return MPlayerServiceDetail::DispatchPlayerComponent<MPlayerController, FPlayerUpdateRouteResponse>(
-        this,
+    return DispatchPlayerComponent<MPlayerController, FPlayerUpdateRouteResponse>(
         Request,
         &MPlayerService::FindController,
         &MPlayerController::PlayerUpdateRoute,
@@ -51,7 +51,7 @@ MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MPlayerService::PlayerUp
         "PlayerUpdateRoute");
 }
 
-MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MPlayerService::ApplySceneRouteForPlayer(
+TResult<FPlayerUpdateRouteResponse, FAppError> MPlayerService::ApplySceneRouteForPlayer(
     uint64 PlayerId,
     uint32 SceneId) const
 {
@@ -62,24 +62,21 @@ MFuture<TResult<FPlayerUpdateRouteResponse, FAppError>> MPlayerService::ApplySce
             });
         Error.has_value())
     {
-        return std::move(*Error);
+        return MAwait(std::move(*Error));
     }
 
     const FRouterUpsertPlayerRouteRequest RouteRequest = BuildSceneRouteRequest(PlayerId, SceneId);
-    return MServerCallAsyncSupport::Chain(
-        WorldServer->GetRouter()->UpsertPlayerRoute(RouteRequest),
-        [this, PlayerId, SceneId](const FRouterUpsertPlayerRouteResponse&)
-        {
-            MPlayerController* Controller = FindController(PlayerId);
-            if (!Controller)
-            {
-                return MServerCallAsyncSupport::MakeErrorFuture<FPlayerUpdateRouteResponse>(
-                    "player_controller_missing",
-                    "ApplySceneRouteForPlayer");
-            }
+    (void)MAwaitOk(WorldServer->GetRouter()->UpsertPlayerRoute(RouteRequest));
 
-            return Controller->PlayerUpdateRoute(BuildPlayerSceneRouteUpdateRequest(PlayerId, SceneId));
-        });
+    MPlayerController* Controller = FindController(PlayerId);
+    if (!Controller)
+    {
+        return MakeErrorResult<FPlayerUpdateRouteResponse>(FAppError::Make(
+            "player_controller_missing",
+            "ApplySceneRouteForPlayer"));
+    }
+
+    return MAwait(Controller->PlayerUpdateRoute(BuildPlayerSceneRouteUpdateRequest(PlayerId, SceneId)));
 }
 
 MFuture<TResult<FSceneEnterResponse, FAppError>> MPlayerService::EnterSceneForPlayer(

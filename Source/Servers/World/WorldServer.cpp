@@ -10,6 +10,7 @@
 #include "Servers/World/Backend/WorldMgo.h"
 #include "Servers/World/Backend/WorldRouter.h"
 #include "Servers/World/Backend/WorldScene.h"
+#include "Servers/World/Player/PlayerManager.h"
 #include "Servers/World/Player/PlayerService.h"
 #include "Servers/World/WorldClient.h"
 
@@ -35,6 +36,7 @@ bool MWorldServer::Init(int InPort)
     ConnectBackends();
     InitServices();
     RegisterBackendTransports();
+    PlayerManager->Initialize(this);
     Player->Initialize(this);
     ObjectCallRegistry.RegisterResolver(Player->GetCallRootResolver());
     ObjectCallRouter->Initialize(&ObjectCallRegistry);
@@ -121,6 +123,10 @@ void MWorldServer::InitServices()
     if (!Player)
     {
         Player = NewMObject<MPlayerService>(this, "Player");
+    }
+    if (!PlayerManager)
+    {
+        PlayerManager = NewMObject<MPlayerManager>(this, "PlayerManager");
     }
     if (!Client)
     {
@@ -331,5 +337,4 @@ void MWorldServer::HandleBackendPacket(uint8 PacketType, const TByteArray& Data,
              ServerName ? ServerName : "backend",
              static_cast<unsigned>(PacketType));
 }
-
 

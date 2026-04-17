@@ -22,6 +22,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import servers
+from build_systems import build_system_cli_args
 from server_control_api import ControlApiState, TaskManager, make_server_snapshot, resolve_build_dir, tail_text_file, utc_now_iso
 
 
@@ -42,6 +43,8 @@ class NodeConfig:
     ssh_port: int = 22
     project_root: str = ""
     build_dir: str = "Build"
+    build_system: Optional[str] = None
+    build_system_config: Optional[str] = None
     services: list[str] = field(default_factory=lambda: list(ALL_SERVICES))
 
 
@@ -93,10 +96,10 @@ class NodeRegistryEntry:
     topology_issues: list[str] = field(default_factory=list)
 
 
-def load_cluster_config(config_path: Optional[Path]) -> ClusterConfig:
+def load_cluster_config(config_path: Optional[Path], default_local_node: Optional[NodeConfig] = None) -> ClusterConfig:
     project_root = servers.get_project_root()
     if config_path is None:
-        nodes = [
+        nodes = [default_local_node] if default_local_node else [
             NodeConfig(
                 name="local",
                 mode="local",
@@ -106,9 +109,10 @@ def load_cluster_config(config_path: Optional[Path]) -> ClusterConfig:
                 services=list(ALL_SERVICES),
             )
         ]
+        local_node_name = nodes[0].name if nodes else "local"
         return ClusterConfig(
             nodes=nodes,
-            topology=TopologyConfig(version="local-dev", node_services={"local": list(ALL_SERVICES)}),
+            topology=TopologyConfig(version="local-dev", node_services={local_node_name: list(ALL_SERVICES)}),
         )
 
     if not config_path.is_absolute():
@@ -135,6 +139,8 @@ def load_cluster_config(config_path: Optional[Path]) -> ClusterConfig:
             ssh_port=int(item.get("ssh_port", 22)),
             project_root=item.get("project_root", str(project_root)),
             build_dir=item.get("build_dir", "Build"),
+            build_system=item.get("build_system"),
+            build_system_config=item.get("build_system_config"),
             services=list(item.get("services", ALL_SERVICES)),
         )
         nodes.append(node)
@@ -168,8 +174,8 @@ def load_cluster_config(config_path: Optional[Path]) -> ClusterConfig:
     return ClusterConfig(nodes=nodes, topology=topology, registry=registry)
 
 
-def load_cluster_nodes(config_path: Optional[Path]) -> list[NodeConfig]:
-    return load_cluster_config(config_path).nodes
+def load_cluster_nodes(config_path: Optional[Path], default_local_node: Optional[NodeConfig] = None) -> list[NodeConfig]:
+    return load_cluster_config(config_path, default_local_node=default_local_node).nodes
 
 
 def filter_snapshot_services(snapshot: dict[str, Any], service_names: Optional[list[str]]) -> dict[str, Any]:
@@ -252,7 +258,11 @@ class LocalNodeController(BaseNodeController):
     def __init__(self, node: NodeConfig):
         super().__init__(node)
         self.build_dir = resolve_build_dir(Path(node.build_dir))
-        self.control_state = ControlApiState(build_dir=self.build_dir)
+        self.control_state = ControlApiState(
+            build_dir=self.build_dir,
+            build_system_name=node.build_system,
+            build_system_config=Path(node.build_system_config) if node.build_system_config else None,
+        )
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = make_server_snapshot(self.build_dir)
@@ -290,7 +300,11 @@ class LocalNodeController(BaseNodeController):
 class SshNodeController(BaseNodeController):
     def __init__(self, node: NodeConfig):
         super().__init__(node)
-        self.task_manager = TaskManager(build_dir=Path(node.build_dir))
+        self.task_manager = TaskManager(
+            build_dir=Path(node.build_dir),
+            build_system_name=node.build_system,
+            build_system_config=Path(node.build_system_config) if node.build_system_config else None,
+        )
 
     def _ssh_target(self) -> str:
         if self.node.user:
@@ -368,11 +382,13 @@ class SshNodeController(BaseNodeController):
 
     def queue_action(self, action: str, server_name: Optional[str] = None):
         build_dir = self.node.build_dir
+        build_flags = build_system_cli_args(
+            self.node.build_system,
+            Path(self.node.build_system_config) if self.node.build_system_config else None,
+        )
         if action == "build":
-            remote_command = (
-                f"cd {shlex.quote(self.node.project_root)} && "
-                f"cmake -S . -B {shlex.quote(build_dir)} -DCMAKE_BUILD_TYPE=Release && "
-                f"cmake --build {shlex.quote(build_dir)} -j4"
+            remote_command = f"cd {shlex.quote(self.node.project_root)} && " + shlex.join(
+                ["python3", "Scripts/build_project.py", "--build-dir", build_dir, *build_flags]
             )
         elif action == "start":
             remote_command = (
@@ -385,14 +401,12 @@ class SshNodeController(BaseNodeController):
                 f"python3 Scripts/servers.py stop --build-dir {shlex.quote(build_dir)}"
             )
         elif action == "validate":
-            remote_command = (
-                f"cd {shlex.quote(self.node.project_root)} && "
-                f"python3 Scripts/validate.py --build-dir {shlex.quote(build_dir)} --no-build"
+            remote_command = f"cd {shlex.quote(self.node.project_root)} && " + shlex.join(
+                ["python3", "Scripts/validate.py", "--build-dir", build_dir, *build_flags, "--no-build"]
             )
         elif action == "validate_with_build":
-            remote_command = (
-                f"cd {shlex.quote(self.node.project_root)} && "
-                f"python3 Scripts/validate.py --build-dir {shlex.quote(build_dir)}"
+            remote_command = f"cd {shlex.quote(self.node.project_root)} && " + shlex.join(
+                ["python3", "Scripts/validate.py", "--build-dir", build_dir, *build_flags]
             )
         elif action in {"start_server", "stop_server", "restart_server"}:
             if not server_name:
@@ -520,7 +534,14 @@ class AgentNodeController(BaseNodeController):
         path = f"/api/actions/{action}"
         if server_name:
             path += f"/{urllib.parse.quote(server_name)}"
-        payload = self._request_json("POST", path)
+        request_payload: Optional[dict[str, Any]] = None
+        if self.node.build_system or self.node.build_system_config:
+            request_payload = {}
+            if self.node.build_system:
+                request_payload["build_system"] = self.node.build_system
+            if self.node.build_system_config:
+                request_payload["build_system_config"] = self.node.build_system_config
+        payload = self._request_json("POST", path, payload=request_payload)
         task_data = payload.get("task")
         if not task_data:
             raise RuntimeError("agent did not return task payload")
@@ -565,6 +586,7 @@ def build_snapshot_from_registry_record(record: dict[str, Any], fallback_node: N
     return {
         "project_root": record.get("project_root", fallback_node.project_root),
         "build_dir": record.get("build_dir", fallback_node.build_dir),
+        "build_system": record.get("build_system", fallback_node.build_system),
         "pid_file": "",
         "pid_file_exists": False,
         "server_log_dir": "",
@@ -634,8 +656,8 @@ class RemoteTaskHandle:
 
 
 class ClusterManager:
-    def __init__(self, config_path: Optional[Path]):
-        self.config = load_cluster_config(config_path)
+    def __init__(self, config_path: Optional[Path], default_local_node: Optional[NodeConfig] = None):
+        self.config = load_cluster_config(config_path, default_local_node=default_local_node)
         self.controllers: list[BaseNodeController] = []
         self.controllers_by_name: dict[str, BaseNodeController] = {}
         self.registry: dict[str, NodeRegistryEntry] = {}
@@ -784,6 +806,9 @@ class ClusterManager:
         host = control_api.get("host") or record.get("host") or "unknown"
         port = int(control_api.get("port") or registry_cfg.default_agent_port)
         manageable = bool(base_url) and (not auth_required or bool(auth_token))
+        build_system = record.get("build_system")
+        build_system_name = build_system.get("name") if isinstance(build_system, dict) else build_system
+        build_system_config = build_system.get("config_path") if isinstance(build_system, dict) else None
         return NodeConfig(
             name=agent_name,
             mode="agent" if manageable else "registry",
@@ -795,6 +820,8 @@ class ClusterManager:
             auth_token=auth_token,
             project_root=record.get("project_root", ""),
             build_dir=record.get("build_dir", "Build"),
+            build_system=build_system_name,
+            build_system_config=build_system_config,
             services=self._extract_registry_services(record),
         )
 
@@ -811,6 +838,8 @@ class ClusterManager:
                 existing.node.host = node.host
                 existing.node.services = list(node.services)
                 existing.node.build_dir = node.build_dir
+                existing.node.build_system = node.build_system
+                existing.node.build_system_config = node.build_system_config
                 existing.node.project_root = node.project_root
                 existing.node.agent_base_url = node.agent_base_url
                 existing.node.agent_port = node.agent_port
@@ -1048,8 +1077,8 @@ class ClusterManager:
         return "central" if self.config.registry else "controller"
 
 
-def build_node_controllers(config_path: Optional[Path]) -> list[BaseNodeController]:
-    nodes = load_cluster_nodes(config_path)
+def build_node_controllers(config_path: Optional[Path], default_local_node: Optional[NodeConfig] = None) -> list[BaseNodeController]:
+    nodes = load_cluster_nodes(config_path, default_local_node=default_local_node)
     controllers: list[BaseNodeController] = []
     for node in nodes:
         if node.mode == "agent":
