@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace Mession.Tools.MObjectEditorAvalonia.Models;
 
-public sealed class ApiEnvelope
+public class ApiEnvelope
 {
     [JsonPropertyName("ok")]
     public bool Ok { get; set; }
@@ -234,7 +234,7 @@ public sealed class DeleteRequestDto
     public List<string> SourcePaths { get; set; } = [];
 }
 
-public sealed class SaveDocumentDto
+public class SaveDocumentDto
 {
     [JsonPropertyName("identity")]
     public AssetIdentityDto Identity { get; set; } = new();
