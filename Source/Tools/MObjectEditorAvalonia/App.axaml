@@ -1,8 +1,105 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="Mession.Tools.MObjectEditorAvalonia.App"
-             RequestedThemeVariant="Default">
+             RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#0B1220" />
+    <SolidColorBrush x:Key="AppPanelBrush" Color="#101A2B" />
+    <SolidColorBrush x:Key="AppPanelAltBrush" Color="#162338" />
+    <SolidColorBrush x:Key="AppPanelElevatedBrush" Color="#1B2C43" />
+    <SolidColorBrush x:Key="AppBorderBrush" Color="#29405B" />
+    <SolidColorBrush x:Key="AppAccentBrush" Color="#D39B41" />
+    <SolidColorBrush x:Key="AppAccentStrongBrush" Color="#E8B45E" />
+    <SolidColorBrush x:Key="AppTextBrush" Color="#ECF3FA" />
+    <SolidColorBrush x:Key="AppMutedTextBrush" Color="#97A8BC" />
+    <SolidColorBrush x:Key="AppDangerBrush" Color="#C76A6A" />
+  </Application.Resources>
   <Application.Styles>
     <FluentTheme />
+
+    <Style Selector="Window">
+      <Setter Property="Background" Value="{DynamicResource AppBackgroundBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
+    </Style>
+
+    <Style Selector="TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
+    </Style>
+
+    <Style Selector="SelectableTextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
+    </Style>
+
+    <Style Selector="Border">
+      <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    </Style>
+
+    <Style Selector="Button">
+      <Setter Property="Background" Value="{DynamicResource AppPanelElevatedBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="14,10" />
+    </Style>
+
+    <Style Selector="Button:pointerover">
+      <Setter Property="Background" Value="{DynamicResource AppAccentBrush}" />
+      <Setter Property="Foreground" Value="#111827" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AppAccentStrongBrush}" />
+    </Style>
+
+    <Style Selector="Button:pressed">
+      <Setter Property="Background" Value="{DynamicResource AppAccentStrongBrush}" />
+      <Setter Property="Foreground" Value="#111827" />
+    </Style>
+
+    <Style Selector="TextBox">
+      <Setter Property="Background" Value="#243246" />
+      <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="10,8" />
+    </Style>
+
+    <Style Selector="ComboBox">
+      <Setter Property="Background" Value="#243246" />
+      <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
+
+    <Style Selector="ComboBoxItem">
+      <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
+      <Setter Property="Background" Value="{DynamicResource AppPanelBrush}" />
+    </Style>
+
+    <Style Selector="DataGrid">
+      <Setter Property="Background" Value="{DynamicResource AppPanelBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+      <Setter Property="RowBackground" Value="#132033" />
+      <Setter Property="AlternatingRowBackground" Value="#16253A" />
+      <Setter Property="HorizontalGridLinesBrush" Value="#22354D" />
+      <Setter Property="VerticalGridLinesBrush" Value="#22354D" />
+    </Style>
+
+    <Style Selector="DataGridColumnHeader">
+      <Setter Property="Background" Value="{DynamicResource AppPanelElevatedBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="DataGridCell">
+      <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
+      <Setter Property="BorderBrush" Value="#22354D" />
+    </Style>
+
+    <Style Selector="DataGridRow:selected">
+      <Setter Property="Background" Value="#29405B" />
+    </Style>
   </Application.Styles>
 </Application>
