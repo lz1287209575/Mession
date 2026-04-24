@@ -65,9 +65,6 @@ TResult<FPlayerUpdateRouteResponse, FAppError> MPlayerService::ApplySceneRouteFo
         return MAwait(std::move(*Error));
     }
 
-    const FRouterUpsertPlayerRouteRequest RouteRequest = BuildSceneRouteRequest(PlayerId, SceneId);
-    (void)MAwaitOk(WorldServer->GetRouter()->UpsertPlayerRoute(RouteRequest));
-
     MPlayerController* Controller = FindController(PlayerId);
     if (!Controller)
     {
@@ -76,7 +73,29 @@ TResult<FPlayerUpdateRouteResponse, FAppError> MPlayerService::ApplySceneRouteFo
             "ApplySceneRouteForPlayer"));
     }
 
-    return MAwait(Controller->PlayerUpdateRoute(BuildPlayerSceneRouteUpdateRequest(PlayerId, SceneId)));
+    const uint32 PreviousSceneId = Controller->SceneId;
+    const uint8 PreviousTargetServerType = Controller->TargetServerType;
+
+    const FRouterUpsertPlayerRouteRequest RouteRequest = BuildSceneRouteRequest(PlayerId, SceneId);
+    (void)MAwaitOk(WorldServer->GetRouter()->UpsertPlayerRoute(RouteRequest));
+
+    const TResult<FPlayerUpdateRouteResponse, FAppError> UpdateResult =
+        MAwait(Controller->PlayerUpdateRoute(BuildPlayerSceneRouteUpdateRequest(PlayerId, SceneId)));
+    if (UpdateResult.IsOk())
+    {
+        return UpdateResult;
+    }
+
+    if (PreviousSceneId != 0)
+    {
+        FRouterUpsertPlayerRouteRequest RollbackRequest;
+        RollbackRequest.PlayerId = PlayerId;
+        RollbackRequest.TargetServerType = PreviousTargetServerType;
+        RollbackRequest.SceneId = PreviousSceneId;
+        (void)MAwait(WorldServer->GetRouter()->UpsertPlayerRoute(RollbackRequest));
+    }
+
+    return UpdateResult;
 }
 
 MFuture<TResult<FSceneEnterResponse, FAppError>> MPlayerService::EnterSceneForPlayer(

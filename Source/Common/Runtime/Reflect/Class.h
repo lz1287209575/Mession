@@ -233,6 +233,8 @@ protected:
 
     using ClassConstructor = void*(*)(void*);
     ClassConstructor Constructor = nullptr;
+    using ClassDestructor = void(*)(void*);
+    ClassDestructor Destructor = nullptr;
 
     uint32 ClassFlags = 0;
     EClassKind ClassKind = EClassKind::Object;
@@ -258,6 +260,7 @@ public:
     MFunction* FindFunctionById(uint16 InId) const;
 
     void* CreateInstance() const;
+    void DestroyInstance(void* Object) const;
     void Construct(void* Object) const;
 
     virtual void WriteSnapshot(void* Object, class MReflectArchive& Ar) const;
@@ -281,6 +284,14 @@ public:
                 return new (InPlace) TObject();
             }
             return new TObject();
+        };
+        Destructor = [](void* Object)
+        {
+            if (!Object)
+            {
+                return;
+            }
+            delete static_cast<TObject*>(Object);
         };
     }
 

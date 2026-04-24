@@ -426,23 +426,30 @@ TResult<FWorldCastSkillAtUnitResponse, FAppError> MPlayerService::DoCastSkillAtU
     }
     else if (SceneResponse.TargetUnit.IsMonster() && SceneResponse.bTargetDefeated)
     {
-        FSceneDespawnCombatUnitRequest DespawnRequest;
-        DespawnRequest.Unit = SceneResponse.TargetUnit;
-        DespawnRequest.Reason = "monster_defeated";
-        (void)MAwaitOk(WorldServer->GetScene()->DespawnCombatUnit(DespawnRequest));
-
         ExperienceReward = SceneResponse.ExperienceReward;
         GoldReward = SceneResponse.GoldReward;
 
         MPlayerProfile* Profile = Caster->GetProfile();
         MPlayerProgression* Progression = Profile ? Profile->GetProgression() : nullptr;
         MPlayerInventory* Inventory = Profile ? Profile->GetInventory() : nullptr;
-        if (!Progression || !Inventory)
+        if ((!Progression && ExperienceReward != 0) || (!Inventory && GoldReward != 0))
         {
             return MakeCombatError<FWorldCastSkillAtUnitResponse>(
                 "player_reward_state_missing",
                 "CastSkillAtUnit");
         }
+
+        if (GoldReward > static_cast<uint32>(std::numeric_limits<int32>::max()))
+        {
+            return MakeCombatError<FWorldCastSkillAtUnitResponse>(
+                "player_gold_overflow",
+                "CastSkillAtUnit");
+        }
+
+        FSceneDespawnCombatUnitRequest DespawnRequest;
+        DespawnRequest.Unit = SceneResponse.TargetUnit;
+        DespawnRequest.Reason = "monster_defeated";
+        (void)MAwaitOk(WorldServer->GetScene()->DespawnCombatUnit(DespawnRequest));
 
         if (ExperienceReward != 0)
         {
@@ -456,13 +463,6 @@ TResult<FWorldCastSkillAtUnitResponse, FAppError> MPlayerService::DoCastSkillAtU
 
         if (GoldReward != 0)
         {
-            if (GoldReward > static_cast<uint32>(std::numeric_limits<int32>::max()))
-            {
-                return MakeCombatError<FWorldCastSkillAtUnitResponse>(
-                    "player_gold_overflow",
-                    "CastSkillAtUnit");
-            }
-
             const TResult<FPlayerChangeGoldResponse, FAppError> GoldResult =
                 Inventory->ApplyGoldDelta(static_cast<int32>(GoldReward));
             if (GoldResult.IsErr())

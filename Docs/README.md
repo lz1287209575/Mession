@@ -42,6 +42,9 @@
 ## 与后续演进相关
 
 - [Roadmap.md](/root/Mession/Docs/Roadmap.md)
+- [ValidationToolDesign.md](/root/Mession/Docs/ValidationToolDesign.md)
+- [ValidationProtocolSchema.md](/root/Mession/Docs/ValidationProtocolSchema.md)
+- [ValidationSchemaExportPlan.md](/root/Mession/Docs/ValidationSchemaExportPlan.md)
 
 ## 当前推荐的阅读路径
 

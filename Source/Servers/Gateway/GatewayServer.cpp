@@ -27,99 +27,6 @@ TSharedPtr<IClientResponseTarget> MakeGatewayClientResponseTarget(const TSharedP
         });
 }
 
-bool WriteDefaultClientResponseProperty(
-    const MProperty* Property,
-    const FAppError& Error,
-    MReflectArchive& Archive)
-{
-    if (!Property)
-    {
-        return false;
-    }
-
-    switch (Property->Type)
-    {
-    case EPropertyType::Bool:
-    {
-        bool Value = false;
-        Archive << Value;
-        return true;
-    }
-    case EPropertyType::UInt8:
-    {
-        uint8 Value = 0;
-        Archive << Value;
-        return true;
-    }
-    case EPropertyType::UInt16:
-    {
-        uint16 Value = 0;
-        Archive << Value;
-        return true;
-    }
-    case EPropertyType::UInt32:
-    {
-        uint32 Value = 0;
-        Archive << Value;
-        return true;
-    }
-    case EPropertyType::UInt64:
-    {
-        uint64 Value = 0;
-        Archive << Value;
-        return true;
-    }
-    case EPropertyType::Int8:
-    {
-        int8 Value = 0;
-        Archive << Value;
-        return true;
-    }
-    case EPropertyType::Int16:
-    {
-        int16 Value = 0;
-        Archive << Value;
-        return true;
-    }
-    case EPropertyType::Int32:
-    {
-        int32 Value = 0;
-        Archive << Value;
-        return true;
-    }
-    case EPropertyType::Int64:
-    {
-        int64 Value = 0;
-        Archive << Value;
-        return true;
-    }
-    case EPropertyType::Float:
-    {
-        float Value = 0.0f;
-        Archive << Value;
-        return true;
-    }
-    case EPropertyType::Double:
-    {
-        double Value = 0.0;
-        Archive << Value;
-        return true;
-    }
-    case EPropertyType::String:
-    {
-        MString Value;
-        if (Property->Name == "Error")
-        {
-            Value = !Error.Code.empty() ? Error.Code : Error.Message;
-        }
-        Archive << Value;
-        return true;
-    }
-    default:
-        return false;
-    }
-}
-
 bool BuildClientErrorResponsePayload(uint16 FunctionId, const FAppError& Error, TByteArray& OutPayload)
 {
     MClass* ResponseStruct = FindGlobalClientResponseStructById(FunctionId);
@@ -128,19 +35,27 @@ bool BuildClientErrorResponsePayload(uint16 FunctionId, const FAppError& Error, 
         return false;
     }
 
-    MReflectArchive Archive;
-    for (const MProperty* Property : ResponseStruct->GetProperties())
+    void* ResponseInstance = ResponseStruct->CreateInstance();
+    if (!ResponseInstance)
     {
-        if (!WriteDefaultClientResponseProperty(Property, Error, Archive))
+        return false;
+    }
+
+    if (MProperty* ErrorProperty = ResponseStruct->FindProperty("Error"))
+    {
+        if (ErrorProperty->Type == EPropertyType::String)
         {
-            LOG_WARN("Gateway cannot build reflected error response: function_id=%u property=%s",
-                     static_cast<unsigned>(FunctionId),
-                     Property ? Property->Name.c_str() : "<null>");
-            return false;
+            if (MString* ErrorValue = ErrorProperty->GetValuePtr<MString>(ResponseInstance))
+            {
+                *ErrorValue = !Error.Code.empty() ? Error.Code : Error.Message;
+            }
         }
     }
 
+    MReflectArchive Archive;
+    ResponseStruct->WriteSnapshot(ResponseInstance, Archive);
     OutPayload = std::move(Archive.Data);
+    ResponseStruct->DestroyInstance(ResponseInstance);
     return true;
 }
 
@@ -505,4 +420,3 @@ void MGatewayServer::HandleBackendPacket(
              PeerName ? PeerName : "backend",
              static_cast<unsigned>(PacketType));
 }
-

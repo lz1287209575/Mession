@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -83,10 +84,21 @@ struct SParsedClass
     std::string ReflectionType = "Object";
     std::string Owner;
     bool bScopedEnum = false;
+    std::string EnumUnderlyingType = "int32";
     std::map<std::string, std::string> TypeAliases;
     std::vector<SParsedProperty> Properties;
     std::vector<SParsedFunction> Functions;
     std::vector<std::string> EnumValues;
+};
+
+struct SValidationSchemaField
+{
+    std::string Name;
+    std::string Kind;
+    std::optional<std::string> TypeName;
+    std::optional<std::string> ItemKind;
+    std::optional<std::string> ItemTypeName;
+    std::optional<size_t> Size;
 };
 
 struct SClassRegion
@@ -102,6 +114,7 @@ struct SOptions
     fs::path SourceRoot = "Source";
     fs::path OutputDir = "Build/Generated";
     fs::path CMakeManifestPath = "Build/Generated/MHeaderToolTargets.cmake";
+    fs::path ValidationSchemaPath = "Build/Generated/ValidationProtocolSchema.json";
     bool bVerbose = false;
 };
 
@@ -118,6 +131,8 @@ std::vector<SParsedFunction::SParsedParameter> ParseFunctionParameters(const std
 std::map<std::string, std::string> ParseTypeAliasesInBody(const std::string& ClassBody);
 std::string BuildClassKindExpr(const SParsedClass& ParsedClass);
 std::string Trim(std::string_view Text);
+std::string EscapeJsonString(std::string_view Text);
+bool WriteValidationProtocolSchema(const fs::path& SchemaPath, const std::vector<SParsedClass>& Classes);
 
 std::string StripEnclosingPair(std::string Value, char Open, char Close)
 {
@@ -137,6 +152,43 @@ std::string UnquoteStringLiteral(std::string Value)
         return Value.substr(1, Value.size() - 2);
     }
     return Value;
+}
+
+std::string EscapeJsonString(std::string_view Text)
+{
+    std::string Result;
+    Result.reserve(Text.size());
+    for (const char Ch : Text)
+    {
+        switch (Ch)
+        {
+        case '\\':
+            Result += "\\\\";
+            break;
+        case '"':
+            Result += "\\\"";
+            break;
+        case '\b':
+            Result += "\\b";
+            break;
+        case '\f':
+            Result += "\\f";
+            break;
+        case '\n':
+            Result += "\\n";
+            break;
+        case '\r':
+            Result += "\\r";
+            break;
+        case '\t':
+            Result += "\\t";
+            break;
+        default:
+            Result += Ch;
+            break;
+        }
+    }
+    return Result;
 }
 
 std::vector<SParsedProperty::SMetadataEntry> ParsePropertyMetadataEntries(const std::string& MacroArgs)
@@ -1629,6 +1681,12 @@ std::vector<SParsedClass> ParseReflectedEnumsInHeader(const fs::path& Header, co
         Parsed.HeaderPath = Header;
         Parsed.Owner = DetermineOwnerFromHeaderPath(Header);
         Parsed.bScopedEnum = bScopedEnum;
+        const size_t UnderlyingColon = Masked.find(':', Cursor);
+        if (UnderlyingColon != std::string::npos && UnderlyingColon < BraceOpen)
+        {
+            Parsed.EnumUnderlyingType = NormalizeReflectionType(
+                Contents.substr(UnderlyingColon + 1, BraceOpen - UnderlyingColon - 1));
+        }
         const size_t MacroOpen = Masked.find('(', MarkerPos);
         const size_t MacroClose = (MacroOpen == std::string::npos) ? std::string::npos : FindMatching(Masked, MacroOpen, '(', ')');
         if (MacroOpen != std::string::npos && MacroClose != std::string::npos)
@@ -2126,6 +2184,12 @@ bool ParseArgs(int Argc, char** Argv, SOptions& OutOptions)
             continue;
         }
 
+        if (StartsWith(Arg, "--validation-schema-out="))
+        {
+            OutOptions.ValidationSchemaPath = Arg.substr(std::string("--validation-schema-out=").size());
+            continue;
+        }
+
         std::cerr << "Unknown argument: " << Arg << "\n";
         return false;
     }
@@ -2425,6 +2489,7 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
         Out << "        Struct->SetMeta(\"" << ParsedClass.Name << "\", \"" << ParsedClass.HeaderPath.generic_string() << "\", nullptr, " << ParsedClass.ClassFlagsExpr << ");\n";
         Out << "        Struct->SetKind(" << BuildClassKindExpr(ParsedClass) << ");\n";
         Out << "        Struct->SetCppTypeIndex(std::type_index(typeid(" << ParsedClass.Name << ")));\n";
+        Out << "        Struct->SetConstructor<" << ParsedClass.Name << ">();\n";
         Out << "        using ThisClass = " << ParsedClass.Name << ";\n";
         Out << "        MClass* InClass = Struct;\n";
         Out << "        MHEADERTOOL_REGISTER_PROPERTIES_" << ParsedClass.Name << "();\n";
@@ -3405,6 +3470,287 @@ bool WriteGeneratedClientManifest(const fs::path& OutputDir, const std::vector<S
     return true;
 }
 
+bool IsProtocolMessageHeader(const fs::path& HeaderPath)
+{
+    const std::string Normalized = HeaderPath.lexically_normal().generic_string();
+    return StartsWith(Normalized, "Source/Protocol/Messages/") ||
+           (Normalized.find("/Source/Protocol/Messages/") != std::string::npos);
+}
+
+std::optional<std::string> TryMapValidationBuiltinScalarKind(const std::string& TypeName)
+{
+    const std::string Compact = ReplaceAll(Trim(TypeName), " ", "");
+    if (Compact == "bool")
+    {
+        return "bool";
+    }
+    if (Compact == "int8")
+    {
+        return "i8";
+    }
+    if (Compact == "int16")
+    {
+        return "i16";
+    }
+    if (Compact == "int32")
+    {
+        return "i32";
+    }
+    if (Compact == "int64")
+    {
+        return "i64";
+    }
+    if (Compact == "uint8")
+    {
+        return "u8";
+    }
+    if (Compact == "uint16")
+    {
+        return "u16";
+    }
+    if (Compact == "uint32")
+    {
+        return "u32";
+    }
+    if (Compact == "uint64")
+    {
+        return "u64";
+    }
+    if (Compact == "float")
+    {
+        return "f32";
+    }
+    if (Compact == "double")
+    {
+        return "f64";
+    }
+    if (Compact == "MString" || Compact == "MName")
+    {
+        return "string";
+    }
+    return std::nullopt;
+}
+
+std::map<std::string, std::string> BuildValidationEnumKindMap(const std::vector<SParsedClass>& Classes)
+{
+    std::map<std::string, std::string> EnumKinds;
+    for (const SParsedClass& ParsedClass : Classes)
+    {
+        if (ParsedClass.Kind != EParsedTypeKind::Enum)
+        {
+            continue;
+        }
+
+        const std::optional<std::string> Kind = TryMapValidationBuiltinScalarKind(ParsedClass.EnumUnderlyingType);
+        if (!Kind.has_value())
+        {
+            throw std::runtime_error("Unsupported enum underlying type for validation schema: " +
+                                     ParsedClass.Name + " -> " + ParsedClass.EnumUnderlyingType);
+        }
+        EnumKinds.emplace(ParsedClass.Name, *Kind);
+    }
+    return EnumKinds;
+}
+
+std::optional<std::string> TryMapValidationScalarKind(
+    const std::string& TypeName,
+    const std::map<std::string, std::string>& EnumKinds)
+{
+    if (const std::optional<std::string> Builtin = TryMapValidationBuiltinScalarKind(TypeName))
+    {
+        return Builtin;
+    }
+
+    const std::string Compact = ReplaceAll(Trim(TypeName), " ", "");
+    const auto It = EnumKinds.find(Compact);
+    if (It != EnumKinds.end())
+    {
+        return It->second;
+    }
+
+    return std::nullopt;
+}
+
+std::optional<std::string> ExtractSingleTemplateArgument(const std::string& TypeName, std::string_view TemplateName)
+{
+    const std::string Compact = ReplaceAll(Trim(TypeName), " ", "");
+    const std::string Prefix = std::string(TemplateName) + "<";
+    if (!StartsWith(Compact, Prefix) || Compact.empty() || Compact.back() != '>')
+    {
+        return std::nullopt;
+    }
+
+    const std::string Inner = Compact.substr(Prefix.size(), Compact.size() - Prefix.size() - 1);
+    const std::vector<std::string> Args = SplitTopLevelArgs(Inner);
+    if (Args.size() != 1)
+    {
+        return std::nullopt;
+    }
+    return ReplaceAll(Trim(Args[0]), " ", "");
+}
+
+bool TryBuildValidationSchemaField(
+    const SParsedClass& ParsedClass,
+    const SParsedProperty& Property,
+    const std::map<std::string, std::string>& EnumKinds,
+    SValidationSchemaField& OutField)
+{
+    OutField = {};
+    OutField.Name = Property.Name;
+
+    const std::string ResolvedType = ResolveAliasedType(ParsedClass.TypeAliases, Property.Type);
+    if (const std::optional<std::string> ScalarKind = TryMapValidationScalarKind(ResolvedType, EnumKinds))
+    {
+        OutField.Kind = *ScalarKind;
+        return true;
+    }
+
+    if (ReplaceAll(Trim(ResolvedType), " ", "") == "TByteArray")
+    {
+        OutField.Kind = "vector";
+        OutField.ItemKind = "u8";
+        return true;
+    }
+
+    if (const std::optional<std::string> ItemType = ExtractSingleTemplateArgument(ResolvedType, "TVector"))
+    {
+        OutField.Kind = "vector";
+        if (const std::optional<std::string> ItemKind = TryMapValidationScalarKind(*ItemType, EnumKinds))
+        {
+            OutField.ItemKind = *ItemKind;
+            return true;
+        }
+
+        OutField.ItemKind = "struct";
+        OutField.ItemTypeName = *ItemType;
+        return true;
+    }
+
+    OutField.Kind = "struct";
+    OutField.TypeName = ReplaceAll(Trim(ResolvedType), " ", "");
+    return true;
+}
+
+std::vector<SValidationSchemaField> BuildValidationSchemaFields(
+    const SParsedClass& ParsedClass,
+    const std::map<std::string, std::string>& EnumKinds)
+{
+    if (ParsedClass.Name == "FCombatUnitRef")
+    {
+        return {
+            SValidationSchemaField{.Name = "UnitKind", .Kind = "u8", .TypeName = std::nullopt, .ItemKind = std::nullopt, .ItemTypeName = std::nullopt, .Size = std::nullopt},
+            SValidationSchemaField{.Name = "_pad0", .Kind = "padding", .TypeName = std::nullopt, .ItemKind = std::nullopt, .ItemTypeName = std::nullopt, .Size = size_t{7}},
+            SValidationSchemaField{.Name = "CombatEntityId", .Kind = "u64", .TypeName = std::nullopt, .ItemKind = std::nullopt, .ItemTypeName = std::nullopt, .Size = std::nullopt},
+            SValidationSchemaField{.Name = "PlayerId", .Kind = "u64", .TypeName = std::nullopt, .ItemKind = std::nullopt, .ItemTypeName = std::nullopt, .Size = std::nullopt},
+        };
+    }
+
+    std::vector<SValidationSchemaField> Fields;
+    Fields.reserve(ParsedClass.Properties.size());
+    for (const SParsedProperty& Property : ParsedClass.Properties)
+    {
+        SValidationSchemaField Field;
+        if (!TryBuildValidationSchemaField(ParsedClass, Property, EnumKinds, Field))
+        {
+            throw std::runtime_error("Failed to build validation schema field for " +
+                                     ParsedClass.Name + "::" + Property.Name);
+        }
+        Fields.push_back(std::move(Field));
+    }
+    return Fields;
+}
+
+void WriteValidationSchemaField(std::ostream& Out, const SValidationSchemaField& Field)
+{
+    Out << "{ \"name\": \"" << EscapeJsonString(Field.Name) << "\", \"kind\": \"" << EscapeJsonString(Field.Kind) << "\"";
+    if (Field.TypeName.has_value())
+    {
+        Out << ", \"type_name\": \"" << EscapeJsonString(*Field.TypeName) << "\"";
+    }
+    if (Field.ItemKind.has_value())
+    {
+        Out << ", \"item_kind\": \"" << EscapeJsonString(*Field.ItemKind) << "\"";
+    }
+    if (Field.ItemTypeName.has_value())
+    {
+        Out << ", \"item_type_name\": \"" << EscapeJsonString(*Field.ItemTypeName) << "\"";
+    }
+    if (Field.Size.has_value())
+    {
+        Out << ", \"size\": " << *Field.Size;
+    }
+    Out << " }";
+}
+
+bool WriteValidationProtocolSchema(const fs::path& SchemaPath, const std::vector<SParsedClass>& Classes)
+{
+    std::error_code Error;
+    if (SchemaPath.has_parent_path())
+    {
+        fs::create_directories(SchemaPath.parent_path(), Error);
+        if (Error)
+        {
+            std::cerr << "Failed to create validation schema directory: " << SchemaPath.parent_path() << "\n";
+            return false;
+        }
+    }
+
+    const std::map<std::string, std::string> EnumKinds = BuildValidationEnumKindMap(Classes);
+
+    std::vector<const SParsedClass*> ProtocolStructs;
+    for (const SParsedClass& ParsedClass : Classes)
+    {
+        if (ParsedClass.Kind != EParsedTypeKind::Struct || ParsedClass.Properties.empty())
+        {
+            continue;
+        }
+        if (!IsProtocolMessageHeader(ParsedClass.HeaderPath))
+        {
+            continue;
+        }
+        ProtocolStructs.push_back(&ParsedClass);
+    }
+
+    std::sort(ProtocolStructs.begin(), ProtocolStructs.end(), [](const SParsedClass* Lhs, const SParsedClass* Rhs)
+    {
+        return Lhs->Name < Rhs->Name;
+    });
+
+    std::ofstream Out(SchemaPath);
+    if (!Out)
+    {
+        std::cerr << "Failed to write validation protocol schema: " << SchemaPath << "\n";
+        return false;
+    }
+
+    Out << "{\n";
+    Out << "  \"schema_version\": 1,\n";
+    Out << "  \"producer\": \"MHeaderTool\",\n";
+    Out << "  \"generated_at\": \"static\",\n";
+    Out << "  \"structs\": {\n";
+
+    for (size_t StructIndex = 0; StructIndex < ProtocolStructs.size(); ++StructIndex)
+    {
+        const SParsedClass& ParsedClass = *ProtocolStructs[StructIndex];
+        const std::vector<SValidationSchemaField> Fields = BuildValidationSchemaFields(ParsedClass, EnumKinds);
+
+        Out << "    \"" << EscapeJsonString(ParsedClass.Name) << "\": {\n";
+        Out << "      \"fields\": [\n";
+        for (size_t FieldIndex = 0; FieldIndex < Fields.size(); ++FieldIndex)
+        {
+            Out << "        ";
+            WriteValidationSchemaField(Out, Fields[FieldIndex]);
+            Out << (FieldIndex + 1 < Fields.size() ? ",\n" : "\n");
+        }
+        Out << "      ]\n";
+        Out << "    }" << (StructIndex + 1 < ProtocolStructs.size() ? "," : "") << "\n";
+    }
+
+    Out << "  }\n";
+    Out << "}\n";
+    return true;
+}
+
 bool WriteCMakeManifest(const fs::path& ManifestPath, const fs::path& OutputDir, const std::vector<SParsedClass>& Classes)
 {
     std::error_code Error;
@@ -3534,7 +3880,9 @@ int main(int Argc, char** Argv)
         SOptions Options;
         if (!ParseArgs(Argc, Argv, Options))
         {
-            std::cerr << "Usage: MHeaderTool [--source-root=Source] [--output-dir=Build/Generated] [--verbose]\n";
+            std::cerr << "Usage: MHeaderTool [--source-root=Source] [--output-dir=Build/Generated] "
+                         "[--cmake-manifest=Build/Generated/MHeaderToolTargets.cmake] "
+                         "[--validation-schema-out=Build/Generated/ValidationProtocolSchema.json] [--verbose]\n";
             return 1;
         }
 
@@ -3573,6 +3921,11 @@ int main(int Argc, char** Argv)
         }
 
         if (!WriteGeneratedClientManifest(Options.OutputDir, Classes))
+        {
+            return 1;
+        }
+
+        if (!WriteValidationProtocolSchema(Options.ValidationSchemaPath, Classes))
         {
             return 1;
         }

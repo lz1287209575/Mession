@@ -1,0 +1,267 @@
+{
+  "schema_version": 1,
+  "producer": "validation-compat",
+  "generated_at": "static",
+  "structs": {
+    "FCombatUnitRef": {
+      "fields": [
+        { "name": "UnitKind", "kind": "u8" },
+        { "name": "_pad0", "kind": "padding", "size": 7 },
+        { "name": "CombatEntityId", "kind": "u64" },
+        { "name": "PlayerId", "kind": "u64" }
+      ]
+    },
+    "FClientLoginResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "SessionKey", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientFindPlayerResponse": {
+      "fields": [
+        { "name": "bFound", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "GatewayConnectionId", "kind": "u64" },
+        { "name": "SceneId", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientLogoutResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientSwitchSceneResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "SceneId", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientChangeGoldResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "Gold", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientQueryProfileResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "CurrentSceneId", "kind": "u32" },
+        { "name": "Gold", "kind": "u32" },
+        { "name": "EquippedItem", "kind": "string" },
+        { "name": "Level", "kind": "u32" },
+        { "name": "Experience", "kind": "u32" },
+        { "name": "Health", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientQueryInventoryResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "Gold", "kind": "u32" },
+        { "name": "EquippedItem", "kind": "string" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientQueryProgressionResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "Level", "kind": "u32" },
+        { "name": "Experience", "kind": "u32" },
+        { "name": "Health", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientQueryCombatProfileResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "BaseAttack", "kind": "u32" },
+        { "name": "BaseDefense", "kind": "u32" },
+        { "name": "MaxHealth", "kind": "u32" },
+        { "name": "PrimarySkillId", "kind": "u32" },
+        { "name": "LastResolvedSceneId", "kind": "u32" },
+        { "name": "LastResolvedHealth", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientSetPrimarySkillResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "PrimarySkillId", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientCreatePartyResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "PartyId", "kind": "u64" },
+        { "name": "LeaderPlayerId", "kind": "u64" },
+        { "name": "MemberCount", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientInvitePartyResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "PartyId", "kind": "u64" },
+        { "name": "TargetPlayerId", "kind": "u64" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientAcceptPartyInviteResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "PartyId", "kind": "u64" },
+        { "name": "LeaderPlayerId", "kind": "u64" },
+        { "name": "MemberCount", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientKickPartyMemberResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "PartyId", "kind": "u64" },
+        { "name": "TargetPlayerId", "kind": "u64" },
+        { "name": "MemberCount", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientPartyCreatedNotify": {
+      "fields": [
+        { "name": "PartyId", "kind": "u64" },
+        { "name": "LeaderPlayerId", "kind": "u64" },
+        { "name": "MemberPlayerIds", "kind": "vector", "item_kind": "u64" }
+      ]
+    },
+    "FClientPartyInviteReceivedNotify": {
+      "fields": [
+        { "name": "PartyId", "kind": "u64" },
+        { "name": "LeaderPlayerId", "kind": "u64" },
+        { "name": "TargetPlayerId", "kind": "u64" }
+      ]
+    },
+    "FClientPartyMemberJoinedNotify": {
+      "fields": [
+        { "name": "PartyId", "kind": "u64" },
+        { "name": "LeaderPlayerId", "kind": "u64" },
+        { "name": "JoinedPlayerId", "kind": "u64" },
+        { "name": "MemberPlayerIds", "kind": "vector", "item_kind": "u64" }
+      ]
+    },
+    "FClientPartyMemberRemovedNotify": {
+      "fields": [
+        { "name": "PartyId", "kind": "u64" },
+        { "name": "LeaderPlayerId", "kind": "u64" },
+        { "name": "RemovedPlayerId", "kind": "u64" },
+        { "name": "MemberPlayerIds", "kind": "vector", "item_kind": "u64" },
+        { "name": "Reason", "kind": "string" }
+      ]
+    },
+    "FClientQueryPawnResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "SceneId", "kind": "u32" },
+        { "name": "X", "kind": "f32" },
+        { "name": "Y", "kind": "f32" },
+        { "name": "Z", "kind": "f32" },
+        { "name": "Health", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "SPlayerSceneStateMessage": {
+      "fields": [
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "SceneId", "kind": "u16" },
+        { "name": "X", "kind": "f32" },
+        { "name": "Y", "kind": "f32" },
+        { "name": "Z", "kind": "f32" }
+      ]
+    },
+    "SPlayerSceneLeaveMessage": {
+      "fields": [
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "SceneId", "kind": "u16" }
+      ]
+    },
+    "FClientEquipItemResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "EquippedItem", "kind": "string" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientGrantExperienceResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "Level", "kind": "u32" },
+        { "name": "Experience", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientModifyHealthResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "Health", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientCastSkillResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "TargetPlayerId", "kind": "u64" },
+        { "name": "SkillId", "kind": "u32" },
+        { "name": "SceneId", "kind": "u32" },
+        { "name": "AppliedDamage", "kind": "u32" },
+        { "name": "TargetHealth", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientDebugSpawnMonsterResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "SceneId", "kind": "u32" },
+        { "name": "MonsterUnit", "kind": "struct", "type_name": "FCombatUnitRef" },
+        { "name": "MonsterTemplateId", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    },
+    "FClientCastSkillAtUnitResponse": {
+      "fields": [
+        { "name": "bSuccess", "kind": "bool" },
+        { "name": "PlayerId", "kind": "u64" },
+        { "name": "TargetUnit", "kind": "struct", "type_name": "FCombatUnitRef" },
+        { "name": "SkillId", "kind": "u32" },
+        { "name": "SceneId", "kind": "u32" },
+        { "name": "AppliedDamage", "kind": "u32" },
+        { "name": "TargetHealth", "kind": "u32" },
+        { "name": "bTargetDefeated", "kind": "bool" },
+        { "name": "ExperienceReward", "kind": "u32" },
+        { "name": "GoldReward", "kind": "u32" },
+        { "name": "Error", "kind": "string" }
+      ]
+    }
+  }
+}

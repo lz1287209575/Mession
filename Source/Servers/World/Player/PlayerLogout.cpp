@@ -59,6 +59,14 @@ TResult<FPlayerLogoutResponse, FAppError> MPlayerService::DoPlayerLogout(FPlayer
     }
 
     const uint32 SceneIdBeforeLogout = Player->ResolveCurrentSceneId();
+    Player->SyncRuntimeStateToProfile();
+
+    FMgoSavePlayerRequest SaveRequest;
+    SaveRequest.PlayerId = Request.PlayerId;
+    SaveRequest.Records = ToProtocolPersistenceRecords(
+        WorldServer->GetPersistence().BuildRecordsForRoot(Player, false));
+    (void)MAwaitOk(WorldServer->GetMgo()->SavePlayer(SaveRequest));
+
     if (SceneIdBeforeLogout != 0 &&
         WorldServer->GetScene() &&
         WorldServer->GetScene()->IsAvailable())
@@ -75,12 +83,6 @@ TResult<FPlayerLogoutResponse, FAppError> MPlayerService::DoPlayerLogout(FPlayer
 
     CleanupPlayerSocialState(Request.PlayerId);
     Player->PrepareForLogout();
-
-    FMgoSavePlayerRequest SaveRequest;
-    SaveRequest.PlayerId = Request.PlayerId;
-    SaveRequest.Records = ToProtocolPersistenceRecords(
-        WorldServer->GetPersistence().BuildRecordsForRoot(Player, false));
-    (void)MAwaitOk(WorldServer->GetMgo()->SavePlayer(SaveRequest));
 
     PlayerCommandRuntime->BumpEpoch(Request.PlayerId);
     RemovePlayer(Request.PlayerId);

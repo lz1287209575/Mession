@@ -53,6 +53,14 @@ TResult<FPlayerSwitchSceneResponse, FAppError> MPlayerService::DoPlayerSwitchSce
             ApplySceneRouteForPlayer(Request.PlayerId, TargetSceneId);
         !RouteResult.IsOk())
     {
+        if (PreviousSceneId != TargetSceneId)
+        {
+            (void)MAwait(LeaveSceneForPlayer(Request.PlayerId, TargetSceneId));
+            if (PreviousSceneId != 0)
+            {
+                (void)MAwait(EnterSceneForPlayer(Request.PlayerId, PreviousSceneId));
+            }
+        }
         return MakeErrorResult<FPlayerSwitchSceneResponse>(RouteResult.GetError());
     }
 

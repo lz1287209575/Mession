@@ -26,13 +26,23 @@ void* MClass::CreateInstance() const
 
     void* Obj = Constructor(nullptr);
 
-    auto* ReflectObj = static_cast<MObject*>(Obj);
+    auto* ReflectObj = (ClassKind != EClassKind::Struct) ? static_cast<MObject*>(Obj) : nullptr;
     if (ReflectObj)
     {
         ReflectObj->SetClass(const_cast<MClass*>(this));
     }
 
     return Obj;
+}
+
+void MClass::DestroyInstance(void* Object) const
+{
+    if (!Object || !Destructor)
+    {
+        return;
+    }
+
+    Destructor(Object);
 }
 
 void MClass::Construct(void* Object) const
@@ -44,7 +54,7 @@ void MClass::Construct(void* Object) const
 
     Constructor(Object);
 
-    auto* ReflectObj = static_cast<MObject*>(Object);
+    auto* ReflectObj = (ClassKind != EClassKind::Struct) ? static_cast<MObject*>(Object) : nullptr;
     if (ReflectObj)
     {
         ReflectObj->SetClass(const_cast<MClass*>(this));

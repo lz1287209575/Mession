@@ -147,6 +147,8 @@ TResult<FPlayerEnterWorldResponse, FAppError> MPlayerService::DoPlayerEnterWorld
             ApplySceneRouteForPlayer(Request.PlayerId, SceneResponse.SceneId);
         !RouteResult.IsOk())
     {
+        (void)MAwait(LeaveSceneForPlayer(Request.PlayerId, SceneResponse.SceneId));
+        RemovePlayer(Request.PlayerId);
         return MakeErrorResult<FPlayerEnterWorldResponse>(RouteResult.GetError());
     }
 
