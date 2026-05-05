@@ -37,7 +37,7 @@ TResult<FPlayerGrantExperienceResponse, FAppError> MPlayerProgression::ApplyExpe
     }
 
     const uint64 TotalExperience = static_cast<uint64>(Experience) + static_cast<uint64>(ExperienceDelta);
-    if (TotalExperience > static_cast<uint64>(std::numeric_limits<uint32>::max()))
+    if (TotalExperience > static_cast<uint64>((std::numeric_limits<uint32>::max)()))
     {
         return MakeErrorResult<FPlayerGrantExperienceResponse>(FAppError::Make(
             "player_experience_overflow",
@@ -112,7 +112,7 @@ MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> MPlayerProgression::Pla
     {
         ResolvedHealth = 0;
     }
-    else if (NextHealth > static_cast<int64>(std::numeric_limits<uint32>::max()))
+    else if (NextHealth > static_cast<int64>((std::numeric_limits<uint32>::max)()))
     {
         return MServerCallAsyncSupport::MakeErrorFuture<FPlayerModifyHealthResponse>(
             "player_health_overflow",

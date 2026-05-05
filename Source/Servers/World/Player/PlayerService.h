@@ -2,6 +2,8 @@
 
 #include "Servers/World/WorldServer.h"
 
+#include "Common/Runtime/Async/MAsync.h"
+#include "Common/Runtime/Concurrency/FiberAwait.h"
 #include "Protocol/Messages/Combat/CombatWorldMessages.h"
 #include "Protocol/Messages/Scene/SceneServiceMessages.h"
 #include "Protocol/Messages/World/PlayerLifecycleMessages.h"
@@ -18,9 +20,9 @@
 #include "Servers/World/Player/Player.h"
 #include "Servers/World/Player/PlayerCombatProfile.h"
 #include "Servers/World/Player/PlayerCommandRuntime.h"
-#include "Servers/World/Player/PlayerInventory.h"
-#include "Servers/World/Player/PlayerManager.h"
+#include "Servers/World/Player/PlayerLogout.h"
 
+#include <coroutine>
 #include <initializer_list>
 #include <optional>
 
@@ -68,6 +70,10 @@ public:
 private:
     const TMap<uint64, MPlayer*>* OnlinePlayers = nullptr;
 };
+
+// MFunction is the runtime class (alias for MFunctionObject, defined in Class.h).
+// MFUNCTION(...) is the no-op macro from Reflection.h — do not redefine it here.
+// __MFUNC__(...) is not a macro; MHeaderTool scans for it as a source marker.
 
 MCLASS(Type=Service)
 class MPlayerService : public MObject
@@ -124,8 +130,48 @@ public:
     MFuture<TResult<FPlayerModifyHealthResponse, FAppError>> PlayerModifyHealth(
         const FPlayerModifyHealthRequest& Request);
 
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FPlayerLogoutResponse, FAppError>> PlayerLogout(const FPlayerLogoutRequest& Request);
+    __MFUNC__(Async, PlayerRPC, ParaMeta=(PlayerId=NotZero), Dependencies=(Persistence, Mgo))
+    MFUTURE(FPlayerLogoutResponse) PlayerLogout(const FPlayerLogoutRequest& Request)
+    {
+        MPlayer* Player = FindPlayer(Request.PlayerId);
+        if (!Player)
+        {
+            co_return TResult<FPlayerLogoutResponse, FAppError>::Ok(BuildPlayerOnlyResponse<FPlayerLogoutResponse>(Request.PlayerId));
+        }
+
+        const uint32 SceneIdBeforeLogout = Player->ResolveCurrentSceneId();
+        Player->SyncRuntimeStateToProfile();
+
+        FMgoSavePlayerRequest SaveRequest;
+        SaveRequest.PlayerId = Request.PlayerId;
+        SaveRequest.Records = ToProtocolPersistenceRecords(
+            WorldServer->GetPersistence().BuildRecordsForRoot(Player, false));
+        (void)MAwaitOk(WorldServer->GetMgo()->SavePlayer(SaveRequest));
+
+        if (SceneIdBeforeLogout != 0 && WorldServer->GetScene() && WorldServer->GetScene()->IsAvailable())
+        {
+            (void)MAwaitOk(LeaveSceneForPlayer(Request.PlayerId, SceneIdBeforeLogout));
+        }
+
+        Player = FindPlayer(Request.PlayerId);
+        if (!Player)
+        {
+            co_return TResult<FPlayerLogoutResponse, FAppError>::Ok(BuildPlayerOnlyResponse<FPlayerLogoutResponse>(Request.PlayerId));
+        }
+
+        CleanupPlayerSocialState(Request.PlayerId);
+        Player->PrepareForLogout();
+
+        PlayerCommandRuntime->BumpEpoch(Request.PlayerId);
+        RemovePlayer(Request.PlayerId);
+
+        if (SceneIdBeforeLogout != 0)
+        {
+            QueueScenePlayerLeaveNotify(Request.PlayerId, SceneIdBeforeLogout);
+        }
+
+        co_return TResult<FPlayerLogoutResponse, FAppError>::Ok(BuildPlayerOnlyResponse<FPlayerLogoutResponse>(Request.PlayerId));
+    }
 
     MFUNCTION(ServerCall)
     MFuture<TResult<FPlayerSwitchSceneResponse, FAppError>> PlayerSwitchScene(const FPlayerSwitchSceneRequest& Request);
@@ -241,7 +287,6 @@ private:
 
     TResult<FPlayerEnterWorldResponse, FAppError> DoPlayerEnterWorld(FPlayerEnterWorldRequest Request);
     TResult<FPlayerSwitchSceneResponse, FAppError> DoPlayerSwitchScene(FPlayerSwitchSceneRequest Request);
-    TResult<FPlayerLogoutResponse, FAppError> DoPlayerLogout(FPlayerLogoutRequest Request);
     TResult<FPlayerOpenTradeSessionResponse, FAppError> DoPlayerOpenTradeSession(FPlayerOpenTradeSessionRequest Request);
     TResult<FPlayerConfirmTradeResponse, FAppError> DoPlayerConfirmTrade(FPlayerConfirmTradeRequest Request);
     TResult<FPlayerCreatePartyResponse, FAppError> DoPlayerCreateParty(FPlayerCreatePartyRequest Request);

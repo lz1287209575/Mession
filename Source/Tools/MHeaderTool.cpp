@@ -1,9 +1,11 @@
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <iostream>
 #include <optional>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -13,9 +15,22 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace
 {
 namespace fs = std::filesystem;
+
+struct SValidationRule
+{
+    std::string FieldName;
+    std::string ValidatorName;
+};
 
 struct SParsedFunction
 {
@@ -36,8 +51,11 @@ struct SParsedFunction
     std::string Owner;
     bool bConst = false;
     bool bHasValidate = false;
+    bool bIsAsync = false;
     bool bIsRpc = false;
+    bool bIsPlayerRpc = false;
     bool bReliable = true;
+    std::string AsyncBody;  // raw function body text for MFunction(Async)
     std::string Transport;
     std::string RpcKind;
     std::string Endpoint;
@@ -48,6 +66,8 @@ struct SParsedFunction
     std::string Wrap;
     std::string ClientApi;
     std::vector<SParsedParameter> Params;
+    std::vector<SValidationRule> ValidationRules;
+    std::vector<std::string> DependencyList;
 };
 
 struct SParsedProperty
@@ -632,6 +652,17 @@ void ApplyFunctionMetadataFromMacroArgs(SParsedFunction& Parsed)
             {
                 Parsed.bIsRpc = true;
             }
+            else if (Part == "Async")
+            {
+                Parsed.bIsAsync = true;
+            }
+            else if (Part == "PlayerRPC")
+            {
+                Parsed.bIsPlayerRpc = true;
+                Parsed.bIsAsync = true;
+                Parsed.Transport = "ServerCall";
+                Parsed.bIsRpc = true;
+            }
             continue;
         }
 
@@ -683,6 +714,39 @@ void ApplyFunctionMetadataFromMacroArgs(SParsedFunction& Parsed)
         else if (Key == "Api" || Key == "ClientApi")
         {
             Parsed.ClientApi = Value;
+        }
+        else if (Key == "ParaMeta")
+        {
+            // Parse (FieldName=Validator, FieldName2=Validator2)
+            std::string Inner = Value;
+            if (Inner.size() >= 2 && Inner.front() == '(' && Inner.back() == ')')
+            {
+                Inner = Inner.substr(1, Inner.size() - 2);
+            }
+            static const std::regex kPairRegex(R"(([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*))");
+            for (auto It = std::sregex_iterator(Inner.begin(), Inner.end(), kPairRegex);
+                 It != std::sregex_iterator(); ++It)
+            {
+                Parsed.ValidationRules.push_back({It->str(1), It->str(2)});
+            }
+        }
+        else if (Key == "Dependencies")
+        {
+            std::string Inner = Value;
+            if (Inner.size() >= 2 && Inner.front() == '(' && Inner.back() == ')')
+            {
+                Inner = Inner.substr(1, Inner.size() - 2);
+            }
+            std::stringstream SS(Inner);
+            std::string Token;
+            while (std::getline(SS, Token, ','))
+            {
+                Token = Trim(Token);
+                if (!Token.empty())
+                {
+                    Parsed.DependencyList.push_back(Token);
+                }
+            }
         }
     }
 }
@@ -1730,6 +1794,8 @@ std::vector<SParsedFunction> ParseFunctionsInClassBody(const std::string& ClassB
     const std::string MaskedClassBody = MakeMaskedCopy(ClassBody);
     const std::vector<std::string> MacroNames = {
         "MFUNCTION(",
+        "MFUNCTION(Async)",
+        "__MFUNC__(",           // async marker: inline body + optional ServerCall
         "MDECLARE_SERVICE_RPC(",
         "MDECLARE_RPC_METHOD(",
         "MDECLARE_RPC_METHOD_WITH_HANDLER(",
@@ -1752,7 +1818,14 @@ std::vector<SParsedFunction> ParseFunctionsInClassBody(const std::string& ClassB
             if (MacroPos == std::string::npos || CandidatePos < MacroPos)
             {
                 MacroPos = CandidatePos;
-                MatchedMacro = Candidate.substr(0, Candidate.size() - 1);
+                if (Candidate == "MFUNCTION(Async)" || Candidate == "__MFUNC__(")
+                {
+                    MatchedMacro = "MFunction";  // strip "(...)" to get "MFunction"
+                }
+                else
+                {
+                    MatchedMacro = Candidate.substr(0, Candidate.size() - 1);
+                }
             }
         }
 
@@ -1771,10 +1844,29 @@ std::vector<SParsedFunction> ParseFunctionsInClassBody(const std::string& ClassB
         }
 
         const std::string MacroArgs = ClassBody.substr(MacroOpen + 1, MacroClose - MacroOpen - 1);
-        if (MatchedMacro == "MFUNCTION")
+        if (MatchedMacro == "MFUNCTION" || MatchedMacro == "MFunction")
         {
             const size_t DeclStart = MacroClose + 1;
-            const size_t DeclEnd = ClassBody.find(';', DeclStart);
+
+            // Determine declaration terminator:
+            //   - ';' for regular declarations (MFunction(ServerCall))
+            //   - '{' for inline body declarations (MFunction(Async) with {} body)
+            size_t DeclEnd = ClassBody.find(';', DeclStart);
+            bool bInlineBody = false;
+            if (DeclEnd == std::string::npos)
+            {
+                // Try to find opening brace for inline body
+                size_t BracePos = ClassBody.find('{', DeclStart);
+                if (BracePos != std::string::npos)
+                {
+                    size_t BraceClose = FindMatching(ClassBody, BracePos, '{', '}');
+                    if (BraceClose != std::string::npos)
+                    {
+                        DeclEnd = BraceClose + 1;  // include the closing '}'
+                        bInlineBody = true;
+                    }
+                }
+            }
             if (DeclEnd == std::string::npos)
             {
                 break;
@@ -1787,11 +1879,40 @@ std::vector<SParsedFunction> ParseFunctionsInClassBody(const std::string& ClassB
                 continue;
             }
 
-            if (auto Parsed = ParseFunctionDeclaration(MacroArgs, Declaration))
+            // For inline body declarations, strip trailing '}' so ParseFunctionDeclaration sees a clean ';'-terminated declaration
+            std::string DeclarationForParse = Declaration;
+            if (bInlineBody)
+            {
+                DeclarationForParse = Trim(Declaration);
+                if (!DeclarationForParse.empty() && DeclarationForParse.back() == '}')
+                {
+                    DeclarationForParse.pop_back();
+                    DeclarationForParse = Trim(DeclarationForParse);
+                }
+            }
+
+            if (auto Parsed = ParseFunctionDeclaration(MacroArgs, DeclarationForParse))
             {
                 ApplyFunctionMetadataFromMacroArgs(*Parsed);
                 const std::string ValidateNeedle = Parsed->Name + "_Validate(";
                 Parsed->bHasValidate = (MaskedClassBody.find(ValidateNeedle) != std::string::npos);
+
+                if (Parsed->bIsAsync && bInlineBody)
+                {
+                    // Capture raw function body for async codegen.
+                    // Declaration ends with '}' and looks like:
+                    //   MFUTURE(FPlayerLogoutResponse) PlayerLogout(FPlayerLogoutRequest Request) const { ... }
+                    const size_t BraceOpen = Declaration.find('{');
+                    if (BraceOpen != std::string::npos)
+                    {
+                        const size_t BraceClose = FindMatching(Declaration, BraceOpen, '{', '}');
+                        if (BraceClose != std::string::npos)
+                        {
+                            Parsed->AsyncBody = Declaration.substr(BraceOpen + 1, BraceClose - BraceOpen - 1);
+                        }
+                    }
+                }
+
                 Functions.push_back(std::move(*Parsed));
             }
 
@@ -1953,7 +2074,7 @@ std::string BuildFunctionRegistrationBlock(const SParsedClass& ParsedClass, cons
     if (Function.Transport == "Client" && !Function.Route.empty())
     {
         Out << "    do {\n";
-        Out << "        auto* Func = new MFunction();\n";
+        Out << "        auto* Func = new MFUNC_OBJECT();\n";
         Out << "        Func->Name = \"" << Function.Name << "\";\n";
         Out << "        Func->Flags = " << BuildFunctionFlagsExpr(Function) << ";\n";
         Out << "        Func->ParamSize = sizeof(" << ParamStructName << ");\n";
@@ -1984,7 +2105,7 @@ std::string BuildFunctionRegistrationBlock(const SParsedClass& ParsedClass, cons
     Out << "    do {\n";
     if (Function.Transport == "ClientCall" || Function.Transport == "ServerCall")
     {
-        Out << "        auto* Func = new MFunction();\n";
+        Out << "        auto* Func = new MFUNC_OBJECT();\n";
         Out << "        Func->Name = \"" << Function.Name << "\";\n";
         Out << "        Func->Flags = " << BuildFunctionFlagsExpr(Function) << ";\n";
     }
@@ -2437,7 +2558,15 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
     Out << "\n";
     Out << "#include \"Common/Net/Rpc/RpcClientCall.h\"\n";
     Out << "#include \"Common/Net/Rpc/RpcServerCall.h\"\n";
+    Out << "#include \"Common/Runtime/Async/MAsync.h\"\n";
     Out << "#include \"Servers/App/ServerCallRequestValidation.h\"\n";
+    Out << "#include \"Protocol/Messages/World/PlayerModifyMessages.h\"\n";
+    Out << "#include \"Protocol/Messages/World/PlayerQueryMessages.h\"\n";
+    Out << "#include \"Protocol/Messages/World/PlayerRouteMessages.h\"\n";
+    Out << "#include \"Protocol/Messages/World/PlayerSocialMessages.h\"\n";
+    Out << "#include \"Protocol/Messages/World/PlayerLifecycleMessages.h\"\n";
+    Out << "#include \"Protocol/Messages/Scene/SceneServiceMessages.h\"\n";
+    Out << "#include \"Protocol/Messages/Combat/CombatWorldMessages.h\"\n";
     Out << "\n";
     if (ParsedClass.Kind == EParsedTypeKind::Enum)
     {
@@ -2667,6 +2796,20 @@ void WriteGeneratedHeader(std::ofstream& Out, const SParsedClass& ParsedClass)
                 << "MServerCallAsyncSupport::MakeErrorFuture<" << *ResponseType << ">("
                 << "ValidationError->Code.c_str(), ValidationError->Message.c_str()), \"" << Function.Name << "\");\n";
             Out << "    }\n";
+            // ParaMeta validation rules generated inline
+            for (const auto& Rule : Function.ValidationRules)
+            {
+                if (Rule.ValidatorName == "NotZero")
+                {
+                    Out << "    if (RequestValue." << Rule.FieldName << "() == 0) {\n";
+                    Out << "        return MServerCallAsyncSupport::StartDeferredServerCall(Context,\n";
+                    Out << "            MServerCallAsyncSupport::MakeErrorFuture<" << *ResponseType << ">(\n";
+                    Out << "                \"ERR_VALIDATION\", \"" << Rule.FieldName << " must not be zero\"),\n";
+                    Out << "            \"" << Function.Name << "\");\n";
+                    Out << "    }\n";
+                }
+                // Support more validators here: NotEmpty, Positive, Range, Regex...
+            }
             Out << "    return MServerCallAsyncSupport::StartDeferredServerCall(Context, TypedObject->" << Function.Name
                 << "(RequestValue), \"" << Function.Name << "\");\n";
             Out << "}\n";
@@ -2875,6 +3018,178 @@ void WriteGeneratedSource(std::ofstream& Out, const SParsedClass& ParsedClass)
     Out << "};\n\n";
     Out << "SAutoRegisterClass_" << ParsedClass.Name << " GAutoRegisterClass_" << ParsedClass.Name << ";\n";
     Out << "} // namespace\n";
+    Out << "\n";
+
+    // ============================================================
+    // MFunction(Async) — generate continuation-chain state machines
+    // ============================================================
+    for (const SParsedFunction& Function : ParsedClass.Functions)
+    {
+        if (!Function.bIsAsync || Function.AsyncBody.empty())
+        {
+            continue;
+        }
+
+        // Build parameter list for the function signature
+        std::string ParamList = "(";
+        for (size_t Pi = 0; Pi < Function.Params.size(); ++Pi)
+        {
+            const auto& P = Function.Params[Pi];
+            ParamList += P.Type + " " + P.Name;
+            if (Pi + 1 < Function.Params.size())
+            {
+                ParamList += ", ";
+            }
+        }
+        ParamList += ")";
+        if (Function.bConst)
+        {
+            ParamList += " const";
+        }
+
+        Out << "\n";
+        Out << "// ============================================================\n";
+        Out << "// MFunction(Async) state machine — " << ParsedClass.Name << "::" << Function.Name << "\n";
+        Out << "// Generated by MHeaderTool — do not edit by hand\n";
+        Out << "// ============================================================\n";
+
+        Out << Function.ReturnType << " " << ParsedClass.Name << "::" << Function.Name << ParamList << "\n";
+        Out << "{\n";
+
+        // Parse AWAIT(expr) calls and co_return from the raw body text
+        std::string Body = Function.AsyncBody;
+        std::vector<std::string> AwaitExprs;
+        std::string ReturnExpr;
+
+        // Extract all AWAIT(expr) occurrences
+        size_t AwaitSearchPos = 0;
+        while (true)
+        {
+            const size_t AwaitPos = Body.find("AWAIT(", AwaitSearchPos);
+            if (AwaitPos == std::string::npos)
+            {
+                break;
+            }
+            const size_t ArgOpen = Body.find('(', AwaitPos);
+            if (ArgOpen == std::string::npos)
+            {
+                break;
+            }
+            const size_t ArgClose = FindMatching(Body, ArgOpen, '(', ')');
+            if (ArgClose == std::string::npos)
+            {
+                break;
+            }
+            AwaitExprs.push_back(Body.substr(ArgOpen + 1, ArgClose - ArgOpen - 1));
+            AwaitSearchPos = ArgClose + 1;
+        }
+
+        // Extract co_return [expr|err(...)];
+        {
+            const size_t CoReturnPos = Body.find("co_return");
+            if (CoReturnPos != std::string::npos)
+            {
+                const size_t SemiPos = Body.find(';', CoReturnPos);
+                if (SemiPos != std::string::npos)
+                {
+                    ReturnExpr = Trim(Body.substr(CoReturnPos + 9, SemiPos - CoReturnPos - 9));
+                }
+            }
+        }
+
+        // Generate the state machine
+        if (AwaitExprs.empty())
+        {
+            // No AWAIT — just co_return
+            if (ReturnExpr.empty())
+            {
+                Out << "    MPromise<TResult<" << Function.ReturnType << ", FAppError>> Promise;\n";
+                Out << "    Promise.SetValue(TResult<" << Function.ReturnType << ", FAppError>::Ok());\n";
+            }
+            else if (ReturnExpr.rfind("err(", 0) == 0)
+            {
+                Out << "    MPromise<TResult<" << Function.ReturnType << ", FAppError>> Promise;\n";
+                Out << "    Promise.SetValue(TResult<" << Function.ReturnType << ", FAppError>::Err(" << ReturnExpr.substr(3) << "));\n";
+            }
+            else
+            {
+                Out << "    MPromise<TResult<" << Function.ReturnType << ", FAppError>> Promise;\n";
+                Out << "    Promise.SetValue(TResult<" << Function.ReturnType << ", FAppError>::Ok(" << ReturnExpr << "));\n";
+            }
+            Out << "    return Promise.GetFuture();\n";
+        }
+        else
+        {
+            // Build continuation chain from first AWAIT to last.
+            // Each step prepends an outer .Then(lambda) around the inner continuation.
+            // The innermost continuation contains the co_return.
+            //
+            // Forward build of lambda body strings:
+            //   innermost = co_return code
+            //   for each outer AWAIT: body = AWAIT.Then([ captures ](auto _rN) { body })
+            //   final body = first .Then() call
+            std::string InnerBody;
+            if (ReturnExpr.empty())
+            {
+                InnerBody = "            _onComplete(TResult<" + Function.ReturnType + ", FAppError>::Ok());\n";
+            }
+            else if (ReturnExpr.rfind("err(", 0) == 0)
+            {
+                InnerBody = "            _onComplete(TResult<" + Function.ReturnType + ", FAppError>::Err(" + ReturnExpr.substr(3) + "));\n";
+            }
+            else
+            {
+                InnerBody = "            _onComplete(TResult<" + Function.ReturnType + ", FAppError>::Ok(" + ReturnExpr + "));\n";
+            }
+
+            // Wrap from last AWAIT outward
+            for (int Ai = static_cast<int>(AwaitExprs.size()) - 1; Ai >= 0; --Ai)
+            {
+                const std::string& AwaitExpr = AwaitExprs[Ai];
+                std::string VarName = "_v" + std::to_string(Ai);
+                std::string ResName = "_r" + std::to_string(Ai);
+
+                std::string ContinuationBody;
+                ContinuationBody = "            auto " + VarName + " = MAsyncDetail::_unwrap(" + ResName + ");\n";
+                ContinuationBody += "            if (" + VarName + ".IsErr()) { _onComplete(" + VarName + "); return; }\n";
+                if (Ai < static_cast<int>(AwaitExprs.size()) - 1)
+                {
+                    // Not the last AWAIT: extract value and chain to inner continuation
+                    std::string NextVarName = "_v" + std::to_string(Ai + 1);
+                    ContinuationBody += "            auto " + NextVarName + " = std::move(" + VarName + ").GetValue();\n";
+                    ContinuationBody += "            (void)" + NextVarName + ";\n";
+                }
+                ContinuationBody += InnerBody;
+
+                InnerBody = "            " + AwaitExpr + ".Then([this](auto " + ResName + ") {\n" + ContinuationBody + "            });\n";
+            }
+
+            Out << "    struct SState {\n";
+            Out << "        " << ParsedClass.Name << "* Self;\n";
+            for (size_t Pi = 0; Pi < Function.Params.size(); ++Pi)
+            {
+                Out << "        " << Function.Params[Pi].Type << " " << Function.Params[Pi].Name << ";\n";
+            }
+            Out << "\n";
+            Out << "        template<typename FCallback>\n";
+            Out << "        void _run(FCallback&& _onComplete) {\n";
+            Out << InnerBody;
+            Out << "        }\n";
+            Out << "    };\n";
+            Out << "\n";
+            Out << "    static SState State{this";
+            for (size_t Pi = 0; Pi < Function.Params.size(); ++Pi)
+            {
+                Out << ", " << Function.Params[Pi].Name;
+            }
+            Out << "};\n";
+            Out << "    MPromise<TResult<" << Function.ReturnType << ", FAppError>> Promise;\n";
+            Out << "    State._run([&](auto _result) { Promise.SetValue(std::move(_result)); });\n";
+            Out << "    return Promise.GetFuture();\n";
+        }
+
+        Out << "}\n";
+    }
 }
 
 bool WriteGeneratedFiles(const fs::path& OutputDir, const std::vector<SParsedClass>& Classes)
@@ -2910,8 +3225,7 @@ bool WriteGeneratedFiles(const fs::path& OutputDir, const std::vector<SParsedCla
         fs::remove(Path, RemoveError);
         if (RemoveError)
         {
-            std::cerr << "Failed to remove stale generated file: " << Path << "\n";
-            return false;
+            std::cerr << "Warning: could not remove stale generated file (may be locked): " << Path << "\n";
         }
     }
 
@@ -3771,103 +4085,116 @@ bool WriteCMakeManifest(const fs::path& ManifestPath, const fs::path& OutputDir,
         GroupedSources[Group].push_back(OutputDir / (SanitizeIdentifier(ParsedClass.Name) + ".mgenerated.cpp"));
     }
 
-    std::ofstream Out(ManifestPath);
-    if (!Out)
+    fs::path TempPath = ManifestPath.string() + ".tmp." + std::to_string(GetCurrentProcessId());
     {
-        std::cerr << "Failed to write CMake manifest: " << ManifestPath << "\n";
-        return false;
-    }
-
-    Out << "# Generated by MHeaderTool. Do not edit manually.\n";
-    Out << "set(MESSION_GENERATED_GROUPS\n";
-    for (const auto& [Group, _] : GroupedSources)
-    {
-        Out << "    \"" << EscapeCMakeListValue(Group) << "\"\n";
-    }
-    Out << ")\n";
-
-    for (const auto& [Group, Sources] : GroupedSources)
-    {
-        const std::string UpperGroup = ReplaceAll(Group, "-", "_");
-        std::string VarName = "MESSION_GENERATED_" + UpperGroup + "_SOURCES";
-        for (char& Ch : VarName)
+        std::ofstream Out(TempPath);
+        if (!Out)
         {
-            Ch = static_cast<char>(std::toupper(static_cast<unsigned char>(Ch)));
+            std::cerr << "Failed to write CMake manifest: " << TempPath << "\n";
+            return false;
         }
 
-        Out << "set(" << VarName << "\n";
-        for (const fs::path& SourcePath : Sources)
+        Out << "# Generated by MHeaderTool. Do not edit manually.\n";
+        Out << "set(MESSION_GENERATED_GROUPS\n";
+        for (const auto& [Group, _] : GroupedSources)
         {
-            Out << "    \"" << EscapeCMakePath(SourcePath) << "\"\n";
+            Out << "    \"" << EscapeCMakeListValue(Group) << "\"\n";
+        }
+        Out << ")\n";
+
+        for (const auto& [Group, Sources] : GroupedSources)
+        {
+            const std::string UpperGroup = ReplaceAll(Group, "-", "_");
+            std::string VarName = "MESSION_GENERATED_" + UpperGroup + "_SOURCES";
+            for (char& Ch : VarName)
+            {
+                Ch = static_cast<char>(std::toupper(static_cast<unsigned char>(Ch)));
+            }
+
+            Out << "set(" << VarName << "\n";
+            for (const fs::path& SourcePath : Sources)
+            {
+                Out << "    \"" << EscapeCMakePath(SourcePath) << "\"\n";
+            }
+            Out << ")\n";
+        }
+
+        Out << "set(MESSION_REFLECTED_TYPE_MANIFEST\n";
+        for (const SParsedClass& ParsedClass : Classes)
+        {
+            Out << "    \""
+                << EscapeCMakeListValue(std::string(GetTypeKindName(ParsedClass.Kind))) << "|"
+                << EscapeCMakeListValue(ParsedClass.Name) << "|"
+                << EscapeCMakeListValue(ParsedClass.Owner) << "|"
+                << EscapeCMakeListValue(EscapeCMakePath(ParsedClass.HeaderPath))
+                << "\"\n";
+        }
+        Out << ")\n";
+
+        Out << "set(MESSION_REFLECTED_PROPERTY_MANIFEST\n";
+        for (const SParsedClass& ParsedClass : Classes)
+        {
+            for (const SParsedProperty& Property : ParsedClass.Properties)
+            {
+                Out << "    \""
+                    << EscapeCMakeListValue(ParsedClass.Name) << "|"
+                    << EscapeCMakeListValue(Property.Name) << "|"
+                    << EscapeCMakeListValue(Property.Owner) << "|"
+                    << EscapeCMakeListValue(Property.Type) << "|"
+                    << EscapeCMakeListValue(Property.MacroArgs)
+                    << "\"\n";
+            }
+        }
+        Out << ")\n";
+
+        Out << "set(MESSION_REFLECTED_FUNCTION_MANIFEST\n";
+        for (const SParsedClass& ParsedClass : Classes)
+        {
+            for (const SParsedFunction& Function : ParsedClass.Functions)
+            {
+                Out << "    \""
+                    << EscapeCMakeListValue(ParsedClass.Name) << "|"
+                    << EscapeCMakeListValue(Function.Name) << "|"
+                    << EscapeCMakeListValue(Function.Owner) << "|"
+                    << EscapeCMakeListValue(Function.Signature) << "|"
+                    << EscapeCMakeListValue(Function.MacroArgs) << "|"
+                    << EscapeCMakeListValue(EscapeCMakePath(ParsedClass.HeaderPath)) << "|"
+                    << EscapeCMakeListValue(Function.Transport) << "|"
+                    << EscapeCMakeListValue(Function.MessageName)
+                    << "\"\n";
+            }
+        }
+        Out << ")\n";
+
+        Out << "set(MESSION_REFLECTED_ENUM_VALUE_MANIFEST\n";
+        for (const SParsedClass& ParsedClass : Classes)
+        {
+            if (ParsedClass.Kind != EParsedTypeKind::Enum)
+            {
+                continue;
+            }
+
+            for (const std::string& Value : ParsedClass.EnumValues)
+            {
+                Out << "    \""
+                    << EscapeCMakeListValue(ParsedClass.Name) << "|"
+                    << EscapeCMakeListValue(Value) << "|"
+                    << EscapeCMakeListValue(ParsedClass.Owner)
+                    << "\"\n";
+            }
         }
         Out << ")\n";
     }
 
-    Out << "set(MESSION_REFLECTED_TYPE_MANIFEST\n";
-    for (const SParsedClass& ParsedClass : Classes)
+    std::error_code RenameError;
+    fs::rename(TempPath, ManifestPath, RenameError);
+    if (RenameError)
     {
-        Out << "    \""
-            << EscapeCMakeListValue(std::string(GetTypeKindName(ParsedClass.Kind))) << "|"
-            << EscapeCMakeListValue(ParsedClass.Name) << "|"
-            << EscapeCMakeListValue(ParsedClass.Owner) << "|"
-            << EscapeCMakeListValue(EscapeCMakePath(ParsedClass.HeaderPath))
-            << "\"\n";
+        std::cerr << "Warning: could not atomically rename CMake manifest from " << TempPath
+                  << " to " << ManifestPath << ": " << RenameError.message() << "\n";
+        std::error_code RemoveError;
+        fs::remove(TempPath, RemoveError);
     }
-    Out << ")\n";
-
-    Out << "set(MESSION_REFLECTED_PROPERTY_MANIFEST\n";
-    for (const SParsedClass& ParsedClass : Classes)
-    {
-        for (const SParsedProperty& Property : ParsedClass.Properties)
-        {
-            Out << "    \""
-                << EscapeCMakeListValue(ParsedClass.Name) << "|"
-                << EscapeCMakeListValue(Property.Name) << "|"
-                << EscapeCMakeListValue(Property.Owner) << "|"
-                << EscapeCMakeListValue(Property.Type) << "|"
-                << EscapeCMakeListValue(Property.MacroArgs)
-                << "\"\n";
-        }
-    }
-    Out << ")\n";
-
-    Out << "set(MESSION_REFLECTED_FUNCTION_MANIFEST\n";
-    for (const SParsedClass& ParsedClass : Classes)
-    {
-        for (const SParsedFunction& Function : ParsedClass.Functions)
-        {
-            Out << "    \""
-                << EscapeCMakeListValue(ParsedClass.Name) << "|"
-                << EscapeCMakeListValue(Function.Name) << "|"
-                << EscapeCMakeListValue(Function.Owner) << "|"
-                << EscapeCMakeListValue(Function.Signature) << "|"
-                << EscapeCMakeListValue(Function.MacroArgs) << "|"
-                << EscapeCMakeListValue(EscapeCMakePath(ParsedClass.HeaderPath)) << "|"
-                << EscapeCMakeListValue(Function.Transport) << "|"
-                << EscapeCMakeListValue(Function.MessageName)
-                << "\"\n";
-        }
-    }
-    Out << ")\n";
-
-    Out << "set(MESSION_REFLECTED_ENUM_VALUE_MANIFEST\n";
-    for (const SParsedClass& ParsedClass : Classes)
-    {
-        if (ParsedClass.Kind != EParsedTypeKind::Enum)
-        {
-            continue;
-        }
-
-        for (const std::string& Value : ParsedClass.EnumValues)
-        {
-            Out << "    \""
-                << EscapeCMakeListValue(ParsedClass.Name) << "|"
-                << EscapeCMakeListValue(Value) << "|"
-                << EscapeCMakeListValue(ParsedClass.Owner)
-                << "\"\n";
-        }
-    }
-    Out << ")\n";
 
     return true;
 }
@@ -3875,6 +4202,25 @@ bool WriteCMakeManifest(const fs::path& ManifestPath, const fs::path& OutputDir,
 
 int main(int Argc, char** Argv)
 {
+    // Only one MHeaderTool may run at a time — parallel MSBuild projects all try to invoke it.
+    // Use a mutex so concurrent invocations block until the first finishes.
+    // Subsequent instances wait up to 60s then exit 0 (idempotent; manifest was written by the first).
+#ifdef _WIN32
+    HANDLE Mutex = CreateMutexA(nullptr, FALSE, "MHeaderTool_SingleInstance");
+    if (Mutex == nullptr)
+    {
+        std::cerr << "Failed to create mutex\n";
+        return 1;
+    }
+    DWORD WaitResult = WaitForSingleObject(Mutex, 60000);
+    if (WaitResult != WAIT_OBJECT_0)
+    {
+        CloseHandle(Mutex);
+        return 0;  // another instance is running; manifest is already written
+    }
+#endif
+
+    int ExitCode = 1;
     try
     {
         SOptions Options;
@@ -3883,7 +4229,8 @@ int main(int Argc, char** Argv)
             std::cerr << "Usage: MHeaderTool [--source-root=Source] [--output-dir=Build/Generated] "
                          "[--cmake-manifest=Build/Generated/MHeaderToolTargets.cmake] "
                          "[--validation-schema-out=Build/Generated/ValidationProtocolSchema.json] [--verbose]\n";
-            return 1;
+            ExitCode = 1;
+            goto end;
         }
 
         const std::vector<fs::path> Headers = DiscoverHeaders(Options.SourceRoot);
@@ -3907,40 +4254,54 @@ int main(int Argc, char** Argv)
 
         if (!WriteGeneratedFiles(Options.OutputDir, Classes))
         {
-            return 1;
+            ExitCode = 1;
+            goto end;
         }
 
         if (!WriteGeneratedRpcManifest(Options.OutputDir, Classes))
         {
-            return 1;
+            ExitCode = 1;
+            goto end;
         }
 
         if (!WriteGeneratedReflectionManifest(Options.OutputDir, Classes))
         {
-            return 1;
+            ExitCode = 1;
+            goto end;
         }
 
         if (!WriteGeneratedClientManifest(Options.OutputDir, Classes))
         {
-            return 1;
+            ExitCode = 1;
+            goto end;
         }
 
         if (!WriteValidationProtocolSchema(Options.ValidationSchemaPath, Classes))
         {
-            return 1;
+            ExitCode = 1;
+            goto end;
         }
 
         if (!WriteCMakeManifest(Options.CMakeManifestPath, Options.OutputDir, Classes))
         {
-            return 1;
+            ExitCode = 1;
+            goto end;
         }
 
         std::cout << "MHeaderTool discovered " << Classes.size() << " reflected classes.\n";
-        return 0;
+        ExitCode = 0;
+        goto end;
     }
     catch (const std::exception& Ex)
     {
         std::cerr << "MHeaderTool error: " << Ex.what() << "\n";
-        return 1;
+        ExitCode = 1;
     }
+
+end:
+#ifdef _WIN32
+    ReleaseMutex(Mutex);
+    CloseHandle(Mutex);
+#endif
+    return ExitCode;
 }

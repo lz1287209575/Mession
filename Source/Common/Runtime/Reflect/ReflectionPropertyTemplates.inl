@@ -541,8 +541,8 @@ inline bool ImportIntegerFromJsonNumber(double NumberValue, TInteger& OutValue, 
 
     if constexpr (std::is_signed_v<TInteger>)
     {
-        const double MinValue = static_cast<double>(std::numeric_limits<TInteger>::min());
-        const double MaxValue = static_cast<double>(std::numeric_limits<TInteger>::max());
+        const double MinValue = static_cast<double>((std::numeric_limits<TInteger>::min)());
+        const double MaxValue = static_cast<double>((std::numeric_limits<TInteger>::max)());
         if (NumberValue < MinValue || NumberValue > MaxValue)
         {
             if (OutError)
@@ -555,7 +555,7 @@ inline bool ImportIntegerFromJsonNumber(double NumberValue, TInteger& OutValue, 
     }
     else
     {
-        const double MaxValue = static_cast<double>(std::numeric_limits<TInteger>::max());
+        const double MaxValue = static_cast<double>((std::numeric_limits<TInteger>::max)());
         if (NumberValue < 0.0 || NumberValue > MaxValue)
         {
             if (OutError)

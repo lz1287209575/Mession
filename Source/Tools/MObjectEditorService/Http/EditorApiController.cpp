@@ -302,7 +302,7 @@ bool TryGetUInt32(const MJsonValue& ObjectValue, const char* FieldName, uint32& 
     {
         return false;
     }
-    if (Value->NumberValue < 0.0 || Value->NumberValue > static_cast<double>(std::numeric_limits<uint32>::max()))
+    if (Value->NumberValue < 0.0 || Value->NumberValue > static_cast<double>((std::numeric_limits<uint32>::max)()))
     {
         return false;
     }
@@ -462,7 +462,7 @@ bool TryParseModel(const MJsonValue& RootValue, FMonsterConfigEditorModel& OutMo
                 OutError = "skill_ids_invalid";
                 return false;
             }
-            if (SkillValue.NumberValue < 0.0 || SkillValue.NumberValue > static_cast<double>(std::numeric_limits<uint32>::max()))
+            if (SkillValue.NumberValue < 0.0 || SkillValue.NumberValue > static_cast<double>((std::numeric_limits<uint32>::max)()))
             {
                 OutError = "skill_ids_out_of_range";
                 return false;

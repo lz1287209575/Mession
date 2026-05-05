@@ -502,6 +502,9 @@ private:
 #define MENUM(...)
 #define MPROPERTY(...)
 #define MFUNCTION(...)
+#define __MFUNC__(...) /* source marker for MHeaderTool, expands to nothing */
+// MFUNC_OBJECT: the actual runtime class name used in MHeaderTool-generated registration code.
+#define MFUNC_OBJECT MFunction
 
 // 注册属性
 #define PROPERTY(Type, Name, Flags) \

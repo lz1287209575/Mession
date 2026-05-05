@@ -28,7 +28,7 @@ TResult<FPlayerChangeGoldResponse, FAppError> MPlayerInventory::ApplyGoldDelta(i
             "PlayerChangeGold"));
     }
 
-    if (NextGold > static_cast<int64>(std::numeric_limits<uint32>::max()))
+    if (NextGold > static_cast<int64>((std::numeric_limits<uint32>::max)()))
     {
         return MakeErrorResult<FPlayerChangeGoldResponse>(FAppError::Make(
             "player_gold_overflow",

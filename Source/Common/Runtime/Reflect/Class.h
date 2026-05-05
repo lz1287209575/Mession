@@ -167,7 +167,7 @@ enum class EGeneratedClientCallHandlerResult : uint8
     Deferred = 3,
 };
 
-class MFunction
+class MFunctionObject
 {
 public:
     using FClientParamBinder = bool(*)(uint64 ConnectionId, const TByteArray& Payload, TByteArray& OutParamStorage);
@@ -201,8 +201,8 @@ public:
     TVector<MProperty*> Params;
     MProperty* ReturnProperty = nullptr;
 
-    MFunction() = default;
-    virtual ~MFunction()
+    MFunctionObject() = default;
+    virtual ~MFunctionObject()
     {
         for (MProperty* Param : Params)
         {
@@ -211,6 +211,8 @@ public:
         delete ReturnProperty;
     }
 };
+// Backward-compatible alias for code that uses MFunction as a type name
+using MFunction = MFunctionObject;
 
 class MClass
 {

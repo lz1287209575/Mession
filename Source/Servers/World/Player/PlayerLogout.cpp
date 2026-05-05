@@ -15,83 +15,18 @@ TResponse BuildPlayerOnlyResponse(uint64 PlayerId)
     return Response;
 }
 
-FObjectPersistenceRecord ToProtocolPersistenceRecord(const SPersistenceRecord& Record)
-{
-    return FObjectPersistenceRecord{
-        Record.ObjectPath,
-        Record.ClassName,
-        Record.SnapshotData,
-    };
-}
-
 TVector<FObjectPersistenceRecord> ToProtocolPersistenceRecords(const TVector<SPersistenceRecord>& Records)
 {
     TVector<FObjectPersistenceRecord> Result;
     Result.reserve(Records.size());
     for (const SPersistenceRecord& Record : Records)
     {
-        Result.push_back(ToProtocolPersistenceRecord(Record));
+        Result.push_back(FObjectPersistenceRecord{
+            Record.ObjectPath,
+            Record.ClassName,
+            Record.SnapshotData,
+        });
     }
     return Result;
 }
-}
-
-MFuture<TResult<FPlayerLogoutResponse, FAppError>> MPlayerService::PlayerLogout(const FPlayerLogoutRequest& Request)
-{
-    return DispatchRuntimeCommandMany<FPlayerLogoutResponse>(
-        Request,
-        BuildLogoutParticipants(Request.PlayerId),
-        "PlayerLogout",
-        {
-            EDependency::Persistence,
-            EDependency::Mgo,
-        },
-        &MPlayerService::DoPlayerLogout);
-}
-
-TResult<FPlayerLogoutResponse, FAppError> MPlayerService::DoPlayerLogout(FPlayerLogoutRequest Request)
-{
-    MPlayer* Player = FindPlayer(Request.PlayerId);
-    if (!Player)
-    {
-        return TResult<FPlayerLogoutResponse, FAppError>::Ok(
-            BuildPlayerOnlyResponse<FPlayerLogoutResponse>(Request.PlayerId));
-    }
-
-    const uint32 SceneIdBeforeLogout = Player->ResolveCurrentSceneId();
-    Player->SyncRuntimeStateToProfile();
-
-    FMgoSavePlayerRequest SaveRequest;
-    SaveRequest.PlayerId = Request.PlayerId;
-    SaveRequest.Records = ToProtocolPersistenceRecords(
-        WorldServer->GetPersistence().BuildRecordsForRoot(Player, false));
-    (void)MAwaitOk(WorldServer->GetMgo()->SavePlayer(SaveRequest));
-
-    if (SceneIdBeforeLogout != 0 &&
-        WorldServer->GetScene() &&
-        WorldServer->GetScene()->IsAvailable())
-    {
-        (void)MAwaitOk(LeaveSceneForPlayer(Request.PlayerId, SceneIdBeforeLogout));
-    }
-
-    Player = FindPlayer(Request.PlayerId);
-    if (!Player)
-    {
-        return TResult<FPlayerLogoutResponse, FAppError>::Ok(
-            BuildPlayerOnlyResponse<FPlayerLogoutResponse>(Request.PlayerId));
-    }
-
-    CleanupPlayerSocialState(Request.PlayerId);
-    Player->PrepareForLogout();
-
-    PlayerCommandRuntime->BumpEpoch(Request.PlayerId);
-    RemovePlayer(Request.PlayerId);
-
-    if (SceneIdBeforeLogout != 0)
-    {
-        QueueScenePlayerLeaveNotify(Request.PlayerId, SceneIdBeforeLogout);
-    }
-
-    return TResult<FPlayerLogoutResponse, FAppError>::Ok(
-        BuildPlayerOnlyResponse<FPlayerLogoutResponse>(Request.PlayerId));
-}
+}  // namespace

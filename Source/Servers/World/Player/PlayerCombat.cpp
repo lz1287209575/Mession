@@ -439,7 +439,7 @@ TResult<FWorldCastSkillAtUnitResponse, FAppError> MPlayerService::DoCastSkillAtU
                 "CastSkillAtUnit");
         }
 
-        if (GoldReward > static_cast<uint32>(std::numeric_limits<int32>::max()))
+        if (GoldReward > static_cast<uint32>((std::numeric_limits<int32>::max)()))
         {
             return MakeCombatError<FWorldCastSkillAtUnitResponse>(
                 "player_gold_overflow",
