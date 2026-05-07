@@ -103,6 +103,9 @@ struct SParsedClass
     std::string ClassFlagsExpr = "0";
     std::string ReflectionType = "Object";
     std::string Owner;
+    std::string InjectionClass;  // InjectionClass=X
+    std::vector<SParsedFunction> InjectionFunctions;  // MFUNCTION(Injection)
+    std::vector<SParsedProperty> InjectionProperties;  // MPROPERTY(Injection)
     bool bScopedEnum = false;
     std::string EnumUnderlyingType = "int32";
     std::map<std::string, std::string> TypeAliases;
@@ -1677,6 +1680,10 @@ void ParseTypeMarkerMetadata(const std::string& Contents, const SClassRegion& Re
     {
         Parsed.ReflectionType = "Struct";
     }
+    if (const auto InjectionClass = ExtractMacroValue(MacroArgs, "InjectionClass"))
+    {
+        Parsed.InjectionClass = *InjectionClass;
+    }
 }
 
 bool HasNearbyTypeMarker(const std::string& Contents, const SClassRegion& Region, EParsedTypeKind Kind)
@@ -1851,22 +1858,73 @@ std::vector<SParsedFunction> ParseFunctionsInClassBody(const std::string& ClassB
             // Determine declaration terminator:
             //   - ';' for regular declarations (MFunction(ServerCall))
             //   - '{' for inline body declarations (MFunction(Async) with {} body)
+            //
+            // For async functions, the MFUNCTION(Async) and MFUTURE(...) may be on separate lines:
+            //   MFUNCTION(Async, ServerCall, ...)
+            //   MFUTURE(Response) FunctionName(...) { ... }
+            // We need to skip past any MFUTURE(...) line to find the actual declaration.
             size_t DeclEnd = ClassBody.find(';', DeclStart);
             bool bInlineBody = false;
-            if (DeclEnd == std::string::npos)
+
+            // For MFUNCTION(Async), check if MFUTURE(...) follows on the next line(s)
+            // If MacroArgs contains "Async", look for MFUTURE pattern after the macro
+            bool bIsAsyncMacro = (MacroArgs.find("Async") != std::string::npos);
+            size_t SearchPos = DeclStart;
+
+            if (bIsAsyncMacro)
             {
-                // Try to find opening brace for inline body
+                // Skip whitespace and newlines to find MFUTURE(...)
+                while (SearchPos < ClassBody.size() && isspace(static_cast<unsigned char>(ClassBody[SearchPos])))
+                {
+                    ++SearchPos;
+                }
+
+                // Check if MFUTURE(...) pattern follows
+                const std::string MFUTUREPrefix = "MFUTURE(";
+                if (ClassBody.compare(SearchPos, MFUTUREPrefix.size(), MFUTUREPrefix) == 0)
+                {
+                    // Found MFUTURE(...), now find its closing paren and check for '{'
+                    size_t FutureOpen = SearchPos + MFUTUREPrefix.size() - 1;  // position of '('
+                    size_t FutureClose = FindMatching(ClassBody, FutureOpen, '(', ')');
+                    if (FutureClose != std::string::npos)
+                    {
+                        // Skip past MFUTURE(...) and any whitespace to find the '{'
+                        SearchPos = FutureClose + 1;
+                        while (SearchPos < ClassBody.size() && isspace(static_cast<unsigned char>(ClassBody[SearchPos])))
+                        {
+                            ++SearchPos;
+                        }
+
+                        if (SearchPos < ClassBody.size() && ClassBody[SearchPos] == '{')
+                        {
+                            // Found inline body after MFUTURE(...)
+                            size_t BraceClose = FindMatching(ClassBody, SearchPos, '{', '}');
+                            if (BraceClose != std::string::npos)
+                            {
+                                // DeclEnd should point to the closing '}' + 1, matching original behavior
+                                DeclEnd = BraceClose + 1;
+                                bInlineBody = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!bInlineBody && DeclEnd != std::string::npos)
+            {
+                // Fall back to regular inline body detection (for non-async or already parsed cases)
                 size_t BracePos = ClassBody.find('{', DeclStart);
-                if (BracePos != std::string::npos)
+                if (BracePos != std::string::npos && (DeclEnd == std::string::npos || BracePos < DeclEnd))
                 {
                     size_t BraceClose = FindMatching(ClassBody, BracePos, '{', '}');
                     if (BraceClose != std::string::npos)
                     {
-                        DeclEnd = BraceClose + 1;  // include the closing '}'
+                        DeclEnd = BracePos;
                         bInlineBody = true;
                     }
                 }
             }
+
             if (DeclEnd == std::string::npos)
             {
                 break;
@@ -1888,6 +1946,8 @@ std::vector<SParsedFunction> ParseFunctionsInClassBody(const std::string& ClassB
                 {
                     DeclarationForParse.pop_back();
                     DeclarationForParse = Trim(DeclarationForParse);
+                    // Append semicolon for ParseFunctionDeclaration requirement
+                    DeclarationForParse += ";";
                 }
             }
 
@@ -2238,6 +2298,24 @@ std::vector<SParsedClass> ParseReflectedClassesInHeader(
             {
                 Param.StorageType = ResolveAliasedType(Parsed.TypeAliases, Param.StorageType);
                 Param.PropertyKind = InferPropertyKind(Param.StorageType);
+            }
+        }
+        // Collect Injection-tagged members for InjectionClass support
+        if (!Parsed.InjectionClass.empty())
+        {
+            for (SParsedProperty& Property : Parsed.Properties)
+            {
+                if (Property.MacroArgs.find("Injection") != std::string::npos)
+                {
+                    Parsed.InjectionProperties.push_back(Property);
+                }
+            }
+            for (SParsedFunction& Function : Parsed.Functions)
+            {
+                if (Function.MacroArgs.find("Injection") != std::string::npos)
+                {
+                    Parsed.InjectionFunctions.push_back(Function);
+                }
             }
         }
         for (SParsedProperty& Property : Parsed.Properties)
@@ -3190,6 +3268,22 @@ void WriteGeneratedSource(std::ofstream& Out, const SParsedClass& ParsedClass)
 
         Out << "}\n";
     }
+
+    // Generate injection members into target class
+    if (!ParsedClass.InjectionClass.empty())
+    {
+        Out << "\n// Injection: " << ParsedClass.Name << " -> " << ParsedClass.InjectionClass << "\n";
+        Out << "// Injected Properties:\n";
+        for (const auto& Prop : ParsedClass.InjectionProperties)
+        {
+            Out << "//   " << Prop.Type << " " << Prop.Name << "\n";
+        }
+        Out << "// Injected Functions:\n";
+        for (const auto& Func : ParsedClass.InjectionFunctions)
+        {
+            Out << "//   " << Func.ReturnType << " " << Func.Name << "(" << Func.Signature << ")\n";
+        }
+    }
 }
 
 bool WriteGeneratedFiles(const fs::path& OutputDir, const std::vector<SParsedClass>& Classes)
@@ -4085,7 +4179,13 @@ bool WriteCMakeManifest(const fs::path& ManifestPath, const fs::path& OutputDir,
         GroupedSources[Group].push_back(OutputDir / (SanitizeIdentifier(ParsedClass.Name) + ".mgenerated.cpp"));
     }
 
-    fs::path TempPath = ManifestPath.string() + ".tmp." + std::to_string(GetCurrentProcessId());
+    fs::path TempPath = ManifestPath.string() + ".tmp." + std::to_string(
+#ifdef _WIN32
+        GetCurrentProcessId()
+#else
+        getpid()
+#endif
+    );
     {
         std::ofstream Out(TempPath);
         if (!Out)
@@ -4249,6 +4349,13 @@ int main(int Argc, char** Argv)
                           << " kind=" << GetTypeKindName(ParsedClass.Kind)
                           << " properties=" << ParsedClass.Properties.size()
                           << " functions=" << ParsedClass.Functions.size() << "\n";
+                for (const auto& Func : ParsedClass.Functions)
+                {
+                    if (Func.bIsAsync)
+                    {
+                        std::cout << "    [ASYNC] " << Func.Name << " AsyncBody.size=" << Func.AsyncBody.size() << "\n";
+                    }
+                }
             }
         }
 
