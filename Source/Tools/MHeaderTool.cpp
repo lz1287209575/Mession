@@ -2244,10 +2244,13 @@ std::vector<SParsedClass> ParseReflectedClassesInHeader(
     const std::string& Contents,
     const TRpcListMacroMap& RpcListMacros)
 {
+    std::cerr << "  ParseReflectedClassesInHeader: parsing class regions...\n";
     std::vector<SParsedClass> Classes;
     const std::vector<SClassRegion> Regions = ParseClassRegions(Contents);
+    std::cerr << "  ParseReflectedClassesInHeader: found " << Regions.size() << " regions\n";
     for (const SClassRegion& Region : Regions)
     {
+        std::cerr << "    Region: " << Region.Name << "\n";
         if (Region.BodyOpen == std::string::npos || Region.BodyClose == std::string::npos)
         {
             continue;
@@ -2439,9 +2442,16 @@ std::vector<SParsedClass> DiscoverReflectedClasses(const std::vector<fs::path>& 
     std::vector<SParsedClass> Classes;
     TRpcListMacroMap RpcListMacros;
 
+    // Read all files once and cache contents
+    std::map<fs::path, std::string> FileContents;
     for (const fs::path& Header : Headers)
     {
-        const std::string Contents = ReadFile(Header);
+        FileContents[Header] = ReadFile(Header);
+    }
+
+    // Parse RPC list macros first pass
+    for (const auto& [Header, Contents] : FileContents)
+    {
         TRpcListMacroMap HeaderMacros = ParseRpcListMacros(Contents);
         for (auto& [Name, Functions] : HeaderMacros)
         {
@@ -2449,16 +2459,24 @@ std::vector<SParsedClass> DiscoverReflectedClasses(const std::vector<fs::path>& 
         }
     }
 
-    for (const fs::path& Header : Headers)
+    // Second pass: parse reflected classes using cached contents
+    size_t FileIndex = 0;
+    for (const auto& [Header, Contents] : FileContents)
     {
-        const std::string Contents = ReadFile(Header);
+        std::cerr << "Parsing file " << FileIndex << "/" << FileContents.size() << ": " << Header.filename().string() << "\n";
+        std::cerr << "  Contents size: " << Contents.size() << " bytes\n";
+        ++FileIndex;
+
         if (Contents.find("MGENERATED_BODY(") == std::string::npos &&
             Contents.find("MSTRUCT(") == std::string::npos &&
             Contents.find("MENUM(") == std::string::npos)
         {
+            std::cerr << "  Skipping (no reflection markers)\n";
             continue;
         }
+        std::cerr << "  Has reflection markers, parsing...\n";
         std::vector<SParsedClass> HeaderClasses = ParseReflectedClassesInHeader(Header, Contents, RpcListMacros);
+        std::cerr << "  Parsed " << HeaderClasses.size() << " classes\n";
         std::vector<SParsedClass> HeaderEnums = ParseReflectedEnumsInHeader(Header, Contents);
         Classes.insert(
             Classes.end(),
