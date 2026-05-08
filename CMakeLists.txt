@@ -141,9 +141,26 @@ target_link_libraries(mession_netdriver
 )
 configure_mession_compile_options(mession_netdriver)
 
-# MHeaderTool - 反射代码生成工具
-add_executable(MHeaderTool
-    Source/Tools/MHeaderTool.cpp
+# MHeaderTool - 反射代码生成工具 (模块化版本)
+add_executable(MHeaderTool MODULE
+    Source/Tools/MHeaderTool/MHeaderTool.cpp
+    Source/Tools/MHeaderTool/Core/Types.h
+    Source/Tools/MHeaderTool/Util/StringUtil.h
+    Source/Tools/MHeaderTool/Util/FileUtil.h
+    Source/Tools/MHeaderTool/Parsing/HeaderScanner.h
+    Source/Tools/MHeaderTool/Parsing/ClassParser.h
+    Source/Tools/MHeaderTool/Parsing/PropertyParser.h
+    Source/Tools/MHeaderTool/Parsing/FunctionParser.h
+    Source/Tools/MHeaderTool/Parsing/EnumParser.h
+    Source/Tools/MHeaderTool/Parsing/MacroExpander.h
+    Source/Tools/MHeaderTool/Cache/BuildCache.h
+    Source/Tools/MHeaderTool/Cache/CacheReader.h
+    Source/Tools/MHeaderTool/Cache/CacheWriter.h
+    Source/Tools/MHeaderTool/Cache/IncrementalDriver.h
+    Source/Tools/MHeaderTool/Generation/CodeGenerator.h
+    Source/Tools/MHeaderTool/Generation/HeaderGenerator.h
+    Source/Tools/MHeaderTool/Generation/SourceGenerator.h
+    Source/Tools/MHeaderTool/Generation/ManifestGenerators.h
 )
 target_link_libraries(MHeaderTool
     PRIVATE
@@ -165,14 +182,16 @@ if(MSVC)
         /std:c++20
         /EHsc
         /utf-8
-        "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool/MHeaderTool.cpp"
         "/Fe:${MESSION_HEADERTOOL_BOOTSTRAP_EXE}"
     )
 else()
     list(APPEND MESSION_HEADERTOOL_BOOTSTRAP_COMMAND
         -std=c++20
         -O2
-        "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool/MHeaderTool.cpp"
+        -I "${CMAKE_SOURCE_DIR}/Source"
+        -I "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool"
         -o
         "${MESSION_HEADERTOOL_BOOTSTRAP_EXE}"
     )
