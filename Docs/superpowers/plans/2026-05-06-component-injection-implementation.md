@@ -26,10 +26,11 @@ MHeaderTool 已有 Async 代码生成逻辑 (MHeaderTool.cpp:3024-3193)，需要
 
 ```cpp
 // Source/Servers/World/Player/PlayerService.h 应该包含：
-MFUNCTION(Async, ServerCall, ParaMeta=(PlayerId=NotZero), Dependencies=(Persistence, Mgo))
+MFUNCTION(Async, ServerCall)
 MFUTURE(FPlayerLogoutResponse) PlayerLogout(const FPlayerLogoutRequest& Request)
 {
     // 函数体包含 AWAIT 和 co_return
+    // 注意：不再使用 ParaMeta，所有验证通过 MPROPERTY(ValidateMeta=...) 在属性上声明
 }
 ```
 
@@ -102,9 +103,7 @@ protected:
 
 ```bash
 git add Source/Common/Runtime/Component/IComponent.h Source/Common/Runtime/MLib.h
-git commit -m "feat: add IComponent interface for component system
-
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
+git commit -m "feat: add IComponent interface for component system"
 ```
 
 ---
@@ -138,7 +137,7 @@ public:
 git add Source/Common/Runtime/Service/IService.h
 git commit -m "feat: add IService interface for service injection
 
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
+
 ```
 
 ---
@@ -211,7 +210,7 @@ git commit -m "feat: MHeaderTool support for InjectionClass tag
 Parse MCLASS(InjectionClass=X) and generate injection code for
 MFUNCTION(Injection) and MPROPERTY(Injection) members.
 
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
+
 ```
 
 ---
@@ -249,7 +248,7 @@ git commit -m "feat: generate service setter methods for IService* members
 
 Auto-generate SetXxxService() methods for components with service dependencies.
 
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
+
 ```
 
 ---
@@ -311,7 +310,7 @@ git commit -m "feat: add property validation framework with ValidateMeta
 Implement ValidateNotZero, ValidateNotEmpty, ValidateRange validators.
 MHeaderTool generates validation calls for decorated properties.
 
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
+
 ```
 
 ---
@@ -418,7 +417,7 @@ Demonstrates Component injection pattern with:
 - ValidateMeta=NotZero for validation
 - IService injection via setter
 
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
+
 ```
 
 ---
@@ -446,7 +445,7 @@ git commit -m "chore: remove unnecessary #include <coroutine>
 
 Project uses C++17, coroutine header is not needed.
 
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
+
 ```
 
 ---

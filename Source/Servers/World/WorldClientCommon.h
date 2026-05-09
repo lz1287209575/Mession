@@ -115,6 +115,22 @@ struct TPlayerMethodTraits<MFuture<TResult<TResponse, FAppError>>(TObject::*)(co
     using TPlayerResponse = TResponse;
 };
 
+// SFutureResult<T> is an alias for MFuture<TResult<T, FAppError>>
+template<typename TObject, typename TResponse, typename TRequest>
+struct TPlayerMethodTraits<MFuture<TResult<TResponse, FAppError>>(TObject::*)(const TRequest&) const>
+{
+    using TPlayerRequest = TRequest;
+    using TPlayerResponse = TResponse;
+};
+
+// SFutureResult<T> 特化 - SFutureResult 继承自 MFuture<TResult<T, FAppError>>
+template<typename TObject, typename TResponse, typename TRequest>
+struct TPlayerMethodTraits<SFutureResult<TResponse>(TObject::*)(const TRequest&)>
+{
+    using TPlayerRequest = TRequest;
+    using TPlayerResponse = TResponse;
+};
+
 namespace MBinding
 {
 template<typename TStruct>

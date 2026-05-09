@@ -46,8 +46,8 @@ private:
     std::string GenerateClassSource(const SParsedClass& parsedClass) const
     {
         std::string code;
-        code += "#include \"" + GetIncludePath(parsedClass) + "\"\n";
         code += "#include \"Reflection/MReflectionMacros.h\"\n";
+        code += "#include \"" + GetIncludePath(parsedClass) + "\"\n";
         code += "#include \"Reflection/MPropertyRegistry.h\"\n";
         code += "#include \"Reflection/MFunctionRegistry.h\"\n";
         code += "#include <type_traits>\n\n";
@@ -123,8 +123,8 @@ private:
     std::string GenerateEnumSource(const SParsedClass& parsedClass) const
     {
         std::string code;
-        code += "#include \"" + GetIncludePath(parsedClass) + "\"\n";
         code += "#include \"Reflection/MReflectionMacros.h\"\n";
+        code += "#include \"" + GetIncludePath(parsedClass) + "\"\n";
         code += "#include \"Reflection/MEnumRegistry.h\"\n\n";
 
         // Namespace

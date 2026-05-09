@@ -502,6 +502,7 @@ private:
 #define MENUM(...)
 #define MPROPERTY(...)
 #define MFUNCTION(...)
+#define GENERATED_BODY() /* alias for MGENERATED_BODY compatibility */
 #define __MFUNC__(...) /* source marker for MHeaderTool, expands to nothing */
 // MFUNC_OBJECT: the actual runtime class name used in MHeaderTool-generated registration code.
 #define MFUNC_OBJECT MFunction

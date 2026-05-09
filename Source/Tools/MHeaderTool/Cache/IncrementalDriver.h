@@ -86,6 +86,7 @@ public:
                 continue;
             }
 
+            // 文件在缓存中，检查是否修改
             auto it = headerToHashes.find(relPath);
             if (it == headerToHashes.end())
             {

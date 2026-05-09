@@ -24,6 +24,7 @@ set(MHEADERTOOL_SOURCES
     Cache/IncrementalDriver.h
 
     # Generation - 代码生成
+    Generation/CodeGenerator.h
     Generation/HeaderGenerator.h
     Generation/SourceGenerator.h
     Generation/ManifestGenerators.h
@@ -35,12 +36,12 @@ set(MHEADERTOOL_SOURCES
     MHeaderTool.cpp
 )
 
-add_executable(MHeaderTool MODULE
+add_executable(MHeaderTool
     ${MHEADERTOOL_SOURCES}
 )
 
 target_link_libraries(MHeaderTool PRIVATE
-    Common
+    mession_core
 )
 
 target_include_directories(MHeaderTool PRIVATE
@@ -50,9 +51,7 @@ target_include_directories(MHeaderTool PRIVATE
 
 configure_mession_compile_options(MHeaderTool)
 
-# Disable RTTI and exceptions for better performance
+# Disable RTTI
 target_compile_options(MHeaderTool PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/GR->
-    $<$<CXX_COMPILER_ID:MSVC>:/EHsc>
-    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions>
 )

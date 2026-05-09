@@ -10,14 +10,6 @@
 namespace
 {
 template<typename TResponse>
-TResponse BuildPlayerOnlyResponse(uint64 PlayerId)
-{
-    TResponse Response;
-    Response.PlayerId = PlayerId;
-    return Response;
-}
-
-template<typename TResponse>
 TResult<TResponse, FAppError> MakePlayerServiceError(const char* Code, const char* Message = "")
 {
     return MakeErrorResult<TResponse>(FAppError::Make(
@@ -143,9 +135,9 @@ TResult<FPlayerEnterWorldResponse, FAppError> MPlayerService::DoPlayerEnterWorld
 
     const FSceneEnterResponse SceneResponse =
         MAwaitOk(EnterSceneForPlayer(Request.PlayerId, Player->ResolveCurrentSceneId()));
-    if (const TResult<FPlayerUpdateRouteResponse, FAppError> RouteResult =
-            ApplySceneRouteForPlayer(Request.PlayerId, SceneResponse.SceneId);
-        !RouteResult.IsOk())
+    const TResult<FPlayerUpdateRouteResponse, FAppError> RouteResult =
+        ApplySceneRouteForPlayer(Request.PlayerId, SceneResponse.SceneId);
+    if (!RouteResult.IsOk())
     {
         (void)MAwait(LeaveSceneForPlayer(Request.PlayerId, SceneResponse.SceneId));
         RemovePlayer(Request.PlayerId);

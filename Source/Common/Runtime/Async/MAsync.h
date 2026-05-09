@@ -83,6 +83,24 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
     SFutureResult(const Super& Other) : Super(Other) {}
     SFutureResult(Super&& Other) : Super(std::move(Other)) {}
 
+    // 隐式转换为基类（供旧的实现代码使用 MFuture<TResult<...>> 返回类型）
+    operator Super() const { return *this; }
+
+    // 从 TResult<T, FAppError> 构造（供 co_return 使用）
+    SFutureResult(const TResult<T, FAppError>& Result)
+    {
+        MPromise<TResult<T, FAppError>> Promise;
+        Promise.SetValue(Result);
+        *static_cast<Super*>(this) = Promise.GetFuture();
+    }
+
+    SFutureResult(TResult<T, FAppError>&& Result)
+    {
+        MPromise<TResult<T, FAppError>> Promise;
+        Promise.SetValue(std::move(Result));
+        *static_cast<Super*>(this) = Promise.GetFuture();
+    }
+
     // T != void：GetValue() exists
     template<typename U = T, std::enable_if_t<!std::is_same<U, void>::value, int> = 0>
     T Get() const

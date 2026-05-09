@@ -4,6 +4,7 @@
 #include "Protocol/Messages/Gateway/GatewayPlayerSocialMessages.h"
 #include "Protocol/Messages/Scene/SceneSyncMessages.h"
 #include "Servers/World/Player/Player.h"
+#include "Servers/World/Player/PlayerManager.h"
 
 namespace
 {

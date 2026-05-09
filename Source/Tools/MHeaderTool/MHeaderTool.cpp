@@ -187,8 +187,8 @@ int main(int argc, char** argv)
                 bIncrementalMode = true;
                 if (decision.AffectedTypes.empty())
                 {
+                    // 即使没有文件变化，也要确保所有输出文件存在
                     std::cout << "MHeaderTool: Incremental cache hit, all types unchanged.\n";
-                    shouldSkip = true;
                 }
                 else
                 {
@@ -276,10 +276,11 @@ int main(int argc, char** argv)
             // 生成代码（增量模式下跳过未变化的类型）
             MHT::CodeGenerator codeGen(options);
             size_t generatedCount = 0;
+            bool bSelectiveRegenerate = bIncrementalMode && !typesToRegenerate.empty();
             for (const auto& cls : allClasses)
             {
-                // 增量模式：跳过未变化的类型
-                if (bIncrementalMode && typesToRegenerate.find(cls.Name) == typesToRegenerate.end())
+                // 增量模式：跳过未变化的类型（仅当有选择性重建时才跳过）
+                if (bSelectiveRegenerate && typesToRegenerate.find(cls.Name) == typesToRegenerate.end())
                 {
                     continue;
                 }
@@ -321,6 +322,14 @@ int main(int argc, char** argv)
                     std::cout << "MHeaderTool discovered " << allClasses.size() << " reflected types:\n";
                     std::cout << "  Classes: " << classCount << ", Structs: " << structCount << ", Enums: " << enumCount << "\n";
                 }
+            }
+
+            // 生成 CMake manifest
+            if (!options.CMakeManifestPath.empty())
+            {
+                MHT::ManifestGenerators manifestGen(options);
+                std::string cmakeContent = manifestGen.GenerateCMakeManifest(allClasses, {});
+                MHT::WriteFile(options.CMakeManifestPath, cmakeContent);
             }
         }
 

@@ -199,9 +199,134 @@ Source/
 
 ---
 
-## 八、待确认事项
+## 八、Async/Await 系统
+
+### 8.1 目标
+
+提供 C++17 风格的 async/await 异步编程能力，不使用 C++20 coroutine。
+
+### 8.2 核心类型
+
+```cpp
+// MAsync.h
+template<typename T>
+struct SFutureResult : MFuture<TResult<T, FAppError>>
+{
+    using Super = MFuture<TResult<T, FAppError>>;
+    using Super::Super;
+
+    // Get() 失败时抛出 FFutureResultError
+    T Get() const
+    {
+        const TResult<T, FAppError>& Result = Super::Get();
+        if (Result.IsErr())
+        {
+            throw FFutureResultError(Result.GetError());
+        }
+        return Result.GetValue();
+    }
+
+    // GetResult() 返回原始 TResult，不抛
+    TResult<T, FAppError> GetResult() const { return Super::Get(); }
+
+    bool IsOk() const { return GetResult().IsOk(); }
+    bool IsErr() const { return GetResult().IsErr(); }
+    const FAppError& GetError() const { return GetResult().GetError(); }
+};
+
+// 类型别名宏
+#define MFUTURE(T) SFutureResult<T>
+```
+
+### 8.3 AWAIT / co_return 宏
+
+```cpp
+// FiberAwait.h
+#define AWAIT(expr) (void)(expr)  // MHeaderTool 解析后生成 .Then() 链
+#define co_return return          // MHeaderTool 解析后生成 Promise.SetValue()
+```
+
+### 8.4 用户写法
+
+```cpp
+// 头文件中：只需要声明 + 函数体，MHeaderTool 自动生成状态机
+MFUNCTION(Async)
+MFUTURE(FPlayerLogoutResponse) PlayerLogout(FPlayerLogoutRequest Request)
+{
+    auto* Profile = AWAIT(ResolveProfile());
+    AWAIT(SaveProfile(Profile));
+    co_return FPlayerLogoutResponse{};
+}
+```
+
+### 8.5 MHeaderTool 代码生成
+
+MHeaderTool 解析函数体，生成续体链状态机：
+
+```cpp
+// Build/Generated/MPlayerService.mgenerated.cpp 中
+MFUTURE(FPlayerLogoutResponse) PlayerLogout(FPlayerLogoutRequest Request)
+{
+    struct SState {
+        FPlayerLogoutRequest Request;
+
+        template<typename FCallback>
+        void _run(FCallback&& _onComplete) {
+            ResolveProfile().Then([this, _onComplete](auto _r0) {
+                auto _v0 = _unwrap(_r0);
+                if (_v0.IsErr()) { _onComplete(_v0); return; }
+                auto* Profile = std::move(_v0).GetValue();
+
+                SaveProfile(Profile).Then([this, _onComplete](auto _r1) {
+                    auto _v1 = _unwrap(_r1);
+                    if (_v1.IsErr()) { _onComplete(_v1); return; }
+                    _onComplete(TResult<FPlayerLogoutResponse, FAppError>::Ok(FPlayerLogoutResponse{}));
+                });
+            });
+        }
+    };
+
+    static SState State{Request};
+    MPromise<TResult<FPlayerLogoutResponse, FAppError>> Promise;
+    State._run([&](auto R) { Promise.SetValue(std::move(R)); });
+    return Promise.GetFuture();
+}
+```
+
+### 8.6 AWAIT / co_return 语义
+
+| 语法 | 生成的代码 |
+|------|-----------|
+| `AWAIT(f1())` | `.Then([](auto _r) { auto _v = _unwrap(_r); ... })` |
+| `co_return value` | `_onComplete(TResult::Ok(value))` |
+| `co_return err(code, msg)` | `_onComplete(TResult::Err(FAppError{...}))` |
+
+错误自动短路传播，无需每个 AWAIT 后面判空。
+
+### 8.7 MHeaderTool 实现要点
+
+1. **扫描函数体**：解析 `AWAIT(expr)` 和 `co_return` 语句
+2. **提取表达式**：从 AWAIT 括号内提取 future 表达式
+3. **生成状态机**：按顺序生成嵌套的 `.Then()` 链
+4. **错误处理**：每个 AWAIT 结果检查 `IsErr()`，错误短路传播
+
+### 8.8 文件结构
+
+```
+Source/Common/Runtime/Async/
+├── MAsync.h           — SFutureResult<T> + MFUTURE 宏 + FFutureResultError
+└── MEventAwait.h     — MEventBus::Await<T>(TEvent&) + TEventAwaiter
+
+Source/Common/Runtime/Concurrency/
+└── FiberAwait.h      — AWAIT/MAwait 实现
+```
+
+---
+
+## 九、待确认事项
 
 1. `IService` 接口的具体定义
 2. 服务注册机制（静态？动态？）
 3. 命令队列的具体实现
 4. 验证框架的具体语法（`ValidateMeta` 值）
+5. MHeaderTool Async 代码生成的具体实现细节

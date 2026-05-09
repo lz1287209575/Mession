@@ -132,9 +132,20 @@ private:
         parsed.Kind = EParsedTypeKind::Enum;
         parsed.Name = *enumName;
         parsed.HeaderPath = headerPath;
-        parsed.Owner = DetermineOwnerFromHeaderPath(headerPath);
         parsed.bScopedEnum = bScopedEnum;
         parsed.SourceLine = enumPos;
+
+        // Check if this is a nested enum inside a class
+        if (IsNestedEnum(contents, enumPos))
+        {
+            // Nested enums can't be accessed externally, so mark Owner as empty
+            // The code generator will skip generating enum value registration
+            parsed.Owner = "";
+        }
+        else
+        {
+            parsed.Owner = DetermineOwnerFromHeaderPath(headerPath);
+        }
 
         // 解析底层类型
         const size_t underlyingColon = masked.find(':', cursor);
@@ -215,6 +226,20 @@ private:
     std::string DetermineOwnerFromHeaderPath(const fs::path& headerPath) const
     {
         std::string relPath = headerPath.generic_string();
+
+        // Check for Protocol directory - extract subdirectory name
+        size_t protocolPos = relPath.find("/Protocol/");
+        if (protocolPos != std::string::npos)
+        {
+            size_t start = protocolPos + 10;
+            size_t end = relPath.find('/', start);
+            if (end != std::string::npos)
+            {
+                return relPath.substr(start, end - start);
+            }
+            return "Protocol";
+        }
+
         size_t serversPos = relPath.find("/Servers/");
         if (serversPos != std::string::npos)
         {
@@ -225,7 +250,57 @@ private:
                 return relPath.substr(start, end - start);
             }
         }
-        return "Shared";
+        return "";
+    }
+
+    // Check if enum is inside a class/struct (nested enum)
+    bool IsNestedEnum(const std::string& contents, size_t enumPos) const
+    {
+        // Look backwards for class/struct keywords
+        size_t pos = enumPos;
+        while (pos > 0)
+        {
+            size_t prev = contents.rfind("class ", pos);
+            size_t prevStruct = contents.rfind("struct ", pos);
+            size_t prevPublic = contents.rfind("public:", pos);
+            size_t prevPrivate = contents.rfind("private:", pos);
+            size_t prevProtected = contents.rfind("protected:", pos);
+
+            // Find the closest keyword before enumPos
+            size_t closest = 0;
+            if (prev != std::string::npos && prev > closest) closest = prev;
+            if (prevStruct != std::string::npos && prevStruct > closest) closest = prevStruct;
+
+            // If we found class/struct keyword, check if there's a access specifier between it and the enum
+            if (closest > 0)
+            {
+                std::string between = contents.substr(closest, enumPos - closest);
+                if (between.find("public:") != std::string::npos ||
+                    between.find("private:") != std::string::npos ||
+                    between.find("protected:") != std::string::npos)
+                {
+                    // There's an access specifier - this is a nested enum inside a class
+                    return true;
+                }
+            }
+
+            // Check if we're inside a class (access specifier right before enum)
+            if (prevPrivate != std::string::npos || prevProtected != std::string::npos ||
+                prevPublic != std::string::npos)
+            {
+                return true;
+            }
+
+            if (closest > 0)
+            {
+                pos = closest - 1;
+            }
+            else
+            {
+                break;
+            }
+        }
+        return false;
     }
 
     std::optional<std::string> ReadIdentifier(const std::string& text, size_t& inOutPos) const
