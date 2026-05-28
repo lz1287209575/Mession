@@ -7,6 +7,40 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 编译性能优化
+include(ProcessorCount)
+ProcessorCount(NUM_CORES)
+if(NUM_CORES GREATER_EQUAL 16)
+    set(CMAKE_BUILD_TYPE_INITIAL "${CMAKE_BUILD_TYPE}")
+    set(DEFAULT_JOBS 32)
+elseif(NUM_CORES GREATER_EQUAL 8)
+    set(DEFAULT_JOBS 16)
+else()
+    set(DEFAULT_JOBS 4)
+endif()
+if(NOT CMAKE_BUILD_TYPE_INITIAL)
+    set(CMAKE_BUILD_TYPE_INITIAL "${DEFAULT_BUILD_TYPE:-Release}")
+endif()
+
+# ccache支持
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    message(STATUS "ccache found: ${CCACHE_PROGRAM}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+else()
+    message(STATUS "ccache not found, install it for faster rebuilds: apt install ccache")
+endif()
+
+# 预编译头文件
+option(MESSION_USE_PCH "Enable precompiled headers" ON)
+if(MESSION_USE_PCH AND NOT MSVC)
+    set(MESSION_PCH_HEADER "Source/Common/Runtime/MLib.h")
+    set(MESSION_PCH_SOURCE "Source/Common/Runtime/MLib.cpp")
+    if(EXISTS "${CMAKE_SOURCE_DIR}/${MESSION_PCH_HEADER}")
+        message(STATUS "PCH enabled: ${MESSION_PCH_HEADER}")
+    endif()
+endif()
+
 # 统一二进制/库输出目录（与构建目录 Build 分离）
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/Bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/Bin/Lib)
@@ -47,6 +81,14 @@ function(configure_mession_compile_options TargetName)
                 $<$<CONFIG:Debug>:-g>
                 $<$<CONFIG:Debug>:-O0>
                 $<$<CONFIG:Release>:-O3>
+        )
+    endif()
+
+    # 预编译头文件支持
+    if(MESSION_USE_PCH AND EXISTS "${CMAKE_SOURCE_DIR}/${MESSION_PCH_HEADER}")
+        target_precompile_headers(${TargetName}
+            PRIVATE
+                <${MESSION_PCH_HEADER}>
         )
     endif()
 endfunction()
