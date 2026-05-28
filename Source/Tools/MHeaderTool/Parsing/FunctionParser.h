@@ -73,7 +73,8 @@ public:
                 : FindMatching(classBody, macroOpen, '(', ')');
             if (macroOpen == std::string::npos || macroClose == std::string::npos)
             {
-                break;
+                searchPos = macroPos + 1;
+                continue;
             }
 
             const std::string macroArgs = classBody.substr(macroOpen + 1, macroClose - macroOpen - 1);
@@ -140,7 +141,16 @@ public:
 
                 if (declEnd == std::string::npos)
                 {
-                    break;
+                    size_t semicolonSearch = macroClose + 1;
+                    while (semicolonSearch < classBody.size() && classBody[semicolonSearch] != ';') {
+                        ++semicolonSearch;
+                    }
+                    if (semicolonSearch < classBody.size()) {
+                        declEnd = semicolonSearch;
+                    } else {
+                        searchPos = macroClose + 1;
+                        continue;
+                    }
                 }
 
                 const std::string declaration = classBody.substr(declStart, declEnd - declStart + 1);
@@ -163,7 +173,8 @@ public:
                     }
                 }
 
-                if (auto parsed = ParseFunctionDeclaration(macroArgs, declForParse))
+                auto parsed = ParseFunctionDeclaration(macroArgs, declForParse);
+                if (parsed)
                 {
                     ApplyFunctionMetadataFromMacroArgs(*parsed);
                     const std::string validateNeedle = parsed->Name + "_Validate(";
@@ -238,13 +249,23 @@ public:
         const std::string& declaration) const
     {
         const std::string clean = Trim(declaration);
+
+        if (clean.empty()) {
+            return std::nullopt;
+        }
+
         const size_t openParen = clean.find('(');
-        const size_t closeParen = (openParen == std::string::npos)
-            ? std::string::npos
-            : FindMatching(clean, openParen, '(', ')');
         const size_t semicolon = clean.rfind(';');
 
-        if (openParen == std::string::npos || closeParen == std::string::npos || semicolon == std::string::npos)
+
+        if (openParen == std::string::npos || semicolon == std::string::npos)
+        {
+            return std::nullopt;
+        }
+
+        size_t closeParen = FindMatching(clean, openParen, '(', ')');
+
+        if (closeParen == std::string::npos)
         {
             return std::nullopt;
         }
@@ -363,10 +384,12 @@ public:
                 else if (part == "ClientCall")
                 {
                     parsed.Transport = "ClientCall";
+                    parsed.bIsRpc = true;
                 }
                 else if (part == "ServerCall")
                 {
                     parsed.Transport = "ServerCall";
+                    parsed.bIsRpc = true;
                 }
                 else if (part == "RPC")
                 {

@@ -5,16 +5,6 @@
 #include "Protocol/Messages/Mgo/MgoPlayerStateMessages.h"
 #include "Servers/World/Player/Player.h"
 
-namespace
-{
-template<typename TResponse>
-TResponse BuildPlayerOnlyResponse(uint64 PlayerId)
-{
-    TResponse Response;
-    Response.PlayerId = PlayerId;
-    return Response;
-}
-
 TVector<FObjectPersistenceRecord> ToProtocolPersistenceRecords(const TVector<SPersistenceRecord>& Records)
 {
     TVector<FObjectPersistenceRecord> Result;
@@ -29,4 +19,3 @@ TVector<FObjectPersistenceRecord> ToProtocolPersistenceRecords(const TVector<SPe
     }
     return Result;
 }
-}  // namespace

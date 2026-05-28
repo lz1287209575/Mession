@@ -105,6 +105,7 @@ struct SParsedClass
     std::string ReflectionType = "Object";
     std::string Owner;
     std::string InjectionClass;
+    std::vector<std::string> AllParentClasses;  // 所有基类，用于检查是否继承自 MServerCallProxyBase
     std::vector<SParsedFunction> InjectionFunctions;
     std::vector<SParsedProperty> InjectionProperties;
     bool bScopedEnum = false;

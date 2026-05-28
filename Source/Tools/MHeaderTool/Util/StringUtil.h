@@ -146,13 +146,29 @@ inline std::string EscapeJsonString(std::string_view text)
 inline size_t FindMatching(const std::string& text, size_t openPos, char openChar, char closeChar)
 {
     int depth = 0;
+    bool inString = false;
     for (size_t i = openPos; i < text.size(); ++i)
     {
-        if (text[i] == openChar)
+        char c = text[i];
+        char prev = (i > 0) ? text[i-1] : '\0';
+
+        // Handle strings
+        if (c == '"' && prev != '\\') {
+            inString = !inString;
+            continue;
+        }
+        if (inString) continue;
+
+        // Skip angle brackets when looking for parentheses or braces
+        if ((openChar == '(' || openChar == '{') && (c == '<' || c == '>')) {
+            continue;
+        }
+
+        if (c == openChar)
         {
             ++depth;
         }
-        else if (text[i] == closeChar)
+        else if (c == closeChar)
         {
             --depth;
             if (depth == 0)

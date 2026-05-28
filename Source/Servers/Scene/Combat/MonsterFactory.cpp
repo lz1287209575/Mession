@@ -5,6 +5,10 @@
 #include "Servers/Scene/Combat/Monster.h"
 #include "Servers/Scene/Combat/MonsterConfig.h"
 
+MMonsterFactory::MMonsterFactory()
+{
+}
+
 bool MMonsterFactory::RegisterConfig(MMonsterConfig* Config, MString& OutError)
 {
     if (!Config)

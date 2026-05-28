@@ -35,10 +35,15 @@ public:
         out << "\n";
 
         // 包含必要的头文件
+        out << "#include \"Common/Runtime/Reflect/Reflection.h\"\n";
+        out << "#include \"Common/Runtime/Async/MAsync.h\"\n";
         out << "#include \"Common/Net/Rpc/RpcClientCall.h\"\n";
         out << "#include \"Common/Net/Rpc/RpcServerCall.h\"\n";
-        out << "#include \"Common/Runtime/Async/MAsync.h\"\n";
         out << "#include \"Servers/App/ServerCallRequestValidation.h\"\n";
+        out << "#include \"Protocol/Messages/Common/AppMessages.h\"\n";
+        out << "#include \"Protocol/Messages/Common/ClientDownlinkMessages.h\"\n";
+        out << "#include \"Protocol/Messages/Common/ControlPlaneMessages.h\"\n";
+        out << "#include \"Protocol/Messages/Common/ForwardedClientCallMessages.h\"\n";
         out << "#include \"Protocol/Messages/World/PlayerModifyMessages.h\"\n";
         out << "#include \"Protocol/Messages/World/PlayerQueryMessages.h\"\n";
         out << "#include \"Protocol/Messages/World/PlayerRouteMessages.h\"\n";
@@ -163,14 +168,16 @@ private:
         out << "#define MHEADERTOOL_REGISTER_PROPERTIES_" << parsedClass.Name << "() \\\n";
         if (parsedClass.Properties.empty())
         {
-            out << "    (void)InClass\n";
+            out << "    do { (void)InClass; } while(0)\n";
         }
         else
         {
+            out << "    do { \\\n";
             for (const auto& prop : parsedClass.Properties)
             {
-                out << "    " << BuildPropertyRegistrationLine(prop) << " \\\n";
+                out << "        " << BuildPropertyRegistrationLine(prop) << " \\\n";
             }
+            out << "    } while(0)\n";
         }
         out << "\n";
 
@@ -275,14 +282,16 @@ private:
         out << "#define MHEADERTOOL_REGISTER_PROPERTIES_" << parsedClass.Name << "() \\\n";
         if (parsedClass.Properties.empty())
         {
-            out << "    (void)InClass\n";
+            out << "    do { (void)InClass; } while(0)\n";
         }
         else
         {
+            out << "    do { \\\n";
             for (const auto& prop : parsedClass.Properties)
             {
-                out << "    " << BuildPropertyRegistrationLine(prop) << " \\\n";
+                out << "        " << BuildPropertyRegistrationLine(prop) << " \\\n";
             }
+            out << "    } while(0)\n";
         }
         out << "\n";
 
@@ -294,9 +303,24 @@ private:
         }
         else
         {
-            for (const auto& func : parsedClass.Functions)
+            for (size_t i = 0; i < parsedClass.Functions.size(); ++i)
             {
-                out << "    " << ReplaceAll(BuildFunctionRegistrationBlock(parsedClass, func), "\n", " \\\n") << " \\\n";
+                const auto& func = parsedClass.Functions[i];
+                std::string block = ReplaceAll(BuildFunctionRegistrationBlock(parsedClass, func), "\n", " \\\n");
+                // Remove trailing backslash from block since we'll add our own
+                if (!block.empty() && block.back() == '\\')
+                {
+                    block.pop_back();
+                }
+                out << "    " << block;
+                if (i < parsedClass.Functions.size() - 1)
+                {
+                    out << " \\\n";
+                }
+                else
+                {
+                    out << "\n";
+                }
             }
         }
     }
@@ -498,8 +522,7 @@ private:
 
     void GenerateServerCallProxyImplementations(std::ostringstream& out, const SParsedClass& parsedClass) const
     {
-        // 检查是否是代理类（继承自 MServerCallProxyBase）
-        // 通过检查是否有 ServerCall 类型的函数来判断
+        // 检查是否有 ServerCall 类型的函数
         bool hasServerCall = false;
         for (const auto& func : parsedClass.Functions)
         {
@@ -511,6 +534,23 @@ private:
         }
 
         if (!hasServerCall)
+        {
+            return;
+        }
+
+        // 检查是否继承自 MServerCallProxyBase
+        bool isProxyClass = false;
+        for (const auto& parent : parsedClass.AllParentClasses)
+        {
+            if (parent == "MServerCallProxyBase")
+            {
+                isProxyClass = true;
+                break;
+            }
+        }
+
+        // 如果不是代理类，不生成 CallRemoteByName 实现
+        if (!isProxyClass)
         {
             return;
         }
@@ -532,9 +572,11 @@ private:
             const auto& requestParam = func.Params[0];
 
             // 生成函数实现：调用 CallRemoteByName
-            out << parsedClass.Name << "::" << func.Name << "(" << requestParam.StorageType << " const& Request)\n";
+            // TResponse 应该是原始响应类型（如 FPlayerEnterWorldResponse），CallRemoteByName 会内部包装到 TResult<>
+            const std::string responseType = ExtractResponseType(func.ReturnStorageType);
+            out << func.ReturnStorageType << " " << parsedClass.Name << "::" << func.Name << "(" << requestParam.StorageType << " const& Request)\n";
             out << "{\n";
-            out << "    return CallRemoteByName<" << func.ReturnStorageType << ">(\"" << func.Name << "\", Request);\n";
+            out << "    return CallRemoteByName<" << responseType << ">(\"" << func.Name << "\", Request);\n";
             out << "}\n";
             out << "\n";
         }
@@ -609,7 +651,7 @@ private:
             out << "        Func->WrapMode = \"" << func.Wrap << "\";\n";
             out << "        InClass->RegisterFunction(Func);\n";
         }
-        else if (func.bIsRpc)
+        else if (func.bIsRpc && func.Transport != "ServerCall")
         {
             std::string rpcKind = func.RpcKind.empty() ? "Server" : func.RpcKind;
             out << "        auto* Func = CreateRpcFunction<&ThisClass::" << func.Name << ">(\"" << func.Name << "\", "
@@ -628,7 +670,7 @@ private:
             }
             out << "        InClass->RegisterFunction(Func);\n";
         }
-        else
+        else if (func.Transport != "ServerCall")
         {
             out << "        auto* Func = CreateNativeFunction<&ThisClass::" << func.Name << ">(\"" << func.Name << "\", "
                 << BuildFunctionFlagsExpr(func) << ");\n";
@@ -739,6 +781,26 @@ private:
         case EParsedTypeKind::Enum: return "enum";
         }
         return "unknown";
+    }
+
+    // 从 MFuture<TResult<T, E>> 中提取 T（原始响应类型）
+    std::string ExtractResponseType(const std::string& returnType) const
+    {
+        // 匹配 MFuture<TResult<SuccessType, ErrorType>>
+        // CallRemoteByName<TResponse> 返回 MFuture<TResult<TResponse, FAppError>>
+        // 所以我们需要传递 SuccessType（第一个模板参数）
+        const std::string mfuturePrefix = "MFuture<TResult<";
+        if (returnType.find(mfuturePrefix) == 0)
+        {
+            size_t start = mfuturePrefix.size();
+            // 找到逗号位置（在 ErrorType 之前）
+            size_t comma = returnType.find(',', start);
+            if (comma != std::string::npos)
+            {
+                return returnType.substr(start, comma - start);
+            }
+        }
+        return returnType;
     }
 
     SOptions Options_;

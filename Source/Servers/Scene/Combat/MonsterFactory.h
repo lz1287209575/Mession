@@ -13,6 +13,8 @@ class MMonsterFactory : public MObject
 public:
     MGENERATED_BODY(MMonsterFactory, MObject, 0)
 public:
+    MMonsterFactory();
+
     bool RegisterConfig(MMonsterConfig* Config, MString& OutError);
     const MMonsterConfig* FindConfig(uint32 MonsterTemplateId) const;
 

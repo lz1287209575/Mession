@@ -214,9 +214,12 @@ if(EXISTS "${MESSION_HEADERTOOL_RUNNER}")
 endif()
 
 set(MESSION_GENERATED_GROUPS)
+message(STATUS "Including manifest: ${MESSION_HEADERTOOL_MANIFEST}")
 include("${MESSION_HEADERTOOL_MANIFEST}" OPTIONAL)
+message(STATUS "MESSION_GENERATED_GROUPS = ${MESSION_GENERATED_GROUPS}")
 
 if(NOT MESSION_GENERATED_GROUPS)
+    message(WARNING "No generated groups found, using stub")
     set(MESSION_GENERATED_GROUPS shared)
 endif()
 
@@ -352,10 +355,12 @@ target_sources(MObjectEditorService
 add_dependencies(MObjectEditorService mession_reflection_codegen)
 
 # 1. Gateway Server - 网关服务器
-add_executable(GatewayServer 
+add_executable(GatewayServer
     Source/Servers/Gateway/GatewayServer.h
     Source/Servers/Gateway/GatewayServer.cpp
     Source/Servers/Gateway/GatewayServerMain.cpp
+    Source/Servers/Gateway/Rpc/GatewayBackendRpc.cpp
+    Source/Servers/Gateway/Rpc/GatewayBackendRpcWorld.cpp
 )
 target_link_libraries(GatewayServer
     PRIVATE
@@ -379,10 +384,14 @@ configure_mession_target(LoginServer)
 mession_attach_generated_groups(LoginServer shared login)
 
 # 3. World Server - 世界服务器
-add_executable(WorldServer 
+add_executable(WorldServer
     Source/Servers/World/WorldServer.h
     Source/Servers/World/WorldServer.cpp
     Source/Servers/World/WorldServerMain.cpp
+    Source/Servers/World/Backend/WorldLogin.cpp
+    Source/Servers/World/Backend/WorldMgo.cpp
+    Source/Servers/World/Backend/WorldScene.cpp
+    Source/Servers/World/Backend/WorldRouter.cpp
     Source/Servers/World/Player/PlayerEnter.cpp
     Source/Servers/World/Player/PlayerCombat.cpp
     Source/Servers/World/Player/PlayerLogout.cpp

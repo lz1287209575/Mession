@@ -2,6 +2,7 @@
 
 #include "Core/Types.h"
 #include "Util/StringUtil.h"
+#include "Parsing/FunctionParser.h"
 #include <optional>
 #include <filesystem>
 
@@ -20,6 +21,7 @@ struct SClassRegion
     std::string Name;
     size_t BodyOpen = std::string::npos;
     size_t BodyClose = std::string::npos;
+    std::vector<std::string> ParentClasses;  // 所有基类
 };
 
 // ============================================================================
@@ -101,10 +103,23 @@ public:
                 continue;
             }
 
-            // 找到类体开始
+            // 找到类体开始（跳过继承声明和模板参数）
             size_t bracePos = cursor;
+            int angleDepth = 0;
+            bool foundColon = false;
             while (bracePos < masked.size() && masked[bracePos] != '{' && masked[bracePos] != ';')
             {
+                if (masked[bracePos] == '<') ++angleDepth;
+                else if (masked[bracePos] == '>')
+                {
+                    // 跳过 >> 这种情况
+                    if (angleDepth > 0) --angleDepth;
+                }
+                // 检查是否有冒号（继承开始）
+                if (!foundColon && masked[bracePos] == ':')
+                {
+                    foundColon = true;
+                }
                 ++bracePos;
             }
 
@@ -121,7 +136,99 @@ public:
                 continue;
             }
 
-            regions.push_back({keyword, *className, bracePos, closeBrace});
+            // 解析基类列表
+            std::vector<std::string> parentClasses;
+            if (foundColon)
+            {
+                // 继承声明在冒号之后，类体之前
+                size_t inheritStart = bestPos + keyword.size();
+                // 找到继承声明的范围
+                size_t inheritEnd = bracePos;
+                std::string inheritStr = Trim(masked.substr(inheritStart, inheritEnd - inheritStart));
+                // 移除冒号开头的部分并解析基类
+                // 检查是否有冒号（可能在开头或空格后）
+                size_t colonPos = inheritStr.find(':');
+                if (colonPos != std::string::npos)
+                {
+                    inheritStr = Trim(inheritStr.substr(colonPos + 1));
+                    // 分割多个基类
+                    size_t pos = 0;
+                    while (pos < inheritStr.size())
+                    {
+                        // 跳过 public/protected/private
+                        while (pos < inheritStr.size() && std::isspace(static_cast<unsigned char>(inheritStr[pos])))
+                            ++pos;
+                        size_t keywordEnd = pos;
+                        while (keywordEnd < inheritStr.size() && std::isalpha(static_cast<unsigned char>(inheritStr[keywordEnd])))
+                            ++keywordEnd;
+                        if (keywordEnd > pos)
+                        {
+                            std::string keyword = inheritStr.substr(pos, keywordEnd - pos);
+                            if (keyword != "public" && keyword != "protected" && keyword != "private")
+                            {
+                                break;  // 不是访问说明符
+                            }
+                            pos = keywordEnd;
+                            while (pos < inheritStr.size() && std::isspace(static_cast<unsigned char>(inheritStr[pos])))
+                                ++pos;
+                        }
+
+                        // 提取基类名
+                        size_t classStart = pos;
+                        int depth = 0;
+                        while (pos < inheritStr.size())
+                        {
+                            char c = inheritStr[pos];
+                            if (c == '<')
+                            {
+                                ++depth;
+                            }
+                            else if (c == '>')
+                            {
+                                --depth;
+                            }
+                            else if (c == ',' && depth == 0)
+                            {
+                                break;
+                            }
+                            ++pos;
+                        }
+                        std::string parentClass = Trim(inheritStr.substr(classStart, pos - classStart));
+                        if (!parentClass.empty())
+                        {
+                            // 移除模板参数中的逗号，只保留基类名
+                            size_t firstComma = parentClass.find(',');
+                            if (firstComma != std::string::npos)
+                            {
+                                parentClass = Trim(parentClass.substr(0, firstComma));
+                            }
+                            // 移除模板参数
+                            size_t anglePos = parentClass.find('<');
+                            if (anglePos != std::string::npos)
+                            {
+                                parentClass = Trim(parentClass.substr(0, anglePos));
+                            }
+                            // 移除命名空间前缀中的冒号
+                            size_t lastColon = parentClass.rfind(':');
+                            size_t lastSpace = parentClass.rfind(' ');
+                            size_t actualStart = (lastColon != std::string::npos && lastColon > lastSpace)
+                                ? (lastColon + 1) : 0;
+                            if (actualStart > 0)
+                            {
+                                parentClass = parentClass.substr(actualStart);
+                            }
+                            if (!parentClass.empty())
+                            {
+                                parentClasses.push_back(parentClass);
+                            }
+                        }
+                        if (pos < inheritStr.size() && inheritStr[pos] == ',')
+                            ++pos;
+                    }
+                }
+            }
+
+            regions.push_back({keyword, *className, bracePos, closeBrace, parentClasses});
             searchPos = closeBrace + 1;
         }
 
@@ -136,18 +243,32 @@ public:
     {
         const std::string classBody = contents.substr(region.BodyOpen + 1, region.BodyClose - region.BodyOpen - 1);
 
+        if (region.Name == "MWorldServer")
+        {
+        }
+
         SParsedClass parsed;
         parsed.Kind = (region.Keyword == "struct") ? EParsedTypeKind::Struct : EParsedTypeKind::Class;
         parsed.Name = region.Name;
         parsed.HeaderPath = headerPath;
+        parsed.AllParentClasses = region.ParentClasses;
 
         // 检查是否有 MGENERATED_BODY
         const bool hasGeneratedBody = classBody.find("MGENERATED_BODY(") != std::string::npos;
 
-        // 跳过没有 MGENERATED_BODY 的类
-        if (parsed.Kind == EParsedTypeKind::Class && !hasGeneratedBody)
+        // 检查是否有 MCLASS 标记（有 MCLASS 标记的类也需要解析，用于递归继承检查）
+        const bool hasClassMarker = HasNearbyTypeMarker(contents, region, parsed.Kind);
+
+        // 跳过没有 MGENERATED_BODY 且没有 MCLASS 标记的类（除非有 MFUNCTION）
+        if (parsed.Kind == EParsedTypeKind::Class && !hasGeneratedBody && !hasClassMarker)
         {
-            return std::nullopt;
+            // 检查是否有 MFUNCTION
+            if (classBody.find("MFUNCTION(") == std::string::npos &&
+                classBody.find("MFUNCTION(Async)") == std::string::npos &&
+                classBody.find("MDECLARE_SERVICE_RPC") == std::string::npos)
+            {
+                return std::nullopt;
+            }
         }
 
         // 解析类型标记
@@ -166,6 +287,10 @@ public:
             parsed.Owner = DetermineOwnerFromHeaderPath(headerPath);
         }
 
+        // 解析函数
+        FunctionParser funcParser;
+        parsed.Functions = funcParser.ParseFunctionsInClassBody(classBody, {});
+
         // 解析父类信息
         if (hasGeneratedBody)
         {
@@ -177,9 +302,6 @@ public:
 
         // 解析属性
         parsed.Properties = ParsePropertiesInTypeBody(classBody);
-
-        // 解析函数
-        parsed.Functions = ParseFunctionsInClassBody(classBody);
 
         // 解析 MPROPERTY Injection 标记
         for (const auto& prop : parsed.Properties)
@@ -418,74 +540,6 @@ private:
             searchPos = declEnd + 1;
         }
         return properties;
-    }
-
-    std::vector<SParsedFunction> ParseFunctionsInClassBody(const std::string& classBody) const
-    {
-        std::vector<SParsedFunction> functions;
-        size_t searchPos = 0;
-
-        while (searchPos < classBody.size())
-        {
-            const char* macroNames[] = {"MFUNCTION(", "MFUNCTION(Async)", "__MFUNC__(", nullptr};
-            size_t macroPos = std::string::npos;
-            std::string matchedMacro;
-
-            for (int i = 0; macroNames[i] != nullptr; ++i)
-            {
-                size_t pos = classBody.find(macroNames[i], searchPos);
-                if (pos != std::string::npos && (macroPos == std::string::npos || pos < macroPos))
-                {
-                    macroPos = pos;
-                    matchedMacro = macroNames[i];
-                    if (matchedMacro == "MFUNCTION(Async)" || matchedMacro == "__MFUNC__(")
-                        matchedMacro = "MFunction";
-                    else
-                        matchedMacro = matchedMacro.substr(0, matchedMacro.size() - 1);
-                }
-            }
-
-            if (macroPos == std::string::npos) break;
-
-            const size_t macroOpen = classBody.find('(', macroPos);
-            const size_t macroClose = (macroOpen == std::string::npos) ? std::string::npos : FindMatching(classBody, macroOpen, '(', ')');
-            if (macroOpen == std::string::npos || macroClose == std::string::npos) break;
-
-            const std::string macroArgs = classBody.substr(macroOpen + 1, macroClose - macroOpen - 1);
-            const size_t declStart = macroClose + 1;
-            size_t declEnd = classBody.find(';', declStart);
-
-            if (declEnd == std::string::npos) break;
-
-            const std::string declaration = classBody.substr(declStart, declEnd - declStart + 1);
-            std::string clean = Trim(declaration);
-            if (clean.back() == '}') {
-                clean = Trim(clean.substr(0, clean.size() - 1)) + ";";
-            }
-
-            const size_t openParen = clean.find('(');
-            const size_t closeParen = (openParen == std::string::npos) ? std::string::npos : FindMatching(clean, openParen, '(', ')');
-            const size_t semicolon = clean.rfind(';');
-
-            if (openParen != std::string::npos && closeParen != std::string::npos && semicolon != std::string::npos)
-            {
-                const std::string head = Trim(clean.substr(0, openParen));
-                const size_t nameSplit = head.find_last_of(" \t");
-                if (nameSplit != std::string::npos)
-                {
-                    SParsedFunction func;
-                    func.MacroArgs = Trim(macroArgs);
-                    func.ReturnType = Trim(head.substr(0, nameSplit));
-                    func.Name = Trim(head.substr(nameSplit + 1));
-                    func.Signature = Trim(clean.substr(openParen, closeParen - openParen + 1));
-                    func.ReturnStorageType = func.ReturnType;
-                    functions.push_back(func);
-                }
-            }
-
-            searchPos = declEnd + 1;
-        }
-        return functions;
     }
 
     std::string DetermineOwnerFromHeaderPath(const fs::path& headerPath) const

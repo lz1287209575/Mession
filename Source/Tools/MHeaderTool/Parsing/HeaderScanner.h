@@ -122,7 +122,9 @@ public:
     {
         return content.find("MGENERATED_BODY(") != std::string::npos ||
                content.find("MSTRUCT(") != std::string::npos ||
-               content.find("MENUM(") != std::string::npos;
+               content.find("MENUM(") != std::string::npos ||
+               content.find("MCLASS(") != std::string::npos ||
+               content.find("MSERVICE(") != std::string::npos;
     }
 
 private:

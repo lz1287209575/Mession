@@ -273,11 +273,86 @@ int main(int argc, char** argv)
                 }
             }
 
-            // 生成代码（增量模式下跳过未变化的类型）
+            // 调试：打印 MWorldServer 的函数信息
+            for (const auto& cls : allClasses)
+            {
+                if (cls.Name == "MWorldServer")
+                {
+                    std::cerr << "DEBUG MWorldServer functions:\n";
+                    for (const auto& func : cls.Functions)
+                    {
+                        std::cerr << "  " << func.Name << " bIsRpc=" << func.bIsRpc
+                                  << " Transport=" << func.Transport << "\n";
+                    }
+                }
+            }
+
+            // 构建类型名到其父类列表的映射
+            std::map<std::string, std::vector<std::string>> classParents;
+            for (const auto& cls : allClasses)
+            {
+                classParents[cls.Name] = cls.AllParentClasses;
+            }
+
+            // 已知继承自 MObject 的基础设施类（用于补充解析）
+            std::set<std::string> knownMObjectBaseClasses = {
+                "MServerCallProxyBase",  // 继承自 MObject，是 WorldLogin 等的基类
+            };
+
+            // 递归检查是否继承自 MObject
+            auto recursivelyInheritsMObject = [&](const std::string& typeName, auto&& self) -> bool
+            {
+                if (typeName == "MObject")
+                {
+                    return true;
+                }
+                // 检查已知的基础设施类
+                if (knownMObjectBaseClasses.count(typeName) > 0)
+                {
+                    return true;
+                }
+                auto it = classParents.find(typeName);
+                if (it == classParents.end())
+                {
+                    // 如果找不到这个类在已解析的类型中，假设它是一个继承自 MObject 的基础设施类
+                    // 这样可以让使用这些类的子类（如 MWorldLogin）被正确识别
+                    return true;
+                }
+                for (const auto& parent : it->second)
+                {
+                    if (self(parent, self))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            // 过滤出需要生成的类型（跳过不继承自 MObject 的类，如组件等）
+            std::vector<MHT::SParsedClass> classesToGenerate;
+            std::cerr << "DEBUG: allClasses has " << allClasses.size() << " types\n";
+            for (const auto& cls : allClasses)
+            {
+                // 递归检查是否继承自 MObject
+                bool inheritsMObject = recursivelyInheritsMObject(cls.Name, recursivelyInheritsMObject);
+                if (!inheritsMObject && cls.Kind == MHT::EParsedTypeKind::Class)
+                {
+                    std::cerr << "DEBUG: Skipping " << cls.Name << " (doesn't inherit MObject)\n";
+                    continue;
+                }
+                if (cls.Name.find("World") != std::string::npos)
+                {
+                    std::cerr << "DEBUG: Found World type: " << cls.Name << " inheritsMObject=" << inheritsMObject << "\n";
+                }
+                classesToGenerate.push_back(cls);
+            }
+            std::cerr << "DEBUG: classesToGenerate has " << classesToGenerate.size() << " types\n";
+
+            // 生成代码
             MHT::CodeGenerator codeGen(options);
             size_t generatedCount = 0;
             bool bSelectiveRegenerate = bIncrementalMode && !typesToRegenerate.empty();
-            for (const auto& cls : allClasses)
+            for (const auto& cls : classesToGenerate)
             {
                 // 增量模式：跳过未变化的类型（仅当有选择性重建时才跳过）
                 if (bSelectiveRegenerate && typesToRegenerate.find(cls.Name) == typesToRegenerate.end())
@@ -327,9 +402,12 @@ int main(int argc, char** argv)
             // 生成 CMake manifest
             if (!options.CMakeManifestPath.empty())
             {
+                std::cerr << "DEBUG: Generating CMake manifest with " << classesToGenerate.size() << " types\n";
                 MHT::ManifestGenerators manifestGen(options);
-                std::string cmakeContent = manifestGen.GenerateCMakeManifest(allClasses, {});
+                std::string cmakeContent = manifestGen.GenerateCMakeManifest(classesToGenerate, {});
+                std::cerr << "DEBUG: CMake manifest content length = " << cmakeContent.size() << "\n";
                 MHT::WriteFile(options.CMakeManifestPath, cmakeContent);
+                std::cerr << "DEBUG: CMake manifest written\n";
             }
         }
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Common/Runtime/Object/MObject.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 
 class IComponent
 {

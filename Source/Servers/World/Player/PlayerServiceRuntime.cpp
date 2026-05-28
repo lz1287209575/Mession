@@ -8,32 +8,6 @@
 #include "Servers/World/Player/PlayerController.h"
 #include "Servers/World/Player/PlayerManager.h"
 
-namespace
-{
-template<typename TResponse>
-TResponse BuildPlayerOnlyResponse(uint64 PlayerId)
-{
-    TResponse Response;
-    Response.PlayerId = PlayerId;
-    return Response;
-}
-
-TVector<FObjectPersistenceRecord> ToProtocolPersistenceRecords(const TVector<SPersistenceRecord>& Records)
-{
-    TVector<FObjectPersistenceRecord> Result;
-    Result.reserve(Records.size());
-    for (const SPersistenceRecord& Record : Records)
-    {
-        Result.push_back(FObjectPersistenceRecord{
-            Record.ObjectPath,
-            Record.ClassName,
-            Record.SnapshotData,
-        });
-    }
-    return Result;
-}
-}
-
 void MPlayerService::Initialize(MWorldServer* InWorldServer)
 {
     WorldServer = InWorldServer;
