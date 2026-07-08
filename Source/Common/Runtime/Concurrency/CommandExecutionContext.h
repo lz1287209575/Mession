@@ -3,7 +3,14 @@
 #include "Common/Runtime/Concurrency/ITaskRunner.h"
 #include "Common/Runtime/MLib.h"
 
-class MPlayerCommandRuntime;
+// MPlayerCommandRuntime 是 World 进程内的 Player 命令调度器；架构 v2 不再依赖 World，
+// 这里只保留前向声明 + 一个空的虚拟基类，供旧 fiber 工具链继续编译通过。
+class MPlayerCommandRuntime
+{
+public:
+    virtual ~MPlayerCommandRuntime() = default;
+    virtual uint64 SnapshotEpoch(uint64 PlayerId) const { (void)PlayerId; return 0; }
+};
 
 struct SPlayerCommandEpoch
 {

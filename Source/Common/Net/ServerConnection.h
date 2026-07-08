@@ -7,7 +7,7 @@
 #include <chrono>
 
 // 服务器类型
-enum class EServerType : uint8
+enum class EServerType : uint32
 {
     Unknown = 0,
     Gateway = 1,
@@ -15,7 +15,11 @@ enum class EServerType : uint8
     World = 3,
     Scene = 4,
     Router = 5,
-    Mgo = 6
+    Mgo = 6,
+    // ↓ v2 PoC 第 1 步：1 个 Service 类型（Echo）。生产部署前改为业务名（如 CombatService=7）
+    Echo = 7,  // PoC 第 1 步
+    // ↓ v2 PoC 第 2 步扩展：再加 1 个 Service 类型
+    // SampleB = 8,
 };
 
 // 服务器间消息类型

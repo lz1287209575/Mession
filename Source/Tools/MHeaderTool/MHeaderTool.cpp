@@ -206,10 +206,12 @@ int main(int argc, char** argv)
 
             // 读取所有文件内容
             std::map<fs::path, std::string> fileContents;
+            std::cerr << "DEBUG: Total headers found: " << headers.size() << "\n";
             for (const auto& header : headers)
             {
                 fileContents[header] = MHT::ReadFile(header);
             }
+            std::cerr << "DEBUG: fileContents loaded: " << fileContents.size() << "\n";
 
             // 解析所有类型（无论是否增量模式）
             std::vector<MHT::SParsedClass> allClasses;
@@ -217,8 +219,10 @@ int main(int argc, char** argv)
 
             for (const auto& [header, contents] : fileContents)
             {
+                std::cerr << "DEBUG: Processing header: " << header.filename().string() << " contents.size=" << contents.size() << "\n";
                 if (!MHT::HeaderScanner::HasReflectionMarkers(contents))
                 {
+                    std::cerr << "DEBUG: Header has no reflection markers, skipping\n";
                     continue;
                 }
 
@@ -283,6 +287,15 @@ int main(int argc, char** argv)
                     {
                         std::cerr << "  " << func.Name << " bIsRpc=" << func.bIsRpc
                                   << " Transport=" << func.Transport << "\n";
+                    }
+                }
+                if (cls.Name == "MPlayerService")
+                {
+                    std::cerr << "DEBUG MPlayerService functions:\n";
+                    for (const auto& func : cls.Functions)
+                    {
+                        std::cerr << "  " << func.Name << " bIsAsync=" << func.bIsAsync
+                                  << " AsyncBody.size=" << func.AsyncBody.size() << "\n";
                     }
                 }
             }

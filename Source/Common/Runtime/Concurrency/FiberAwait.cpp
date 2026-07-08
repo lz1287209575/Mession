@@ -1,7 +1,7 @@
 #include "Common/Runtime/Concurrency/FiberAwait.h"
 
 #include "Common/Runtime/Concurrency/FiberScheduler.h"
-#include "Servers/World/Player/PlayerCommandRuntime.h"
+#include "Common/Runtime/Concurrency/CommandExecutionContext.h"
 
 namespace
 {

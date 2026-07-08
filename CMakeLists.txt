@@ -129,14 +129,14 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Runtime/Log/ConsoleLogSink.cpp
     Source/Common/Runtime/Log/FileLogSink.cpp
     Source/Common/Net/NetServerBase.cpp
+    Source/Common/Net/Routing/ActorRouter.cpp
     Source/Common/Net/ServerConnection.cpp
     Source/Common/Net/Rpc/RpcClientCall.cpp
     Source/Common/Net/Rpc/RpcDispatch.cpp
     Source/Common/Net/Rpc/RpcManifest.cpp
     Source/Common/Net/Rpc/RpcServerCall.cpp
     Source/Common/Net/Rpc/RpcTransport.cpp
-    Source/Servers/App/ObjectCallRegistry.cpp
-    Source/Servers/App/ObjectCallRouter.cpp
+    Source/Servers/App/ServiceContainer.cpp
 )
 
 add_library(mession_common STATIC
@@ -344,14 +344,11 @@ function(mession_attach_generated_groups TargetName)
     endforeach()
 endfunction()
 
+# 暂禁 MObjectAssetSmokeTool：依赖已删除的 Source/Servers/Scene/Combat/。
+# Task 6 后续按需恢复（独立排期）。
+if(FALSE)
 add_executable(MObjectAssetSmokeTool
     Source/Tools/MObjectAssetSmokeTool.cpp
-    Source/Servers/Scene/Combat/MonsterConfig.cpp
-    Source/Servers/Scene/Combat/Monster.cpp
-    Source/Servers/Scene/Combat/MonsterCombatProfile.cpp
-    Source/Servers/Scene/Combat/MonsterCombatState.cpp
-    Source/Servers/Scene/Combat/MonsterFactory.cpp
-    Source/Servers/Scene/Combat/MonsterManager.cpp
 )
 target_link_libraries(MObjectAssetSmokeTool
     PRIVATE
@@ -371,7 +368,11 @@ target_sources(MObjectAssetSmokeTool
         ${MESSION_GENERATED_DIR}/MMonsterManager.mgenerated.cpp
 )
 add_dependencies(MObjectAssetSmokeTool mession_reflection_codegen)
+endif()
 
+# 暂禁 MObjectEditorService：依赖已删除的 Source/Servers/Scene/Combat/MonsterConfig.h。
+# Task 6 后续按需恢复（独立排期）。
+if(FALSE)
 add_executable(MObjectEditorService
     Source/Tools/MObjectEditorService/App/MObjectEditorServiceApp.cpp
     Source/Tools/MObjectEditorService/Core/EditorPaths.cpp
@@ -382,7 +383,6 @@ add_executable(MObjectEditorService
     Source/Tools/MObjectEditorService/Models/MonsterConfigEditorModel.cpp
     Source/Tools/MObjectEditorService/Validation/MonsterConfigValidator.cpp
     Source/Tools/MObjectEditorService/MObjectEditorServiceMain.cpp
-    Source/Servers/Scene/Combat/MonsterConfig.cpp
 )
 target_link_libraries(MObjectEditorService
     PRIVATE
@@ -395,14 +395,13 @@ target_sources(MObjectEditorService
         ${MESSION_GENERATED_DIR}/MMonsterConfig.mgenerated.cpp
 )
 add_dependencies(MObjectEditorService mession_reflection_codegen)
+endif()
 
 # 1. Gateway Server - 网关服务器
 add_executable(GatewayServer
     Source/Servers/Gateway/GatewayServer.h
     Source/Servers/Gateway/GatewayServer.cpp
     Source/Servers/Gateway/GatewayServerMain.cpp
-    Source/Servers/Gateway/Rpc/GatewayBackendRpc.cpp
-    Source/Servers/Gateway/Rpc/GatewayBackendRpcWorld.cpp
 )
 target_link_libraries(GatewayServer
     PRIVATE
@@ -411,125 +410,42 @@ target_link_libraries(GatewayServer
 configure_mession_target(GatewayServer)
 mession_attach_generated_groups(GatewayServer shared gateway)
 
-# 2. Login Server - 登录服务器
-add_executable(LoginServer 
-    Source/Servers/Login/LoginServer.h
-    Source/Servers/Login/LoginServer.cpp
-    Source/Servers/Login/LoginServerMain.cpp
-    Source/Servers/Login/LoginSession.cpp
-)
-target_link_libraries(LoginServer
-    PRIVATE
-        mession_netdriver
-)
-configure_mession_target(LoginServer)
-mession_attach_generated_groups(LoginServer shared login)
+# 2. Login Server - 已由 EchoService（同质多进程）替代
+# 详见 Docs/RefactorArchitectureAndRpc.md §5
 
-# 3. World Server - 世界服务器
-add_executable(WorldServer
-    Source/Servers/World/WorldServer.h
-    Source/Servers/World/WorldServer.cpp
-    Source/Servers/World/WorldServerMain.cpp
-    Source/Servers/World/Backend/WorldLogin.cpp
-    Source/Servers/World/Backend/WorldMgo.cpp
-    Source/Servers/World/Backend/WorldScene.cpp
-    Source/Servers/World/Backend/WorldRouter.cpp
-    Source/Servers/World/Player/PlayerEnter.cpp
-    Source/Servers/World/Player/PlayerCombat.cpp
-    Source/Servers/World/Player/PlayerLogout.cpp
-    Source/Servers/World/Player/PlayerNotify.cpp
-    Source/Servers/World/Player/PlayerManager.cpp
-    Source/Servers/World/Player/PlayerCommandRuntime.cpp
-    Source/Servers/World/Player/PlayerServiceModify.cpp
-    Source/Servers/World/Player/PlayerServiceQuery.cpp
-    Source/Servers/World/Player/PlayerServiceRoute.cpp
-    Source/Servers/World/Player/PlayerServiceSocial.cpp
-    Source/Servers/World/Player/PlayerServiceRuntime.cpp
-    Source/Servers/World/Player/PlayerSwitchScene.cpp
-    Source/Servers/World/Player/PlayerInventory.cpp
-    Source/Servers/World/Player/PlayerProgression.cpp
-    Source/Servers/World/Player/PlayerComponents.cpp
-    Source/Servers/World/Player/PlayerCombatProfile.cpp
-    Source/Servers/World/Player/PlayerController.cpp
-    Source/Servers/World/Player/PlayerPawn.cpp
-    Source/Servers/World/Player/PlayerProfile.cpp
-    Source/Servers/World/Player/PlayerSession.cpp
-    Source/Servers/World/Player/PlayerState.cpp
-    Source/Servers/World/WorldClient.cpp
-    Source/Servers/World/WorldClientLogin.cpp
-    Source/Servers/World/WorldClientPlayer.cpp
-    Source/Servers/World/WorldClientCombat.cpp
-)
-target_link_libraries(WorldServer
-    PRIVATE
-        mession_netdriver
-)
-configure_mession_target(WorldServer)
-mession_attach_generated_groups(WorldServer shared app world)
+# 3. World Server - 已由 EchoService（同质多进程）替代
+# 详见 Docs/RefactorArchitectureAndRpc.md §5
 
-# 4. Scene Server - 场景服务器
-add_executable(SceneServer 
-    Source/Servers/Scene/SceneServer.h
-    Source/Servers/Scene/SceneServer.cpp
-    Source/Servers/Scene/SceneServerMain.cpp
-    Source/Servers/Scene/Combat/MonsterConfig.cpp
-    Source/Servers/Scene/Combat/Monster.cpp
-    Source/Servers/Scene/Combat/MonsterCombatProfile.cpp
-    Source/Servers/Scene/Combat/MonsterCombatState.cpp
-    Source/Servers/Scene/Combat/MonsterFactory.cpp
-    Source/Servers/Scene/Combat/MonsterManager.cpp
-    Source/Servers/Scene/Combat/SceneCombatRuntime.cpp
-    Source/Servers/Scene/Combat/SkillCatalog.cpp
-    Source/Servers/Scene/Combat/SkillStepExecutor.cpp
-    Source/Servers/Scene/Combat/UAssetSkillLoader.cpp
-    Source/Servers/Scene/SceneCombat.cpp
-    Source/Servers/Scene/SceneSession.cpp
-)
-target_link_libraries(SceneServer
-    PRIVATE
-        mession_netdriver
-)
-configure_mession_target(SceneServer)
-mession_attach_generated_groups(SceneServer shared scene)
+# 4. Scene Server - 已由 EchoService（同质多进程）替代
+# 详见 Docs/RefactorArchitectureAndRpc.md §5
 
-# 5. Router Server - 控制面路由服务器
-add_executable(RouterServer
-    Source/Servers/Router/RouterServer.h
-    Source/Servers/Router/RouterServer.cpp
-    Source/Servers/Router/RouterServerMain.cpp
-    Source/Servers/Router/RouterRegistry.cpp
-)
-target_link_libraries(RouterServer
-    PRIVATE
-        mession_netdriver
-)
-configure_mession_target(RouterServer)
-mession_attach_generated_groups(RouterServer shared router)
+# 5. Router Server - 已由 EchoService（同质多进程）替代
+# 详见 Docs/RefactorArchitectureAndRpc.md §5
 
-# 6. Mgo Server - 持久化接入层服务器
-add_executable(MgoServer
-    Source/Servers/Mgo/MgoServer.h
-    Source/Servers/Mgo/MgoServer.cpp
-    Source/Servers/Mgo/MgoServerMain.cpp
-    Source/Servers/Mgo/MgoPlayerState.cpp
+# 6. Mgo Server - 已由 EchoService（同质多进程）替代
+# 详见 Docs/RefactorArchitectureAndRpc.md §5
+
+# 7. EchoService - 同质多进程 Service（PoC 替代 Login/Scene/Router/Mgo 4 服）
+add_executable(EchoService
+    Source/Servers/EchoService/EchoService.h
+    Source/Servers/EchoService/EchoService.cpp
+    Source/Servers/EchoService/EchoServiceMain.cpp
+    Source/Servers/App/ServiceContainer.h
+    Source/Servers/App/ServiceContainer.cpp
 )
-target_link_libraries(MgoServer
+target_link_libraries(EchoService
     PRIVATE
         mession_netdriver
 )
-if(MESSION_USE_MONGOCXX)
-    find_package(mongocxx CONFIG QUIET)
-    find_package(bsoncxx CONFIG QUIET)
-    if(mongocxx_FOUND AND bsoncxx_FOUND)
-        target_link_libraries(MgoServer PRIVATE mongo::mongocxx_shared mongo::bsoncxx_shared)
-        target_compile_definitions(MgoServer PRIVATE MESSION_USE_MONGOCXX=1)
-        message(STATUS "MgoServer MongoDB integration: enabled (mongocxx/bsoncxx found)")
-    else()
-        message(WARNING "MESSION_USE_MONGOCXX=ON but mongocxx/bsoncxx not found; building MgoServer without MongoDB driver")
-    endif()
-endif()
-configure_mession_target(MgoServer)
-mession_attach_generated_groups(MgoServer shared mgo)
+configure_mession_target(EchoService)
+mession_attach_generated_groups(EchoService shared sample)
+target_sources(EchoService
+    PRIVATE
+        ${MESSION_GENERATED_DIR}/MEchoService.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/FSampleEchoRequest.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/FSampleEchoResponse.mgenerated.cpp
+)
+add_dependencies(EchoService mession_reflection_codegen)
 
 # NetBench - 简单网络压测工具
 add_executable(NetBench
@@ -542,13 +458,8 @@ target_link_libraries(NetBench
 configure_mession_compile_options(NetBench)
 
 # 安装目标
-install(TARGETS 
-    GatewayServer 
-    LoginServer 
-    WorldServer 
-    SceneServer 
-    RouterServer
-    MgoServer
+install(TARGETS
+    GatewayServer
     DESTINATION bin
 )
 

@@ -2,62 +2,23 @@
 #include "Common/Net/Rpc/ClientManifest.h"
 #include "Common/Net/Rpc/RpcClientCall.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
+#include "Common/Net/Rpc/RpcPayload.h"
 #include "Common/Runtime/Object/Object.h"
+#include "Common/Runtime/Async/MAsync.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
-#include "Servers/App/ServerRpcSupport.h"
+#include "Servers/App/ServiceContainer.h"
+#include "Servers/App/ServiceId.h"
+
+MGatewayServer* GGlobalGateway = nullptr;
 
 namespace
 {
-TSharedPtr<IClientResponseTarget> MakeGatewayClientResponseTarget(const TSharedPtr<INetConnection>& ClientConnection)
+struct FClientCallHandle
 {
-    return MakeShared<MClientResponseTarget>(
-        [ClientConnection](uint64 /*ExpectedConnectionId*/) -> bool
-        {
-            return ClientConnection && ClientConnection->IsConnected();
-        },
-        [ClientConnection](uint64 /*ExpectedConnectionId*/, uint16 ResponseFunctionId, uint64 ResponseCallId, const TByteArray& ResponsePayload) -> bool
-        {
-            TByteArray Packet;
-            if (!BuildClientCallPacket(ResponseFunctionId, ResponseCallId, ResponsePayload, Packet))
-            {
-                return false;
-            }
-
-            return ClientConnection->Send(Packet.data(), static_cast<uint32>(Packet.size()));
-        });
-}
-
-bool BuildClientErrorResponsePayload(uint16 FunctionId, const FAppError& Error, TByteArray& OutPayload)
-{
-    MClass* ResponseStruct = FindGlobalClientResponseStructById(FunctionId);
-    if (!ResponseStruct)
-    {
-        return false;
-    }
-
-    void* ResponseInstance = ResponseStruct->CreateInstance();
-    if (!ResponseInstance)
-    {
-        return false;
-    }
-
-    if (MProperty* ErrorProperty = ResponseStruct->FindProperty("Error"))
-    {
-        if (ErrorProperty->Type == EPropertyType::String)
-        {
-            if (MString* ErrorValue = ErrorProperty->GetValuePtr<MString>(ResponseInstance))
-            {
-                *ErrorValue = !Error.Code.empty() ? Error.Code : Error.Message;
-            }
-        }
-    }
-
-    MReflectArchive Archive;
-    ResponseStruct->WriteSnapshot(ResponseInstance, Archive);
-    OutPayload = std::move(Archive.Data);
-    ResponseStruct->DestroyInstance(ResponseInstance);
-    return true;
-}
+    uint16 FunctionId = 0;
+    uint64 ConnectionId = 0;
+    uint64 CallId = 0;
+};
 
 bool DispatchBackendServerCallPacket(
     MObject* Service,
@@ -112,28 +73,43 @@ bool DispatchBackendServerCallPacket(
     return DispatchServerCall(Service, FunctionId, CallId, RequestPayload, ResponseTarget);
 }
 
-void SendClientErrorResponse(
-    const TSharedPtr<IClientResponseTarget>& ResponseTarget,
-    uint64 ConnectionId,
-    uint16 FunctionId,
-    uint64 CallId,
-    const FAppError& Error)
+// PoC：把内嵌的 Then lambda 抽出来
+MFuture<TResult<SEmptyServerMessage, FAppError>> HandleEchoResult(
+    MFuture<TResult<FSampleEchoResponse, FAppError>> Inner,
+    FClientCallHandle Handle)
 {
-    if (!ResponseTarget)
+    TResult<SEmptyServerMessage, FAppError> OutResult;
+    try
     {
-        return;
+        const TResult<FSampleEchoResponse, FAppError> InnerResult = Inner.Get();
+        if (InnerResult.IsErr())
+        {
+            OutResult = TResult<SEmptyServerMessage, FAppError>::Err(InnerResult.GetError());
+        }
+        else
+        {
+            // 把 FSampleEchoResponse 序列化后通过 PushClientDownlink 发回 UE
+            const FSampleEchoResponse& Resp = InnerResult.GetValue();
+            TByteArray Payload = BuildPayload(Resp);
+
+            MGatewayServer* Gateway = MGatewayServer::GetSingleton();
+            if (Gateway)
+            {
+                Gateway->PushClientDownlink(FClientDownlinkPushRequest{Handle.ConnectionId, Handle.FunctionId, Payload});
+            }
+
+            OutResult = TResult<SEmptyServerMessage, FAppError>::Ok(SEmptyServerMessage{});
+        }
+    }
+    catch (const std::exception& Ex)
+    {
+        OutResult = TResult<SEmptyServerMessage, FAppError>::Err(
+            FAppError::Make("handle_echo_exception", Ex.what()));
     }
 
-    TByteArray Payload;
-    if (!BuildClientErrorResponsePayload(FunctionId, Error, Payload))
-    {
-        LOG_WARN("Gateway failed to materialize client error response: function_id=%u code=%s",
-                 static_cast<unsigned>(FunctionId),
-                 Error.Code.c_str());
-        return;
-    }
-
-    (void)ResponseTarget->SendClientResponse(ConnectionId, FunctionId, CallId, Payload);
+    MPromise<TResult<SEmptyServerMessage, FAppError>> Promise;
+    Promise.SetValue(std::move(OutResult));
+    return Promise.GetFuture();
 }
 }
 
@@ -150,26 +126,50 @@ bool MGatewayServer::Init(int InPort)
     }
 
     bRunning = true;
+    GGlobalGateway = this;
     MLogger::LogStartupBanner("GatewayServer", Config.ListenPort, 0);
     MServerConnection::SetLocalInfo(1, EServerType::Gateway, "GatewaySkeleton");
 
-    WorldServerConn = BackendConnectionManager.AddServer(
-        SServerConnectionConfig(3, EServerType::World, "WorldSkeleton", Config.WorldServerAddr, Config.WorldServerPort));
-
-    WorldServerConn->SetOnMessage([this](auto Connection, uint8 PacketType, const TByteArray& Data)
-    {
-        HandleBackendPacket(Connection, PacketType, Data, "World");
-    });
-
-    WorldServerConn->Connect();
-
-    RegisterRpcTransport(EServerType::World, WorldServerConn);
+    ConnectAllPeers();
 
     return true;
 }
 
+void MGatewayServer::ConnectAllPeers()
+{
+    for (const SServicePeerConfig& Peer : Config.Peers)
+    {
+        const uint32 PeerServerId = MUniqueIdGenerator::Generate();
+        const SServerConnectionConfig PeerConfig(
+            PeerServerId,
+            Peer.ServerType,
+            GetServerTypeDisplayName(Peer.ServerType),
+            Peer.Address,
+            Peer.Port);
+
+        TSharedPtr<MServerConnection> PeerConn = MakeShared<MServerConnection>(PeerConfig);
+        PeerConn->SetOnMessage([this](auto Connection, uint8 PacketType, const TByteArray& Data)
+        {
+            HandleBackendPacket(Connection, PacketType, Data, GetServerTypeDisplayName(Connection->GetConfig().ServerType));
+        });
+        PeerConn->Connect();
+
+        // 1. 注册到 MServiceContainer（全局 transport map）
+        MServiceContainer::Get().Register(PeerConn);
+
+        // 2. 注册到本进程 MServerRuntimeContext
+        RegisterRpcTransport(Peer.ServerType, PeerConn);
+
+        LOG_INFO("GatewayServer: connected to peer %s at %s:%u",
+                 GetServerTypeDisplayName(Peer.ServerType),
+                 Peer.Address.c_str(),
+                 static_cast<unsigned>(Peer.Port));
+    }
+}
+
 void MGatewayServer::Tick()
 {
+    MServiceContainer::Get().TickAll(0.0f);
 }
 
 uint16 MGatewayServer::GetListenPort() const
@@ -196,7 +196,7 @@ void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 
 void MGatewayServer::TickBackends()
 {
-    BackendConnectionManager.Tick(0.1f);
+    MServiceContainer::Get().TickAll(0.1f);
 }
 
 void MGatewayServer::ShutdownConnections()
@@ -210,9 +210,8 @@ void MGatewayServer::ShutdownConnections()
         }
     }
     ClientConnections.clear();
-    BackendConnectionManager.DisconnectAll();
+    MServiceContainer::Get().ShutdownAll();
     ClearRpcTransports();
-    WorldServerConn.reset();
 }
 
 void MGatewayServer::OnRunStarted()
@@ -297,18 +296,8 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
             Data.begin() + static_cast<TByteArray::difference_type>(PayloadOffset + PayloadSize));
     }
 
-    auto ConnIt = ClientConnections.find(ConnectionId);
-    if (ConnIt == ClientConnections.end() || !ConnIt->second)
-    {
-        LOG_WARN("Gateway missing client connection for client call: connection=%llu",
-                 static_cast<unsigned long long>(ConnectionId));
-        return;
-    }
-
-    const TSharedPtr<INetConnection> ClientConnection = ConnIt->second;
-    const TSharedPtr<IClientResponseTarget> ResponseTarget = MakeGatewayClientResponseTarget(ClientConnection);
-    const MClientManifest::SEntry* ClientEntry = FindGlobalClientFunctionEntryById(FunctionId);
-    if (!ClientEntry)
+    const FClientFunctionRoute* Route = MClientFunctionRouteTable::FindRoute(FunctionId);
+    if (!Route)
     {
         LOG_WARN("Gateway received unknown client function id=%u connection=%llu",
                  static_cast<unsigned>(FunctionId),
@@ -316,80 +305,46 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
         return;
     }
 
-    const EServerType TargetServerType = GetGlobalClientFunctionTargetServerType(FunctionId);
-    const bool bDispatchLocal =
-        TargetServerType == EServerType::Gateway ||
-        (ClientEntry->OwnerType && std::strcmp(ClientEntry->OwnerType, "MGatewayServer") == 0);
-
-    if (bDispatchLocal)
+    // 通过 MServiceContainer 查 peer transport
+    TSharedPtr<MServerConnection> TargetConn = MServiceContainer::Get().Resolve(Route->TargetServiceType);
+    if (!TargetConn || !TargetConn->IsConnected())
     {
-        const SClientDispatchOutcome Outcome =
-            DispatchClientFunction(this, ConnectionId, FunctionId, CallId, Payload, ResponseTarget);
-        if (Outcome.Result != EClientDispatchResult::Handled)
+        LOG_WARN("Gateway: peer transport unavailable for function=%u target=%s",
+                 static_cast<unsigned>(FunctionId),
+                 GetServerTypeDisplayName(Route->TargetServiceType));
+        return;
+    }
+
+    // PoC 第 1 步：仅 Echo 一条路由 + bRequiresActorId=true
+    FSampleEchoRequest ServiceRequest;
+    ServiceRequest.TargetActorId = 0;
+    ServiceRequest.Message = MString();
+
+    if (Route->bRequiresActorId)
+    {
+        if (Payload.size() < sizeof(uint64))
         {
-            LOG_WARN("Gateway local client dispatch failed: function=%s result=%u",
-                     Outcome.FunctionName ? Outcome.FunctionName : "<unknown>",
-                     static_cast<unsigned>(Outcome.Result));
+            LOG_WARN("Gateway: actor_id_required for function=%u", static_cast<unsigned>(FunctionId));
+            return;
         }
-        return;
+        std::memcpy(&ServiceRequest.TargetActorId, Payload.data(), sizeof(uint64));
+        ServiceRequest.Message.assign(
+            reinterpret_cast<const char*>(Payload.data() + sizeof(uint64)),
+            Payload.size() - sizeof(uint64));
     }
-
-    const TSharedPtr<MServerConnection> TargetConnection = ResolveServerTransport(TargetServerType);
-    if (!TargetConnection || !TargetConnection->IsConnected())
+    else
     {
-        SendClientErrorResponse(
-            ResponseTarget,
-            ConnectionId,
-            FunctionId,
-            CallId,
-            FAppError::Make("client_route_backend_unavailable", ClientEntry->FunctionName ? ClientEntry->FunctionName : ""));
-        return;
+        ServiceRequest.Message.assign(
+            reinterpret_cast<const char*>(Payload.data()),
+            Payload.size());
     }
 
-    FForwardedClientCallRequest ForwardRequest;
-    ForwardRequest.GatewayConnectionId = ConnectionId;
-    ForwardRequest.ClientFunctionId = FunctionId;
-    ForwardRequest.ClientCallId = CallId;
-    ForwardRequest.Payload = Payload;
-
-    CallServerFunction<FForwardedClientCallResponse>(TargetConnection, TargetServerType, "DispatchClientCall", ForwardRequest)
-        .Then(
-            [ResponseTarget, ConnectionId, FunctionId, CallId](MFuture<TResult<FForwardedClientCallResponse, FAppError>> Completed) mutable
-            {
-                try
-                {
-                    const TResult<FForwardedClientCallResponse, FAppError> Result = Completed.Get();
-                    if (Result.IsOk())
-                    {
-                        (void)ResponseTarget->SendClientResponse(
-                            ConnectionId,
-                            FunctionId,
-                            CallId,
-                            Result.GetValue().Payload);
-                        return;
-                    }
-
-                    SendClientErrorResponse(ResponseTarget, ConnectionId, FunctionId, CallId, Result.GetError());
-                }
-                catch (const std::exception& Ex)
-                {
-                    SendClientErrorResponse(
-                        ResponseTarget,
-                        ConnectionId,
-                        FunctionId,
-                        CallId,
-                        FAppError::Make("client_route_exception", Ex.what()));
-                }
-                catch (...)
-                {
-                    SendClientErrorResponse(
-                        ResponseTarget,
-                        ConnectionId,
-                        FunctionId,
-                        CallId,
-                        FAppError::Make("client_route_exception", "unknown"));
-                }
-            });
+    FClientCallHandle Handle(FunctionId, ConnectionId, CallId);
+    CallServerFunction<FSampleEchoResponse>(TargetConn, Route->ClassName, Route->MethodName, ServiceRequest)
+        .Then([Handle](MFuture<TResult<FSampleEchoResponse, FAppError>> Completed)
+        {
+            return HandleEchoResult(std::move(Completed), Handle);
+        });
 }
 
 void MGatewayServer::HandleBackendPacket(

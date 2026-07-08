@@ -12,14 +12,25 @@
 #include "Protocol/Messages/Common/ClientDownlinkMessages.h"
 #include "Protocol/Messages/Common/ControlPlaneMessages.h"
 #include "Protocol/Messages/Common/ForwardedClientCallMessages.h"
+#include "Protocol/Messages/Common/ClientFunctionRoute.h"
 #include "Protocol/Messages/Gateway/GatewayBaseMessages.h"
+#include "Protocol/Messages/EchoService/FSampleEchoMessages.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
+
+class MGatewayServer;
+extern MGatewayServer* GGlobalGateway;
+
+struct SServicePeerConfig
+{
+    EServerType ServerType = EServerType::Unknown;
+    MString Address = "127.0.0.1";
+    uint16 Port = 0;
+};
 
 struct SGatewayConfig
 {
     uint16 ListenPort = 8001;
-    MString WorldServerAddr = "127.0.0.1";
-    uint16 WorldServerPort = 8003;
+    TVector<SServicePeerConfig> Peers;  // 启动时主动连接的 peer（PoC 阶段：EchoService）
 };
 
 MCLASS(Type=Server)
@@ -50,6 +61,10 @@ public:
     MFUNCTION(ServerCall)
     MFuture<TResult<SEmptyServerMessage, FAppError>> PushClientDownlink(const FClientDownlinkPushRequest& Request);
 
+    void ApplyConfig(const SGatewayConfig& InConfig) { Config = InConfig; }
+
+    static MGatewayServer* GetSingleton() { return GGlobalGateway; }
+
 private:
     void HandleClientPacket(uint64 ConnectionId, const TByteArray& Data);
     void HandleBackendPacket(
@@ -58,8 +73,9 @@ private:
         const TByteArray& Data,
         const char* PeerName);
 
+    void ConnectAllPeers();
+
     SGatewayConfig Config;
     TMap<uint64, TSharedPtr<INetConnection>> ClientConnections;
     MServerConnectionManager BackendConnectionManager;
-    TSharedPtr<MServerConnection> WorldServerConn;
 };
