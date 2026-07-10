@@ -19,7 +19,7 @@
  *
  * // ServerCall: 调用远程服务器
  * auto response = MRpcChannel::Get().Call<FResponse>(
- *     Resolver, EServerType::World, "MWorldClient", "PlayerEnterWorld", request);
+ *     Resolver, EServerType::Echo, "MEchoService", "Echo", request);
  * FResponse result = MAwaitOk(response);
  *
  * // ClientCall: 发送到客户端

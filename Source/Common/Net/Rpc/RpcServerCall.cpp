@@ -401,6 +401,59 @@ bool HandleServerCallResponse(const TByteArray& Data)
     return ConsumeServerCall(CallId, &Response);
 }
 
+bool DispatchBackendServerCallPacket(
+    MObject* ServiceInstance,
+    const TSharedPtr<MServerConnection>& Connection,
+    const TByteArray& Data)
+{
+    if (!ServiceInstance || !Connection || Data.empty())
+    {
+        return false;
+    }
+
+    uint16 FunctionId = 0;
+    uint64 CallId = 0;
+    uint32 PayloadSize = 0;
+    size_t PayloadOffset = 0;
+    if (!ParseServerCallPacket(Data, FunctionId, CallId, PayloadSize, PayloadOffset))
+    {
+        return false;
+    }
+
+    TByteArray RequestPayload;
+    if (PayloadSize > 0)
+    {
+        RequestPayload.insert(
+            RequestPayload.end(),
+            Data.begin() + static_cast<TByteArray::difference_type>(PayloadOffset),
+            Data.begin() + static_cast<TByteArray::difference_type>(PayloadOffset + PayloadSize));
+    }
+
+    const TSharedPtr<IServerCallResponseTarget> ResponseTarget =
+        MakeShared<MServerCallResponseTarget>(
+            [Connection]() -> bool
+            {
+                return Connection && Connection->IsConnected();
+            },
+            [Connection](uint16 ResponseFunctionId, uint64 ResponseCallId, bool bSuccess, const TByteArray& ResponsePayload) -> bool
+            {
+                TByteArray ResponsePacketPayload;
+                if (!BuildServerCallResponsePacket(
+                        ResponseFunctionId,
+                        ResponseCallId,
+                        bSuccess,
+                        ResponsePayload,
+                        ResponsePacketPayload))
+                {
+                    return false;
+                }
+
+                return SendServerCallResponseMessage(Connection, ResponsePacketPayload);
+            });
+
+    return DispatchServerCall(ServiceInstance, FunctionId, CallId, RequestPayload, ResponseTarget);
+}
+
 bool BuildServerCallPayload(const MFunction* Function, const TByteArray& RequestPayload, TByteArray& OutData)
 {
     if (!IsServerCallFunction(Function))

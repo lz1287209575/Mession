@@ -25,12 +25,7 @@ set(MHEADERTOOL_SOURCES
 
     # Generation - 代码生成
     Generation/CodeGenerator.h
-    Generation/HeaderGenerator.h
-    Generation/SourceGenerator.h
     Generation/ManifestGenerators.h
-
-    # Parallel - 并行处理
-    Parallel/ParallelExecutor.h
 
     # Main entry
     MHeaderTool.cpp

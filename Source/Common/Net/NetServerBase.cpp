@@ -1,5 +1,6 @@
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
+#include "Common/Runtime/Concurrency/SignalHandler.h"
 #include "Common/Runtime/Log/Logger.h"
 
 void MNetServerBase::Run()
@@ -33,6 +34,12 @@ void MNetServerBase::Run()
 
     while (bRunning)
     {
+        if (MSignalHandler::IsShutdownRequested())
+        {
+            LOG_INFO("MNetServerBase: shutdown signal received, exiting Run loop");
+            RequestShutdown();
+            break;
+        }
         MasterLoop.RunOnce();
         TickBackends();
         PumpServerCallMaintenance();

@@ -106,7 +106,7 @@ protected:
     uint64 ObjectFlags = 0;
     MString Name;
     MObject* Outer = nullptr;
-    TVector<MObject*> Children;
+    TVector<TSharedPtr<MObject>> Children;
     uint64 DirtyDomainFlags = ToMask(EPropertyDomainFlags::None);
     TSet<uint16> DirtyPropertyIds;
     
@@ -143,7 +143,7 @@ public:
     const MString& GetName() const { return Name; }
     void SetName(const MString& InName) { Name = InName; }
     MObject* GetOuter() const { return Outer; }
-    const TVector<MObject*>& GetChildren() const { return Children; }
+    const TVector<TSharedPtr<MObject>>& GetChildren() const { return Children; }
     bool IsRooted() const { return (ObjectFlags & ObjectFlag_RootSet) != 0; }
     bool IsDefaultSubObject() const { return (ObjectFlags & ObjectFlag_DefaultSubObject) != 0; }
     
@@ -373,6 +373,9 @@ public:
     }
 
     void SetOuter(MObject* InOuter);
+
+    /** 公共接口：把 TSharedPtr 加入 Root 集。供 NewMObject 内部使用。*/
+    static void AddToRootSet(const TSharedPtr<MObject>& Object);
     void AddToRoot();
     void RemoveFromRoot();
     void MarkAsDefaultSubObject() { AddObjectFlags(ObjectFlag_DefaultSubObject); }
@@ -482,9 +485,17 @@ public:
     
 private:
     static TMap<uint64, MObject*>& GetObjectMap();
-    static TSet<MObject*>& GetRootSet();
-    void AddChildObject(MObject* Child);
-    void RemoveChildObject(MObject* Child);
+    static TSet<TSharedPtr<MObject>>& GetRootSet();
+    void AddChildObject(const TSharedPtr<MObject>& Child);
+    void RemoveChildObject(const TSharedPtr<MObject>& Child);
+
+    /** 内部辅助：从 Children 找 this 的 TSharedPtr 引用。*/
+    TSharedPtr<MObject> FindChildShared(MObject* Child) const;
+    /** 内部辅助：从 RootSet 找 this 的 TSharedPtr 引用。*/
+    TSharedPtr<MObject> FindRootShared(MObject* Object) const;
+
+    /** 标记 Root 集标志位（NewMObject 内部使用）。*/
+    void MarkAsRootSet() { ObjectFlags |= ObjectFlag_RootSet; }
 
     template<typename TReturn, typename... TArgs>
     bool InvokeFunction(const MString& InName, TReturn* OutReturn, TArgs&&... Args);

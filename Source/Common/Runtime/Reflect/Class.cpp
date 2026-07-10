@@ -115,6 +115,23 @@ MProperty* MClass::FindPropertyByAssetFieldId(uint32 InAssetFieldId) const
     return nullptr;
 }
 
+MProperty* MClass::FindPropertyByMetadata(const MString& InKey, const MString& InValue) const
+{
+    for (MProperty* Prop : Properties)
+    {
+        if (!Prop) continue;
+        if (const MString* Val = Prop->FindMetadata(InKey))
+        {
+            if (InValue.empty() || *Val == InValue)
+            {
+                return Prop;
+            }
+        }
+    }
+    if (ParentClass) return ParentClass->FindPropertyByMetadata(InKey, InValue);
+    return nullptr;
+}
+
 MFunction* MClass::FindFunction(const MString& InName) const
 {
     for (MFunction* Func : Functions)

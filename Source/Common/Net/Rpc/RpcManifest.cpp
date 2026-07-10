@@ -35,29 +35,13 @@ EServerType ParseServerTargetType(const char* TargetName)
     }
 
     const MString Target(TargetName);
-    if (Target == "Login")
-    {
-        return EServerType::Login;
-    }
-    if (Target == "World")
-    {
-        return EServerType::World;
-    }
-    if (Target == "Scene")
-    {
-        return EServerType::Scene;
-    }
-    if (Target == "Router")
-    {
-        return EServerType::Router;
-    }
     if (Target == "Gateway")
     {
         return EServerType::Gateway;
     }
-    if (Target == "Mgo")
+    if (Target == "Echo")
     {
-        return EServerType::Mgo;
+        return EServerType::Echo;
     }
 
     return EServerType::Unknown;
@@ -69,16 +53,8 @@ const char* GetServerTypeDisplayName(EServerType ServerType)
     {
     case EServerType::Gateway:
         return "Gateway";
-    case EServerType::Login:
-        return "Login";
-    case EServerType::World:
-        return "World";
-    case EServerType::Scene:
-        return "Scene";
-    case EServerType::Router:
-        return "Router";
-    case EServerType::Mgo:
-        return "Mgo";
+    case EServerType::Echo:
+        return "Echo";
     default:
         return "Unknown";
     }
@@ -90,16 +66,8 @@ const char* GetServerEndpointClassName(EServerType ServerType)
     {
     case EServerType::Gateway:
         return "MGatewayServer";
-    case EServerType::Login:
-        return "MLoginServer";
-    case EServerType::World:
-        return "MWorldServer";
-    case EServerType::Scene:
-        return "MSceneServer";
-    case EServerType::Router:
-        return "MRouterServer";
-    case EServerType::Mgo:
-        return "MMgoServer";
+    case EServerType::Echo:
+        return "MEchoService";
     default:
         return nullptr;
     }

@@ -38,19 +38,6 @@ public:
         out << "#include \"Common/Runtime/Reflect/Reflection.h\"\n";
         out << "#include \"Common/Runtime/Async/MAsync.h\"\n";
         out << "#include \"Common/Net/Rpc/RpcClientCall.h\"\n";
-        out << "#include \"Common/Net/Rpc/RpcServerCall.h\"\n";
-        out << "#include \"Servers/App/ServerCallRequestValidation.h\"\n";
-        out << "#include \"Protocol/Messages/Common/AppMessages.h\"\n";
-        out << "#include \"Protocol/Messages/Common/ClientDownlinkMessages.h\"\n";
-        out << "#include \"Protocol/Messages/Common/ControlPlaneMessages.h\"\n";
-        out << "#include \"Protocol/Messages/Common/ForwardedClientCallMessages.h\"\n";
-        out << "#include \"Protocol/Messages/World/PlayerModifyMessages.h\"\n";
-        out << "#include \"Protocol/Messages/World/PlayerQueryMessages.h\"\n";
-        out << "#include \"Protocol/Messages/World/PlayerRouteMessages.h\"\n";
-        out << "#include \"Protocol/Messages/World/PlayerSocialMessages.h\"\n";
-        out << "#include \"Protocol/Messages/World/PlayerLifecycleMessages.h\"\n";
-        out << "#include \"Protocol/Messages/Scene/SceneServiceMessages.h\"\n";
-        out << "#include \"Protocol/Messages/Combat/CombatWorldMessages.h\"\n";
         out << "#include \"" << MakeIncludePathFromHeader(parsedClass.HeaderPath) << "\"\n";
         out << "\n";
 
@@ -473,7 +460,9 @@ private:
         out << "    if (!ParseResult.IsOk()) return false;\n";
         out << "    const SServerCallContext Context = CaptureCurrentServerCallContext();\n";
         out << "    if (!Context.IsValid()) return false;\n";
-        out << "    return MServerCallAsyncSupport::StartDeferredServerCall(Context, TypedObject->" << func.Name << "(RequestValue), \"" << func.Name << "\");\n";
+        out << "    (void)Context;\n";
+        out << "    TypedObject->" << func.Name << "(RequestValue);\n";
+        out << "    return true;\n";
         out << "}\n";
         out << "\n";
     }

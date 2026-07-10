@@ -141,6 +141,7 @@ struct SOptions
     fs::path CacheDir = "Build/.mheadertool_cache";
     fs::path CMakeManifestPath = "Build/Generated/MHeaderToolTargets.cmake";
     fs::path ValidationSchemaPath = "Build/Generated/ValidationProtocolSchema.json";
+    fs::path ClientManifestPath = "Build/Generated/MClientManifest.mgenerated.cpp";
     bool bVerbose = false;
     bool bIncremental = true;
     bool bForceFull = false;

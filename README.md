@@ -1,25 +1,19 @@
 # Mession
 
-Mession 是一个基于 C++20 的多服游戏服务端实验工程。仓库当前的重点不是展示单个玩法，而是把下面几条主线收敛成一套可以继续扩展的服务端骨架：
+Mession 是一个基于 C++20 的多服游戏服务端实验工程。仓库当前的重点是收敛基建骨架：
 
 - 统一反射系统：`MCLASS` / `MSTRUCT` / `MPROPERTY` / `MFUNCTION`
-- 统一 RPC 调用链：客户端调用、服间调用、负载编解码、运行时路由
-- 统一对象状态流：Persistence / Replication 共用对象域快照能力
-- 统一服务结构：`Server -> Rpc -> ServiceEndpoint -> Domain Object`
-- 统一玩家状态模型：`MPlayer` 对象树承载主状态与业务入口
+- 统一 RPC 调用链：客户端调用、服间调用、负载编解码、运行时路由（`MRpcChannel::Call / CallToActor / SendToClient`）
+- 统一对象系统：`MObject` + `TSharedPtr` + `IDisposable`（C# 风格），让业务侧零关心释放
+- 同质多进程 Service：一个 binary 通过启动参数决定 ServiceName + ActorIds，水平扩展
 
 ## 当前仓库已经做到什么
 
-当前主干已经打通了一个可工作的玩家闭环：
+PoC 阶段已打通的最短链路：
 
-- 登录、进世界、查找玩家、切场景、登出
-- `Profile / Pawn / Inventory / Progression` 查询入口
-- 金币、装备、经验、生命值等写操作
-- 双玩家场景同步下行
-- 最小战斗链路：`Client_CastSkill`
-- 登出后重登的状态恢复验证
-
-这意味着仓库已经从“只搭骨架”进入“可以持续收口状态边界、补验证、扩玩法能力”的阶段。
+- 链路 1：UE/Client → Gateway(8001) → EchoService_A(7001) → 回包
+- 链路 2：UE/Client → Gateway(8001) → EchoService_A(7001) → EchoService_B(7002) → 回包
+- 错误链路：发一个不存在的 ActorId，回包带 `actor_not_found` 错误码
 
 ## 仓库地图
 
@@ -28,11 +22,13 @@ Mession 是一个基于 C++20 的多服游戏服务端实验工程。仓库当�
 - `Source/Protocol`
   所有跨进程协议与消息定义，按业务域拆分到 `Messages/*`。
 - `Source/Servers`
-  各个服务器实现，当前包含 `Gateway / Login / World / Scene / Router / Mgo`。
+  服务器实现。当前 PoC 阶段只有 `Gateway` 与同质多进程 `EchoService`：
+  - `GatewayServer`：唯一对外入口，监听 client TCP，把 `Client_*` / `MT_FunctionCall` 转发到目标 Service。
+  - `EchoService`：同质多进程 Service（启动参数决定 ActorIds 和监听端口），通过 `MActorRouter + MRpcChannel::CallToActor` 寻址。
 - `Source/Tools`
   工具程序，当前主要是 `MHeaderTool` 和 `NetBench`。
 - `Scripts`
-  本地启动、验证、协议检查、控制面脚本。
+  本地启动、验证、协议检查脚本。
 - `Docs`
   正式文档目录。
 - `Build`
@@ -40,20 +36,25 @@ Mession 是一个基于 C++20 的多服游戏服务端实验工程。仓库当�
 - `Bin`
   所有可执行文件输出目录。
 
-## 当前服务拓扑
+## 当前服务拓扑（PoC）
 
-- `GatewayServer` `8001`
-  客户端入口，处理 `Client_*` 调用并把请求转发给目标服。
-- `LoginServer` `8002`
-  登录会话签发与校验。
-- `WorldServer` `8003`
-  玩家主状态归属、对象树维护、流程编排、持久化边界。
-- `SceneServer` `8004`
-  场景进入/离开、场景同步、轻量战斗运行时。
-- `RouterServer` `8005`
-  玩家路由注册与查询。
-- `MgoServer` `8006`
-  玩家持久化记录加载与保存，可跑内存态，也可选接 Mongo。
+PoC 阶段只有两个 binary，所有"业务服"都是同一个 `EchoService` 进程，靠启动参数决定 ServiceName / ActorIds：
+
+| 进程 | 默认端口 | ServiceName | 角色 |
+|------|---------|-------------|------|
+| `GatewayServer` | 8001 | — | 客户端入口，转发 Client_* 到业务 Service |
+| `EchoService` (instance 1) | 7001 | `MEchoService` | 注册 Actor 1001, 1002 |
+| `EchoService` (instance 2) | 7002 | `MEchoService` | 注册 Actor 2001, 2002 |
+
+启动命令示例：
+
+```bash
+./Bin/EchoService --listen=7001 --inst=1 --actors=1001,1002 \
+    --peers=Echo@127.0.0.1:7002 \
+    --service=MEchoService
+```
+
+ActorId 布局：[ServiceId (高 32 位 = `EServerType::Echo`=7)][InstId (低 32 位)]。
 
 ## 快速开始
 
@@ -75,23 +76,18 @@ Windows 下也可以直接使用：
 Scripts\Build.bat Release
 ```
 
-3. 本地起服
+3. 启动 PoC 三进程（Gateway + 2 个 EchoService）
 
 ```bash
 python3 Scripts/servers.py start --build-dir Build
 ```
 
-4. 跑完整验证
+默认启动顺序：`EchoService@7001` → `EchoService@7002` → `Gateway@8001`。
+
+4. 跑端到端验证（链 1 + 链 2）
 
 ```bash
 python3 Scripts/validate.py --build-dir Build --no-build
-```
-
-如果只想先过某条主链路，可以先看 suite，再跑专项回归：
-
-```bash
-python3 Scripts/validate.py --build-dir Build --no-build --list-suites
-python3 Scripts/validate.py --build-dir Build --no-build --suite runtime_dispatch
 ```
 
 5. 停服
@@ -100,7 +96,18 @@ python3 Scripts/validate.py --build-dir Build --no-build --suite runtime_dispatc
 python3 Scripts/servers.py stop --build-dir Build
 ```
 
+> 当前 `validate.py` 跑的是骨架链路：
+> - 链路 1：Client → Gateway → EchoService（直接命中本机 Actor）
+> - 链路 2：Client → Gateway → EchoService_A → EchoService_B（跨进程 hop）
+> - 错误链路：发一个不存在的 ActorId，校验回包有 `actor_not_found` 错误码
+
 ## 文档入口
+
+`Docs/RefactorArchitectureAndRpc.md` 是当前架构权威说明。
+
+## 文档入口（legacy references）
+
+下面这些链接在 PoC 阶段不再更新——它们面向"6 服异质"历史拓扑。当前仓库只有 `GatewayServer + EchoService` 两类进程，结构与代码请直接看 `Source/` + `RefactorArchitectureAndRpc.md`。
 
 - [Docs/README.md](/root/Mession/Docs/README.md)
 - [Docs/Architecture.md](/root/Mession/Docs/Architecture.md)
@@ -117,17 +124,15 @@ python3 Scripts/servers.py stop --build-dir Build
 
 如果是第一次接触这个仓库，建议按以下顺序阅读：
 
-1. [Docs/Architecture.md](/root/Mession/Docs/Architecture.md)
-2. [Docs/BuildAndRun.md](/root/Mession/Docs/BuildAndRun.md)
-3. [Docs/RuntimeAndRpc.md](/root/Mession/Docs/RuntimeAndRpc.md)
-4. [Docs/GameplayAndState.md](/root/Mession/Docs/GameplayAndState.md)
-5. [Docs/PlayerRpcDevelopment.md](/root/Mession/Docs/PlayerRpcDevelopment.md)
-6. [Docs/Validation.md](/root/Mession/Docs/Validation.md)
+1. [Docs/RefactorArchitectureAndRpc.md](/root/Mession/Docs/RefactorArchitectureAndRpc.md)
+2. [Source/Common/Net/Rpc/MRpcChannel.h](/root/Mession/Source/Common/Net/Rpc/MRpcChannel.h) — RPC 三入口
+3. [Source/Common/Net/Routing/ActorRouter.h](/root/Mession/Source/Common/Net/Routing/ActorRouter.h) — Actor 寻址
+4. [Source/Servers/EchoService/EchoService.cpp](/root/Mession/Source/Servers/EchoService/EchoService.cpp) — 端到端示例
 
 ## 当前开发重点
 
-当前最值得继续推进的方向主要有三条：
+PoC 阶段的下一个推进方向：
 
-- 收口玩家状态归属，减少 `Profile / Pawn / Progression / CombatProfile` 之间的桥接同步
-- 固化自动验证和可观测性，把现有主链路能力沉淀为稳定回归
-- 把战斗和技能配置继续往数据驱动方向推进，而不是只停留在内建默认值
+- **跑通链路 2**：Client → Gateway → EchoService_A → EchoService_B。需要 `MActorRouter` 跨进程同步（当前只有本进程 `RegisterActor`）。
+- **MClientManifest 真正落地**：让 MHeaderTool 把 `MFUNCTION(Client)` 反射生成全局 FunctionId → (OwnerType, FunctionName, ResponseType) 表，替代现在的硬编码。
+- **补一组真实协议样例**：`FCastSkillRequest/Response / FMoveRequest/Response / FQuerySceneResponse`，给 `MRpcChannel::CallToActor` + `MRpcChannel::SendToClient` 真实例子，而不是只剩一个 `FSampleEchoRequest`。

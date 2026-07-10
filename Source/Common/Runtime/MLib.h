@@ -81,12 +81,30 @@ template<typename K, typename V, typename Compare = std::less<K>>
 using TMultiMap = std::map<K, V, Compare>;
 
 template<typename T>
-using TSharedPtr = std::shared_ptr<T>;
+class TSharedPtr : public std::shared_ptr<T>
+{
+public:
+    using std::shared_ptr<T>::shared_ptr;
+
+    TSharedPtr() = default;
+    TSharedPtr(std::nullptr_t) : std::shared_ptr<T>(nullptr) {}
+    // Allow converting construction from std::shared_ptr<U> (e.g., MakeShared returns std::shared_ptr<MBase>)
+    template<typename U>
+    TSharedPtr(const std::shared_ptr<U>& Other) : std::shared_ptr<T>(Other) {}
+    template<typename U>
+    TSharedPtr(std::shared_ptr<U>&& Other) : std::shared_ptr<T>(std::move(Other)) {}
+    template<typename U>
+    TSharedPtr(const TSharedPtr<U>& Other) : std::shared_ptr<T>(Other) {}
+
+    // UE-style helpers
+    T* Get() const { return std::shared_ptr<T>::get(); }
+    bool IsValid() const { return std::shared_ptr<T>::get() != nullptr; }
+};
 
 template<typename T, typename... TArgs>
 TSharedPtr<T> MakeShared(TArgs&&... Args)
 {
-    return std::make_shared<T>(std::forward<TArgs>(Args)...);
+    return TSharedPtr<T>(std::make_shared<T>(std::forward<TArgs>(Args)...));
 }
 
 template<typename T>

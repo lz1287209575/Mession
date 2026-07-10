@@ -10,26 +10,45 @@
 #include "Common/Runtime/Object/Result.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Common/Runtime/Id.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 #include "Servers/App/ServiceId.h"
+#include "Servers/App/ServerCallAsyncSupport.h"
+#include "Servers/App/ServiceMain.h"
+#include "Protocol/Messages/Common/AppMessages.h"
+#include "Protocol/Messages/Common/ControlPlaneMessages.h"
 #include "Protocol/Messages/EchoService/FSampleEchoMessages.h"
 
-// 进程间连接 peer 配置。PoC 阶段由 --peers 命令行参数解析；每个 peer 一项。
-struct SServicePeerConfig
-{
-    EServerType ServerType = EServerType::Unknown;
-    MString Address = "127.0.0.1";
-    uint16 Port = 0;
-};
+class MEchoService;
+extern MEchoService* GGlobalEchoService;
 
+MSTRUCT()
 struct SEchoServiceConfig
 {
+    MPROPERTY(Meta=(Cli="--listen"))
     uint16 ListenPort = 0;
+
+    MPROPERTY(Meta=(Cli="--service"))
     MString ServiceName = "MEchoService";
+
+    // --local-type 接受字符串（"Echo" / "Gateway"），反射到 LocalServerType 后再派生 LocalServerId。
+    MPROPERTY(Meta=(Cli="--local-type"))
+    MString LocalServerTypeName = "Echo";
+
+    MPROPERTY()
     EServerType LocalServerType = EServerType::Unknown;
+
+    MPROPERTY()
     uint32 LocalServerId = 0;
-    uint32 LocalInstId = 0;  // 本进程在 LocalServerType 类型下的实例号
-    TVector<uint32> LocalActorIds;  // 本进程持有的其他 Actor 的 InstId 列表；最终 ActorId = MServiceId::Make(LocalServerType, InstId)
-    TVector<SServicePeerConfig> Peers;  // 启动时连接的 peer 列表（Gateway + 其它 EchoService）
+
+    MPROPERTY(Meta=(Cli="--inst"))
+    uint32 LocalInstId = 0;
+
+    MPROPERTY(Meta=(Cli="--actors"))
+    TVector<uint32> LocalActorIds;
+
+    // Peers 反射解析为 TVector<MServiceMain::SServicePeerConfig>——支持嵌套结构体的反射解析。
+    MPROPERTY(Meta=(Cli="--peers"))
+    TVector<MServiceMain::SServicePeerConfig> Peers;
 };
 
 MCLASS(Type=Service)
@@ -40,6 +59,8 @@ public:
 public:
     using MObject::Tick;
 
+    static MEchoService* GetSingleton() { return GGlobalEchoService; }
+
     bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
     void Tick();
@@ -47,17 +68,37 @@ public:
 
     uint16 GetListenPort() const override;
     void OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
+    void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
 
     void ApplyConfig(const SEchoServiceConfig& InConfig) { Config = InConfig; }
 
-    // EchoService 暴露的 ServerCall——Gateway 通过 ClientFunctionRoute 路由表查到本类后调用。
+    /**
+     * BuildConfig — EchoService 入口参数解析。
+     * 走反射：遍历 SEchoServiceConfig Properties，找 Meta=(Cli="--xxx") 匹配 argv；
+     * 公共参数（--port / --listen）由 MServiceMain::ParseCommonArgs 处理。
+     */
+    static SEchoServiceConfig BuildConfig(int argc, char** argv);
+
+    // EchoService 暴露的 ServerCall——Gateway 通过 MClientManifest 把 Client_* 转到本类后调用。
     MFUNCTION(ServerCall)
     MFUTURE(FSampleEchoResponse) Echo(const FSampleEchoRequest& Request);
 
+    // 传输层握手 / 心跳桩——MServerConnection::SendHandshake / SendHeartbeat 会通过
+    // MRpc::CallRemote 调 Rpc_OnServerHandshake / Rpc_OnHeartbeat。
+    //
+    // 签名限制：MHeaderTool 当前生成的 ServerCall stub 只支持 1-arg invoke
+    // （GenerateServerCallHandler 跳过 0-arg 函数 + 只 parse 第一个参数），所以这里
+    // 用单个 uint32 当 dummy 参数——handshake / heartbeat 是无状态 ack。
+    MFUNCTION(ServerCall)
+    MFuture<TResult<SEmptyServerMessage, FAppError>> Rpc_OnServerHandshake(uint32 DummyServerId);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<SEmptyServerMessage, FAppError>> Rpc_OnHeartbeat(uint32 Seq);
+
 private:
-    // 建立到所有 peer 的连接 + 注册到 MServiceContainer + 注册到本进程 MServerRuntimeContext。
+    // 建立到所有 peer 的连接 + 注册到本进程 MServerRuntimeContext。
     void ConnectAllPeers();
 
     // 本机 Actor 注册到 MActorRouter（ServerType=Unknown 表示本机）。

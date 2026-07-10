@@ -1,17 +1,23 @@
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Common/Runtime/Object/IDisposable.h"
 
 MObject::~MObject()
 {
     RemoveFromRoot();
+
+    if (IDisposable* Disposable = dynamic_cast<IDisposable*>(this))
+    {
+        if (!Disposable->IsDisposed())
+        {
+            Disposable->Dispose();
+        }
+    }
+
     SetOuter(nullptr);
     GetObjectMap().erase(ObjectId);
 
-    TVector<MObject*> ChildObjects = Children;
+    // TSharedPtr<MObject> 析构链自动 delete child
     Children.clear();
-    for (MObject* Child : ChildObjects)
-    {
-        delete Child;
-    }
 }
 
 TMap<uint64, MObject*>& MObject::GetObjectMap()
@@ -20,9 +26,9 @@ TMap<uint64, MObject*>& MObject::GetObjectMap()
     return ObjectMap;
 }
 
-TSet<MObject*>& MObject::GetRootSet()
+TSet<TSharedPtr<MObject>>& MObject::GetRootSet()
 {
-    static TSet<MObject*> RootSet;
+    static TSet<TSharedPtr<MObject>> RootSet;
     return RootSet;
 }
 
@@ -33,11 +39,11 @@ void MObject::VisitReferencedObjects(const TFunction<void(MObject*)>& Visitor) c
         return;
     }
 
-    for (MObject* Child : Children)
+    for (const TSharedPtr<MObject>& Child : Children)
     {
         if (Child)
         {
-            Visitor(Child);
+            Visitor(Child.Get());
         }
     }
 }
@@ -51,39 +57,71 @@ void MObject::SetOuter(MObject* InOuter)
 
     if (Outer)
     {
-        Outer->RemoveChildObject(this);
+        TSharedPtr<MObject> SelfRef = Outer->FindChildShared(this);
+        if (SelfRef.IsValid())
+        {
+            Outer->RemoveChildObject(SelfRef);
+        }
     }
 
     Outer = InOuter;
 
     if (Outer)
     {
-        Outer->AddChildObject(this);
+        // 路径：业务代码 NewMObject 已经把 TSharedPtr 挂到 Outer->Children；
+        // 这里不再额外 AddChildObject，避免重复持有。
+        // 兜底：如果 Outer 找不到 this 的 TSharedPtr 引用（即 SetOuter 在 NewMObject 之外被裸调），
+        // 创建一个 aliased shared_ptr，custom deleter 不再 delete（Outer 不管生命周期）。
+        TSharedPtr<MObject> SelfRef = Outer->FindChildShared(this);
+        if (!SelfRef.IsValid())
+        {
+            Outer->AddChildObject(TSharedPtr<MObject>(this, [](MObject*) {}));
+        }
     }
+}
+
+void MObject::AddToRootSet(const TSharedPtr<MObject>& Object)
+{
+    if (!Object.IsValid())
+    {
+        return;
+    }
+    Object->ObjectFlags |= ObjectFlag_RootSet;
+    GetRootSet().insert(Object);
 }
 
 void MObject::AddToRoot()
 {
     ObjectFlags |= ObjectFlag_RootSet;
-    GetRootSet().insert(this);
+    // TSharedPtr 由 NewMObject 在调用 AddToRoot 之前/之后 push 到 RootSet。
+    // 直接调 AddToRoot() 的旧调用点需要先在外面 MakeShared 持有。
+    TSharedPtr<MObject> Existing = FindChildShared(this);
+    if (Existing.IsValid())
+    {
+        GetRootSet().insert(Existing);
+    }
 }
 
 void MObject::RemoveFromRoot()
 {
     ObjectFlags &= ~ObjectFlag_RootSet;
-    GetRootSet().erase(this);
+    TSharedPtr<MObject> Existing = FindRootShared(this);
+    if (Existing.IsValid())
+    {
+        GetRootSet().erase(Existing);
+    }
 }
 
-void MObject::AddChildObject(MObject* Child)
+void MObject::AddChildObject(const TSharedPtr<MObject>& Child)
 {
-    if (!Child)
+    if (!Child.IsValid())
     {
         return;
     }
 
-    for (MObject* ExistingChild : Children)
+    for (const TSharedPtr<MObject>& ExistingChild : Children)
     {
-        if (ExistingChild == Child)
+        if (ExistingChild.Get() == Child.Get())
         {
             return;
         }
@@ -92,21 +130,50 @@ void MObject::AddChildObject(MObject* Child)
     Children.push_back(Child);
 }
 
-void MObject::RemoveChildObject(MObject* Child)
+void MObject::RemoveChildObject(const TSharedPtr<MObject>& Child)
 {
-    if (!Child)
+    if (!Child.IsValid())
     {
         return;
     }
 
     for (auto It = Children.begin(); It != Children.end(); ++It)
     {
-        if (*It == Child)
+        if (It->Get() == Child.Get())
         {
             Children.erase(It);
             return;
         }
     }
+}
+
+TSharedPtr<MObject> MObject::FindChildShared(MObject* Child) const
+{
+    if (!Child)
+    {
+        return nullptr;
+    }
+    for (const TSharedPtr<MObject>& ExistingChild : Children)
+    {
+        if (ExistingChild.Get() == Child)
+        {
+            return ExistingChild;
+        }
+    }
+    return nullptr;
+}
+
+TSharedPtr<MObject> MObject::FindRootShared(MObject* Object) const
+{
+    auto& RootSet = GetRootSet();
+    for (const TSharedPtr<MObject>& Existing : RootSet)
+    {
+        if (Existing.Get() == Object)
+        {
+            return Existing;
+        }
+    }
+    return nullptr;
 }
 
 MString MObject::ToString() const

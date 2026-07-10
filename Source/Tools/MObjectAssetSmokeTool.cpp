@@ -148,12 +148,11 @@ int main(int argc, char** argv)
         return 6;
     }
 
-    MMonsterManager* Manager = NewMObject<MMonsterManager>(nullptr, "AssetSmokeManager");
+    TSharedPtr<MMonsterManager> Manager = NewMObject<MMonsterManager>(nullptr, "AssetSmokeManager");
     MObject* LoadedRoot = MObjectAssetLoader::LoadFromBytes(Bytes, Manager, &Error);
     if (!LoadedRoot)
     {
         std::cerr << "load_failed: " << Error << "\n";
-        DestroyMObject(Manager);
         return 7;
     }
 
@@ -163,15 +162,13 @@ int main(int argc, char** argv)
         if (!MObjectAssetJson::ExportAssetObjectToJson(LoadedRoot, RoundTripJson, &Error))
         {
             std::cerr << "roundtrip_export_failed: " << Error << "\n";
-            DestroyMObject(Manager);
-            return 8;
+                return 8;
         }
 
         if (!WriteTextFile(RoundTripPath, RoundTripJson))
         {
             std::cerr << "write_roundtrip_failed: " << RoundTripPath << "\n";
-            DestroyMObject(Manager);
-            return 9;
+                return 9;
         }
     }
 
@@ -181,24 +178,21 @@ int main(int argc, char** argv)
         if (!Manager->RegisterMonsterConfig(Config, Error))
         {
             std::cerr << "register_config_failed: " << Error << "\n";
-            DestroyMObject(Manager);
-            return 10;
+                return 10;
         }
 
         FCombatUnitRef Unit;
         if (!Manager->SpawnMonster(9001, *Config, Unit, Error))
         {
             std::cerr << "spawn_from_config_failed: " << Error << "\n";
-            DestroyMObject(Manager);
-            return 11;
+                return 11;
         }
 
         MMonster* Monster = Manager->FindMonster(Unit);
         if (!Monster)
         {
             std::cerr << "spawned_monster_not_found\n";
-            DestroyMObject(Manager);
-            return 12;
+                return 12;
         }
 
         std::cout
@@ -224,6 +218,5 @@ int main(int argc, char** argv)
         << " payload_bytes=" << Header.PayloadSize
         << "\n";
 
-    DestroyMObject(Manager);
     return 0;
 }

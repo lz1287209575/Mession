@@ -160,29 +160,13 @@ EServerType ParseClientTargetServerType(const char* TargetName)
     }
 
     const MString Target(TargetName);
-    if (Target == "Login")
-    {
-        return EServerType::Login;
-    }
-    if (Target == "World")
-    {
-        return EServerType::World;
-    }
-    if (Target == "Scene")
-    {
-        return EServerType::Scene;
-    }
-    if (Target == "Router")
-    {
-        return EServerType::Router;
-    }
     if (Target == "Gateway")
     {
         return EServerType::Gateway;
     }
-    if (Target == "Mgo")
+    if (Target == "Echo")
     {
-        return EServerType::Mgo;
+        return EServerType::Echo;
     }
 
     return EServerType::Unknown;

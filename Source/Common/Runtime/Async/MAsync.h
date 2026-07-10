@@ -155,6 +155,53 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
  *   SFutureResult<FPlayerLogoutResponse>
  * 替代：
  *   MFuture<TResult<FPlayerLogoutResponse, FAppError>>
+ *
+ * ----------------------------------------------------------------------------
+ * 何时用 SFutureResult / MFUTURE vs 裸 MFuture：
+ *
+ *   - `MFUTURE(T)`（即 `SFutureResult<T>`）是**协程友好的 future**：
+ *     Get() 返回值；Err 时抛 `FFutureResultError` 而不是返回错误码——适合
+ *     `MAwait`/`MAwaitOk` 内部捕获并短路传播。
+ *     所有 `MFUNCTION(ServerCall)` / `MFUNCTION(Async)` 的 RPC handler 返回
+ *     类型都用 MFUTURE(T)。
+ *
+ *   - `MFuture<TResult<T, FAppError>>`（裸）适合**调用方**：
+ *     当你需要明确检查 IsErr()/IsOk() 而不希望异常时，回包直接用 `.Then()`
+ *     处理；不要在 MFUTURE 上调 .Get() 除非你愿意 catch FFutureResultError。
+ *
+ *   - `MFuture<void>` / `MPromise<void>` 是不带错误状态的纯 future。
+ *
+ * ----------------------------------------------------------------------------
+ * Fiber 后端状态：
+ *
+ *   - Linux（POSIX ucontext）：完整 suspend/resume，`MAwait*` 走慢路径真挂起；
+ *   - Windows（null backend）：fiber 落空，`MAwait*` 走到 suspend 会抛
+ *     `FPlayerCommandError(FAppError::Make("fiber_backend_unsupported"))`。
+ *
+ *   **同步 fast-path 仍然安全**：`MAwait` / `MAwaitOk` 先检查
+ *   `MHasCurrentPlayerCommand()`（即 fiber 是否在线程内），如果不在 fiber
+ *   就直接调 `Future.Get()`，不进入 suspend/resume。任何在 MainLoop 上跑的
+ *   service handler 都走 fast-path，不会触发 fiber backend 检查。
+ *
+ * ----------------------------------------------------------------------------
+ * 服务 handler 的写法约定：
+ *
+ *   MFUNCTION(ServerCall)
+ *   MFUTURE(FPlayerLogoutResponse) PlayerLogout(FPlayerLogoutRequest Request)
+ *   {
+ *       FPlayerLogoutResponse Response;
+ *       // ... 业务逻辑 ...
+ *       return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
+ *   }
+ *
+ *   错误用 MServerCallAsyncSupport::MakeErrorFuture<T>(code, msg)，
+ *   不要直接构造 `TResult<T, FAppError>::Err(...)`——它跟服务层的 wire
+ *   code 协议绑定（生成在 Build/Generated/MClientManifest.mgenerated.cpp）。
+ *
+ *   不要在 service handler 里调 `MAwait` / `MAwaitOk` ——它们目前是为 PoC
+ *   异步链路预留的 hook。如果你的服务逻辑需要"等待另一个 future 完成"，
+ *   用 `.Then()` 链 + 接续函数；只有当业务真正实现 player strand 调度时
+ *   才用 fiber await。
  */
 #define MFUTURE(T) SFutureResult<T>
 

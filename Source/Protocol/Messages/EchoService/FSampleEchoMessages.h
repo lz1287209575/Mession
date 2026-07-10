@@ -22,7 +22,7 @@ struct FSampleEchoResponse
     MString Echo;
 
     // 主叫 ActorId（同样 64-bit 位布局）。远端收到后能用 MServiceId::GetServiceType()
-    // 知道主叫来自哪种 Service，再 MServiceContainer::Resolve 拿到 transport 反调。
+    // 知道主叫来自哪种 Service，再通过 MActorRouter::FindActor 寻址反调。
     MPROPERTY()
     uint64 SourceActorId = 0;
 

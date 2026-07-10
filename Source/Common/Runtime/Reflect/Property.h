@@ -156,6 +156,15 @@ public:
     virtual bool ExportBinaryValue(const void* Object, TByteArray& OutData, MString* OutError = nullptr) const;
     virtual bool ImportBinaryValue(void* Object, const TByteArray& InData, MString* OutError = nullptr) const;
 
+    /**
+     * SetValueFromString — 从字符串解析字段值（CLI 解析用）。
+     * 默认实现不支持；TProperty<T> 模板按 T 特化（MString/integral/bool/enum/TVector<T>）。
+     */
+    virtual bool SetValueFromString(void* /*Object*/, const MString& /*Value*/, MString* /*OutError*/ = nullptr) const
+    {
+        return false;
+    }
+
     template<typename T>
     T* GetValuePtr(void* Object) const
     {

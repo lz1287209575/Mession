@@ -1,15 +1,26 @@
 #pragma once
 
-#include "Common/Net/Rpc/RpcManifest.h"
-#include "Common/Runtime/Reflect/Reflection.h"
-#include "MClientManifest.generated.h"
+// ClientManifest — 客户端调用清单的薄包装层。
+//
+// MClientManifest 自身在 Source/Common/Net/Rpc/MClientManifest.generated.h 里
+// 由 MHeaderTool 维护（静态声明 + definitions 由 .mgenerated.cpp 提供）。
+//
+// 当前 PoC 阶段仓库里没有任何 MFUNCTION(Client/ClientCall) 函数——
+// GClientManifestEntries 是空数组；FindByFunctionId 会始终返回 nullptr。
 
-inline const MClientManifest::SEntry* FindGlobalClientFunctionEntryById(uint16 FunctionId)
+#include "Common/Runtime/MLib.h"
+#include "Common/Runtime/Reflect/Reflection.h"
+#include "Common/Net/Rpc/MClientManifest.generated.h"
+#include "Common/Net/Rpc/RpcManifest.h"
+
+#include <cstring>
+
+inline const MClientManifest::SEntry* FindGlobalClientFunctionEntryById(uint16_t FunctionId)
 {
     return MClientManifest::FindByFunctionId(FunctionId);
 }
 
-inline MClass* FindGlobalClientFunctionOwnerClassById(uint16 FunctionId)
+inline MClass* FindGlobalClientFunctionOwnerClassById(uint16_t FunctionId)
 {
     const MClientManifest::SEntry* Entry = FindGlobalClientFunctionEntryById(FunctionId);
     if (!Entry || !Entry->OwnerType || Entry->OwnerType[0] == '\0')
@@ -20,7 +31,7 @@ inline MClass* FindGlobalClientFunctionOwnerClassById(uint16 FunctionId)
     return MObject::FindClass(Entry->OwnerType);
 }
 
-inline const MFunction* FindGlobalClientFunctionById(uint16 FunctionId)
+inline const MFunction* FindGlobalClientFunctionById(uint16_t FunctionId)
 {
     const MClientManifest::SEntry* Entry = FindGlobalClientFunctionEntryById(FunctionId);
     MClass* OwnerClass = FindGlobalClientFunctionOwnerClassById(FunctionId);
@@ -32,7 +43,7 @@ inline const MFunction* FindGlobalClientFunctionById(uint16 FunctionId)
     return OwnerClass->FindFunction(Entry->FunctionName);
 }
 
-inline MClass* FindGlobalClientResponseStructById(uint16 FunctionId)
+inline MClass* FindGlobalClientResponseStructById(uint16_t FunctionId)
 {
     const MClientManifest::SEntry* Entry = FindGlobalClientFunctionEntryById(FunctionId);
     if (!Entry || !Entry->ResponseTypeName || Entry->ResponseTypeName[0] == '\0')
@@ -43,7 +54,7 @@ inline MClass* FindGlobalClientResponseStructById(uint16 FunctionId)
     return MObject::FindStruct(Entry->ResponseTypeName);
 }
 
-inline EServerType GetGlobalClientFunctionTargetServerType(uint16 FunctionId)
+inline EServerType GetGlobalClientFunctionTargetServerType(uint16_t FunctionId)
 {
     const MClientManifest::SEntry* Entry = FindGlobalClientFunctionEntryById(FunctionId);
     if (!Entry)
@@ -69,25 +80,9 @@ inline EServerType GetGlobalClientFunctionTargetServerType(uint16 FunctionId)
     {
         return EServerType::Gateway;
     }
-    if (std::strcmp(Entry->OwnerType, "MLoginServer") == 0)
+    if (std::strcmp(Entry->OwnerType, "MEchoService") == 0)
     {
-        return EServerType::Login;
-    }
-    if (std::strcmp(Entry->OwnerType, "MWorldServer") == 0)
-    {
-        return EServerType::World;
-    }
-    if (std::strcmp(Entry->OwnerType, "MSceneServer") == 0)
-    {
-        return EServerType::Scene;
-    }
-    if (std::strcmp(Entry->OwnerType, "MRouterServer") == 0)
-    {
-        return EServerType::Router;
-    }
-    if (std::strcmp(Entry->OwnerType, "MMgoServer") == 0)
-    {
-        return EServerType::Mgo;
+        return EServerType::Echo;
     }
 
     return EServerType::Unknown;

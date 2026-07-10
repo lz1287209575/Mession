@@ -5,6 +5,11 @@
 #include "Common/Runtime/Json.h"
 #include "Common/Runtime/Asset/MObjectAssetBinary.h"
 
+#include <cerrno>
+#include <cctype>
+#include <cstdlib>
+#include <limits>
+
 namespace MObjectAssetJson
 {
 bool ExportStructToJsonValue(const MClass* StructMeta, const void* StructData, MJsonValue& OutValue, MString* OutError);
@@ -75,6 +80,190 @@ inline bool ImportReflectValueFromBinary(
     void* OwnerObject,
     MString* OutError);
 
+
+// ---------- SetValueFromString 特化（CLI 解析用） ----------
+
+template<typename T> class TProperty;
+
+template<typename T>
+struct TPropertyStringImporter
+{
+    static bool Import(const MProperty* /*Prop*/, void* /*Object*/, const MString& /*Value*/, MString* OutError)
+    {
+        if (OutError) *OutError = "string_import_unsupported_type";
+        return false;
+    }
+};
+
+template<>
+struct TPropertyStringImporter<MString>
+{
+    static bool Import(const MProperty* Prop, void* Object, const MString& Value, MString* /*OutError*/)
+    {
+        if (!Prop || !Object) return false;
+        auto* Ptr = Prop->GetValuePtr<MString>(Object);
+        if (!Ptr) return false;
+        *Ptr = Value;
+        return true;
+    }
+};
+
+template<>
+struct TPropertyStringImporter<bool>
+{
+    static bool Import(const MProperty* Prop, void* Object, const MString& Value, MString* OutError)
+    {
+        if (!Prop || !Object) return false;
+        auto* Ptr = Prop->GetValuePtr<bool>(Object);
+        if (!Ptr) return false;
+        MString Lower = Value;
+        for (auto& C : Lower) C = static_cast<char>(std::tolower(static_cast<unsigned char>(C)));
+        if (Lower == "true" || Lower == "1" || Lower == "yes" || Lower == "on")
+        {
+            *Ptr = true;
+            return true;
+        }
+        if (Lower == "false" || Lower == "0" || Lower == "no" || Lower == "off")
+        {
+            *Ptr = false;
+            return true;
+        }
+        if (OutError) *OutError = "string_import_invalid_bool:" + Value;
+        return false;
+    }
+};
+
+template<typename TInteger>
+struct TPropertyStringIntegerImporter
+{
+    static bool Import(const MProperty* Prop, void* Object, const MString& Value, MString* OutError)
+    {
+        if (!Prop || !Object) return false;
+        auto* Ptr = Prop->GetValuePtr<TInteger>(Object);
+        if (!Ptr) return false;
+        if (Value.empty())
+        {
+            if (OutError) *OutError = "string_import_empty_integer";
+            return false;
+        }
+        char* End = nullptr;
+        errno = 0;
+        unsigned long long Raw = std::strtoull(Value.c_str(), &End, 0);
+        if (End == Value.c_str() || (End != nullptr && *End != '\0') || errno != 0)
+        {
+            if (OutError) *OutError = "string_import_invalid_integer:" + Value;
+            return false;
+        }
+        if (Raw > static_cast<unsigned long long>((std::numeric_limits<TInteger>::max)()))
+        {
+            if (OutError) *OutError = "string_import_integer_out_of_range:" + Value;
+            return false;
+        }
+        *Ptr = static_cast<TInteger>(Raw);
+        return true;
+    }
+};
+
+template<> struct TPropertyStringImporter<int8>   : TPropertyStringIntegerImporter<int8> {};
+template<> struct TPropertyStringImporter<int16>  : TPropertyStringIntegerImporter<int16> {};
+template<> struct TPropertyStringImporter<int32>  : TPropertyStringIntegerImporter<int32> {};
+template<> struct TPropertyStringImporter<int64>  : TPropertyStringIntegerImporter<int64> {};
+template<> struct TPropertyStringImporter<uint8>  : TPropertyStringIntegerImporter<uint8> {};
+template<> struct TPropertyStringImporter<uint16> : TPropertyStringIntegerImporter<uint16> {};
+template<> struct TPropertyStringImporter<uint32> : TPropertyStringIntegerImporter<uint32> {};
+template<> struct TPropertyStringImporter<uint64> : TPropertyStringIntegerImporter<uint64> {};
+
+template<>
+struct TPropertyStringImporter<float>
+{
+    static bool Import(const MProperty* Prop, void* Object, const MString& Value, MString* OutError)
+    {
+        if (!Prop || !Object) return false;
+        auto* Ptr = Prop->GetValuePtr<float>(Object);
+        if (!Ptr) return false;
+        if (Value.empty())
+        {
+            if (OutError) *OutError = "string_import_empty_float";
+            return false;
+        }
+        char* End = nullptr;
+        errno = 0;
+        float V = std::strtof(Value.c_str(), &End);
+        if (End == Value.c_str() || (End != nullptr && *End != '\0') || errno != 0)
+        {
+            if (OutError) *OutError = "string_import_invalid_float:" + Value;
+            return false;
+        }
+        *Ptr = V;
+        return true;
+    }
+};
+
+template<>
+struct TPropertyStringImporter<double>
+{
+    static bool Import(const MProperty* Prop, void* Object, const MString& Value, MString* OutError)
+    {
+        if (!Prop || !Object) return false;
+        auto* Ptr = Prop->GetValuePtr<double>(Object);
+        if (!Ptr) return false;
+        if (Value.empty())
+        {
+            if (OutError) *OutError = "string_import_empty_float";
+            return false;
+        }
+        char* End = nullptr;
+        errno = 0;
+        double V = std::strtod(Value.c_str(), &End);
+        if (End == Value.c_str() || (End != nullptr && *End != '\0') || errno != 0)
+        {
+            if (OutError) *OutError = "string_import_invalid_float:" + Value;
+            return false;
+        }
+        *Ptr = V;
+        return true;
+    }
+};
+
+template<typename TElement>
+struct TPropertyStringImporter<TVector<TElement>>
+{
+    static bool Import(const MProperty* Prop, void* Object, const MString& Value, MString* OutError)
+    {
+        if (!Prop || !Object) return false;
+        auto* Vec = Prop->GetValuePtr<TVector<TElement>>(Object);
+        if (!Vec) return false;
+        Vec->clear();
+
+        size_t Pos = 0;
+        while (Pos <= Value.size())
+        {
+            size_t Comma = Value.find(',', Pos);
+            MString Token = (Comma == MString::npos)
+                ? Value.substr(Pos)
+                : Value.substr(Pos, Comma - Pos);
+            while (!Token.empty() && std::isspace(static_cast<unsigned char>(Token.front()))) Token.erase(Token.begin());
+            while (!Token.empty() && std::isspace(static_cast<unsigned char>(Token.back()))) Token.pop_back();
+
+            if (!Token.empty())
+            {
+                TElement E{};
+                TProperty<TElement> ElementProp(MString(), EPropertyType::None, 0, sizeof(TElement), EPropertyFlags::None);
+                MString ElemErr;
+                if (!ElementProp.SetValueFromString(&E, Token, &ElemErr))
+                {
+                    if (OutError) *OutError = "string_import_array_element:" + ElemErr;
+                    return false;
+                }
+                Vec->push_back(std::move(E));
+            }
+            if (Comma == MString::npos) break;
+            Pos = Comma + 1;
+        }
+        return true;
+    }
+};
+
 template<typename T>
 class TProperty : public MProperty
 {
@@ -127,7 +316,13 @@ public:
     {
         return TPropertyBinaryImporter<T>::Import(this, Object, InData, OutError);
     }
+
+    virtual bool SetValueFromString(void* Object, const MString& Value, MString* OutError = nullptr) const override
+    {
+        return TPropertyStringImporter<T>::Import(this, Object, Value, OutError);
+    }
 };
+
 
 template<typename TObject, typename TValue, TValue TObject::* MemberPtr>
 class TMemberProperty : public TProperty<TValue>

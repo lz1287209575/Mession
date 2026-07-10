@@ -1,12 +1,13 @@
 #include "Servers/Gateway/GatewayServer.h"
+#include "Servers/App/ServiceMain.h"
 #include "Common/Net/Rpc/ClientManifest.h"
+#include "Common/Net/Rpc/MRpcChannel.h"
 #include "Common/Net/Rpc/RpcClientCall.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Net/Rpc/RpcPayload.h"
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Async/MAsync.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
-#include "Servers/App/ServiceContainer.h"
 #include "Servers/App/ServiceId.h"
 
 MGatewayServer* GGlobalGateway = nullptr;
@@ -19,59 +20,6 @@ struct FClientCallHandle
     uint64 ConnectionId = 0;
     uint64 CallId = 0;
 };
-
-bool DispatchBackendServerCallPacket(
-    MObject* Service,
-    const TSharedPtr<MServerConnection>& Connection,
-    const TByteArray& Data)
-{
-    if (!Service || !Connection || Data.empty())
-    {
-        return false;
-    }
-
-    uint16 FunctionId = 0;
-    uint64 CallId = 0;
-    uint32 PayloadSize = 0;
-    size_t PayloadOffset = 0;
-    if (!ParseServerCallPacket(Data, FunctionId, CallId, PayloadSize, PayloadOffset))
-    {
-        return false;
-    }
-
-    TByteArray RequestPayload;
-    if (PayloadSize > 0)
-    {
-        RequestPayload.insert(
-            RequestPayload.end(),
-            Data.begin() + static_cast<TByteArray::difference_type>(PayloadOffset),
-            Data.begin() + static_cast<TByteArray::difference_type>(PayloadOffset + PayloadSize));
-    }
-
-    const TSharedPtr<IServerCallResponseTarget> ResponseTarget =
-        MakeShared<MServerCallResponseTarget>(
-            [Connection]() -> bool
-            {
-                return Connection && Connection->IsConnected();
-            },
-            [Connection](uint16 ResponseFunctionId, uint64 ResponseCallId, bool bSuccess, const TByteArray& ResponsePayload) -> bool
-            {
-                TByteArray ResponsePacketPayload;
-                if (!BuildServerCallResponsePacket(
-                        ResponseFunctionId,
-                        ResponseCallId,
-                        bSuccess,
-                        ResponsePayload,
-                        ResponsePacketPayload))
-                {
-                    return false;
-                }
-
-                return SendServerCallResponseMessage(Connection, ResponsePacketPayload);
-            });
-
-    return DispatchServerCall(Service, FunctionId, CallId, RequestPayload, ResponseTarget);
-}
 
 // PoC：把内嵌的 Then lambda 抽出来
 MFuture<TResult<SEmptyServerMessage, FAppError>> HandleEchoResult(
@@ -137,7 +85,7 @@ bool MGatewayServer::Init(int InPort)
 
 void MGatewayServer::ConnectAllPeers()
 {
-    for (const SServicePeerConfig& Peer : Config.Peers)
+    for (const MServiceMain::SServicePeerConfig& Peer : Config.Peers)
     {
         const uint32 PeerServerId = MUniqueIdGenerator::Generate();
         const SServerConnectionConfig PeerConfig(
@@ -154,10 +102,7 @@ void MGatewayServer::ConnectAllPeers()
         });
         PeerConn->Connect();
 
-        // 1. 注册到 MServiceContainer（全局 transport map）
-        MServiceContainer::Get().Register(PeerConn);
-
-        // 2. 注册到本进程 MServerRuntimeContext
+        // 注册到本进程 MServerRuntimeContext（用作 RpcRuntimeContext::ResolveServerTransport）
         RegisterRpcTransport(Peer.ServerType, PeerConn);
 
         LOG_INFO("GatewayServer: connected to peer %s at %s:%u",
@@ -169,7 +114,13 @@ void MGatewayServer::ConnectAllPeers()
 
 void MGatewayServer::Tick()
 {
-    MServiceContainer::Get().TickAll(0.0f);
+    for (const auto& Pair : GetRpcTransports())
+    {
+        if (Pair.second)
+        {
+            Pair.second->Tick(0.0f);
+        }
+    }
 }
 
 uint16 MGatewayServer::GetListenPort() const
@@ -186,6 +137,8 @@ void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
         Conn,
         [this](uint64 ConnectionId, const TByteArray& Payload)
         {
+            LOG_INFO("Gateway received client packet: conn=%llu size=%zu",
+                     static_cast<unsigned long long>(ConnectionId), Payload.size());
             HandleClientPacket(ConnectionId, Payload);
         },
         [this](uint64 ConnectionId)
@@ -196,7 +149,13 @@ void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 
 void MGatewayServer::TickBackends()
 {
-    MServiceContainer::Get().TickAll(0.1f);
+    for (const auto& Pair : GetRpcTransports())
+    {
+        if (Pair.second)
+        {
+            Pair.second->Tick(0.1f);
+        }
+    }
 }
 
 void MGatewayServer::ShutdownConnections()
@@ -210,7 +169,6 @@ void MGatewayServer::ShutdownConnections()
         }
     }
     ClientConnections.clear();
-    MServiceContainer::Get().ShutdownAll();
     ClearRpcTransports();
 }
 
@@ -219,18 +177,6 @@ void MGatewayServer::OnRunStarted()
     LOG_INFO("Gateway skeleton running on port %u", static_cast<unsigned>(Config.ListenPort));
 }
 
-void MGatewayServer::Client_Echo(FClientEchoRequest& Request, FClientEchoResponse& Response)
-{
-    Response.ConnectionId = GetCurrentClientConnectionId();
-    Response.Message = Request.Message;
-}
-
-void MGatewayServer::Client_Heartbeat(FClientHeartbeatRequest& Request, FClientHeartbeatResponse& Response)
-{
-    Response.bSuccess = true;
-    Response.Sequence = Request.Sequence;
-    Response.ConnectionId = GetCurrentClientConnectionId();
-}
 
 MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::PushClientDownlink(
     const FClientDownlinkPushRequest& Request)
@@ -275,6 +221,16 @@ MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::PushClientDownl
     return MServerCallAsyncSupport::MakeSuccessFuture(SEmptyServerMessage{});
 }
 
+MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::Rpc_OnServerHandshake(uint32 /*DummyServerId*/)
+{
+    return MServerCallAsyncSupport::MakeSuccessFuture(SEmptyServerMessage{});
+}
+
+MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::Rpc_OnHeartbeat(uint32 /*Seq*/)
+{
+    return MServerCallAsyncSupport::MakeSuccessFuture(SEmptyServerMessage{});
+}
+
 void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& Data)
 {
     uint16 FunctionId = 0;
@@ -296,51 +252,46 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
             Data.begin() + static_cast<TByteArray::difference_type>(PayloadOffset + PayloadSize));
     }
 
-    const FClientFunctionRoute* Route = MClientFunctionRouteTable::FindRoute(FunctionId);
-    if (!Route)
+    const MClientManifest::SEntry* Entry = MClientManifest::FindByFunctionId(FunctionId);
+
+    // PoC 阶段：MFUNCTION(Client/ClientCall) 还没声明，MClientManifest 是空表。
+    // 退化路径：所有 Client_* 走当前唯一的业务 Service（MEchoService::Echo）。
+    const char* TargetClassName = "MEchoService";
+    const char* TargetMethodName = "Echo";
+    EServerType TargetServer = EServerType::Echo;
+    if (Entry)
     {
-        LOG_WARN("Gateway received unknown client function id=%u connection=%llu",
-                 static_cast<unsigned>(FunctionId),
-                 static_cast<unsigned long long>(ConnectionId));
-        return;
+        TargetClassName = Entry->OwnerType;
+        TargetMethodName = Entry->FunctionName;
+        TargetServer = GetGlobalClientFunctionTargetServerType(FunctionId);
     }
 
-    // 通过 MServiceContainer 查 peer transport
-    TSharedPtr<MServerConnection> TargetConn = MServiceContainer::Get().Resolve(Route->TargetServiceType);
-    if (!TargetConn || !TargetConn->IsConnected())
-    {
-        LOG_WARN("Gateway: peer transport unavailable for function=%u target=%s",
-                 static_cast<unsigned>(FunctionId),
-                 GetServerTypeDisplayName(Route->TargetServiceType));
-        return;
-    }
-
-    // PoC 第 1 步：仅 Echo 一条路由 + bRequiresActorId=true
+    // Gateway 收到 Client_* 后把它当作 ServerCall 转给对应的 Service 实例。
+    // Service 实例通过 TargetActorId 走 MRpcChannel::CallToActor 自己寻址。
     FSampleEchoRequest ServiceRequest;
     ServiceRequest.TargetActorId = 0;
     ServiceRequest.Message = MString();
 
-    if (Route->bRequiresActorId)
+    // PoC 第 1 步：所有 Client_* 都假定包含 8 字节 ActorId 头部 + 后续 message body
+    if (Payload.size() < sizeof(uint64))
     {
-        if (Payload.size() < sizeof(uint64))
-        {
-            LOG_WARN("Gateway: actor_id_required for function=%u", static_cast<unsigned>(FunctionId));
-            return;
-        }
-        std::memcpy(&ServiceRequest.TargetActorId, Payload.data(), sizeof(uint64));
-        ServiceRequest.Message.assign(
-            reinterpret_cast<const char*>(Payload.data() + sizeof(uint64)),
-            Payload.size() - sizeof(uint64));
+        LOG_WARN("Gateway: actor_id_required for function=%u", static_cast<unsigned>(FunctionId));
+        return;
     }
-    else
-    {
-        ServiceRequest.Message.assign(
-            reinterpret_cast<const char*>(Payload.data()),
-            Payload.size());
-    }
+    std::memcpy(&ServiceRequest.TargetActorId, Payload.data(), sizeof(uint64));
+    ServiceRequest.Message.assign(
+        reinterpret_cast<const char*>(Payload.data() + sizeof(uint64)),
+        Payload.size() - sizeof(uint64));
 
     FClientCallHandle Handle(FunctionId, ConnectionId, CallId);
-    CallServerFunction<FSampleEchoResponse>(TargetConn, Route->ClassName, Route->MethodName, ServiceRequest)
+
+    // 通过 MRpcChannel::Call 走 Resolver 路由到目标 Service
+    MRpcChannel::Get().Call<FSampleEchoResponse>(
+        this,
+        TargetServer,
+        TargetClassName,
+        TargetMethodName,
+        ServiceRequest)
         .Then([Handle](MFuture<TResult<FSampleEchoResponse, FAppError>> Completed)
         {
             return HandleEchoResult(std::move(Completed), Handle);
@@ -374,4 +325,16 @@ void MGatewayServer::HandleBackendPacket(
     LOG_WARN("Gateway received unsupported backend packet from %s: type=%u",
              PeerName ? PeerName : "backend",
              static_cast<unsigned>(PacketType));
+}
+
+SGatewayConfig MGatewayServer::BuildConfig(int argc, char** argv)
+{
+    MServiceMain::SCommonConfig Common = MServiceMain::ParseCommonArgs(argc, argv);
+
+    SGatewayConfig Config;
+    Config.ListenPort = (Common.PortOverride > 0)
+        ? static_cast<uint16>(Common.PortOverride)
+        : Config.ListenPort;
+    Config.Peers = std::move(Common.Peers);
+    return Config;
 }

@@ -3,6 +3,7 @@
 #include "Core/Types.h"
 #include "Util/StringUtil.h"
 #include "Parsing/FunctionParser.h"
+#include "Parsing/PropertyParser.h"
 #include <optional>
 #include <filesystem>
 
@@ -242,10 +243,6 @@ public:
         const SClassRegion& region) const
     {
         const std::string classBody = contents.substr(region.BodyOpen + 1, region.BodyClose - region.BodyOpen - 1);
-
-        if (region.Name == "MWorldServer")
-        {
-        }
 
         SParsedClass parsed;
         parsed.Kind = (region.Keyword == "struct") ? EParsedTypeKind::Struct : EParsedTypeKind::Class;
@@ -536,6 +533,11 @@ private:
             prop.Type = Trim(left.substr(0, nameStart));
             if (auto owner = ExtractMacroValue(prop.MacroArgs, "Owner")) prop.Owner = *owner;
             prop.FlagsExpr = "EPropertyFlags::None";
+            // Parse Meta=(Cli=..., ...) metadata
+            {
+                PropertyParser metaParser;
+                prop.Metadata = metaParser.ParsePropertyMetadataEntries(prop.MacroArgs);
+            }
             properties.push_back(prop);
             searchPos = declEnd + 1;
         }

@@ -43,6 +43,7 @@ void PrintUsage(const char* progName)
     std::cerr << "  --cache-dir=<path>        Cache directory (default: Build/.mheadertool_cache)\n";
     std::cerr << "  --cmake-manifest=<path>   CMake manifest path\n";
     std::cerr << "  --validation-schema-out=<path>  Validation schema output path\n";
+    std::cerr << "  --client-manifest=<path>  Client manifest output path (.cpp)\n";
     std::cerr << "  --verbose                 Verbose output\n";
     std::cerr << "  --incremental             Enable incremental build (default: true)\n";
     std::cerr << "  --force-full             Force full rebuild\n";
@@ -103,6 +104,10 @@ MHT::SOptions ParseArgs(int argc, char** argv)
         else if (arg.rfind("--validation-schema-out=", 0) == 0)
         {
             options.ValidationSchemaPath = arg.substr(24);
+        }
+        else if (arg.rfind("--client-manifest=", 0) == 0)
+        {
+            options.ClientManifestPath = arg.substr(18);
         }
         else if (arg.rfind("--jobs=", 0) == 0)
         {
@@ -277,28 +282,7 @@ int main(int argc, char** argv)
                 }
             }
 
-            // 调试：打印 MWorldServer 的函数信息
-            for (const auto& cls : allClasses)
-            {
-                if (cls.Name == "MWorldServer")
-                {
-                    std::cerr << "DEBUG MWorldServer functions:\n";
-                    for (const auto& func : cls.Functions)
-                    {
-                        std::cerr << "  " << func.Name << " bIsRpc=" << func.bIsRpc
-                                  << " Transport=" << func.Transport << "\n";
-                    }
-                }
-                if (cls.Name == "MPlayerService")
-                {
-                    std::cerr << "DEBUG MPlayerService functions:\n";
-                    for (const auto& func : cls.Functions)
-                    {
-                        std::cerr << "  " << func.Name << " bIsAsync=" << func.bIsAsync
-                                  << " AsyncBody.size=" << func.AsyncBody.size() << "\n";
-                    }
-                }
-            }
+
 
             // 构建类型名到其父类列表的映射
             std::map<std::string, std::vector<std::string>> classParents;
@@ -307,11 +291,6 @@ int main(int argc, char** argv)
                 classParents[cls.Name] = cls.AllParentClasses;
             }
 
-            // 已知继承自 MObject 的基础设施类（用于补充解析）
-            std::set<std::string> knownMObjectBaseClasses = {
-                "MServerCallProxyBase",  // 继承自 MObject，是 WorldLogin 等的基类
-            };
-
             // 递归检查是否继承自 MObject
             auto recursivelyInheritsMObject = [&](const std::string& typeName, auto&& self) -> bool
             {
@@ -319,17 +298,11 @@ int main(int argc, char** argv)
                 {
                     return true;
                 }
-                // 检查已知的基础设施类
-                if (knownMObjectBaseClasses.count(typeName) > 0)
-                {
-                    return true;
-                }
                 auto it = classParents.find(typeName);
                 if (it == classParents.end())
                 {
-                    // 如果找不到这个类在已解析的类型中，假设它是一个继承自 MObject 的基础设施类
-                    // 这样可以让使用这些类的子类（如 MWorldLogin）被正确识别
-                    return true;
+                    // 找不到这个类在已解析的类型中——保守返回 false 让上层报错
+                    return false;
                 }
                 for (const auto& parent : it->second)
                 {
@@ -421,6 +394,15 @@ int main(int argc, char** argv)
                 std::cerr << "DEBUG: CMake manifest content length = " << cmakeContent.size() << "\n";
                 MHT::WriteFile(options.CMakeManifestPath, cmakeContent);
                 std::cerr << "DEBUG: CMake manifest written\n";
+            }
+
+            // 生成 Client manifest（FunctionId → Client_* 路由表）
+            if (!options.ClientManifestPath.empty())
+            {
+                MHT::ManifestGenerators manifestGen(options);
+                std::string clientContent = manifestGen.GenerateClientManifest(classesToGenerate);
+                MHT::WriteFile(options.ClientManifestPath, clientContent);
+                std::cerr << "DEBUG: ClientManifest written to " << options.ClientManifestPath.generic_string() << "\n";
             }
         }
 

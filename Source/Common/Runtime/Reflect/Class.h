@@ -256,6 +256,7 @@ public:
     MProperty* FindProperty(const MString& InName) const;
     MProperty* FindPropertyById(uint16 InId) const;
     MProperty* FindPropertyByAssetFieldId(uint32 InAssetFieldId) const;
+    MProperty* FindPropertyByMetadata(const MString& InKey, const MString& InValue) const;
 
     const TVector<MFunction*>& GetFunctions() const { return Functions; }
     MFunction* FindFunction(const MString& InName) const;

@@ -12,25 +12,18 @@
 #include "Protocol/Messages/Common/ClientDownlinkMessages.h"
 #include "Protocol/Messages/Common/ControlPlaneMessages.h"
 #include "Protocol/Messages/Common/ForwardedClientCallMessages.h"
-#include "Protocol/Messages/Common/ClientFunctionRoute.h"
-#include "Protocol/Messages/Gateway/GatewayBaseMessages.h"
 #include "Protocol/Messages/EchoService/FSampleEchoMessages.h"
+#include "Common/Runtime/Async/MAsync.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
+#include "Servers/App/ServiceMain.h"
 
 class MGatewayServer;
 extern MGatewayServer* GGlobalGateway;
 
-struct SServicePeerConfig
-{
-    EServerType ServerType = EServerType::Unknown;
-    MString Address = "127.0.0.1";
-    uint16 Port = 0;
-};
-
 struct SGatewayConfig
 {
     uint16 ListenPort = 8001;
-    TVector<SServicePeerConfig> Peers;  // 启动时主动连接的 peer（PoC 阶段：EchoService）
+    TVector<MServiceMain::SServicePeerConfig> Peers;  // 启动时主动连接的 peer（PoC 阶段：EchoService）
 };
 
 MCLASS(Type=Server)
@@ -52,16 +45,23 @@ public:
     void ShutdownConnections() override;
     void OnRunStarted() override;
 
-    MFUNCTION(ClientCall, Target=Gateway)
-    void Client_Echo(FClientEchoRequest& Request, FClientEchoResponse& Response);
-
-    MFUNCTION(ClientCall, Target=Gateway)
-    void Client_Heartbeat(FClientHeartbeatRequest& Request, FClientHeartbeatResponse& Response);
-
     MFUNCTION(ServerCall)
     MFuture<TResult<SEmptyServerMessage, FAppError>> PushClientDownlink(const FClientDownlinkPushRequest& Request);
 
+    // 传输层握手 / 心跳桩——EchoService 对端 Rpc_OnServerHandshake / Rpc_OnHeartbeat 同源。
+    MFUNCTION(ServerCall)
+    MFuture<TResult<SEmptyServerMessage, FAppError>> Rpc_OnServerHandshake(uint32 DummyServerId);
+
+    MFUNCTION(ServerCall)
+    MFuture<TResult<SEmptyServerMessage, FAppError>> Rpc_OnHeartbeat(uint32 Seq);
+
     void ApplyConfig(const SGatewayConfig& InConfig) { Config = InConfig; }
+
+    /**
+     * BuildConfig — GatewayServer 入口参数解析。
+     * 公共参数（--port / --peers / --listen）由 MServiceMain::ParseCommonArgs 处理。
+     */
+    static SGatewayConfig BuildConfig(int argc, char** argv);
 
     static MGatewayServer* GetSingleton() { return GGlobalGateway; }
 

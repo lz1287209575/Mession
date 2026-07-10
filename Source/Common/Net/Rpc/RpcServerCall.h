@@ -64,6 +64,18 @@ private:
 bool TryInvokeServerRpc(MObject* ServiceInstance, const TByteArray& Data, ERpcType ExpectedType);
 bool TryInvokeServerRpc(MObject* ServiceInstance, uint64 ConnectionId, const TByteArray& Data, ERpcType ExpectedType);
 uint16 PeekServerRpcFunctionId(const TByteArray& Data);
+
+/**
+ * DispatchBackendServerCallPacket — 把对端 MServerConnection 的入站 MT_FunctionCall 包
+ * 反射到指定 ServiceInstance 上，ServiceInstance 必须继承 MObject。回包通过 Connection
+ * 走原路返回对端。
+ *
+ * ServiceInstance 决定哪个 Class 的方法被调用（通常 self）。
+ */
+bool DispatchBackendServerCallPacket(
+    MObject* ServiceInstance,
+    const TSharedPtr<MServerConnection>& Connection,
+    const TByteArray& Data);
 uint64 GetCurrentServerRpcConnectionId();
 const MFunction* FindServerCallFunctionByName(const MClass* TargetClass, const char* FunctionName);
 const MFunction* FindServerCallFunctionById(const MClass* TargetClass, uint16 FunctionId);

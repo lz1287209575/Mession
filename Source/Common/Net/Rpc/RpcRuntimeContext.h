@@ -63,6 +63,12 @@ public:
         RpcTransports.clear();
     }
 
+    // 直接访问当前注册的全部 transport（用于 server 主循环 tick 与 shutdown）。
+    const TMap<EServerType, TSharedPtr<MServerConnection>>& GetRpcTransports() const
+    {
+        return RpcTransports;
+    }
+
 private:
     TMap<EServerType, TSharedPtr<MServerConnection>> RpcTransports;
 };

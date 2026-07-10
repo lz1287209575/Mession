@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional
 
 
 DEFAULT_SCHEMA_PATH = Path("Build/Generated/ValidationProtocolSchema.json")
-BUNDLED_COMPAT_SCHEMA_PATH = Path("Scripts/validation/schemas/compat_protocol_schema.json")
 
 
 class ValidationSchemaError(ValueError):
@@ -104,15 +103,14 @@ def load_default_schema(project_root: Path) -> SchemaRegistry:
     return load_schema_file((project_root / DEFAULT_SCHEMA_PATH).resolve())
 
 
-def load_bundled_compat_schema(project_root: Path) -> SchemaRegistry:
-    return load_schema_file((project_root / BUNDLED_COMPAT_SCHEMA_PATH).resolve())
-
-
 def load_schema_with_fallback(project_root: Path) -> SchemaRegistry:
     generated_path = (project_root / DEFAULT_SCHEMA_PATH).resolve()
     if generated_path.exists():
         return load_schema_file(generated_path)
-    return load_bundled_compat_schema(project_root)
+    raise ValidationSchemaError(
+        f"generated schema not found at {generated_path}; "
+        "run MHeaderTool (via `cmake --build`) before validation"
+    )
 
 
 def _optional_string(value: Any) -> Optional[str]:
