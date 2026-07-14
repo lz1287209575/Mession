@@ -131,6 +131,9 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Runtime/Log/FileLogSink.cpp
     Source/Common/Runtime/Log/LogStringTable.cpp
     Source/Common/Runtime/Log/LogContext.cpp
+    Source/Common/Runtime/Log/LogRegistry.cpp
+    Source/Common/Runtime/Log/LogMetrics.cpp
+    Source/Common/Runtime/Log/LogCategories.cpp
     Source/Common/Net/NetServerBase.cpp
     Source/Common/Net/Routing/ActorRouter.cpp
     Source/Common/Net/ServerConnection.cpp

@@ -10,10 +10,12 @@
 #include "Common/Runtime/Log/Tests/TestHarness.h"
 #include "Common/Runtime/Log/Tests/TestMpscRingBuffer.cpp"
 #include "Common/Runtime/Log/Tests/TestLogContext.cpp"
+#include "Common/Runtime/Log/Tests/TestLogRegistry.cpp"
+#include "Common/Runtime/Log/Tests/TestLogMetrics.cpp"
 
 int main()
 {
-    std::printf("Running LogTest (Task 1+2)...\n");
+    std::printf("Running LogTest (Task 1+2+3)...\n");
 
     std::printf("[ MpscRingBuffer_Basic ]\n");
     Test_MpscRingBuffer_Basic();
@@ -29,6 +31,21 @@ int main()
 
     std::printf("[ LogContext_NestedScope ]\n");
     Test_LogContext_NestedScope();
+
+    std::printf("[ LogRegistry_RegisterAndLookup ]\n");
+    Test_LogRegistry_RegisterAndLookup();
+
+    std::printf("[ LogRegistry_GetById ]\n");
+    Test_LogRegistry_GetById();
+
+    std::printf("[ LogRegistry_FindByNameAndCount ]\n");
+    Test_LogRegistry_FindByNameAndCount();
+
+    std::printf("[ LogMetrics_CountersAccumulate ]\n");
+    Test_LogMetrics_CountersAccumulate();
+
+    std::printf("[ LogMetrics_SnapshotIsConsistent ]\n");
+    Test_LogMetrics_SnapshotIsConsistent();
 
     RUN_TESTS();
 }
