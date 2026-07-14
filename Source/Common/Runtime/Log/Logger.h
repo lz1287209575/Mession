@@ -39,6 +39,18 @@ public:
     static void LogStartupBanner(const char* ServiceName, uint16 Port, intptr_t Fd = -1);
     static void LogStarted(const char* ServiceName, double ElapsedSeconds);
 
+    // True when the binary was compiled without NDEBUG (DEBUG / RelWithDebInfo
+    // / ASAN builds). Used by ServiceRegistry / EndpointCache to gate fatal-vs-
+    // warn behavior on the protocol-vs-deployment fault axis.
+    static bool IsDebugBuild()
+    {
+#if defined(NDEBUG)
+        return false;
+#else
+        return true;
+#endif
+    }
+
 private:
     void VLog(ELogLevel InLevel, const char* File, int Line, const char* Func, const char* Fmt, va_list Args);
     MString FormatLine(ELogLevel Level, const char* File, int Line, const char* Func, const char* Message) const;
