@@ -1,17 +1,30 @@
 #include "Servers/EchoService/EchoService.h"
+#include "Common/Net/Rpc/MRpcChannel.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
+#include "Common/Net/Rpc/RpcTransport.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
-#include "Servers/App/ServiceContainer.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Common/Runtime/Async/MAsync.h"
-
-bool MEchoService::LoadConfig(const MString& /*ConfigPath*/)
-{
-    return true;
-}
+#include "Common/Runtime/Id.h"
 
 bool MEchoService::Init(int InPort)
 {
+    // MService<SEchoServiceConfig>::LoadConfig(argc, argv) 已经在 main
+    // 入口（ServiceMain.h::Run 模板）跑过，这里直接从单例拷一份即可。
+    Config = MService<SEchoServiceConfig>::GetConfig();
+
+    // 后处理派生：LocalServerTypeName 是 CLI 友好的字符串字段；本地业务代码
+    // 期望直接拿到 EServerType。如果用户没传 --local-type，保持 MSTRUCT
+    // 默认值 ("Echo")，下面再把 LocalServerType 派生过来。
+    const EServerType Derived = MServiceMain::ParseLocalServerType(Config.LocalServerTypeName);
+    if (Derived == EServerType::Unknown && !Config.LocalServerTypeName.empty())
+    {
+        LOG_WARN("MEchoService: --local-type=%s did not match any known server type; "
+                 "leaving LocalServerType=Unknown",
+                 Config.LocalServerTypeName.c_str());
+    }
+    Config.LocalServerType = Derived;
+
     if (InPort > 0)
     {
         Config.ListenPort = static_cast<uint16>(InPort);
@@ -35,9 +48,17 @@ bool MEchoService::Init(int InPort)
     return true;
 }
 
-void MEchoService::Tick()
+void MEchoService::TickBackends()
 {
-    MServiceContainer::Get().TickAll(0.0f);
+    // 后端 tick：MNetServerBase::Run 主循环每帧调一次，把 RpcTransports 里的
+    // 对端连接推心跳 / 收包。
+    for (const auto& Pair : GetRpcTransports())
+    {
+        if (Pair.second)
+        {
+            Pair.second->Tick(0.0f);
+        }
+    }
 }
 
 uint16 MEchoService::GetListenPort() const
@@ -52,8 +73,6 @@ void MEchoService::OnAccept(uint64 /*ConnId*/, TSharedPtr<INetConnection> /*Conn
 
 void MEchoService::ShutdownConnections()
 {
-    MServiceContainer::Get().ShutdownAll();
-
     for (uint32 InstId : Config.LocalActorIds)
     {
         const uint64 ActorId = MServiceId::Make(Config.LocalServerType, InstId);
@@ -103,10 +122,7 @@ void MEchoService::ConnectAllPeers()
         TSharedPtr<MServerConnection> PeerConn = MakeShared<MServerConnection>(PeerConfig);
         PeerConn->Connect();
 
-        // 1. 注册到 MServiceContainer（全局 transport map）
-        MServiceContainer::Get().Register(PeerConn);
-
-        // 2. 注册到本进程 MServerRuntimeContext（用于 RpcRuntimeContext::ResolveServerTransport）
+        // 注册到本进程 MServerRuntimeContext（用作 RpcRuntimeContext::ResolveServerTransport 与 MActorRouter 跨进程寻址）
         RegisterRpcTransport(Peer.ServerType, PeerConn);
 
         LOG_INFO("%s: connected to peer %s at %s:%u",
@@ -134,8 +150,6 @@ MFUTURE(FSampleEchoResponse) MEchoService::Echo(const FSampleEchoRequest& Reques
              GetServerTypeDisplayName(TargetServiceType),
              static_cast<unsigned>(TargetInstId));
 
-    const SActorRoute Route = MActorRouter::Get().FindActor(Request.TargetActorId);
-
     // 响应中带回本进程的 (ServiceId, InstId) 让远端能反调
     const uint64 SelfActorId = MServiceId::Make(Config.LocalServerType, Config.LocalInstId);
 
@@ -144,29 +158,42 @@ MFUTURE(FSampleEchoResponse) MEchoService::Echo(const FSampleEchoRequest& Reques
     Response.SourceActorId = SelfActorId;        // 远端用此反查
     Response.SourceServerName = Config.ServiceName;
 
-    // 本机 Actor：直接返
-    if (Route.ActorId != 0 && Route.ServerType == EServerType::Unknown)
+    // 本机 Actor：MActorRouter 命中本进程 → 直接返（避免走跨进程）
+    if (MActorRouter::Get().IsActorLocal(Request.TargetActorId))
     {
         return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
     }
 
-    // 远程 Actor：跨进程转发（链 2 路径——ServiceA → ServiceB 直连，不走 Gateway）
-    if (Route.ActorId != 0)
-    {
-        // 通过 MServiceContainer 查 peer transport
-        TSharedPtr<MServerConnection> TargetConn = MServiceContainer::Get().Resolve(TargetServiceType);
-        if (!TargetConn || !TargetConn->IsConnected())
-        {
-            return MServerCallAsyncSupport::MakeErrorFuture<FSampleEchoResponse>(
-                "peer_transport_unavailable", "Echo");
-        }
-
-        // 直接转发到 peer——Service B 处理完会回 A，A 再回原始调用方（Gateway）。
-        // 这里调用方可能是 Gateway（ClientCall 入口）或另一 Service（链 2 内部转发）。
-        return CallServerFunction<FSampleEchoResponse>(
-            TargetConn, "MEchoService", "Echo", Request);
-    }
-
-    return MServerCallAsyncSupport::MakeErrorFuture<FSampleEchoResponse>(
-        "actor_not_found", "Echo");
+    // 跨进程转发（链 2 路径：ServiceA → ServiceB 走 MRpcChannel::CallToActor）
+    // MActorRouter 已经在对端连接建立时通过 MActorRouter::UpdateActorRoute 注册了对端 ActorIds；
+    // 这里直接用 ActorId 寻址，不直接拿 connection。
+    return MRpcChannel::Get().CallToActor<FSampleEchoResponse>(
+        this,
+        Request.TargetActorId,
+        "MEchoService",
+        "Echo",
+        Request);
 }
+
+// CreateService 工厂——MServiceMain::Run 模板按 C++ name mangling 调用。
+// MObject 生命周期由 TSharedPtr 体系管理；ServiceMain.h 中 namespace
+// 内的 CreateService<TService>() 模板已经用 NewMObject<TService>() 兜底。
+// 这里不再单独导出 extern "C" 工厂——Service 自身的类型 + ServiceMain
+// 的 NewMObject 路径已经够用。
+//
+// 如果未来某 Service 想要更精细的初始化（例如注入外部依赖），可以在
+// 此文件加一个特殊的 extern "C" TSharedPtr<MObject> CreateMEchoService()
+// 工厂，并相应去掉 ServiceMain.h::CreateService 的兜底调用——目前不需要。
+//
+// CreateService 工厂约定（Service 自定义工厂方法约定）：
+//   1. 默认路径：MServiceMain::CreateService<TService>() 模板自动调
+//      NewMObject<TService>(nullptr, typeid(TService).name())——零配置，
+//      适用于所有不依赖外部注入的 Service。
+//   2. 覆盖路径：在 Service 的 cpp 内提供 extern "C" 重载：
+//          extern "C" TSharedPtr<MObject> CreateMEchoService()
+//          { return NewMObject<MEchoService>(nullptr, "MEchoService"); }
+//      然后 MServiceMain::Run<TService, TConfig> 改成先查强符号、再
+//      回退到 CreateService<TService>() 模板。
+//   3. 命名要求：函数名必须严格等于 "Create" + Service 类名（无名字
+//      mangling 干扰，dlopen/dlsym 也能拿到同一符号）。当前 Service
+//      都不需要第 2 步，但保留扩展空间。

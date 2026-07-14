@@ -1,136 +1,178 @@
 #pragma once
+#include "Common/Runtime/MLib.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 #include "Servers/App/ServiceId.h"
+#include "Servers/App/MService.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Common/Runtime/Concurrency/SignalHandler.h"
-#include <cstdlib>
-#include <cstring>
+
+/**
+ * SServicePeerConfig - peer service connection config (shared by Gateway and EchoService).
+ * Used as the element type of SEchoServiceConfig::Peers (TVector<SServicePeerConfig>).
+ *
+ * Lives at global namespace scope so MHeaderTool-generated reflection registration
+ * code can resolve `SServicePeerConfig` unqualified in its typeid/SetConstructor
+ * template arguments. The type still goes through MObject::RegisterStruct via the
+ * MHeaderTool-generated SAutoRegisterStruct_SServicePeerConfig static.
+ *
+ * Reflection-driven CLI parsing (--peers=Gateway@addr:port,Echo@addr:port) recurses
+ * through TPropertyStringImporter<TVector<SServicePeerConfig>>; each element
+ * token is dispatched via the aggregate importer in
+ * Common/Runtime/Reflect/ReflectionPropertyTemplates.inl to
+ * SServicePeerConfig::ImportFromCompactString, which parses the "Type@addr:port"
+ * compact form.
+ */
+MSTRUCT()
+struct SServicePeerConfig
+{
+    MPROPERTY()
+    EServerType ServerType = EServerType::Unknown;
+
+    MPROPERTY()
+    MString Address = "127.0.0.1";
+
+    MPROPERTY()
+    uint16 Port = 0;
+
+    /**
+     * ImportFromCompactString - parse "Type@addr:port" into this struct.
+     * Type strings recognized: "Gateway" -> EServerType::Gateway,
+     * "Echo" -> EServerType::Echo, anything else -> EServerType::Unknown.
+     * Returns false on malformed input (missing @ or :).
+     */
+    static bool ImportFromCompactString(SServicePeerConfig& Out, const MString& Str)
+    {
+        const size_t AtPos = Str.find('@');
+        if (AtPos == MString::npos)
+        {
+            return false;
+        }
+        const size_t ColonPos = Str.rfind(':');
+        if (ColonPos == MString::npos || ColonPos <= AtPos)
+        {
+            return false;
+        }
+
+        const MString TypeName = Str.substr(0, AtPos);
+        const MString AddrPart = Str.substr(AtPos + 1, ColonPos - AtPos - 1);
+        const MString PortStr = Str.substr(ColonPos + 1);
+
+        if (TypeName == "Gateway")
+        {
+            Out.ServerType = EServerType::Gateway;
+        }
+        else if (TypeName == "Echo")
+        {
+            Out.ServerType = EServerType::Echo;
+        }
+        else
+        {
+            return false;
+        }
+
+        Out.Address = AddrPart;
+        Out.Port = static_cast<uint16>(std::atoi(PortStr.c_str()));
+        return true;
+    }
+};
 
 namespace MServiceMain
 {
-/**
- * SServicePeerConfig — 对端 Service 连接配置（Gateway 和 EchoService 共用）
- */
-struct SServicePeerConfig
-{
-    EServerType ServerType = EServerType::Unknown;
-    MString Address = "127.0.0.1";
-    uint16 Port = 0;
-};
 
 /**
- * SCommonConfig — 所有 Service main 共用的命令行解析结果
+ * ParseLocalServerType - translate a human-readable server type name
+ * ("Echo" / "Gateway" / ...) into the strongly-typed EServerType enum.
+ *
+ * Used as a post-parse derivation step: SEchoServiceConfig exposes both
+ * `LocalServerTypeName` (MString, set from CLI via --local-type) and
+ * `LocalServerType` (EServerType). The reflection parser only knows how to
+ * fill the MString field; the enum must be filled in code, *after* LoadConfig
+ * returns. Service::Init() calls this and writes the result back into the
+ * Service-side Config copy. New server-type strings only need to be added in
+ * two places: this helper and the canonical CLI mapping in
+ * SServicePeerConfig::ImportFromCompactString (kept in sync by hand).
  */
-struct SCommonConfig
+inline EServerType ParseLocalServerType(const MString& Name)
 {
-    int PortOverride = 0;
-    TVector<SServicePeerConfig> Peers;
-};
-
-/**
- * ParsePeers — 解析 --peers=Type1@addr:port,Type2@addr:port,...
- */
-inline TVector<SServicePeerConfig> ParsePeers(const MString& Value)
-{
-    TVector<SServicePeerConfig> Result;
-    size_t Pos = 0;
-    while (Pos < Value.size())
-    {
-        size_t CommaPos = Value.find(',', Pos);
-        MString Token = (CommaPos == MString::npos)
-            ? Value.substr(Pos)
-            : Value.substr(Pos, CommaPos - Pos);
-
-        size_t AtPos = Token.find('@');
-        size_t ColonPos = Token.rfind(':');
-        if (AtPos != MString::npos && ColonPos != MString::npos && ColonPos > AtPos)
-        {
-            SServicePeerConfig Peer;
-            MString TypeName = Token.substr(0, AtPos);
-            MString AddrPort = Token.substr(AtPos + 1);
-
-            if (TypeName == "Gateway") Peer.ServerType = EServerType::Gateway;
-            else if (TypeName == "Echo") Peer.ServerType = EServerType::Echo;
-            else
-            {
-                if (CommaPos == MString::npos) break;
-                Pos = CommaPos + 1;
-                continue;
-            }
-
-            size_t InnerColon = AddrPort.find(':');
-            Peer.Address = AddrPort.substr(0, InnerColon);
-            Peer.Port = static_cast<uint16>(std::atoi(AddrPort.substr(InnerColon + 1).c_str()));
-            Result.push_back(Peer);
-        }
-
-        if (CommaPos == MString::npos) break;
-        Pos = CommaPos + 1;
-    }
-    return Result;
+    if (Name == "Gateway") return EServerType::Gateway;
+    if (Name == "Echo")    return EServerType::Echo;
+    return EServerType::Unknown;
 }
 
 /**
- * ParseCommonArgs — 解析所有 Service main 共用的参数
+ * CreateService - default Service factory (extern "C" not required).
  *
- * 支持:
- *   -p N / --port N       → PortOverride
- *   --peers=...           → Peers
- *   --listen=N            → PortOverride（同 -p）
+ * Declared before Run so the template is visible at the Run call site below
+ * (the lookup happens at instantiation, but GCC needs declaration order).
+ *
+ * Override per-Service by adding an `extern "C" TSharedPtr<MObject> Create<ServiceClass>()`
+ * factory in the Service cpp. The default fallback uses NewMObject so the
+ * MObject lifetime stays inside the TSharedPtr system (Object.h).
  */
-inline SCommonConfig ParseCommonArgs(int argc, char** argv)
+template<typename TService>
+TSharedPtr<MObject> CreateService()
 {
-    SCommonConfig Config;
-    for (int i = 1; i < argc; ++i)
-    {
-        MString Arg = argv[i] ? argv[i] : "";
-        if (Arg == "-p" || Arg == "--port")
-        {
-            if (i + 1 < argc)
-            {
-                Config.PortOverride = std::atoi(argv[++i]);
-            }
-        }
-        else if (Arg == "--listen")
-        {
-            if (i + 1 < argc)
-            {
-                Config.PortOverride = std::atoi(argv[++i]);
-            }
-        }
-        else if (Arg.rfind("--listen=", 0) == 0)
-        {
-            Config.PortOverride = std::atoi(Arg.substr(MString("--listen=").size()).c_str());
-        }
-        else if (Arg.rfind("--peers=", 0) == 0)
-        {
-            Config.Peers = ParsePeers(Arg.substr(MString("--peers=").size()));
-        }
-    }
-    return Config;
+    return NewMObject<TService>(/*Outer=*/nullptr, /*Name=*/typeid(TService).name());
 }
 
 /**
- * Run — Service 统一入口
+ * Run - unified Service entry point (every Service goes through the same one).
  *
- * Service 必须提供：
- *   static SConfig BuildConfig(int argc, char** argv)
+ * A Service must provide:
+ *   1. An SConfig subtype (e.g. SEchoServiceConfig) annotated with MSTRUCT(),
+ *      with MPROPERTY(Meta=(Cli="--xxx")) marking each CLI flag.
+ *   2. Optionally: an `extern "C" TSharedPtr<MObject> Create<ServiceClass>()`
+ *      factory in the Service cpp. If absent, the default CreateService<T>()
+ *      template above instantiates the Service via NewMObject<TService>(nullptr, ...).
+ *      Either way the Service is owned by TSharedPtr, never by raw new/delete
+ *      (see Object.h: "DestroyMObject deleted - MObject lifetime is managed
+ *      by TSharedPtr").
  *
- * 流程：BuildConfig → ApplyConfig → Init(port) → Run
+ * Flow: LoadConfig(argc, argv) -> CreateService<TService>() -> Init(port) -> Run.
+ *
+ * Old per-Service BuildConfig / ApplyConfig / ParseCommonArgs are gone.
  */
 template<typename TService, typename TConfig>
 int Run(int argc, char** argv)
 {
-    // 注册 SIGINT/SIGTERM → 优雅退出；SIGPIPE → 忽略。
     MSignalHandler::Install();
 
-    TConfig Config = TService::BuildConfig(argc, argv);
-    TService Service;
-    Service.ApplyConfig(Config);
-    if (!Service.Init(Config.ListenPort))
+    if (!MService<TConfig>::LoadConfig(argc, argv))
     {
         return 1;
     }
-    Service.Run();
+
+    TSharedPtr<MObject> ServiceObj = MServiceMain::CreateService<TService>();
+    if (!ServiceObj)
+    {
+        LOG_FATAL("MServiceMain::Run: Create<%s>() returned null", typeid(TService).name());
+        return 1;
+    }
+
+    TService* Service = static_cast<TService*>(ServiceObj.Get());
+    const TConfig& Config = MService<TConfig>::GetConfig();
+
+    // Init failure path: ServiceObj goes out of scope on return and is
+    // released by TSharedPtr, triggering ~MObject and IDisposable::Dispose.
+    if (!Service->Init(Config.ListenPort))
+    {
+        return 1;
+    }
+    Service->Run();
+
+    // Normal exit path: Service->Run() returns when MSignalHandler (SIGINT/SIGTERM)
+    // flips bRunning inside MNetServerBase::Run. MNetServerBase::Run() itself does
+    // NOT call Shutdown() on the way out — it only unregisters the listener and
+    // breaks the loop. We must explicitly drive Shutdown() here so the subclass's
+    // ShutdownConnections() runs (close transports, unregister actors, clear maps).
+    // Without this, transport state lingers in static containers
+    // (MServerRuntimeContext::RpcTransports, MActorRouter::ActorRoutes) until process
+    // exit, which is the same shape as the double-free we fixed by removing
+    // RemoveFromRoot() from ~MObject.
+    Service->Shutdown();
+
+    // ServiceObj goes out of scope here, TSharedPtr releases once,
+    // ~MObject runs IDisposable::Dispose() exactly once.
     return 0;
 }
 

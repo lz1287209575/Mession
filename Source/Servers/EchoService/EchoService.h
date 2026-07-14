@@ -46,9 +46,9 @@ struct SEchoServiceConfig
     MPROPERTY(Meta=(Cli="--actors"))
     TVector<uint32> LocalActorIds;
 
-    // Peers 反射解析为 TVector<MServiceMain::SServicePeerConfig>——支持嵌套结构体的反射解析。
+    // Peers 反射解析为 TVector<SServicePeerConfig>——支持嵌套结构体的反射解析。
     MPROPERTY(Meta=(Cli="--peers"))
-    TVector<MServiceMain::SServicePeerConfig> Peers;
+    TVector<SServicePeerConfig> Peers;
 };
 
 MCLASS(Type=Service)
@@ -61,7 +61,6 @@ public:
 
     static MEchoService* GetSingleton() { return GGlobalEchoService; }
 
-    bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
     void Tick();
     void Run() override { MNetServerBase::Run(); }
@@ -71,15 +70,6 @@ public:
     void TickBackends() override;
     void ShutdownConnections() override;
     void OnRunStarted() override;
-
-    void ApplyConfig(const SEchoServiceConfig& InConfig) { Config = InConfig; }
-
-    /**
-     * BuildConfig — EchoService 入口参数解析。
-     * 走反射：遍历 SEchoServiceConfig Properties，找 Meta=(Cli="--xxx") 匹配 argv；
-     * 公共参数（--port / --listen）由 MServiceMain::ParseCommonArgs 处理。
-     */
-    static SEchoServiceConfig BuildConfig(int argc, char** argv);
 
     // EchoService 暴露的 ServerCall——Gateway 通过 MClientManifest 把 Client_* 转到本类后调用。
     MFUNCTION(ServerCall)

@@ -61,13 +61,12 @@ MFuture<TResult<SEmptyServerMessage, FAppError>> HandleEchoResult(
 }
 }
 
-bool MGatewayServer::LoadConfig(const MString& /*ConfigPath*/)
-{
-    return true;
-}
-
 bool MGatewayServer::Init(int InPort)
 {
+    // MService<SGatewayConfig>::LoadConfig(argc, argv) 已经在 main 入口
+    // （ServiceMain.h::Run 模板）跑过，这里直接从单例拷一份即可。
+    Config = MService<SGatewayConfig>::GetConfig();
+
     if (InPort > 0)
     {
         Config.ListenPort = static_cast<uint16>(InPort);
@@ -85,7 +84,7 @@ bool MGatewayServer::Init(int InPort)
 
 void MGatewayServer::ConnectAllPeers()
 {
-    for (const MServiceMain::SServicePeerConfig& Peer : Config.Peers)
+    for (const SServicePeerConfig& Peer : Config.Peers)
     {
         const uint32 PeerServerId = MUniqueIdGenerator::Generate();
         const SServerConnectionConfig PeerConfig(
@@ -327,14 +326,7 @@ void MGatewayServer::HandleBackendPacket(
              static_cast<unsigned>(PacketType));
 }
 
-SGatewayConfig MGatewayServer::BuildConfig(int argc, char** argv)
-{
-    MServiceMain::SCommonConfig Common = MServiceMain::ParseCommonArgs(argc, argv);
-
-    SGatewayConfig Config;
-    Config.ListenPort = (Common.PortOverride > 0)
-        ? static_cast<uint16>(Common.PortOverride)
-        : Config.ListenPort;
-    Config.Peers = std::move(Common.Peers);
-    return Config;
-}
+// CreateService 工厂——ServiceMain.h 中 namespace 内的
+// CreateService<TService>() 模板已经用 NewMObject<TService>() 兜底
+// 实例化。如果未来某 Service 想要更精细的初始化（例如注入外部依赖），
+// 可以在此文件加特殊的 extern "C" 工厂并相应去掉兜底调用——目前不需要。
