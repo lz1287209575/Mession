@@ -9,10 +9,11 @@
 
 #include "Common/Runtime/Log/Tests/TestHarness.h"
 #include "Common/Runtime/Log/Tests/TestMpscRingBuffer.cpp"
+#include "Common/Runtime/Log/Tests/TestLogContext.cpp"
 
 int main()
 {
-    std::printf("Running LogTest (Task 1)...\n");
+    std::printf("Running LogTest (Task 1+2)...\n");
 
     std::printf("[ MpscRingBuffer_Basic ]\n");
     Test_MpscRingBuffer_Basic();
@@ -22,6 +23,12 @@ int main()
 
     std::printf("[ MpscRingBuffer_FullReturnsFalse ]\n");
     Test_MpscRingBuffer_FullReturnsFalse();
+
+    std::printf("[ LogContext_SetAndUnset ]\n");
+    Test_LogContext_SetAndUnset();
+
+    std::printf("[ LogContext_NestedScope ]\n");
+    Test_LogContext_NestedScope();
 
     RUN_TESTS();
 }
