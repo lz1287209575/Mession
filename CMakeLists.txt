@@ -134,6 +134,7 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Runtime/Log/LogRegistry.cpp
     Source/Common/Runtime/Log/LogMetrics.cpp
     Source/Common/Runtime/Log/LogCategories.cpp
+    Source/Common/Runtime/Log/LogRouter.cpp
     Source/Common/Net/NetServerBase.cpp
     Source/Common/Net/Routing/ActorRouter.cpp
     Source/Common/Net/ServerConnection.cpp

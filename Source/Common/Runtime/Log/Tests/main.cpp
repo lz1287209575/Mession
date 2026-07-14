@@ -12,10 +12,11 @@
 #include "Common/Runtime/Log/Tests/TestLogContext.cpp"
 #include "Common/Runtime/Log/Tests/TestLogRegistry.cpp"
 #include "Common/Runtime/Log/Tests/TestLogMetrics.cpp"
+#include "Common/Runtime/Log/Tests/TestLogRouter.cpp"
 
 int main()
 {
-    std::printf("Running LogTest (Task 1+2+3)...\n");
+    std::printf("Running LogTest (Task 1+2+3+4)...\n");
 
     std::printf("[ MpscRingBuffer_Basic ]\n");
     Test_MpscRingBuffer_Basic();
@@ -46,6 +47,15 @@ int main()
 
     std::printf("[ LogMetrics_SnapshotIsConsistent ]\n");
     Test_LogMetrics_SnapshotIsConsistent();
+
+    std::printf("[ LogRouter_DefaultAllSinks ]\n");
+    Test_LogRouter_DefaultAllSinks();
+
+    std::printf("[ LogRouter_SetRuleChangesMask ]\n");
+    Test_LogRouter_SetRuleChangesMask();
+
+    std::printf("[ LogRouter_MinLevelFiltersLowerLevels ]\n");
+    Test_LogRouter_MinLevelFiltersLowerLevels();
 
     RUN_TESTS();
 }
