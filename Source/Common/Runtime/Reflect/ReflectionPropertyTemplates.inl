@@ -225,6 +225,29 @@ struct TPropertyStringImporter<double>
     }
 };
 
+// MSTRUCT aggregate string importer: parses a compact "Type@addr:port" form
+// into a struct that exposes a static ImportFromCompactString method. Used for
+// nested MSTRUCT element types in TVector fields (e.g. SEchoServiceConfig::Peers
+// is TVector<SServicePeerConfig> with MSTRUCT annotation). The reflection system
+// uses this specialization when TPropertyStringImporter<TVector<TElement>>
+// recurses into TElement::SetValueFromString at ReflectionPropertyTemplates.inl:253.
+template<typename TAggregate>
+struct TPropertyStringImporterAggregate
+{
+    static bool Import(const MProperty* Prop, void* Object, const MString& Value, MString* OutError)
+    {
+        if (!Prop || !Object) return false;
+        auto* Ptr = Prop->template GetValuePtr<TAggregate>(Object);
+        if (!Ptr) return false;
+        if (!TAggregate::ImportFromCompactString(*Ptr, Value))
+        {
+            if (OutError) *OutError = "string_import_aggregate_parse_failed:" + Value;
+            return false;
+        }
+        return true;
+    }
+};
+
 template<typename TElement>
 struct TPropertyStringImporter<TVector<TElement>>
 {
@@ -319,7 +342,17 @@ public:
 
     virtual bool SetValueFromString(void* Object, const MString& Value, MString* OutError = nullptr) const override
     {
-        return TPropertyStringImporter<T>::Import(this, Object, Value, OutError);
+        // Prefer MSTRUCT aggregate importer (which calls T::ImportFromCompactString)
+        // when the type is a marked aggregate. Otherwise fall back to the per-type
+        // POD importer.
+        if constexpr (requires { T::ImportFromCompactString; })
+        {
+            return TPropertyStringImporterAggregate<T>::Import(this, Object, Value, OutError);
+        }
+        else
+        {
+            return TPropertyStringImporter<T>::Import(this, Object, Value, OutError);
+        }
     }
 };
 

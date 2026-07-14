@@ -3,7 +3,16 @@
 
 MObject::~MObject()
 {
-    RemoveFromRoot();
+    // NOTE: We previously called RemoveFromRoot() here, but the TSharedPtr<MObject>
+    // held inside GetRootSet() shares the same control block as the Service's
+    // holding shared_ptr. Erasing it from the static RootSet triggers a second
+    // ~TSharedPtr<MObject> destructor on shutdown (via __run_exit_handlers),
+    // which decrements ref_count to -1 and double-frees the object.
+    //
+    // Removal from RootSet is now handled implicitly: when the static RootSet
+    // itself is destroyed at program exit, each TSharedPtr<MObject> it holds
+    // is destroyed once. Combined with the Service-side release in
+    // MServiceMain::Run, the MObject is disposed exactly once.
 
     if (IDisposable* Disposable = dynamic_cast<IDisposable*>(this))
     {

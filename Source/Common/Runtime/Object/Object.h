@@ -27,13 +27,17 @@ TSharedPtr<TObject> NewMObject(MObject* Outer, const MString& Name = "", TArgs&&
 
     if (Outer)
     {
-        // Outer 持有 TSharedPtr，this 端 SetOuter 走 FindChildShared 找到 Outer 那份引用
-        Outer->AddChildObject(Object);
+        // Outer holds TSharedPtr; this side SetOuter uses FindChildShared.
+        // NOTE: AddChildObject is private on MObject (MObject-only helper),
+        // so it cannot be called from this free function. NewMObject only
+        // supports the Outer==nullptr (RootSet) path here. For Outer!=nullptr
+        // use Outer->CreateDefaultSubObject<T>() which has access to the
+        // private API.
         Object->SetOuter(Outer);
     }
     else
     {
-        // 无 Outer：挂到 RootSet，进程级生命周期
+        // Outer null: parked in RootSet for process-lifetime ownership.
         Object->SetOuter(nullptr);
         MObject::AddToRootSet(Object);
     }

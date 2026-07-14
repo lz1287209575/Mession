@@ -20,10 +20,17 @@
 class MGatewayServer;
 extern MGatewayServer* GGlobalGateway;
 
+MSTRUCT()
 struct SGatewayConfig
 {
+    MPROPERTY(Meta=(Cli="--listen"))
     uint16 ListenPort = 8001;
-    TVector<MServiceMain::SServicePeerConfig> Peers;  // 启动时主动连接的 peer（PoC 阶段：EchoService）
+
+    // 启动时主动连接的 peer（PoC 阶段：EchoService）。反射解析
+    // --peers=Gateway@addr:port,Echo@addr:port 通过 TPropertyStringImporter
+    // 对嵌套 MSTRUCT 元素递归。
+    MPROPERTY(Meta=(Cli="--peers"))
+    TVector<SServicePeerConfig> Peers;
 };
 
 MCLASS(Type=Server)
@@ -34,7 +41,6 @@ public:
 public:
     using MObject::Tick;
 
-    bool LoadConfig(const MString& ConfigPath);
     bool Init(int InPort = 0);
     void Tick();
     void Run() override { MNetServerBase::Run(); }
@@ -54,14 +60,6 @@ public:
 
     MFUNCTION(ServerCall)
     MFuture<TResult<SEmptyServerMessage, FAppError>> Rpc_OnHeartbeat(uint32 Seq);
-
-    void ApplyConfig(const SGatewayConfig& InConfig) { Config = InConfig; }
-
-    /**
-     * BuildConfig — GatewayServer 入口参数解析。
-     * 公共参数（--port / --peers / --listen）由 MServiceMain::ParseCommonArgs 处理。
-     */
-    static SGatewayConfig BuildConfig(int argc, char** argv);
 
     static MGatewayServer* GetSingleton() { return GGlobalGateway; }
 
