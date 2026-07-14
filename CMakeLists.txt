@@ -492,6 +492,23 @@ target_link_libraries(NetBench
 )
 configure_mession_compile_options(NetBench)
 
+# LogTest - 日志模块单元测试（Task 1 起；后续 Task 追加测试 TU）
+# main.cpp #includes TestMpscRingBuffer.cpp directly (see file comment for rationale);
+# do not add TestMpscRingBuffer.cpp to the source list to avoid ODR-multiple-definition.
+add_executable(LogTest
+    Source/Common/Runtime/Log/Tests/main.cpp
+)
+target_include_directories(LogTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+)
+target_link_libraries(LogTest
+    PRIVATE
+        mession_common
+)
+configure_mession_compile_options(LogTest)
+
 # 安装目标
 install(TARGETS
     GatewayServer
