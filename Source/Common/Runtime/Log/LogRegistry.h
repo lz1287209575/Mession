@@ -32,5 +32,6 @@ private:
     // move-insertable. Instead we store unique_ptrs and hand out raw
     // SLogCategory* to callers; the pointers are stable across reallocation.
     TVector<TUniquePtr<SLogCategory>> Categories;
-    std::mutex Mutex;
+    // mutable so const FindByName can lock it
+    mutable std::mutex Mutex;
 };

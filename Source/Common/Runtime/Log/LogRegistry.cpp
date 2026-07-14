@@ -43,6 +43,7 @@ SLogCategory* MLogRegistry::GetById(uint16 Id)
 
 const SLogCategory* MLogRegistry::FindByName(const MString& Name) const
 {
+    std::lock_guard<std::mutex> L(Mutex);
     for (const auto& Up : Categories)
     {
         if (Up->Name == Name) return Up.get();

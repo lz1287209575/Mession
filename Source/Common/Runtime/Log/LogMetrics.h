@@ -5,31 +5,37 @@
 
 struct SLogMetricsSnapshot
 {
-    uint64 Enqueued           = 0;
-    uint64 DroppedEvicted     = 0;
-    uint64 DroppedOverflow    = 0;
-    uint64 BlockedEnqueues    = 0;
-    uint64 DispatchedBatches  = 0;
+    uint64 Enqueued            = 0;
+    uint64 DroppedEvicted      = 0;
+    uint64 DroppedOverflow     = 0;
+    uint64 BlockedEnqueues     = 0;
+    uint64 DispatchedBatches   = 0;
     uint64 WrittenBytesConsole = 0;
-    uint64 WrittenBytesFile   = 0;
-    uint64 WrittenBytesUdp    = 0;
-    uint64 WrittenBytesTcp    = 0;
-    uint64 TotalSuppressed    = 0;
+    uint64 WrittenBytesFile    = 0;
+    uint64 WrittenBytesUdp     = 0;
+    uint64 WrittenBytesTcp     = 0;
+    uint64 TotalSuppressed     = 0;
+    // SuppressedByCategory: per-category suppression counters. Indexed by
+    // SLogCategory::Id. Consumers should index only up to
+    // MLogRegistry::Get().NumCategories(). Not pre-sized because Category count
+    // is dynamic; resize happens in MLogMetrics::IncSuppressedByCategory().
+    TVector<uint64> SuppressedByCategory;
 };
 
 class MLogMetrics
 {
 public:
-    static void IncEnqueued()             { SInc(Enqueued); }
-    static void IncDroppedEvicted()       { SInc(DroppedEvicted); }
-    static void IncDroppedOverflow()      { SInc(DroppedOverflow); }
-    static void IncBlockedEnqueues()      { SInc(BlockedEnqueues); }
-    static void IncDispatchedBatches()    { SInc(DispatchedBatches); }
+    static void IncEnqueued()                  { SInc(Enqueued); }
+    static void IncDroppedEvicted()            { SInc(DroppedEvicted); }
+    static void IncDroppedOverflow()           { SInc(DroppedOverflow); }
+    static void IncBlockedEnqueues()           { SInc(BlockedEnqueues); }
+    static void IncDispatchedBatches()         { SInc(DispatchedBatches); }
     static void AddWrittenBytesConsole(uint64 Bytes) { WrittenBytesConsole.fetch_add(Bytes); }
-    static void AddWrittenBytesFile(uint64 Bytes)   { WrittenBytesFile.fetch_add(Bytes); }
-    static void AddWrittenBytesUdp(uint64 Bytes)    { WrittenBytesUdp.fetch_add(Bytes); }
-    static void AddWrittenBytesTcp(uint64 Bytes)    { WrittenBytesTcp.fetch_add(Bytes); }
-    static void IncSuppressed()           { SInc(TotalSuppressed); }
+    static void AddWrittenBytesFile(uint64 Bytes)    { WrittenBytesFile.fetch_add(Bytes); }
+    static void AddWrittenBytesUdp(uint64 Bytes)     { WrittenBytesUdp.fetch_add(Bytes); }
+    static void AddWrittenBytesTcp(uint64 Bytes)     { WrittenBytesTcp.fetch_add(Bytes); }
+    static void IncSuppressed()                { SInc(TotalSuppressed); }
+    static void IncSuppressedByCategory(uint16 CategoryId);
 
     static SLogMetricsSnapshot Snapshot();
 
