@@ -13,6 +13,18 @@ bool MEchoService::Init(int InPort)
     // 入口（ServiceMain.h::Run 模板）跑过，这里直接从单例拷一份即可。
     Config = MService<SEchoServiceConfig>::GetConfig();
 
+    // 后处理派生：LocalServerTypeName 是 CLI 友好的字符串字段；本地业务代码
+    // 期望直接拿到 EServerType。如果用户没传 --local-type，保持 MSTRUCT
+    // 默认值 ("Echo")，下面再把 LocalServerType 派生过来。
+    const EServerType Derived = MServiceMain::ParseLocalServerType(Config.LocalServerTypeName);
+    if (Derived == EServerType::Unknown && !Config.LocalServerTypeName.empty())
+    {
+        LOG_WARN("MEchoService: --local-type=%s did not match any known server type; "
+                 "leaving LocalServerType=Unknown",
+                 Config.LocalServerTypeName.c_str());
+    }
+    Config.LocalServerType = Derived;
+
     if (InPort > 0)
     {
         Config.ListenPort = static_cast<uint16>(InPort);
@@ -172,3 +184,16 @@ MFUTURE(FSampleEchoResponse) MEchoService::Echo(const FSampleEchoRequest& Reques
 // 如果未来某 Service 想要更精细的初始化（例如注入外部依赖），可以在
 // 此文件加一个特殊的 extern "C" TSharedPtr<MObject> CreateMEchoService()
 // 工厂，并相应去掉 ServiceMain.h::CreateService 的兜底调用——目前不需要。
+//
+// CreateService 工厂约定（Service 自定义工厂方法约定）：
+//   1. 默认路径：MServiceMain::CreateService<TService>() 模板自动调
+//      NewMObject<TService>(nullptr, typeid(TService).name())——零配置，
+//      适用于所有不依赖外部注入的 Service。
+//   2. 覆盖路径：在 Service 的 cpp 内提供 extern "C" 重载：
+//          extern "C" TSharedPtr<MObject> CreateMEchoService()
+//          { return NewMObject<MEchoService>(nullptr, "MEchoService"); }
+//      然后 MServiceMain::Run<TService, TConfig> 改成先查强符号、再
+//      回退到 CreateService<TService>() 模板。
+//   3. 命名要求：函数名必须严格等于 "Create" + Service 类名（无名字
+//      mangling 干扰，dlopen/dlsym 也能拿到同一符号）。当前 Service
+//      都不需要第 2 步，但保留扩展空间。
