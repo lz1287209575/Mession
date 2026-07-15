@@ -2,6 +2,8 @@
 #include "Common/Net/Rpc/MRpcChannel.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Net/Rpc/RpcTransport.h"
+#include "Common/Net/ServiceDiscovery/Endpoint.h"
+#include "Common/Net/ServiceDiscovery/EndpointCache.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Common/Runtime/Async/MAsync.h"
@@ -36,29 +38,49 @@ bool MEchoService::Init(int InPort)
         return false;
     }
 
+    if (Config.RegistryAddr.empty())
+    {
+        LOG_ERROR("MEchoService: --registry=<host:port> is required");
+        return false;
+    }
+
+    // LocalServerId 没传 → MUniqueIdGenerator::Generate 自给；截到 uint32 避免溢出。
+    if (Config.LocalServerId == 0)
+    {
+        Config.LocalServerId = static_cast<uint32>(MUniqueIdGenerator::Generate());
+    }
+
     bRunning = true;
     MLogger::LogStartupBanner(Config.ServiceName.c_str(), Config.ListenPort, 0);
 
     // 标记本进程本地 Server 信息——MServerConnection 响应包分发时依赖 LocalInfo。
     MServerConnection::SetLocalInfo(Config.LocalServerId, Config.LocalServerType, Config.ServiceName.c_str());
 
+    // 注册到 Registry：
+    // 1. AttachEventLoop：把 Service 进程内的 NetEventLoop 交给 Cache
+    // 2. BindRegistry：拆 host:port 触发首次 TCP 连接
+    // 3. RegisterLocal：发 Register packet
+    MEndpointCache::Get().AttachEventLoop(&EventLoop);
+    MString RegHost;
+    uint16 RegPort = 0;
+    if (!ParseAddrPort(Config.RegistryAddr, RegHost, RegPort))
+    {
+        LOG_ERROR("MEchoService: malformed --registry=%s (expected host:port)", Config.RegistryAddr.c_str());
+        return false;
+    }
+    MEndpointCache::Get().BindRegistry(RegHost, RegPort);
+    MEndpointCache::Get().RegisterLocal(MakeLocalEndpoint(Config));
+
     RegisterLocalActors();
-    ConnectAllPeers();
 
     return true;
 }
 
 void MEchoService::TickBackends()
 {
-    // 后端 tick：MNetServerBase::Run 主循环每帧调一次，把 RpcTransports 里的
-    // 对端连接推心跳 / 收包。
-    for (const auto& Pair : GetRpcTransports())
-    {
-        if (Pair.second)
-        {
-            Pair.second->Tick(0.0f);
-        }
-    }
+    // 后端 tick：MNetServerBase::Run 主循环每帧调一次，把 MEndpointCache
+    // 内部的 Registry 心跳发送 + 断线重连维护起来。
+    MEndpointCache::Get().Tick(0.0f);
 }
 
 uint16 MEchoService::GetListenPort() const
@@ -80,7 +102,8 @@ void MEchoService::ShutdownConnections()
     }
     ActorMessages.clear();
 
-    ClearRpcTransports();
+    // 注销 Registry 连接 + 清空 ConnectionPool
+    MEndpointCache::Get().DeregisterAndShutdown();
 }
 
 void MEchoService::OnRunStarted()
@@ -104,32 +127,6 @@ void MEchoService::RegisterLocalActors()
                  static_cast<unsigned>(MServiceId::GetServiceId(ActorId)),
                  static_cast<unsigned>(MServiceId::GetInstId(ActorId)),
                  static_cast<unsigned long long>(ActorId));
-    }
-}
-
-void MEchoService::ConnectAllPeers()
-{
-    for (const SServicePeerConfig& Peer : Config.Peers)
-    {
-        const uint32 PeerServerId = MUniqueIdGenerator::Generate();
-        const SServerConnectionConfig PeerConfig(
-            PeerServerId,
-            Peer.ServerType,
-            GetServerTypeDisplayName(Peer.ServerType),
-            Peer.Address,
-            Peer.Port);
-
-        TSharedPtr<MServerConnection> PeerConn = MakeShared<MServerConnection>(PeerConfig);
-        PeerConn->Connect();
-
-        // 注册到本进程 MServerRuntimeContext（用作 RpcRuntimeContext::ResolveServerTransport 与 MActorRouter 跨进程寻址）
-        RegisterRpcTransport(Peer.ServerType, PeerConn);
-
-        LOG_INFO("%s: connected to peer %s at %s:%u",
-                 Config.ServiceName.c_str(),
-                 GetServerTypeDisplayName(Peer.ServerType),
-                 Peer.Address.c_str(),
-                 static_cast<unsigned>(Peer.Port));
     }
 }
 
@@ -165,10 +162,8 @@ MFUTURE(FSampleEchoResponse) MEchoService::Echo(const FSampleEchoRequest& Reques
     }
 
     // 跨进程转发（链 2 路径：ServiceA → ServiceB 走 MRpcChannel::CallToActor）
-    // MActorRouter 已经在对端连接建立时通过 MActorRouter::UpdateActorRoute 注册了对端 ActorIds；
-    // 这里直接用 ActorId 寻址，不直接拿 connection。
+    // MEndpointCache::GetOrConnect 走 Registry 推送的 endpoint 列表 + lazy connect。
     return MRpcChannel::Get().CallToActor<FSampleEchoResponse>(
-        this,
         Request.TargetActorId,
         "MEchoService",
         "Echo",

@@ -5,8 +5,11 @@
 #include "Common/Net/Rpc/RpcClientCall.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Net/Rpc/RpcPayload.h"
+#include "Common/Net/ServiceDiscovery/Endpoint.h"
+#include "Common/Net/ServiceDiscovery/EndpointCache.h"
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Async/MAsync.h"
+#include "Common/Runtime/Id.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
 #include "Servers/App/ServiceId.h"
 
@@ -72,54 +75,40 @@ bool MGatewayServer::Init(int InPort)
         Config.ListenPort = static_cast<uint16>(InPort);
     }
 
+    if (Config.RegistryAddr.empty())
+    {
+        LOG_ERROR("MGatewayServer: --registry=<host:port> is required");
+        return false;
+    }
+
     bRunning = true;
     GGlobalGateway = this;
     MLogger::LogStartupBanner("GatewayServer", Config.ListenPort, 0);
-    MServerConnection::SetLocalInfo(1, EServerType::Gateway, "GatewaySkeleton");
 
-    ConnectAllPeers();
+    // 本地 ServerId 没传 → 默认 1（PoC 阶段 Gateway 在 Listener 上是 1）
+    const uint32 LocalServerId = 1;
+    MServerConnection::SetLocalInfo(LocalServerId, EServerType::Gateway, "GatewaySkeleton");
+    Config.LocalServerType = EServerType::Gateway;
+    Config.LocalServerId = LocalServerId;
+
+    // 注册到 Registry：AttachEventLoop → BindRegistry → RegisterLocal
+    MEndpointCache::Get().AttachEventLoop(&EventLoop);
+    MString RegHost;
+    uint16 RegPort = 0;
+    if (!ParseAddrPort(Config.RegistryAddr, RegHost, RegPort))
+    {
+        LOG_ERROR("MGatewayServer: malformed --registry=%s (expected host:port)", Config.RegistryAddr.c_str());
+        return false;
+    }
+    MEndpointCache::Get().BindRegistry(RegHost, RegPort);
+    MEndpointCache::Get().RegisterLocal(MakeLocalEndpoint(Config));
 
     return true;
 }
 
-void MGatewayServer::ConnectAllPeers()
-{
-    for (const SServicePeerConfig& Peer : Config.Peers)
-    {
-        const uint32 PeerServerId = MUniqueIdGenerator::Generate();
-        const SServerConnectionConfig PeerConfig(
-            PeerServerId,
-            Peer.ServerType,
-            GetServerTypeDisplayName(Peer.ServerType),
-            Peer.Address,
-            Peer.Port);
-
-        TSharedPtr<MServerConnection> PeerConn = MakeShared<MServerConnection>(PeerConfig);
-        PeerConn->SetOnMessage([this](auto Connection, uint8 PacketType, const TByteArray& Data)
-        {
-            HandleBackendPacket(Connection, PacketType, Data, GetServerTypeDisplayName(Connection->GetConfig().ServerType));
-        });
-        PeerConn->Connect();
-
-        // 注册到本进程 MServerRuntimeContext（用作 RpcRuntimeContext::ResolveServerTransport）
-        RegisterRpcTransport(Peer.ServerType, PeerConn);
-
-        LOG_INFO("GatewayServer: connected to peer %s at %s:%u",
-                 GetServerTypeDisplayName(Peer.ServerType),
-                 Peer.Address.c_str(),
-                 static_cast<unsigned>(Peer.Port));
-    }
-}
-
 void MGatewayServer::Tick()
 {
-    for (const auto& Pair : GetRpcTransports())
-    {
-        if (Pair.second)
-        {
-            Pair.second->Tick(0.0f);
-        }
-    }
+    MEndpointCache::Get().Tick(0.0f);
 }
 
 uint16 MGatewayServer::GetListenPort() const
@@ -148,13 +137,7 @@ void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 
 void MGatewayServer::TickBackends()
 {
-    for (const auto& Pair : GetRpcTransports())
-    {
-        if (Pair.second)
-        {
-            Pair.second->Tick(0.1f);
-        }
-    }
+    MEndpointCache::Get().Tick(0.1f);
 }
 
 void MGatewayServer::ShutdownConnections()
@@ -168,7 +151,7 @@ void MGatewayServer::ShutdownConnections()
         }
     }
     ClientConnections.clear();
-    ClearRpcTransports();
+    MEndpointCache::Get().DeregisterAndShutdown();
 }
 
 void MGatewayServer::OnRunStarted()
@@ -284,9 +267,8 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
 
     FClientCallHandle Handle(FunctionId, ConnectionId, CallId);
 
-    // 通过 MRpcChannel::Call 走 Resolver 路由到目标 Service
+    // 通过 MRpcChannel::Call 路由到目标 Service（走 MEndpointCache::GetOrConnect）
     MRpcChannel::Get().Call<FSampleEchoResponse>(
-        this,
         TargetServer,
         TargetClassName,
         TargetMethodName,
@@ -295,35 +277,6 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
         {
             return HandleEchoResult(std::move(Completed), Handle);
         });
-}
-
-void MGatewayServer::HandleBackendPacket(
-    const TSharedPtr<MServerConnection>& Connection,
-    uint8 PacketType,
-    const TByteArray& Data,
-    const char* PeerName)
-{
-    if (PacketType == static_cast<uint8>(EServerMessageType::MT_FunctionCall))
-    {
-        if (!DispatchBackendServerCallPacket(this, Connection, Data))
-        {
-            LOG_WARN("Gateway failed to dispatch backend function call from %s", PeerName ? PeerName : "backend");
-        }
-        return;
-    }
-
-    if (PacketType == static_cast<uint8>(EServerMessageType::MT_FunctionResponse))
-    {
-        if (!HandleServerCallResponse(Data))
-        {
-            LOG_WARN("Gateway failed to handle backend function response from %s", PeerName ? PeerName : "backend");
-        }
-        return;
-    }
-
-    LOG_WARN("Gateway received unsupported backend packet from %s: type=%u",
-             PeerName ? PeerName : "backend",
-             static_cast<unsigned>(PacketType));
 }
 
 // CreateService 工厂——ServiceMain.h 中 namespace 内的

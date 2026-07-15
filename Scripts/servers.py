@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-一键起服 / 停服脚本（PoC：Gateway + 同质多进程 EchoService）
+一键起服 / 停服脚本（PoC：MServiceRegistry + Gateway + 同质多进程 EchoService）
 
 用法:
   python3 Scripts/servers.py start [--build-dir Build]
   python3 Scripts/servers.py stop  [--build-dir Build]
 
-起服顺序: EchoService@7001 → EchoService@7002 → Gateway@8001
+起服顺序: MServiceRegistry@18000 → EchoService@7001 → EchoService@7002 → Gateway@8001
 停服时按启动时记录的 PID 结束进程；若无 PID 文件则尝试按端口结束占用进程（仅 Linux）。
 """
 
@@ -24,10 +24,21 @@ from typing import Optional, Sequence, Tuple
 ECHO_PORT_A = 7001
 ECHO_PORT_B = 7002
 GATEWAY_PORT = 8001
+REGISTRY_PORT = 18000
+
+REGISTRY_HOST = "127.0.0.1"
+REGISTRY_ADDR = f"{REGISTRY_HOST}:{REGISTRY_PORT}"
 
 # 同质多进程 EchoService 启动参数：(name, port, argv)
 # 两个 EchoService 都是同一个 binary（MEchoService），靠 --inst 和 --actors 区分
 SERVER_ORDER: Sequence[Tuple[str, int, Sequence[str]]] = [
+    (
+        "MServiceRegistry",
+        REGISTRY_PORT,
+        [
+            f"--listen={REGISTRY_PORT}",
+        ],
+    ),
     (
         "EchoService",
         ECHO_PORT_A,
@@ -36,7 +47,7 @@ SERVER_ORDER: Sequence[Tuple[str, int, Sequence[str]]] = [
             "--inst=1",
             "--actors=1001,1002",
             "--service=MEchoService",
-            f"--peers=Echo@127.0.0.1:{ECHO_PORT_B}",
+            f"--registry={REGISTRY_ADDR}",
         ],
     ),
     (
@@ -47,7 +58,7 @@ SERVER_ORDER: Sequence[Tuple[str, int, Sequence[str]]] = [
             "--inst=2",
             "--actors=2001,2002",
             "--service=MEchoService",
-            f"--peers=Echo@127.0.0.1:{ECHO_PORT_A}",
+            f"--registry={REGISTRY_ADDR}",
         ],
     ),
     (
@@ -55,7 +66,7 @@ SERVER_ORDER: Sequence[Tuple[str, int, Sequence[str]]] = [
         GATEWAY_PORT,
         [
             f"--listen={GATEWAY_PORT}",
-            f"--peers=Echo@127.0.0.1:{ECHO_PORT_A},Echo@127.0.0.1:{ECHO_PORT_B}",
+            f"--registry={REGISTRY_ADDR}",
         ],
     ),
 ]
