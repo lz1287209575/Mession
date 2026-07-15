@@ -166,11 +166,23 @@ void MRollingFileSink::RotateLocked()
         return;
     }
 
-    // Trim archives beyond NumArchives: walk from the highest plausible
-    // suffix downward and remove any file matching <path>.<N>.
+    // Trim archives beyond NumArchives. After the live→archive rename above,
+    // the freshly written archive occupies FreeSuffix and any pre-existing
+    // archive at that slot has been overwritten by rename(2). We only need
+    // to delete *pre-existing* archives that no longer fit under the
+    // NumArchives budget, i.e. those with a suffix older than the new
+    // archive's slot minus (NumArchives - 1).
+    //
+    // Concretely: if NumArchives == 5 and we just rotated into slot N,
+    // valid archives are N, N-1, N-2, N-3, N-4. Anything below N-4 is dropped.
     if (NumArchives > 0)
     {
-        for (int N = static_cast<int>(NumArchives) + 1; N < FreeSuffix + 64; ++N)
+        const int OldestKept = FreeSuffix - static_cast<int>(NumArchives) + 1;
+        // Walk upward from OldestKept (skipping the freshly written archive
+        // at FreeSuffix and any kept newer slots) deleting anything older.
+        // Range cap matches the scan above so we can't spin forever.
+        const int MaxScan = FreeSuffix + 64;
+        for (int N = 0; N < OldestKept && N < MaxScan; ++N)
         {
             char Old[1024];
             std::snprintf(Old, sizeof(Old), "%s.%d", FilePath.c_str(), N);

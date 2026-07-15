@@ -173,14 +173,15 @@ void MConsoleSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<char> 
             static_cast<unsigned>(Line),
             Message);
 
-        // Write the formatted line to stdout. std::cout.write + \n is the
-        // simplest path; std::endl would force a flush per line which we
-        // explicitly want to avoid (Flush() below is the explicit gate).
+        // Write the formatted line to stdout. snprintf already appended the
+        // trailing '\n' into the buffer, so a single write() carries it
+        // out — two write() calls (write + put('\n')) would double the
+        // per-record syscall cost. std::endl would force a flush per
+        // line, which we explicitly avoid (Flush() below is the gate).
         const size_t Len = static_cast<size_t>(Cursor - BufBegin);
         if (Len > 0)
         {
-            std::cout.write(BufBegin, static_cast<std::streamsize>(Len - 1));
-            std::cout.put('\n');
+            std::cout.write(BufBegin, static_cast<std::streamsize>(Len));
         }
     }
 }
