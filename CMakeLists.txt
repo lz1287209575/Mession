@@ -165,6 +165,9 @@ set(MESSION_NETDRIVER_SOURCES
     Source/Common/Runtime/Reflect/Class.cpp
     Source/Common/Runtime/Reflect/Property.cpp
     Source/Common/Runtime/Reflect/Reflection.cpp
+    Source/Common/Net/ServiceDiscovery/Endpoint.cpp
+    Source/Common/Net/ServiceDiscovery/RegistryProtocol.cpp
+    Source/Common/Net/ServiceDiscovery/EndpointCache.cpp
 )
 
 add_library(mession_netdriver STATIC
@@ -466,6 +469,13 @@ mession_add_service(EchoService MEchoService SEchoServiceConfig Source/Servers/E
     EXTRA_GROUPS echoservice
 )
 
+# 8. MServiceRegistry - 服务发现集中管理进程（PoC 阶段纯内存）
+mession_add_service(MServiceRegistry MServiceRegistry SServiceRegistryConfig Source/Servers/ServiceRegistry/ServiceRegistryServer.h
+    SOURCES
+        Source/Servers/ServiceRegistry/ServiceRegistryServer.cpp
+    GENERATED_GROUPS shared serviceregistry
+)
+
 # MClientManifest generated definitions — linked into EchoService.
 add_dependencies(EchoService mession_reflection_codegen)
 target_sources(EchoService PRIVATE
@@ -485,6 +495,7 @@ configure_mession_compile_options(NetBench)
 # 安装目标
 install(TARGETS
     GatewayServer
+    MServiceRegistry
     DESTINATION bin
 )
 
@@ -493,5 +504,5 @@ message(STATUS "  Mession - Distributed MMO Server")
 message(STATUS "=====================================")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
-message(STATUS "  Servers: Gateway, EchoService (homogeneous multi-process PoC)")
+message(STATUS "  Servers: Gateway, EchoService, MServiceRegistry (homogeneous multi-process PoC)")
 message(STATUS "=====================================")

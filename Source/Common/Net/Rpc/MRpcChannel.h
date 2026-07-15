@@ -1,9 +1,9 @@
 #pragma once
 
-#include "Common/Net/Rpc/RpcRuntimeContext.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Net/Rpc/RpcClientCall.h"
 #include "Common/Net/Routing/ActorRouter.h"
+#include "Common/Net/ServiceDiscovery/EndpointCache.h"
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Common/Runtime/Log/Logger.h"
@@ -15,11 +15,14 @@
  *
  * 统一 ServerCall 和 ClientCall，提供一致的异步调用体验。
  *
+ * Server-side transport resolution（选 connection / lazy connect）由
+ * MEndpointCache 全局单例负责——Caller 不用再传 IRpcTransportResolver。
+ *
  * 用法:
  *
  * // ServerCall: 调用远程服务器
  * auto response = MRpcChannel::Get().Call<FResponse>(
- *     Resolver, EServerType::Echo, "MEchoService", "Echo", request);
+ *     EServerType::Echo, "MEchoService", "Echo", request);
  * FResponse result = MAwaitOk(response);
  *
  * // ClientCall: 发送到客户端
@@ -36,18 +39,12 @@ public:
 
     template<typename TResponse, typename TRequest>
     MFUTURE(TResponse) Call(
-        const IRpcTransportResolver* Resolver,
         EServerType TargetServer,
         const char* ClassName,
         const char* MethodName,
         const TRequest& Request) const
     {
-        if (!Resolver)
-        {
-            return MakeRpcErrorFuture<TResponse>("resolver_missing", "Transport resolver required");
-        }
-
-        TSharedPtr<MServerConnection> Connection = Resolver->ResolveServerTransport(TargetServer);
+        TSharedPtr<MServerConnection> Connection = MEndpointCache::Get().GetOrConnect(TargetServer);
         if (!Connection || !Connection->IsConnected())
         {
             return MakeRpcErrorFuture<TResponse>("connection_unavailable", TargetServer == EServerType::Unknown ? "server_type_invalid" : "");
@@ -65,7 +62,6 @@ public:
     // 带 Actor 路由
     template<typename TResponse, typename TRequest>
     MFUTURE(TResponse) CallToActor(
-        const IRpcTransportResolver* Resolver,
         uint64 ActorId,
         const char* ClassName,
         const char* MethodName,
@@ -73,7 +69,7 @@ public:
         EServerType DefaultServer = EServerType::Unknown) const
     {
         return MActorRouter::Get().SendToActor<TResponse>(
-            Resolver, ActorId, ClassName, MethodName, Request, DefaultServer);
+            ActorId, ClassName, MethodName, Request, DefaultServer);
     }
 
     // ============================================

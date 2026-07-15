@@ -4,7 +4,6 @@
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
-#include "Common/Net/Rpc/RpcRuntimeContext.h"
 #include "Common/Net/Rpc/RpcDispatch.h"
 #include "Common/Runtime/Log/Logger.h"
 #include "Common/Runtime/Object/Result.h"
@@ -26,15 +25,26 @@ struct SGatewayConfig
     MPROPERTY(Meta=(Cli="--listen"))
     uint16 ListenPort = 8001;
 
-    // 启动时主动连接的 peer（PoC 阶段：EchoService）。反射解析
-    // --peers=Gateway@addr:port,Echo@addr:port 通过 TPropertyStringImporter
-    // 对嵌套 MSTRUCT 元素递归。
-    MPROPERTY(Meta=(Cli="--peers"))
-    TVector<SServicePeerConfig> Peers;
+    // Service 注册中心地址（"127.0.0.1:18000"）。PoC 阶段强制要求传
+    // ——MEndpointCache 启动期就要连 Registry 取全量 endpoint。
+    MPROPERTY(Meta=(Cli="--registry"))
+    MString RegistryAddr;
+
+    // PoC 阶段：Gateway 没有 LocalActorIds / LocalInstId（不做业务），
+    // 但 MakeLocalEndpoint 模板需要这些字段——这里给个空的默认值让
+    // 模板实例化能通过。运行时 Gateway 通过 MEndpointCache 寻址 EchoService。
+    MPROPERTY()
+    EServerType LocalServerType = EServerType::Unknown;
+
+    MPROPERTY()
+    uint32 LocalServerId = 0;
+
+    MPROPERTY()
+    TVector<uint32> LocalActorIds;
 };
 
 MCLASS(Type=Server)
-class MGatewayServer : public MNetServerBase, public MObject, public MServerRuntimeContext
+class MGatewayServer : public MNetServerBase, public MObject
 {
 public:
     MGENERATED_BODY(MGatewayServer, MObject, 0)
@@ -65,15 +75,7 @@ public:
 
 private:
     void HandleClientPacket(uint64 ConnectionId, const TByteArray& Data);
-    void HandleBackendPacket(
-        const TSharedPtr<MServerConnection>& Connection,
-        uint8 PacketType,
-        const TByteArray& Data,
-        const char* PeerName);
-
-    void ConnectAllPeers();
 
     SGatewayConfig Config;
     TMap<uint64, TSharedPtr<INetConnection>> ClientConnections;
-    MServerConnectionManager BackendConnectionManager;
 };

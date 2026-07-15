@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mession PoC 端到端验证（Gateway + 同质多进程 EchoService）
+Mession PoC 端到端验证（MServiceRegistry + Gateway + 同质多进程 EchoService）
 
 链路：
   - 链路 1 (chain_local):   Client → Gateway → EchoService_A(7001) → 本机 Actor 1001
@@ -8,7 +8,7 @@ Mession PoC 端到端验证（Gateway + 同质多进程 EchoService）
   - 链路 3 (error_unknown): Client → Gateway → EchoService_A → 不存在 ActorId
 
 启动顺序由 Scripts/servers.py 控制；本脚本负责：
-  1. 启动三个进程（如果需要）
+  1. 启动 4 个进程（Registry + EchoA + EchoB + Gateway）
   2. 发 MT_FunctionCall(13) 给 Gateway:8001
   3. 解析 FSampleEchoResponse 回包
   4. 按 enabled tests 决定跑哪些链路
@@ -35,6 +35,7 @@ VALIDATE_LOG_DIR = Path("Logs") / "validate"
 GATEWAY_PORT = 8001
 ECHO_A_PORT = 7001
 ECHO_B_PORT = 7002
+REGISTRY_PORT = 18000
 
 
 def log(msg: str) -> None:
@@ -63,8 +64,8 @@ def wait_for_port(host: str, port: int, timeout: float) -> bool:
 
 
 def kill_poc_processes() -> None:
-    """按 binary 名清理可能残留的 GatewayServer / EchoService 进程。"""
-    for name in ("GatewayServer", "EchoService"):
+    """按 binary 名清理可能残留的 GatewayServer / EchoService / MServiceRegistry 进程。"""
+    for name in ("GatewayServer", "EchoService", "MServiceRegistry"):
         try:
             subprocess.run(
                 ["pkill", "-f", f"/{name}"],
@@ -83,7 +84,7 @@ def kill_poc_processes() -> None:
         else:
             fuser = None
         if fuser:
-            for port in (GATEWAY_PORT, ECHO_A_PORT, ECHO_B_PORT):
+            for port in (GATEWAY_PORT, ECHO_A_PORT, ECHO_B_PORT, REGISTRY_PORT):
                 try:
                     subprocess.run(
                         [fuser, "-k", f"{port}/tcp"],
@@ -235,6 +236,21 @@ def make_echo_request(target_actor_id: int, message: str) -> bytes:
     return struct.pack("<Q", target_actor_id) + pack_string(message)
 
 
+# ActorId 编码：[ServiceId: high 32][InstId: low 32]；与 ServiceId.h::MServiceId::Make 一致。
+def make_actor_id(server_type_name: str, inst_id: int) -> int:
+    type_map = {
+        "Gateway": 1,
+        "Login": 2,
+        "World": 3,
+        "Scene": 4,
+        "Router": 5,
+        "Mgo": 6,
+        "Echo": 7,
+    }
+    service_id = type_map.get(server_type_name, 0)
+    return (service_id << 32) | (inst_id & 0xFFFFFFFF)
+
+
 def call_echo(sock: socket.socket, function_id: int, call_id: int, payload: bytes, timeout: float = 5.0) -> dict:
     sock.sendall(build_client_call_packet(function_id, call_id, payload))
     deadline = time.time() + timeout
@@ -264,7 +280,7 @@ def call_echo(sock: socket.socket, function_id: int, call_id: int, payload: byte
 
 def run_test_chain_local(sock: socket.socket) -> bool:
     log("Test 1 (chain_local): Client -> Gateway -> EchoService_A -> Actor 1001")
-    request = make_echo_request(target_actor_id=1001, message="hello local")
+    request = make_echo_request(target_actor_id=make_actor_id("Echo", 1001), message="hello local")
     response = call_echo(sock, ECHO_FUNCTION_ID, call_id=1, payload=request)
     if not response["b_success"]:
         log(f"  FAIL: response not successful: {response}")
@@ -285,7 +301,7 @@ def run_test_chain_local(sock: socket.socket) -> bool:
 
 def run_test_chain_remote(sock: socket.socket) -> bool:
     log("Test 2 (chain_remote): Client -> Gateway -> EchoService_A -> EchoService_B -> Actor 2001")
-    request = make_echo_request(target_actor_id=2001, message="hello remote")
+    request = make_echo_request(target_actor_id=make_actor_id("Echo", 2001), message="hello remote")
     response = call_echo(sock, ECHO_FUNCTION_ID, call_id=2, payload=request)
     if not response["b_success"]:
         log(f"  FAIL: response not successful: {response}")
@@ -362,6 +378,15 @@ def run_validation(
         return True
 
     try:
+        # 起 MServiceRegistry 在最前——Echo/Gateway 都依赖 Registry 否则起不来。
+        if not spawn(
+            "MServiceRegistry",
+            REGISTRY_PORT,
+            [
+                f"--listen={REGISTRY_PORT}",
+            ],
+        ):
+            return False
         if not spawn(
             "EchoService",
             ECHO_A_PORT,
@@ -370,7 +395,7 @@ def run_validation(
                 "--inst=1",
                 "--actors=1001,1002",
                 "--service=MEchoService",
-                f"--peers=Echo@127.0.0.1:{ECHO_B_PORT}",
+                f"--registry=127.0.0.1:{REGISTRY_PORT}",
             ],
         ):
             return False
@@ -382,18 +407,18 @@ def run_validation(
                 "--inst=2",
                 "--actors=2001,2002",
                 "--service=MEchoService",
-                f"--peers=Echo@127.0.0.1:{ECHO_A_PORT}",
+                f"--registry=127.0.0.1:{REGISTRY_PORT}",
             ],
         ):
             return False
-        # 给两个 EchoService 一小段时间去互相连接
+        # 给两个 EchoService 一小段时间注册到 Registry + 推 EndpointChange。
         time.sleep(1.0)
         if not spawn(
             "GatewayServer",
             GATEWAY_PORT,
             [
                 f"--listen={GATEWAY_PORT}",
-                f"--peers=Echo@127.0.0.1:{ECHO_A_PORT},Echo@127.0.0.1:{ECHO_B_PORT}",
+                f"--registry=127.0.0.1:{REGISTRY_PORT}",
             ],
         ):
             return False

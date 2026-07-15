@@ -40,12 +40,12 @@ inline bool ReadFixedLE64(const TByteArray& In, size_t& Off, uint64& Out)
     Off += sizeof(uint64);
     return true;
 }
-inline void AppendString(TByteArray& Out, const MString& S)
+inline void AppendString_LE(TByteArray& Out, const MString& S)
 {
     AppendFixedLE16(Out, static_cast<uint16>(S.size()));
     Out.insert(Out.end(), S.begin(), S.end());
 }
-inline bool ReadString(const TByteArray& In, size_t& Off, MString& Out)
+inline bool ReadString_LE(const TByteArray& In, size_t& Off, MString& Out)
 {
     uint16 Len = 0;
     if (!ReadFixedLE16(In, Off, Len)) return false;
@@ -127,7 +127,7 @@ bool BuildRegistryAckPacket(EServiceRegistryResult Status, const MString& Messag
 {
     OutPacket.clear();
     OutPacket.push_back(static_cast<uint8>(Status));
-    AppendString(OutPacket, Message);
+    AppendString_LE(OutPacket, Message);
     PrependType(OutPacket, EServiceRegistryMessageType::Ack);
     return true;
 }
@@ -207,6 +207,6 @@ bool ParseRegistryAckPacket(const TByteArray& Payload, EServiceRegistryResult& O
     if (Payload.empty()) return false;
     size_t Off = 0;
     OutStatus = static_cast<EServiceRegistryResult>(Payload[Off++]);
-    return ReadString(Payload, Off, OutMessage) && Off == Payload.size();
+    return ReadString_LE(Payload, Off, OutMessage) && Off == Payload.size();
 }
 }

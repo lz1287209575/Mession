@@ -40,12 +40,12 @@ inline bool ReadFixedLE64(const TByteArray& In, size_t& Off, uint64& Out)
     Off += sizeof(uint64);
     return true;
 }
-inline void AppendString(TByteArray& Out, const MString& S)
+inline void AppendString_LE(TByteArray& Out, const MString& S)
 {
     AppendFixedLE16(Out, static_cast<uint16>(S.size()));
     Out.insert(Out.end(), S.begin(), S.end());
 }
-inline bool ReadString(const TByteArray& In, size_t& Off, MString& Out)
+inline bool ReadString_LE(const TByteArray& In, size_t& Off, MString& Out)
 {
     uint16 Len = 0;
     if (!ReadFixedLE16(In, Off, Len)) return false;
@@ -61,7 +61,7 @@ bool EncodeEndpoint(const FServiceEndpoint& Ep, TByteArray& Out)
     Out.clear();
     AppendFixedLE(Out, static_cast<uint32>(Ep.ServerType));
     AppendFixedLE(Out, Ep.ServerId);
-    AppendString(Out, Ep.Address);
+    AppendString_LE(Out, Ep.Address);
     AppendFixedLE16(Out, Ep.Port);
     AppendFixedLE64(Out, Ep.LastHeartbeatMs);
     Out.push_back(Ep.bHealthy ? 1 : 0);
@@ -79,7 +79,7 @@ bool DecodeEndpoint(const TByteArray& In, size_t& Off, FServiceEndpoint& Ep)
     if (!ReadFixedLE(In, Off, ServerTypeRaw)) return false;
     Ep.ServerType = static_cast<EServerType>(ServerTypeRaw);
     if (!ReadFixedLE(In, Off, Ep.ServerId)) return false;
-    if (!ReadString(In, Off, Ep.Address)) return false;
+    if (!ReadString_LE(In, Off, Ep.Address)) return false;
     if (!ReadFixedLE16(In, Off, Ep.Port)) return false;
     if (!ReadFixedLE64(In, Off, Ep.LastHeartbeatMs)) return false;
     if (Off + 1 > In.size()) return false;

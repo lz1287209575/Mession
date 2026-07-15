@@ -1,8 +1,8 @@
 #pragma once
 
 #include "Common/Net/Routing/ActorRoute.h"
-#include "Common/Net/Rpc/RpcRuntimeContext.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
+#include "Common/Net/ServiceDiscovery/EndpointCache.h"
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Reflect/Reflection.h"
 
@@ -25,7 +25,6 @@ public:
     // 模板方式：传类名+函数名
     template<typename TResponse, typename TRequest>
     MFUTURE(TResponse) SendToActor(
-        const IRpcTransportResolver* Resolver,
         uint64 ActorId,
         const char* TargetClassName,
         const char* FunctionName,
@@ -34,7 +33,7 @@ public:
 
     // Lambda 方式：用户提供如何调用的逻辑
     template<typename TCall>
-    auto RouteToActor(const IRpcTransportResolver* Resolver, uint64 ActorId, TCall&& Call) const
+    auto RouteToActor(uint64 ActorId, TCall&& Call) const
         -> decltype(Call(std::declval<TSharedPtr<MServerConnection>>()));
 
 private:
@@ -48,7 +47,6 @@ private:
 
 template<typename TResponse, typename TRequest>
 MFUTURE(TResponse) MActorRouter::SendToActor(
-    const IRpcTransportResolver* Resolver,
     uint64 ActorId,
     const char* TargetClassName,
     const char* FunctionName,
@@ -58,12 +56,7 @@ MFUTURE(TResponse) MActorRouter::SendToActor(
     SActorRoute Route = FindActor(ActorId);
     EServerType TargetServerType = Route.ActorId ? Route.ServerType : DefaultServerType;
 
-    if (!Resolver)
-    {
-        return MakeRpcErrorFuture<TResponse>("resolver_missing", "Transport resolver required");
-    }
-
-    TSharedPtr<MServerConnection> Connection = Resolver->ResolveServerTransport(TargetServerType);
+    TSharedPtr<MServerConnection> Connection = MEndpointCache::Get().GetOrConnect(TargetServerType);
     if (!Connection || !Connection->IsConnected())
     {
         return MakeRpcErrorFuture<TResponse>("connection_unavailable",
@@ -85,7 +78,6 @@ MFUTURE(TResponse) MActorRouter::SendToActor(
 
 template<typename TCall>
 auto MActorRouter::RouteToActor(
-    const IRpcTransportResolver* Resolver,
     uint64 ActorId,
     TCall&& Call) const -> decltype(Call(std::declval<TSharedPtr<MServerConnection>>()))
 {
@@ -97,12 +89,7 @@ auto MActorRouter::RouteToActor(
         return MakeRpcErrorFuture<TResponse>("actor_not_found", "Actor not registered");
     }
 
-    if (!Resolver)
-    {
-        return MakeRpcErrorFuture<TResponse>("resolver_missing", "Transport resolver required");
-    }
-
-    TSharedPtr<MServerConnection> Connection = Resolver->ResolveServerTransport(Route.ServerType);
+    TSharedPtr<MServerConnection> Connection = MEndpointCache::Get().GetOrConnect(Route.ServerType);
     if (!Connection || !Connection->IsConnected())
     {
         return MakeRpcErrorFuture<TResponse>("connection_unavailable", Route.ServerType == EServerType::Unknown ? "actor_route_invalid" : "");

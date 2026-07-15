@@ -6,76 +6,6 @@
 #include "Common/Runtime/Log/Logger.h"
 #include "Common/Runtime/Concurrency/SignalHandler.h"
 
-/**
- * SServicePeerConfig - peer service connection config (shared by Gateway and EchoService).
- * Used as the element type of SEchoServiceConfig::Peers (TVector<SServicePeerConfig>).
- *
- * Lives at global namespace scope so MHeaderTool-generated reflection registration
- * code can resolve `SServicePeerConfig` unqualified in its typeid/SetConstructor
- * template arguments. The type still goes through MObject::RegisterStruct via the
- * MHeaderTool-generated SAutoRegisterStruct_SServicePeerConfig static.
- *
- * Reflection-driven CLI parsing (--peers=Gateway@addr:port,Echo@addr:port) recurses
- * through TPropertyStringImporter<TVector<SServicePeerConfig>>; each element
- * token is dispatched via the aggregate importer in
- * Common/Runtime/Reflect/ReflectionPropertyTemplates.inl to
- * SServicePeerConfig::ImportFromCompactString, which parses the "Type@addr:port"
- * compact form.
- */
-MSTRUCT()
-struct SServicePeerConfig
-{
-    MPROPERTY()
-    EServerType ServerType = EServerType::Unknown;
-
-    MPROPERTY()
-    MString Address = "127.0.0.1";
-
-    MPROPERTY()
-    uint16 Port = 0;
-
-    /**
-     * ImportFromCompactString - parse "Type@addr:port" into this struct.
-     * Type strings recognized: "Gateway" -> EServerType::Gateway,
-     * "Echo" -> EServerType::Echo, anything else -> EServerType::Unknown.
-     * Returns false on malformed input (missing @ or :).
-     */
-    static bool ImportFromCompactString(SServicePeerConfig& Out, const MString& Str)
-    {
-        const size_t AtPos = Str.find('@');
-        if (AtPos == MString::npos)
-        {
-            return false;
-        }
-        const size_t ColonPos = Str.rfind(':');
-        if (ColonPos == MString::npos || ColonPos <= AtPos)
-        {
-            return false;
-        }
-
-        const MString TypeName = Str.substr(0, AtPos);
-        const MString AddrPart = Str.substr(AtPos + 1, ColonPos - AtPos - 1);
-        const MString PortStr = Str.substr(ColonPos + 1);
-
-        if (TypeName == "Gateway")
-        {
-            Out.ServerType = EServerType::Gateway;
-        }
-        else if (TypeName == "Echo")
-        {
-            Out.ServerType = EServerType::Echo;
-        }
-        else
-        {
-            return false;
-        }
-
-        Out.Address = AddrPart;
-        Out.Port = static_cast<uint16>(std::atoi(PortStr.c_str()));
-        return true;
-    }
-};
-
 namespace MServiceMain
 {
 
@@ -88,9 +18,9 @@ namespace MServiceMain
  * `LocalServerType` (EServerType). The reflection parser only knows how to
  * fill the MString field; the enum must be filled in code, *after* LoadConfig
  * returns. Service::Init() calls this and writes the result back into the
- * Service-side Config copy. New server-type strings only need to be added in
- * two places: this helper and the canonical CLI mapping in
- * SServicePeerConfig::ImportFromCompactString (kept in sync by hand).
+ * Service-side Config copy.
+ *
+ * 新增业务 Service 类型时，本表 + EServerType 枚举同步加一行即可。
  */
 inline EServerType ParseLocalServerType(const MString& Name)
 {
@@ -166,7 +96,7 @@ int Run(int argc, char** argv)
     // breaks the loop. We must explicitly drive Shutdown() here so the subclass's
     // ShutdownConnections() runs (close transports, unregister actors, clear maps).
     // Without this, transport state lingers in static containers
-    // (MServerRuntimeContext::RpcTransports, MActorRouter::ActorRoutes) until process
+    // (MActorRouter::ActorRoutes) until process
     // exit, which is the same shape as the double-free we fixed by removing
     // RemoveFromRoot() from ~MObject.
     Service->Shutdown();

@@ -3,7 +3,6 @@
 #include "Common/Runtime/MLib.h"
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
-#include "Common/Net/Rpc/RpcRuntimeContext.h"
 #include "Common/Net/Routing/ActorRouter.h"
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Object/Object.h"
@@ -46,13 +45,14 @@ struct SEchoServiceConfig
     MPROPERTY(Meta=(Cli="--actors"))
     TVector<uint32> LocalActorIds;
 
-    // Peers 反射解析为 TVector<SServicePeerConfig>——支持嵌套结构体的反射解析。
-    MPROPERTY(Meta=(Cli="--peers"))
-    TVector<SServicePeerConfig> Peers;
+    // Service 注册中心地址（"127.0.0.1:18000"）。PoC 阶段强制要求传
+    // ——MEndpointCache 启动期就要连 Registry 取全量 endpoint。
+    MPROPERTY(Meta=(Cli="--registry"))
+    MString RegistryAddr;
 };
 
 MCLASS(Type=Service)
-class MEchoService : public MNetServerBase, public MObject, public MServerRuntimeContext
+class MEchoService : public MNetServerBase, public MObject
 {
 public:
     MGENERATED_BODY(MEchoService, MObject, 0)
@@ -88,9 +88,6 @@ public:
     MFuture<TResult<SEmptyServerMessage, FAppError>> Rpc_OnHeartbeat(uint32 Seq);
 
 private:
-    // 建立到所有 peer 的连接 + 注册到本进程 MServerRuntimeContext。
-    void ConnectAllPeers();
-
     // 本机 Actor 注册到 MActorRouter（ServerType=Unknown 表示本机）。
     void RegisterLocalActors();
 
