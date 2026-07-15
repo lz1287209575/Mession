@@ -1,9 +1,25 @@
 #pragma once
 
-#include "Common/Net/NetMessages.h"
 #include "Common/Runtime/Reflect/Reflection.h"
 
 #include <utility>
+
+// step-1 过渡：原 EClientMessageType 在 Source/Common/Net/NetMessages.h
+// 已随 ClientProtocol 重构删除。RpcDispatch 的 message-type dispatch 路径
+// 仍依赖它作为参数 / 字段,这一步只删除物理文件,代码逻辑留待 step-2
+// 整体重写为纯 FunctionId 反射。这里定义一个最小占位 enum,后续 step-2
+// 会彻底拆掉所有依赖它的函数。
+enum class EClientMessageType : uint8
+{
+    MT_Login = 1,
+    MT_Handshake = 3,
+    MT_PlayerMove = 5,
+    MT_RPC = 9,
+    MT_Chat = 10,
+    MT_Heartbeat = 11,
+    MT_Error = 12,
+    MT_FunctionCall = 13,
+};
 
 struct SClientRouteRequest
 {

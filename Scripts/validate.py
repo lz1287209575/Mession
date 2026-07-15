@@ -100,7 +100,16 @@ def kill_poc_processes() -> None:
 
 # ===== 协议编解码（与 Common/Net/Rpc/RpcTransport.cpp 一致） =====
 
+# step-1: Client↔Gateway envelope 改成无 MessageType 字节:
+#   wire = [Length:4B][RequestId:8B][FunctionId:2B][PayloadSize:4B][Payload:N]
+# 这一步仅删除 `MT_FUNCTION_CALL = 13` 那一字节,客户端 stub 跟 Gateway
+# 现在的 BuildClientCallPacket / ParseClientCallPacket 暂时仍兼容,直到
+# step-2 把 Gateway 切到 BuildClientEnvelopePacket 才彻底丢掉 1 字节头。
+# 现在 validate.py 客户端发出的包仍带 1 字节头(暂态),Gateway 用旧路径
+# 解包,链路保持通。
 MT_FUNCTION_CALL = 13
+
+REQUEST_ID_DEFAULT = 1  # UE 实际运行时会用单调递增 id;validate.py 一次性用 1
 
 
 def compute_stable_id(scope: str, member: str) -> int:
@@ -131,10 +140,38 @@ def pack_string(value: str) -> bytes:
 
 
 def build_client_call_packet(function_id: int, call_id: int, payload: bytes) -> bytes:
+    # step-1 暂态:仍按 [MT:1][FunctionId:2][CallId:8][Size:4][Payload] 编码,
+    # 等 step-2 Gateway 切到 ParseClientEnvelopePacket 后改成
+    #   struct.pack("<HQ", request_id, function_id) + struct.pack("<I", len(payload)) + payload
     body = struct.pack("<BHQ", MT_FUNCTION_CALL, function_id, call_id)
     body += struct.pack("<I", len(payload))
     body += payload
     return struct.pack("<I", len(body)) + body
+
+
+# step-1 引入:新 envelope builder / parser。先在 validate.py 这边准备好,
+# step-2 把 Gateway 切到 ParseClientEnvelopePacket 后开始用。
+def build_client_envelope_packet(function_id: int, request_id: int, payload: bytes) -> bytes:
+    body = struct.pack("<Q", request_id)
+    body += struct.pack("<H", function_id)
+    body += struct.pack("<I", len(payload))
+    body += payload
+    return struct.pack("<I", len(body)) + body
+
+
+def parse_client_envelope(payload: bytes) -> Optional[dict]:
+    #   [RequestId:8B][FunctionId:2B][PayloadSize:4B][Payload:N]
+    if len(payload) < 8 + 2 + 4:
+        return None
+    request_id, function_id, payload_size = struct.unpack_from("<QHI", payload, 0)
+    header_size = 8 + 2 + 4
+    if len(payload) < header_size + payload_size:
+        return None
+    return {
+        "request_id": request_id,
+        "function_id": function_id,
+        "payload": payload[header_size:header_size + payload_size],
+    }
 
 
 def recv_exact(sock: socket.socket, size: int) -> Optional[bytes]:

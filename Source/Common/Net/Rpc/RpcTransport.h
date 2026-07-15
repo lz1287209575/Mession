@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Common/Net/NetMessages.h"
 #include "Common/Net/ServerConnection.h"
 #include "Common/Serialization/MessageUtils.h"
 #include "Common/Net/Rpc/RpcPayload.h"
@@ -18,6 +17,12 @@ bool BuildClientFunctionPacket(uint16 FunctionId, const TByteArray& InPayload, T
 bool BuildClientCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& InPayload, TByteArray& OutPacket);
 bool ParseClientFunctionPacket(const TByteArray& Data, uint16& OutFunctionId, uint32& OutPayloadSize, size_t& OutPayloadOffset);
 bool ParseClientCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutCallId, uint32& OutPayloadSize, size_t& OutPayloadOffset);
+
+// New step-1 envelope:无 MessageType 字节,纯反射 envelope。
+// wire 形态:[RequestId:8B][FunctionId:2B][PayloadSize:4B][Payload:N]
+// 最终取代上述 BuildClient*Packet / ParseClient*Packet。
+bool BuildClientEnvelopePacket(uint16 FunctionId, uint64 RequestId, const TByteArray& InPayload, TByteArray& OutPacket);
+bool ParseClientEnvelopePacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutRequestId, uint32& OutPayloadSize, size_t& OutPayloadOffset);
 
 bool BuildServerCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& InPayload, TByteArray& OutPayload);
 bool BuildServerCallResponsePacket(uint16 FunctionId, uint64 CallId, bool bSuccess, const TByteArray& InPayload, TByteArray& OutPayload);
