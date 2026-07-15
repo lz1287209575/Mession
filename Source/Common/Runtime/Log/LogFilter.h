@@ -8,10 +8,11 @@
 // level is below the category's RuntimeLevel. Returns true if the record
 // should be enqueued, false if it was dropped.
 //
-// Dropped records increment TotalSuppressed so the count is observable via
-// MLogMetrics::Snapshot(). We do not increment per-category counters here
-// because MLogRouter also contributes to the same total; a single increment
-// keeps the accounting simple and consistent.
+// Dropped records increment TotalSuppressed (global) and the per-category
+// SuppressedByCategory[Cat.Id] counter so the count is observable per
+// category via MLogMetrics::Snapshot(). MLogRouter's SinkMask==0 path is
+// a distinct event handled in the Router (see LogRouter.cpp), so this
+// does not double-count.
 class MLogFilter
 {
 public:
@@ -21,12 +22,14 @@ public:
         if (Category->bSuppressed.load(std::memory_order_relaxed))
         {
             MLogMetrics::IncSuppressed();
+            MLogMetrics::IncSuppressedByCategory(Category->Id);
             return false;
         }
         const ELogLevel Runtime = Category->RuntimeLevel.load(std::memory_order_relaxed);
         if (static_cast<int>(Level) < static_cast<int>(Runtime))
         {
             MLogMetrics::IncSuppressed();
+            MLogMetrics::IncSuppressedByCategory(Category->Id);
             return false;
         }
         return true;
