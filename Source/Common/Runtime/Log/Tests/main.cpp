@@ -13,10 +13,11 @@
 #include "Common/Runtime/Log/Tests/TestLogRegistry.cpp"
 #include "Common/Runtime/Log/Tests/TestLogMetrics.cpp"
 #include "Common/Runtime/Log/Tests/TestLogRouter.cpp"
+#include "Common/Runtime/Log/Tests/TestLogSinks.cpp"
 
 int main()
 {
-    std::printf("Running LogTest (Task 1+2+3+4)...\n");
+    std::printf("Running LogTest (Task 1+2+3+4+5)...\n");
 
     std::printf("[ MpscRingBuffer_Basic ]\n");
     Test_MpscRingBuffer_Basic();
@@ -56,6 +57,12 @@ int main()
 
     std::printf("[ LogRouter_MinLevelFiltersLowerLevels ]\n");
     Test_LogRouter_MinLevelFiltersLowerLevels();
+
+    std::printf("[ LogSinks_ConsoleWriteBatchToStdout ]\n");
+    Test_LogSinks_ConsoleWriteBatchToStdout();
+
+    std::printf("[ LogSinks_RollingFileWritesJsonLines ]\n");
+    Test_LogSinks_RollingFileWritesJsonLines();
 
     RUN_TESTS();
 }

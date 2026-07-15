@@ -129,6 +129,8 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Runtime/Log/Logger.cpp
     Source/Common/Runtime/Log/ConsoleLogSink.cpp
     Source/Common/Runtime/Log/FileLogSink.cpp
+    Source/Common/Runtime/Log/ConsoleSink.cpp
+    Source/Common/Runtime/Log/RollingFileSink.cpp
     Source/Common/Runtime/Log/LogStringTable.cpp
     Source/Common/Runtime/Log/LogContext.cpp
     Source/Common/Runtime/Log/LogRegistry.cpp

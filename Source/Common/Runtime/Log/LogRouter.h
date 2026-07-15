@@ -2,21 +2,13 @@
 #include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Log/LogLevel.h"
 #include "Common/Runtime/Log/LogCategory.h"
+#include "Common/Runtime/Log/LogSinks.h"  // ELogSinkId + MakeSinkMask live here (Task 5)
 #include <atomic>
 
-// Sink identifier enum used as bit indices into SinkMask.
-//
-// Defined here for Task 4; Task 5 (LogSinks.h consolidation) will lift this
-// enum to its own header and may add additional sink IDs. Bit values must
-// stay stable so routing rules written before Task 5 keep working.
-enum class ELogSinkId : uint32
-{
-    Console  = 0,   // 1<<0
-    File     = 1,   // 1<<1
-    Udp      = 2,   // 1<<2
-    Tcp      = 3,   // 1<<3
-    Coredump = 4,   // 1<<4
-};
+// ELogSinkId / MakeSinkMask were defined here in Task 4 as a temporary home.
+// They are lifted into LogSinks.h (Task 5) so the enum lives next to the
+// ILogSink interface that consumes its bit values. Bit values 0..4 are STABLE:
+// do not reorder.
 
 struct SLogRouteRule
 {
