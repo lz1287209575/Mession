@@ -12,6 +12,48 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# --- Reflected-ABI guard (Q2: machine-enforced) ---
+# 反射字段名(`MPROPERTY()` 后紧跟的字段名)是公开 ABI.
+# 任何 +/- 行触及 ABI 表中的字段名 → 视为破坏 ABI → 阻断 CI.
+# 当前 ABI 列表手维护,后续 PR 可扩展.
+ABI_HEADERS=(
+    "Source/Common/Net/ServiceDiscovery/Endpoint.h"
+    "Source/Servers/EchoService/EchoService.h"
+)
+ABI_FIELDS=(
+    # Endpoint.h
+    "EServerType" "ServerType"
+    "ServerId"
+    "Address" "Port"
+    "PublisherCount" "PublisherServerType" "PublisherServerId"
+    "Topic" "Tick" "Endpoints"
+    "Ack"
+    # EchoService.h
+    "SEchoServiceConfig" "InstId" "ActorCount" "ListenPort" "ServiceName"
+    "FEchoRequest" "Payload"
+    "FEchoResponse" "ReplyPayload" "EchoActorId"
+)
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+    ABIPATTERN='\b('"$(IFS='|'; echo "${ABI_FIELDS[*]}")"')\b'
+    for HDR in "${ABI_HEADERS[@]}"; do
+        if [ -f "$HDR" ]; then
+            git diff --unified=0 HEAD -- "$HDR" 2>/dev/null \
+            | grep -E '^[-+]\s*[A-Za-z]' \
+            | grep -E "$ABIPATTERN" \
+            | grep -v '^[-+]{3}' \
+            | grep -vE '^[-+]\s*//' > /tmp/abi-diff-$$.txt || true
+            if [ -s /tmp/abi-diff-$$.txt ]; then
+                echo "[check-style] ABI violation in $HDR:" >&2
+                cat /tmp/abi-diff-$$.txt >&2
+                rm -f /tmp/abi-diff-$$.txt
+                exit 1
+            fi
+        fi
+    done
+fi
+rm -f /tmp/abi-diff-$$.txt
+# --- ABI guard END ---
+
 if ! command -v clang-format >/dev/null 2>&1; then
     echo "[check-style] clang-format not found. Install with:" >&2
     echo "  apt-get install clang-format   # Debian/Ubuntu" >&2
