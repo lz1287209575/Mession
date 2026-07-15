@@ -17,10 +17,12 @@ struct FServiceEndpoint
     MPROPERTY() TVector<uint64> ActorIds;
 };
 
-// Wire-level enum for the Registry protocol. Lives outside EServerMessageType /
-// EClientMessageType so we can hand MServerConnection the raw uint8 PacketType
-// without colliding with MT_RPC=27 / MT_FunctionCall=28 / MT_FunctionResponse=29
-// (see Common/Net/ServerConnection.h:26-31). Base 200 is well clear of those.
+// Wire-level enum for the Registry protocol. Lives outside EServerMessageType
+// so we can hand MServerConnection the raw uint8 PacketType without colliding
+// with MT_RPC=27 / MT_FunctionCall=28 / MT_FunctionResponse=29 (see
+// Common/Net/ServerConnection.h:26-31). Base 200 is well clear of those.
+// Client↔Gateway envelope 由 RpcTransport.cpp::BuildClientEnvelopePacket 编/解码,
+// 此处不涉及(2026-07 step-1/2 协议族重构后 EClientMessageType 整个 enum 已删)。
 enum class EServiceRegistryMessageType : uint8_t
 {
     Register       = 200,

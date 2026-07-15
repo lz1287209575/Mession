@@ -1,106 +1,24 @@
 #pragma once
 
-#include "Common/Net/Rpc/RpcDispatch.h"
-#include "Common/Net/Rpc/RpcTransport.h"
+// step-2: 原 RpcClientCall 整个文件基本被清空。
+//
+//   原 SClientCallContext / GetCurrentClientConnectionId / CaptureCurrentClientCallContext
+//   / RegisterDeferredClientCall / BuildClientFunctionArgsPayload / BuildClientFunctionCallPacket*
+//   / FindClientDownlinkFunction* 全部删除 —— 它们依赖的 IClientResponseTarget /
+//   MClientDownlink / MessageType dispatch 整条路径已拆。
+//
+//   新 Client↔Gateway envelope 由 RpcTransport.cpp::BuildClientEnvelopePacket /
+//   ParseClientEnvelopePacket 负责,纯反射(只看 FunctionId + Payload)。
+//   业务侧如果需要给 UE 推下行,走 MHeaderTool 生成的 MClientDownlinkManifest +
+//   静态 stub(后续 task 引入)。
 
-#include <utility>
+#include <cstdint>
 
-struct SClientCallContext
+namespace RpcClientCall
 {
-    uint64 ConnectionId = 0;
-    uint16 FunctionId = 0;
-    uint64 CallId = 0;
-    TSharedPtr<IClientResponseTarget> ResponseTarget;
-
-    bool IsValid() const
-    {
-        return ConnectionId != 0 && FunctionId != 0 && ResponseTarget != nullptr;
-    }
-};
-
-uint64 GetCurrentClientConnectionId();
-uint64 GetCurrentClientCallId();
-SClientCallContext CaptureCurrentClientCallContext();
-void RegisterDeferredClientCall(const SClientCallContext& Context);
-void UnregisterDeferredClientCall(const SClientCallContext& Context);
-bool IsDeferredClientCall(const SClientCallContext& Context);
-void MarkCurrentClientCallDeferred();
-bool IsCurrentClientCallDeferred();
-bool SendDeferredClientCallResponse(const SClientCallContext& Context, const TByteArray& Payload);
-
-uint16 GetClientDownlinkFunctionId(const char* FunctionName);
-const char* GetClientDownlinkFunctionName(uint16 FunctionId);
-const MFunction* FindClientDownlinkFunctionById(uint16 FunctionId);
-const MFunction* FindClientDownlinkFunctionByName(const char* FunctionName);
-
-inline bool BuildClientFunctionArgsPayload(const MFunction* Function, TByteArray& OutPayload)
-{
-    if (!Function)
-    {
-        return false;
-    }
-
-    MReflectArchive Ar;
-    if (!SerializeFunctionArgsByMeta(Function, Ar))
-    {
-        return false;
-    }
-
-    OutPayload = std::move(Ar.Data);
-    return true;
-}
-
-template<typename... TArgs>
-inline bool BuildClientFunctionArgsPayload(const MFunction* Function, TByteArray& OutPayload, TArgs&&... Args)
-{
-    if (!Function)
-    {
-        return false;
-    }
-
-    MReflectArchive Ar;
-    if (!SerializeFunctionArgsByMeta(Function, Ar, std::forward<TArgs>(Args)...))
-    {
-        return false;
-    }
-
-    OutPayload = std::move(Ar.Data);
-    return true;
-}
-
-template<typename... TArgs>
-inline bool BuildClientFunctionCallPacketById(uint16 FunctionId, TByteArray& OutPacket, TArgs&&... Args)
-{
-    const MFunction* Function = FindClientDownlinkFunctionById(FunctionId);
-    TByteArray Payload;
-    if (!BuildClientFunctionArgsPayload(Function, Payload, std::forward<TArgs>(Args)...))
-    {
-        return false;
-    }
-
-    return BuildClientFunctionPacket(FunctionId, Payload, OutPacket);
-}
-
-template<typename... TArgs>
-inline bool BuildClientFunctionCallPacketByName(const char* FunctionName, TByteArray& OutPacket, TArgs&&... Args)
-{
-    const MFunction* Function = FindClientDownlinkFunctionByName(FunctionName);
-    if (!Function)
-    {
-        return false;
-    }
-
-    return BuildClientFunctionCallPacketById(Function->FunctionId, OutPacket, std::forward<TArgs>(Args)...);
-}
-
-template<typename TResponse>
-inline bool SendDeferredClientCallResponse(const SClientCallContext& Context, const TResponse& Response)
-{
-    if (!Context.IsValid())
-    {
-        return false;
-    }
-
-    const TByteArray Payload = BuildPayload(Response);
-    return SendDeferredClientCallResponse(Context, Payload);
+    // 整文件目前为占位过渡。后续 task 引入 MFUNCTION(Async, CallClient) 时,
+    // 这里会增加:
+    //   - bool SendClientDownlink(TSharedPtr<INetConnection>, uint16 FunctionId, const TByteArray& Payload);
+    //   - uint16 ResolveClientDownlinkFunctionId(const char* OwnerType, const char* FunctionName);
+    // 当前为空,但仍保留头文件符号以便 binary 链接稳定。
 }

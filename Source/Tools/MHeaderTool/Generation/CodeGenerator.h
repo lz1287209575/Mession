@@ -246,7 +246,9 @@ private:
                 GenerateClientBinder(out, parsedClass, func);
             }
 
-            // ClientCall handler
+            // step-2: ClientCall handler emit 路径已 no-op。原 client dispatch 由
+            // Gateway 端 MClientManifest 反射 + MRpcChannel::Call 接管,不再走
+            // MFunctionObject::ClientCallHandler 虚表。
             if (func.Transport == "ClientCall")
             {
                 GenerateClientCallHandler(out, parsedClass, func);
@@ -419,29 +421,16 @@ private:
         out << "\n";
     }
 
-    void GenerateClientCallHandler(std::ostringstream& out, const SParsedClass& parsedClass, const SParsedFunction& func) const
+    // step-2: ClientCall 的 MHeaderTool emit 路径已删除。原 GenerateClientCallHandler
+    // 依赖 EGeneratedClientCallHandlerResult / IsCurrentClientCallDeferred /
+    // MFunctionObject::ClientCallHandler,这些字段都随 ClientProtocol 重构拆掉。
+    // 后续如果有 MFUNCTION(Async, CallClient) 这类下行通知的需求(本工作树后续
+    // task 引入),会走 GenerateClientDownlinkStub 那条新路径,emit 到
+    // MClientDownlinkManifest + 静态 stub 函数,而不是 emit ClientCallHandler
+    // 虚表项。
+    void GenerateClientCallHandler(std::ostringstream& /*out*/, const SParsedClass& /*parsedClass*/, const SParsedFunction& /*func*/) const
     {
-        if (func.Params.size() < 2) return;
-
-        std::string handlerName = "MHeaderTool_HandleClientCall_" + SanitizeIdentifier(parsedClass.Name) + "_" + SanitizeIdentifier(func.Name);
-        const auto& requestParam = func.Params[0];
-        const auto& responseParam = func.Params[1];
-
-        out << "inline EGeneratedClientCallHandlerResult " << handlerName
-            << "(MObject* Object, uint64, const TByteArray& Payload, TByteArray& OutResponsePayload)\n";
-        out << "{\n";
-        out << "    auto* TypedObject = static_cast<" << parsedClass.Name << "*>(Object);\n";
-        out << "    if (!TypedObject) return EGeneratedClientCallHandlerResult::Failed;\n";
-        out << "    " << requestParam.StorageType << " RequestValue {};\n";
-        out << "    auto ParseResult = ParsePayload(Payload, RequestValue, \"" << func.Name << "\");\n";
-        out << "    if (!ParseResult.IsOk()) return EGeneratedClientCallHandlerResult::ParamBindingFailed;\n";
-        out << "    " << responseParam.StorageType << " ResponseValue {};\n";
-        out << "    TypedObject->" << func.Name << "(RequestValue, ResponseValue);\n";
-        out << "    if (IsCurrentClientCallDeferred()) return EGeneratedClientCallHandlerResult::Deferred;\n";
-        out << "    OutResponsePayload = BuildPayload(ResponseValue);\n";
-        out << "    return EGeneratedClientCallHandlerResult::Responded;\n";
-        out << "}\n";
-        out << "\n";
+        // no-op: client-side call dispatch 由 Gateway 反射接管,这里不再 emit
     }
 
     void GenerateServerCallHandler(std::ostringstream& out, const SParsedClass& parsedClass, const SParsedFunction& func) const
@@ -620,6 +609,12 @@ private:
         // No do-while wrapper - we're inside a macro
         out << "    {\n";
 
+        // step-2: 客户端 dispatch 字段(MessageName/RouteName/TargetName/AuthMode/
+        // WrapMode)整段从 MFunctionObject 删除。Client / ClientCall 这两条
+        // transport 也不再走 RegisterFunction 直接 emit 字段;改由后续 task
+        // 引入的 GenerateClientDownlinkStub 走 MClientDownlinkManifest 路径。
+        // 这里把 Client 路径保留最小 stub 形态(Transport 字段仍留 Class.h,
+        // 因为 ServerCall 也用它)。
         if (func.Transport == "Client" || !func.MessageName.empty())
         {
             out << "        auto* Func = new MFUNC_OBJECT();\n";
@@ -633,11 +628,6 @@ private:
                     << paramStructName << ", " << param.Name << ")));\n";
             }
             out << "        Func->Transport = \"" << func.Transport << "\";\n";
-            out << "        Func->MessageName = \"" << func.MessageName << "\";\n";
-            out << "        Func->RouteName = \"" << func.Route << "\";\n";
-            out << "        Func->TargetName = \"" << func.Target << "\";\n";
-            out << "        Func->AuthMode = \"" << func.Auth << "\";\n";
-            out << "        Func->WrapMode = \"" << func.Wrap << "\";\n";
             out << "        InClass->RegisterFunction(Func);\n";
         }
         else if (func.bIsRpc && func.Transport != "ServerCall")

@@ -113,69 +113,45 @@ bool ParseClientEnvelopePacket(const TByteArray& Data, uint16& OutFunctionId, ui
 
 bool BuildClientFunctionPacket(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutPacket)
 {
-    // 注意:这一段只是 step-1 的过渡,保留旧 1 字节 MT_FunctionCall=13 头
-    // 防止 Gateway 的 HandleClientPacket 现编译失败。step-2 把 Gateway
-    // 切到 ParseClientEnvelopePacket 之后整段删除。
-    constexpr uint8 LegacyMsgType = 13;
-    if (FunctionId == 0)
-    {
-        return false;
-    }
-
+    // step-2: 旧 BuildClientFunctionPacket(1-byte MessageType=MT_FunctionCall=13)
+    // 整体删除;统一用 BuildClientEnvelopePacket。这里保留空函数体是为了兼容
+    // 第三方 stub / 老 validate.py 子模块的引用,如有再彻底移除。
+    (void)FunctionId;
+    (void)InPayload;
     OutPacket.clear();
-    OutPacket.reserve(1 + sizeof(FunctionId) + sizeof(uint32) + InPayload.size());
-    OutPacket.push_back(LegacyMsgType);
-    AppendValue(OutPacket, FunctionId);
-    AppendValue(OutPacket, static_cast<uint32>(InPayload.size()));
-    OutPacket.insert(OutPacket.end(), InPayload.begin(), InPayload.end());
-    return true;
+    return false;
 }
 
 bool BuildClientCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& InPayload, TByteArray& OutPacket)
 {
-    constexpr uint8 LegacyMsgType = 13;
-    if (FunctionId == 0)
-    {
-        return false;
-    }
-
+    // step-2: 旧 BuildClientCallPacket 整体删除。
+    (void)FunctionId;
+    (void)CallId;
+    (void)InPayload;
     OutPacket.clear();
-    OutPacket.reserve(1 + sizeof(FunctionId) + sizeof(CallId) + sizeof(uint32) + InPayload.size());
-    OutPacket.push_back(LegacyMsgType);
-    AppendValue(OutPacket, FunctionId);
-    AppendValue(OutPacket, CallId);
-    AppendValue(OutPacket, static_cast<uint32>(InPayload.size()));
-    OutPacket.insert(OutPacket.end(), InPayload.begin(), InPayload.end());
-    return true;
+    return false;
 }
 
 bool ParseClientFunctionPacket(const TByteArray& Data, uint16& OutFunctionId, uint32& OutPayloadSize, size_t& OutPayloadOffset)
 {
-    const size_t HeaderSize = 1 + sizeof(uint16) + sizeof(uint32);
-    if (Data.size() < HeaderSize)
-    {
-        return false;
-    }
-
-    std::memcpy(&OutFunctionId, Data.data() + 1, sizeof(OutFunctionId));
-    std::memcpy(&OutPayloadSize, Data.data() + 1 + sizeof(uint16), sizeof(OutPayloadSize));
-    OutPayloadOffset = HeaderSize;
-    return Data.size() >= OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
+    // step-2: 旧 ParseClientFunctionPacket 整体删除。Gateway 已切到
+    // ParseClientEnvelopePacket。下面这几行保留兼容签名。
+    (void)Data;
+    (void)OutFunctionId;
+    (void)OutPayloadSize;
+    (void)OutPayloadOffset;
+    return false;
 }
 
 bool ParseClientCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutCallId, uint32& OutPayloadSize, size_t& OutPayloadOffset)
 {
-    const size_t HeaderSize = 1 + sizeof(uint16) + sizeof(uint64) + sizeof(uint32);
-    if (Data.size() < HeaderSize)
-    {
-        return false;
-    }
-
-    std::memcpy(&OutFunctionId, Data.data() + 1, sizeof(OutFunctionId));
-    std::memcpy(&OutCallId, Data.data() + 1 + sizeof(uint16), sizeof(OutCallId));
-    std::memcpy(&OutPayloadSize, Data.data() + 1 + sizeof(uint16) + sizeof(uint64), sizeof(OutPayloadSize));
-    OutPayloadOffset = HeaderSize;
-    return Data.size() >= OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
+    // step-2: 旧 ParseClientCallPacket 整体删除。
+    (void)Data;
+    (void)OutFunctionId;
+    (void)OutCallId;
+    (void)OutPayloadSize;
+    (void)OutPayloadOffset;
+    return false;
 }
 
 bool BuildServerCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& InPayload, TByteArray& OutPayload)

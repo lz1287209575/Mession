@@ -16,8 +16,6 @@
 
 class MReflectArchive;
 class MObject;
-class IClientRouteTarget;
-class IClientResponseTarget;
 bool BuildServerRpcPayload(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutData);
 
 template<typename T>
@@ -152,8 +150,11 @@ public:
     virtual void Tick(float /*DeltaTime*/) {}
     virtual void Destroy() {}
     virtual MString ToString() const;
-    virtual IClientRouteTarget* GetClientRouteTarget() { return nullptr; }
-    virtual IClientResponseTarget* GetClientResponseTarget() { return nullptr; }
+    // step-2: GetClientRouteTarget/GetClientResponseTarget 已随 ClientProtocol
+    // 重构删除(原 RpcDispatch 的 message-type + RouteName + WrapMode + AuthMode
+    // 整套 dispatch 都被换为 Manifest 反射)。Class.h 里 Reflection 字段
+    // (MessageName/RouteName/TargetName/AuthMode/WrapMode/ClientParamBinder/
+    // ClientCallHandler) 同步删除。
     virtual void VisitReferencedObjects(const TFunction<void(MObject*)>& Visitor) const;
     
     // 反射方法
