@@ -16,7 +16,7 @@ ContinuationIndentWidth: 4
 
 # Braces: Allman (every brace on its own line). 强制花括号 — 与 CLAUDE.md "Always use braces" 一致
 BraceWrapping:
-  AfterCase: true
+  AfterCaseLabel: true
   AfterClass: true
   AfterControlStatement: true   # 覆盖 AfterIf/AfterFor/AfterWhile/AfterDo
   AfterEnum: true
@@ -69,15 +69,12 @@ IncludeCategories:
     Priority:        1
 
 # Spacing / 杂项
-Cpp20: BracedListInit: true
 CompactNamespaces: false
 ConstructorInitializerIndentWidth: 4
 FixNamespaceComments: true
 IndentCaseLabels: false
 IndentCaseBlocks: false
 IndentGotoLabels: false
-KeepEmptyLinesAtEOF: false
-RemoveSemicolon: false
 SpaceAfterCStyleCast: false
 SpaceAfterLogicalNot: false
 SpaceAfterTemplateKeyword: true
@@ -88,6 +85,6 @@ SpaceBeforeCpp11BracedList: false
 SpaceBeforeCtorInitializerColon: true
 SpaceBeforeInheritanceColon: true
 SpaceBeforeParens: ControlStatements
-SpaceBeforeRangeBasedForColon: true
+SpaceBeforeRangeBasedForLoopColon: true
 SpaceInEmptyBlock: false
 SpaceInEmptyParentheses: false

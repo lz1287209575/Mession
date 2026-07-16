@@ -19,19 +19,35 @@ cd "$REPO_ROOT"
 ABI_HEADERS=(
     "Source/Common/Net/ServiceDiscovery/Endpoint.h"
     "Source/Servers/EchoService/EchoService.h"
+    "Source/Servers/App/ServiceMain.h"
+    "Source/Servers/Gateway/GatewayServer.h"
+    "Source/Protocol/Messages/Common/AppMessages.h"
+    "Source/Protocol/Messages/Common/ClientDownlinkMessages.h"
+    "Source/Protocol/Messages/Common/ForwardedClientCallMessages.h"
+    "Source/Protocol/Messages/EchoService/FSampleEchoMessages.h"
 )
 ABI_FIELDS=(
-    # Endpoint.h
-    "EServerType" "ServerType"
-    "ServerId"
-    "Address" "Port"
-    "PublisherCount" "PublisherServerType" "PublisherServerId"
-    "Topic" "Tick" "Endpoints"
-    "Ack"
-    # EchoService.h
-    "SEchoServiceConfig" "InstId" "ActorCount" "ListenPort" "ServiceName"
-    "FEchoRequest" "Payload"
-    "FEchoResponse" "ReplyPayload" "EchoActorId"
+    # Endpoint.h (FServiceEndpoint)
+    "EServerType" "ServerType" "ServerId" "Address" "Port"
+    "LastHeartbeatMs" "bHealthy" "ActorIds"
+    # EchoService.h (SEchoServiceConfig)
+    "SEchoServiceConfig" "ListenPort" "ServiceName"
+    "LocalServerTypeName" "LocalServerType" "LocalServerId"
+    "LocalInstId" "LocalActorIds" "Peers"
+    # ServiceMain.h (SServicePeerConfig — 共享嵌套类型)
+    "SServicePeerConfig"
+    # GatewayServer.h (SGatewayConfig)
+    "SGatewayConfig"
+    # FSampleEchoMessages.h (FSampleEchoRequest / FSampleEchoResponse)
+    "FSampleEchoRequest" "FSampleEchoResponse"
+    "Message" "TargetActorId" "Echo" "SourceActorId" "SourceServerName"
+    # AppMessages.h (FAppError)
+    "FAppError" "Code"
+    # ClientDownlinkMessages.h (FClientDownlinkPushRequest)
+    "FClientDownlinkPushRequest" "GatewayConnectionId" "FunctionId" "Payload"
+    # ForwardedClientCallMessages.h (FForwardedClientCallRequest / FForwardedClientCallResponse)
+    "FForwardedClientCallRequest" "FForwardedClientCallResponse"
+    "ClientFunctionId" "ClientCallId"
 )
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
     ABIPATTERN='\b('"$(IFS='|'; echo "${ABI_FIELDS[*]}")"')\b'
