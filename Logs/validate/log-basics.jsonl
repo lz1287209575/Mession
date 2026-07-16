@@ -1,0 +1,6 @@
+{"ts":"1970-05-01T18:48:54.931Z","level":"INFO","category":"LogCore","thread":0,"service":"Mession","file":"","line":0,"func":"","msg":":: Mession Game"}
+{"ts":"1970-05-01T18:48:54.931Z","level":"INFO","category":"LogNet","thread":0,"service":"Mession","file":"","line":0,"func":"","msg":"Starting MEchoS"}
+{"ts":"1970-05-01T18:48:54.931Z","level":"INFO","category":"LogCore","thread":0,"service":"Mession","file":"","line":0,"func":"","msg":"MEchoService: r"}
+{"ts":"1970-05-01T18:48:54.931Z","level":"INFO","category":"LogCore","thread":0,"service":"Mession","file":"","line":0,"func":"","msg":"MEchoService: r"}
+{"ts":"1970-05-01T18:48:54.931Z","level":"INFO","category":"LogCore","thread":0,"service":"Mession","file":"","line":0,"func":"","msg":"MEchoService ru"}
+{"ts":"1970-05-01T18:48:54.971Z","level":"INFO","category":"LogCore","thread":0,"service":"Mession","file":"","line":0,"func":"","msg":"New connection "}

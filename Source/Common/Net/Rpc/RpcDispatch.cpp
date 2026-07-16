@@ -1,6 +1,6 @@
 #include "Common/Net/Rpc/RpcClientCall.h"
 
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 
 extern thread_local uint64 GCurrentClientConnectionId;
 extern thread_local SClientCallContext GCurrentClientCallContext;

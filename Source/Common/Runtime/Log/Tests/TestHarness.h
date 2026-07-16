@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <atomic>
 #include <vector>
+#include <algorithm>
 
 // NOTE: GTestPassed/GTestFailed 均为 static (内部链接),每个测试 TU 各持一份。
 // 这避免了多 TU 链接符号冲突,但意味着统计是按 TU 内的测试聚合的。

@@ -3,7 +3,7 @@
 #include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Reflect/Reflection.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 #include <cstring>
 #include <string>
 #include <typeindex>

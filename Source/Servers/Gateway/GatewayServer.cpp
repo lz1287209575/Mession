@@ -83,7 +83,9 @@ bool MGatewayServer::Init(int InPort)
 
     bRunning = true;
     GGlobalGateway = this;
-    MLogger::LogStartupBanner("GatewayServer", Config.ListenPort, 0);
+    CORE_LOG(Info, ":: Mession Game Server :: (v%s)", "1.0.0");
+    NET_LOG(Info, "Starting GatewayServer on port %u",
+        static_cast<unsigned>(Config.ListenPort));
 
     // 本地 ServerId 没传 → 默认 1（PoC 阶段 Gateway 在 Listener 上是 1）
     const uint32 LocalServerId = 1;

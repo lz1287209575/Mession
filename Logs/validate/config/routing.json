@@ -1,0 +1,22 @@
+{
+  "defaultLevel": "Info",
+  "enableConsole": true,
+  "filePath": "/root/Mession/.claude/worktrees/log-module-design-spec/Logs/validate/log-routing.jsonl",
+  "categories": [],
+  "routes": [
+    {
+      "name": "LogAuth",
+      "sinks": [
+        "file"
+      ],
+      "minLevel": "Trace"
+    },
+    {
+      "name": "LogNet",
+      "sinks": [
+        "console"
+      ],
+      "minLevel": "Trace"
+    }
+  ]
+}

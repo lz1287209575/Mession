@@ -1,0 +1,17 @@
+{
+  "defaultLevel": "Info",
+  "enableConsole": true,
+  "filePath": "Logs/echo.jsonl",
+  "categories": [
+    { "name": "LogNet",   "level": "Info", "suppressed": false },
+    { "name": "LogDb",    "level": "Warn", "suppressed": false },
+    { "name": "LogAuth",  "level": "Info", "suppressed": false },
+    { "name": "LogRpc",   "level": "Info", "suppressed": false },
+    { "name": "LogCore",  "level": "Info", "suppressed": false },
+    { "name": "LogScene", "level": "Info", "suppressed": false }
+  ],
+  "routes": [
+    { "name": "LogAuth", "sinks": ["console", "file"], "minLevel": "Info" },
+    { "name": "LogRpc",  "sinks": ["console", "file"], "minLevel": "Info" }
+  ]
+}

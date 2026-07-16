@@ -1,7 +1,7 @@
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Runtime/Concurrency/SignalHandler.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 
 void MNetServerBase::Run()
 {

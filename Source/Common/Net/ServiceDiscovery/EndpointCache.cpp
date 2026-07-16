@@ -3,7 +3,7 @@
 #include "Common/Net/Rpc/RpcManifest.h"
 #include "Common/Runtime/EventLoop/EventLoop.h"
 #include "Common/Runtime/Id.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Time.h"
 
 #include <atomic>
@@ -60,7 +60,7 @@ void MEndpointCache::RegisterLocal(const FServiceEndpoint& Self)
     Registry_.LocalPort = Self.Port;
     if (!Registry_.bConnected)
     {
-        if (MLogger::IsDebugBuild())
+        if (MLogIsDebugBuild())
         {
             LOG_FATAL("MEndpointCache: registry not connected (DEBUG abort); addr=%s:%u",
                       Registry_.Addr.c_str(), static_cast<unsigned>(Registry_.Port));
@@ -90,7 +90,7 @@ TSharedPtr<MServerConnection> MEndpointCache::GetOrConnect(EServerType TargetSer
     auto It = Endpoints_.find(TargetServerType);
     if (It == Endpoints_.end() || It->second.empty())
     {
-        if (MLogger::IsDebugBuild())
+        if (MLogIsDebugBuild())
         {
             LOG_WARN("MEndpointCache: no endpoints for type=%s",
                      GetServerTypeDisplayName(TargetServerType));
@@ -120,7 +120,7 @@ TSharedPtr<MServerConnection> MEndpointCache::GetOrConnect(EServerType TargetSer
             return Conn;
         }
     }
-    if (MLogger::IsDebugBuild())
+    if (MLogIsDebugBuild())
     {
         LOG_WARN("MEndpointCache: all endpoints unhealthy for type=%s",
                  GetServerTypeDisplayName(TargetServerType));
@@ -139,7 +139,7 @@ void MEndpointCache::OnEndpointChange(EServerType ServerType, uint64 Seq, const 
     auto SeqIt = LastSeq_.find(ServerType);
     if (SeqIt != LastSeq_.end() && Seq < SeqIt->second)
     {
-        if (MLogger::IsDebugBuild())
+        if (MLogIsDebugBuild())
         {
             LOG_FATAL("MEndpointCache: stale push ServerType=%s Seq=%llu LastSeq=%llu",
                       GetServerTypeDisplayName(ServerType),
@@ -272,7 +272,7 @@ void MEndpointCache::TryConnectRegistry()
     TSharedPtr<MTcpConnection> Tcp = MTcpConnection::ConnectTo(SSocketAddress(Registry_.Addr, Registry_.Port), 3.0f);
     if (!Tcp || !Tcp->IsConnected())
     {
-        if (MLogger::IsDebugBuild())
+        if (MLogIsDebugBuild())
         {
             LOG_FATAL("MEndpointCache: failed to connect registry at %s:%u (DEBUG abort)",
                       Registry_.Addr.c_str(), static_cast<unsigned>(Registry_.Port));

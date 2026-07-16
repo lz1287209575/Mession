@@ -14,10 +14,11 @@
 #include "Common/Runtime/Log/Tests/TestLogMetrics.cpp"
 #include "Common/Runtime/Log/Tests/TestLogRouter.cpp"
 #include "Common/Runtime/Log/Tests/TestLogSinks.cpp"
+#include "Common/Runtime/Log/Tests/TestLogPerf.cpp"
 
 int main()
 {
-    std::printf("Running LogTest (Task 1+2+3+4+5)...\n");
+    std::printf("Running LogTest (Task 1+2+3+4+5+10)...\n");
 
     std::printf("[ MpscRingBuffer_Basic ]\n");
     Test_MpscRingBuffer_Basic();
@@ -63,6 +64,15 @@ int main()
 
     std::printf("[ LogSinks_RollingFileWritesJsonLines ]\n");
     Test_LogSinks_RollingFileWritesJsonLines();
+
+    std::printf("[ LogPerf_EnqueueP99UnderOneUs ]\n");
+    Test_LogPerf_EnqueueP99UnderOneUs();
+
+    std::printf("[ LogPerf_ConcurrentThroughputMeetsOneMillion ]\n");
+    Test_LogPerf_ConcurrentThroughputMeetsOneMillion();
+
+    std::printf("[ LogPerf_BackpressureDropsProtectErrorLevel ]\n");
+    Test_LogPerf_BackpressureDropsProtectErrorLevel();
 
     RUN_TESTS();
 }

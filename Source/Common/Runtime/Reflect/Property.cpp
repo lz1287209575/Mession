@@ -1,7 +1,7 @@
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Common/Runtime/HexUtils.h"
 #include "Common/Runtime/Json.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 
 namespace
 {

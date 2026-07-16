@@ -1,7 +1,7 @@
 #include "Common/Net/Rpc/RpcManifest.h"
 
 #include "Common/Runtime/Json.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 
 #include <mutex>
 

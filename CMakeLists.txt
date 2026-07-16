@@ -126,17 +126,29 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Runtime/Concurrency/FiberAwait.cpp
     Source/Common/Runtime/Concurrency/FiberScheduler.cpp
     Source/Common/Runtime/Concurrency/SignalHandler.cpp
-    Source/Common/Runtime/Log/Logger.cpp
-    Source/Common/Runtime/Log/ConsoleLogSink.cpp
-    Source/Common/Runtime/Log/FileLogSink.cpp
     Source/Common/Runtime/Log/ConsoleSink.cpp
     Source/Common/Runtime/Log/RollingFileSink.cpp
+    Source/Common/Runtime/Log/UdpSink.cpp
+    Source/Common/Runtime/Log/TcpSink.cpp
     Source/Common/Runtime/Log/LogStringTable.cpp
     Source/Common/Runtime/Log/LogContext.cpp
     Source/Common/Runtime/Log/LogRegistry.cpp
     Source/Common/Runtime/Log/LogMetrics.cpp
     Source/Common/Runtime/Log/LogCategories.cpp
     Source/Common/Runtime/Log/LogRouter.cpp
+    Source/Common/Runtime/Log/SinkWriter.cpp
+    Source/Common/Runtime/Log/Dispatcher.cpp
+    Source/Common/Runtime/Log/CoredumpSink.cpp
+    Source/Common/Runtime/Log/LogConfig.cpp
+    Source/Common/Runtime/Log/Log.cpp
+    Source/Common/Runtime/Log/LogMetrics.cpp
+    Source/Common/Runtime/Log/LogCategories.cpp
+    Source/Common/Runtime/Log/LogRouter.cpp
+    Source/Common/Runtime/Log/SinkWriter.cpp
+    Source/Common/Runtime/Log/Dispatcher.cpp
+    Source/Common/Runtime/Log/CoredumpSink.cpp
+    Source/Common/Runtime/Log/LogConfig.cpp
+    Source/Common/Runtime/Log/Log.cpp
     Source/Common/Net/NetServerBase.cpp
     Source/Common/Net/Routing/ActorRouter.cpp
     Source/Common/Net/ServerConnection.cpp

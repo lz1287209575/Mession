@@ -1,6 +1,6 @@
 #include "Common/Net/Rpc/RpcServerCall.h"
 
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Time.h"
 
 #include <atomic>

@@ -7,7 +7,7 @@
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Object/Result.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Id.h"
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Servers/App/ServiceId.h"
@@ -49,6 +49,19 @@ struct SEchoServiceConfig
     // ——MEndpointCache 启动期就要连 Registry 取全量 endpoint。
     MPROPERTY(Meta=(Cli="--registry"))
     MString RegistryAddr;
+
+    // 日志：ServiceMain::Run 会读这些字段初始化 MLog 管道。
+    MPROPERTY(Meta=(Cli="--log-file"))
+    MString LogFilePath = "";
+
+    MPROPERTY(Meta=(Cli="--log-rotate-bytes"))
+    uint64 LogRotateBytes = 100ull * 1024ull * 1024ull;
+
+    MPROPERTY(Meta=(Cli="--log-archives"))
+    uint32 LogArchives = 5;
+
+    MPROPERTY(Meta=(Cli="--log-config"))
+    MString LogConfigPath = "";
 };
 
 MCLASS(Type=Service)

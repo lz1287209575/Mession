@@ -5,7 +5,7 @@
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
 #include "Common/Net/Rpc/RpcDispatch.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Object/Result.h"
 #include "Protocol/Messages/Common/AppMessages.h"
 #include "Protocol/Messages/Common/ClientDownlinkMessages.h"
@@ -41,6 +41,19 @@ struct SGatewayConfig
 
     MPROPERTY()
     TVector<uint32> LocalActorIds;
+
+    // 日志：ServiceMain::Run 会读这些字段初始化 MLog 管道。
+    MPROPERTY(Meta=(Cli="--log-file"))
+    MString LogFilePath = "";
+
+    MPROPERTY(Meta=(Cli="--log-rotate-bytes"))
+    uint64 LogRotateBytes = 100ull * 1024ull * 1024ull;
+
+    MPROPERTY(Meta=(Cli="--log-archives"))
+    uint32 LogArchives = 5;
+
+    MPROPERTY(Meta=(Cli="--log-config"))
+    MString LogConfigPath = "";
 };
 
 MCLASS(Type=Server)

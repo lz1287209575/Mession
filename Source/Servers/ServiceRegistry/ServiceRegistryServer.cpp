@@ -2,7 +2,7 @@
 
 #include "Servers/App/MService.h"
 #include "Common/Net/Rpc/RpcManifest.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Time.h"
 
 bool MServiceRegistry::Init(int InPort)
@@ -16,7 +16,9 @@ bool MServiceRegistry::Init(int InPort)
     }
 
     bRunning = true;
-    MLogger::LogStartupBanner("MServiceRegistry", Config.ListenPort, 0);
+    CORE_LOG(Info, ":: Mession Game Server :: (v%s)", "1.0.0");
+    NET_LOG(Info, "Starting MServiceRegistry on port %u",
+        static_cast<unsigned>(Config.ListenPort));
     return true;
 }
 
@@ -113,7 +115,7 @@ void MServiceRegistry::HandleRegister(TSharedPtr<FRegistryClientSession> Session
     if (Existing != Endpoints_.end() && !Session->bRegistered)
     {
         SendAck(Session, EServiceRegistryResult::AlreadyExists, "server_id_in_use");
-        if (MLogger::IsDebugBuild())
+        if (MLogIsDebugBuild())
         {
             LOG_FATAL("MServiceRegistry: duplicate ServerId=%u (DEBUG abort)",
                       static_cast<unsigned>(Ep.ServerId));

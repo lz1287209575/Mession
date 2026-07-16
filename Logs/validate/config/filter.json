@@ -1,0 +1,33 @@
+{
+  "defaultLevel": "Info",
+  "enableConsole": true,
+  "filePath": "/root/Mession/.claude/worktrees/log-module-design-spec/Logs/validate/log-filter.jsonl",
+  "categories": [
+    {
+      "name": "LogAuth",
+      "level": "Trace",
+      "suppressed": true
+    },
+    {
+      "name": "LogDb",
+      "level": "Warn",
+      "suppressed": false
+    }
+  ],
+  "routes": [
+    {
+      "name": "LogDb",
+      "sinks": [
+        "file"
+      ],
+      "minLevel": "Debug"
+    },
+    {
+      "name": "LogAuth",
+      "sinks": [
+        "console"
+      ],
+      "minLevel": "Trace"
+    }
+  ]
+}

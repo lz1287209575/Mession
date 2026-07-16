@@ -1,6 +1,6 @@
 #include "HttpDebugServer.h"
 #include "Common/IO/Socket/SocketPlatform.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 #include <cstring>
 #include <chrono>
 
