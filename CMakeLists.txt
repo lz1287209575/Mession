@@ -141,6 +141,7 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Runtime/Log/CoredumpSink.cpp
     Source/Common/Runtime/Log/LogConfig.cpp
     Source/Common/Runtime/Log/Log.cpp
+    Source/Common/Net/ClientCall/MClientTargetResolver.cpp
     Source/Common/Net/NetServerBase.cpp
     Source/Common/Net/Routing/ActorRouter.cpp
     Source/Common/Net/ServerConnection.cpp
