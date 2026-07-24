@@ -633,7 +633,27 @@ MHeaderTool 生成的代码在 `Build/Generated/`,**不参与**风格检查。
 
 ---
 
-## 12. 相关文档
+## 12. 落地进度（TODO）
+
+本文件与工具链（`.clang-format` / `.pre-commit-config.yaml` / `scripts/check-style.sh` / `scripts/install-hooks.sh` / design spec）为 **C1：规范 + 工具**，已先合入 `main`。
+
+**尚未做（后续单独 PR，避免与功能改动抢 diff）：**
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| **C1** | 文档 + clang-format + pre-commit + check-style（含反射 ABI 黑名单） | **已合入** |
+| **C2** | 全量 format `Source/Common/**` | TODO |
+| **C3** | 全量 format `Source/Servers/**` | TODO |
+| **C4** | 全量 format `Source/Tools/**` + `Source/Protocol/**` | TODO |
+| **C5** | `CLAUDE.md` 快查表收口 + 全量 `check-style.sh` / build / validate 验收 | TODO |
+
+约束：C2–C5 期间 **禁止改反射字段名/顺序**（`scripts/check-style.sh` ABI 黑名单）；纯格式变更，不改 runtime 行为。
+
+实施计划见 worktree / 后续补档：`Docs/superpowers/plans/2026-07-14-coding-style-implementation.md`。
+
+---
+
+## 13. 相关文档
 
 - `CLAUDE.md`:项目总纲,本规范的快查表 + 跳转。
 - `Docs/Architecture.md`:系统架构,Server 拓扑、对象模型。
