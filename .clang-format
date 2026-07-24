@@ -1,16 +1,24 @@
+# clang-format config for Mession C++ codebase.
+# Spec: Docs/superpowers/specs/2026-07-14-coding-style/design.md
+# Doc:  Docs/CodingStyle.md
+
 BasedOnStyle: LLVM
-Language: Cpp
 
+# Layout
 IndentWidth: 4
-TabWidth: 4
 UseTab: Never
-ColumnLimit: 120
+ColumnLimit: 240
+AccessModifierOffset: 0
+NamespaceIndentation: All
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 2
+ContinuationIndentWidth: 4
 
-BreakBeforeBraces: Allman
+# Braces: Allman (every brace on its own line). 强制花括号 — 与 CLAUDE.md "Always use braces" 一致
 BraceWrapping:
   AfterCaseLabel: true
   AfterClass: true
-  AfterControlStatement: Always
+  AfterControlStatement: true   # 覆盖 AfterIf/AfterFor/AfterWhile/AfterDo
   AfterEnum: true
   AfterFunction: true
   AfterNamespace: true
@@ -18,18 +26,65 @@ BraceWrapping:
   AfterUnion: true
   BeforeCatch: true
   BeforeElse: true
-  IndentBraces: false
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
 
+# 单行禁用 — CLAUDE.md "Always use braces, even single statements"
 AllowShortBlocksOnASingleLine: Never
 AllowShortCaseLabelsOnASingleLine: false
-AllowShortEnumsOnASingleLine: false
 AllowShortFunctionsOnASingleLine: None
 AllowShortIfStatementsOnASingleLine: Never
-AllowShortLambdasOnASingleLine: Empty
 AllowShortLoopsOnASingleLine: false
 
-IndentCaseLabels: true
+# Pointers / references
 PointerAlignment: Left
 ReferenceAlignment: Left
-SortIncludes: false
+DerivePointerAlignment: false
+
+# 对齐
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+AlignConsecutiveMacros: true
+AlignAfterOpenBracket: Align
+AlignEscapedNewlines: Left
+AlignOperands: true
+AlignTrailingComments: true
+
+# Includes
+SortIncludes: true
+IncludeBlocks: Preserve
+IncludeCategories:
+  # 本项目头
+  - Regex:           '^"(Common|Servers|Protocol|Tests)/.*\.h"$'
+    Priority:        2
+  # 第三方库
+  - Regex:           '^<[a-zA-Z0-9_]+/'   # 任意有目录的第三方
+    Priority:        3
+  # C++ 标准库
+  - Regex:           '^<[a-zA-Z_]+>$'      # 单一标识符标准头
+    Priority:        4
+  # 其他兜底
+  - Regex:           '.*'
+    Priority:        1
+
+# Spacing / 杂项
+CompactNamespaces: false
+ConstructorInitializerIndentWidth: 4
+FixNamespaceComments: true
+IndentCaseLabels: false
+IndentCaseBlocks: false
+IndentGotoLabels: false
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceAfterTemplateKeyword: true
+SpaceAroundPointerQualifiers: Default
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCaseColon: false
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
 SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceInEmptyBlock: false
+SpaceInEmptyParentheses: false

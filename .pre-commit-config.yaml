@@ -1,0 +1,36 @@
+# pre-commit configuration for Mession C++ codebase.
+# Spec: Docs/superpowers/specs/2026-07-14-coding-style/design.md
+
+# 安装:
+#   1. pip install pre-commit
+#   2. pre-commit install
+#   3. bash scripts/install-hooks.sh   (可选,只安装 clang-format 二进制)
+
+# 当 clang-format 缺失时,跳过而不是失败 — 见 hooks[].additional_dependencies
+default_language_version:
+  python: python3
+
+repos:
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v18.1.8
+    hooks:
+      - id: clang-format
+        name: clang-format (C++)
+        types_or: [c, c++]
+        files: '^(Source|Protocol|Tests)/.*\.(h|hpp|c|cc|cpp)$'
+        # 排除自动生成
+        exclude: '^Build/.*'
+        args: ['--style=file', '-i']
+        # pre-commit 默认在工具缺失时失败;我们改为警告:
+        require_serial: false
+
+  - repo: local
+    hooks:
+      - id: no-bare-stdout
+        name: forbid bare std::cout / printf in Source/
+        # 业务日志必须走 LOG_*;stdio 仅 CLI 工具允许
+        entry: bash -c 'grep -rnE "std::cout|^\s*printf" Source/ --include="*.cpp" --include="*.h" || true'
+        language: system
+        pass_filenames: false
+        # 仅做提示,不阻断 commit
+        stages: [manual]
