@@ -1,7 +1,5 @@
 #include "Common/Net/ClientCall/MClientTargetResolver.h"
 
-#include "Common/Runtime/Log/Logger.h"
-
 MClientTargetResolver& MClientTargetResolver::Get()
 {
     // Meyers singleton — first-touch construction, process-local lifetime.
