@@ -20,7 +20,7 @@
 | 客户端下行 | 经 Gateway（如 `PushClientDownlink`）；目标连接框架：`MClientTargetResolver` |
 | 代码生成 | **保留 MHeaderTool**；`MClientManifest` **真 emit 仍是缺口** |
 | 日志 | **MLog** 异步管道（`Common/Runtime/Log`）；旧 `Logger` 已移除 |
-| 协程 | **`MFUTURE(T)`** = `SFutureResult<T>` / `MFuture<TResult<T, FAppError>>`（真挂起 backend 仍有限） |
+| 异步 | **合同 `SFutureResult<T>`**；目标路径见 `Docs/superpowers/specs/2026-07-24-cpp17-async-await.md`（`Async`/`AWAIT` 状态机 + `MAsyncContext`；C++17；Fiber 非主路径）。现状 handler 多为同步完成 future |
 
 ### 0.1 历史设计（已废弃作施工图）
 

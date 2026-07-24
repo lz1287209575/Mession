@@ -75,9 +75,10 @@
 见 `Docs/CodingStyle.md` §落地进度：Common / Servers / Tools+Protocol 全量 format + CLAUDE 快查收口。  
 **单独 PR**，勿与功能改动混提。
 
-### 7. 运行时基础
+### 7. 运行时基础 / C++17 异步（设计已定）
 
-- Fiber：Windows backend 仍受限；真挂起需选 backend（libco / boost::context 等）
+- **规范**：`Docs/superpowers/specs/2026-07-24-cpp17-async-await.md`（`SFutureResult` + `MFUNCTION(Async)` + `AWAIT` 状态机 + 薄 `MAsyncContext`；废弃 `MFUTURE` 包装；Fiber/`MAwait` 非主路径）
+- 实施分期见该 spec §14（P0 口径/CMake17 → P1 dispatch pending → P2 垂直切片 → P3 MHeaderTool）
 - 拆分超大 `ReflectionPropertyTemplates.inl`（JSON / Binary / CLI）
 
 ### 8. 文档与仓库卫生
