@@ -12,110 +12,155 @@ cmake --build Build -j4
 # Windows
 Scripts\Build.bat Release
 
-# Start servers locally
+# Start PoC topology (Registry → 2×EchoService → Gateway)
 python3 Scripts/servers.py start --build-dir Build
 
 # Stop servers
 python3 Scripts/servers.py stop --build-dir Build
 
-# Run validation suite
+# Run validation (client chains through Gateway)
 python3 Scripts/validate.py --build-dir Build --no-build
 
-# Run specific validation suite
+# Run specific validation suite(s)
 python3 Scripts/validate.py --build-dir Build --no-build --suite player_state
-python3 Scripts/validate.py --build-dir Build --no-build --suite scene_downlink
-python3 Scripts/validate.py --build-dir Build --no-build --suite combat_commit
-
-# List available validation suites
 python3 Scripts/validate.py --build-dir Build --no-build --list-suites
+
+# Protocol / reflection checks after RPC or MHeaderTool changes
+python3 Scripts/verify_protocol.py
+
+# Log module unit tests (after Log-related changes)
+cmake --build Build --target LogTest -j4 && ./Bin/LogTest
+
+# Style toolchain (C1 landed; bulk format C2–C5 still TODO — see Docs/CodingStyle.md)
+bash scripts/check-style.sh
 ```
 
-## Architecture Overview
+## PoC Topology (current truth)
 
-### Six-Server Topology
+Historical six-server layout (Login/World/Scene/Router/Mgo) was collapsed for PoC. **Do not restore those services.** Business surface is EchoService instances.
 
-| Server | Port | Purpose |
-|--------|------|---------|
-| GatewayServer | 8001 | Client entry, routes ClientCall via MClientManifest |
-| LoginServer | 8002 | Session issuance and validation |
-| WorldServer | 8003 | Player object tree ownership, orchestration |
-| SceneServer | 8004 | Scene entry/exit, sync, lightweight combat runtime |
-| RouterServer | 8005 | Player routing registration and lookup |
-| MgoServer | 8006 | Player persistence (in-memory or MongoDB) |
+| Process | Port (default) | Role |
+|---------|----------------|------|
+| MServiceRegistry | 18000 | Service discovery: register / heartbeat / endpoint push |
+| EchoService (×N) | 7001, 7002, … | Homogeneous business workers; own ActorIds via `--inst` / `--actors` |
+| GatewayServer | 8001 | Sole client-facing entry; routes ClientCall to backends |
 
-### Client Request Flow
+All business processes take `--registry=host:port`. Peers are **not** static CLI lists; they come from Registry + `MEndpointCache`.
 
-1. Client connects to Gateway → sends `MT_FunctionCall`
-2. Gateway looks up target via `MClientManifest` → forwards to business server
-3. WorldServer receives via `MWorldClient::Client_*` → dispatches to `MPlayerService`
-4. `MPlayerService` finds `MPlayer` and executes on child objects via `MFUNCTION(ServerCall)`
+```
+UE / Scripts/validate.py
+        │  MT_FunctionCall (FunctionId path)
+        ▼
+  Gateway :8001  ──MEndpointCache──►  EchoService A/B :7001/:7002
+        │                                    ▲
+        └────────── --registry ──────────────┤
+                                             ▼
+                                   MServiceRegistry :18000
+```
 
-### Object State Model
+## Client / server request flow
 
-Player state is a tree rooted at `MPlayer`:
-- `MPlayerSession` / `MPlayerController` / `MPlayerPawn`
-- `MPlayerProfile` / `MPlayerInventory` / `MPlayerProgression` / `MPlayerCombatProfile`
+1. Client connects to **Gateway** and sends `MT_FunctionCall` (stable **FunctionId** envelope; legacy `EClientMessageType` / `ForwardedClientCall` removed).
+2. Gateway looks up `MClientManifest::FindByFunctionId` (emit still incomplete — table may be empty/stub; do not reintroduce hard-coded route tables as the long-term design).
+3. Gateway resolves backend via **`MEndpointCache::GetOrConnect(EServerType)`** (fed by Registry), then server RPC.
+4. EchoService handles `MFUNCTION(ServerCall)` on local actors (`MActorRouter`); cross-instance uses `MRpcChannel::CallToActor` + cache.
+5. Downlink to clients is Gateway-mediated (`PushClientDownlink` / `SendToClient` style paths). Server→client push targeting framework: `MClientTargetResolver` + `MClientTargetContextGuard` (framework landed; full call-site wiring still ongoing).
 
-Properties use `MPROPERTY(...)` with domain tags:
-- `PersistentData` — survives across sessions via MgoServer
-- `Replicated` — synchronized to clients
-- `PersistentData | Replicated` — both
+## Object / actor model
 
-### Three-Layer World Dispatch
+- No restored Player object tree. Addressing is **flat ActorId (uint64)** → process / connection.
+- `MActorRouter` — process-local actor registration and lookup; transport resolution goes through `MEndpointCache` where remote.
+- Properties still use `MPROPERTY(...)` with domain tags when applicable:
+  - `PersistentData` — survives across sessions (persistence not in PoC hot path)
+  - `Replicated` — synchronized to clients
+  - `PersistentData | Replicated` — both
 
-1. **WorldClient** (`MWorldClient`) — thin client-call adapter, projects to PlayerService
-2. **PlayerService** (`MPlayerService`) — Runtime dispatch contract, validation, barrier coordination
-3. **ObjectCall** (`MObjectCall*`) — local/remote object invocation routing
+## Core runtime layers
 
-## Core Conventions
+| Layer | Location | Notes |
+|-------|----------|--------|
+| Core I/O / loops | `Source/Common/IO`, `Runtime/EventLoop`, `Runtime/Concurrency` | sockets, net/task loops, fibers (Windows fiber backend still limited) |
+| Log | `Source/Common/Runtime/Log` | **MLog** async pipeline (ring + dispatcher + sinks). Use `LOG_*` / `CORE_LOG` / `NET_LOG` etc. from `Log.h`. Legacy `Logger.h` removed. |
+| RPC | `Source/Common/Net/Rpc` | `MRpcChannel`, FunctionId dispatch, transport |
+| Service discovery | `Source/Common/Net/ServiceDiscovery` | `Endpoint*`, `RegistryProtocol`, `MEndpointCache` |
+| Client target | `Source/Common/Net/ClientCall` | `MClientTargetResolver` |
+| Servers | `Source/Servers/{App,Gateway,EchoService,ServiceRegistry}` | `MService` / `MServiceMain` config + lifecycle |
+| Reflection tool | `Source/Tools/MHeaderTool` | generates into `Build/Generated/` |
+
+## Core conventions
 
 ### Naming
-- `S*` prefix for structs, `M*` for classes, `E*` for enums
-- `bXxx` for booleans, `InXxx`/`OutXxx` for function parameters
-- PascalCase for functions, types, local variables
+- `S*` structs, `M*` classes, `E*` enums, `I*` interfaces
+- `bXxx` booleans, `InXxx` / `OutXxx` parameters
+- PascalCase for functions, types, locals
 
-### STL Wrapping Rule
-Prefer project aliases (`TVector`, `TMap`, `TSharedPtr`, etc.) over raw STL. Add new aliases to `Source/Common/Runtime/MLib.h` first.
+### Style
+- Full rules: **`Docs/CodingStyle.md`** (ColumnLimit 240, Allman braces, etc.)
+- Tooling: `.clang-format`, `scripts/check-style.sh` (includes reflected-ABI guard), optional pre-commit via `scripts/install-hooks.sh`
+- **C1 (docs + tools) is on main; C2–C5 bulk reformat is TODO** — avoid huge format-only PRs mixed with features
 
-### Shared Pointer Construction
-Use `MakeShared<T>(...)` instead of `TSharedPtr(new T(...))`. For interface assignments: `TSharedPtr<IBase> Ptr = MakeShared<MImpl>(...)`.
+### STL wrapping
+Prefer project aliases (`TVector`, `TMap`, `TSharedPtr`, …) over raw STL. Add new aliases in `Source/Common/Runtime/MLib.h` first.
 
-### Control Flow
-Always use braces for `if`/`for`/`while`, even single statements.
+### Shared pointers
+Use `MakeShared<T>(...)`, not `TSharedPtr(new T(...))`. Interface assign: `TSharedPtr<IBase> Ptr = MakeShared<MImpl>(...)`.
 
-### Protocol Structures
-Prefer `MSTRUCT + MPROPERTY` over manual serialization.
+### Control flow
+Always braces for `if` / `for` / `while`, even single statements.
 
-## Reflection System
+### Protocol structures
+Prefer `MSTRUCT` + `MPROPERTY` over hand-rolled serialization.
 
-`MHeaderTool` generates glue code to `Build/Generated/` from macros:
+## Reflection system
+
+`MHeaderTool` generates glue under `Build/Generated/` from:
+
 - `MCLASS` / `MSTRUCT` — type registration
-- `MPROPERTY(...)` — field with domain tags and validation metadata
-- `MFUNCTION(...)` — RPC function with ServerCall/ClientCall semantics
-- `MGENERATED_BODY` — generated boilerplate
+- `MPROPERTY(...)` — fields + domain / CLI meta
+- `MFUNCTION(...)` — RPC / client surface (`ServerCall`, `ClientCall`, `Client`, `Async`, …)
+- `MGENERATED_BODY` — boilerplate
 
-If you modify reflection macros or add new reflected types, verify `Build/Generated/` updates correctly.
+After changing reflection macros or reflected types: rebuild so `Build/Generated/` updates, then `Scripts/verify_protocol.py` when protocol-related.
 
-## Recommended Reading
+ClientCall stable IDs default from function identity; use `Api=...` / `ClientApi=...` when renames must keep wire IDs.
 
-1. `Docs/Architecture.md` — system layers, server responsibilities, object model
-2. `Docs/BuildAndRun.md` — build, startup, validation commands
-3. `Docs/RuntimeAndRpc.md` — reflection, RPC dispatch, async patterns
-4. `Docs/Validation.md` — testing strategy and regression suites
-5. `Docs/PlayerRpcDevelopment.md` — adding new Player RPC functions
+## Recommended reading
 
-## Validation Strategy
+1. `Docs/RefactorArchitectureAndRpc.md` — original refactor narrative (**partially outdated**: World middle-tier / six-server diagrams; still useful for Actor/RPC intent)
+2. `Docs/superpowers/specs/2026-07-13-service-registry-design.md` — Registry + EndpointCache
+3. `docs/superpowers/specs/2026-07-14-log-module-design.md` — log design (note lowercase `docs/` path)
+4. `Docs/CodingStyle.md` — coding style + C2–C5 backlog
+5. `Docs/superpowers/specs/2026-07-07-actor-rpc-refactor.md` — actor RPC refactor context
 
-After protocol changes:
-1. Build (`cmake --build Build -j4`)
-2. Run `Scripts/verify_protocol.py`
-3. Run `Scripts/validate.py --build-dir Build --no-build`
+If docs disagree with this file on **topology or process list**, trust **this file + `Scripts/servers.py`**.
 
-After Player object tree changes, check: login initial state, write→query consistency, logout→relogin recovery.
+## Validation strategy
 
-## Key Constraints
+After protocol / Gateway / Echo / Registry changes:
 
-- Business logic belongs in `MPlayerService` or explicit `Workflow`, not in `Server` classes
-- `Server` handles connection boundaries and runtime context, not business details
-- Player business lives in `MPlayer` child objects, not World endpoints
-- ClientCall stable IDs use function name by default; use `Api=...` to preserve IDs during refactoring
+1. `cmake --build Build -j4`
+2. `python3 Scripts/verify_protocol.py` (when reflection/protocol touched)
+3. `python3 Scripts/validate.py --build-dir Build --no-build`
+
+After Log changes: `./Bin/LogTest` (and optional `Scripts/validate_log_*.py`).
+
+**Note:** full client chain validate has been flaky/timeout on recent main; treat failures as real until proven environmental. Do not assume green without running it.
+
+## Key constraints
+
+- Business logic lives in service/object handlers (e.g. EchoService), **not** in thin `Server` connection glue beyond routing/lifecycle
+- `Server` classes: connection boundaries, registry bind, event loop — not gameplay rules
+- **No direct server→client TCP** for gameplay notify; go through Gateway downlink paths
+- Prefer `MEndpointCache` over hard-coded peer lists
+- ClientCall stable IDs: preserve with `Api`/`ClientApi` across renames
+- Do not revive deleted six-server business trees or static `--peers` as the discovery model
+
+## Active gaps (do not “fix” by reverting architecture)
+
+| Gap | Intent |
+|-----|--------|
+| `MClientManifest` real emit from `MFUNCTION(Client/ClientCall/…)` | Replace stub; Gateway routes only via generated table |
+| Wire `MClientTargetResolver` at session online/offline + CallClient sites | Complete server→client push path |
+| Prove cross-Echo `CallToActor` under Registry actor metadata | Distributed baseline |
+| Green `validate.py` chains | Gate for further protocol work |
+| Coding-style C2–C5 bulk format | Deferred; see `Docs/CodingStyle.md` §落地进度 |
