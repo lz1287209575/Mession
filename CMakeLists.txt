@@ -141,14 +141,6 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Runtime/Log/CoredumpSink.cpp
     Source/Common/Runtime/Log/LogConfig.cpp
     Source/Common/Runtime/Log/Log.cpp
-    Source/Common/Runtime/Log/LogMetrics.cpp
-    Source/Common/Runtime/Log/LogCategories.cpp
-    Source/Common/Runtime/Log/LogRouter.cpp
-    Source/Common/Runtime/Log/SinkWriter.cpp
-    Source/Common/Runtime/Log/Dispatcher.cpp
-    Source/Common/Runtime/Log/CoredumpSink.cpp
-    Source/Common/Runtime/Log/LogConfig.cpp
-    Source/Common/Runtime/Log/Log.cpp
     Source/Common/Net/NetServerBase.cpp
     Source/Common/Net/Routing/ActorRouter.cpp
     Source/Common/Net/ServerConnection.cpp
