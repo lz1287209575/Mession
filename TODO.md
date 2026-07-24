@@ -1,67 +1,110 @@
 # TODO
 
-这份文档记录当前这一轮 PoC 收口之后，最值得继续推进的近期待办。
+当前 PoC 待办。与 `CLAUDE.md`、本仓库实现对齐。
 
-更新时间基线：
+**更新时间基线：2026-07-24**（main @ log 模块 + coding-style C1 + client-protocol step-1/2 + MClientTargetResolver 已合入之后）
 
-- 当前内容已对齐到 `2026-07-09` 这次"Gateway + 同质多进程 EchoService" 收口之后的仓库状态
-- 已确认 `cmake --build Build -j4` 可通过
-- 已确认 `Scripts/validate.py --build-dir Build --no-build` 跑链路 1 + 链路 2 + 错误链路通过
-- 历史 6 服（Login/World/Scene/Router/Mgo）以及 `Player/Controller/Pawn/Profile/Inventory/Progression/CombatProfile` 业务代码已经在 PoC 重构中删除，**不恢复**
+---
 
 ## 当前已稳定
 
-- 反射系统：`MCLASS` / `MSTRUCT` / `MPROPERTY` / `MFUNCTION` 全部经 `MHeaderTool` 生成 `.mgenerated.cpp/.h` 落到 `Build/Generated/`
-- 跨进程 RPC 三入口统一为 `MRpcChannel::Call / CallToActor / SendToClient`，`RpcServerCall.h` 用稳定 FunctionId
-- 对象系统：`MObject` + `TSharedPtr` + `IDisposable`，`NewMObject<T>` 模板返回 `TSharedPtr`，业务侧零关心释放
-- 同质多进程：`EchoService` 用启动参数 `--inst / --actors` 决定本进程 ActorIds；`MActorRouter` 做进程内寻址
-- 服务运行时骨架：`MNetServerBase` 提供统一事件循环 + Listener + 客户端/后端连接管理
-- `Scripts/servers.py` + `Scripts/validate.py` 切到 2 服拓扑（`GatewayServer` + 2 个 `EchoService`）
-- 旧的 `legacy_runtime.py / compat_protocol_schema.json / ClientFunctionRoute.h` 已清理
+- **拓扑**：`MServiceRegistry`(:18000) + `GatewayServer`(:8001) + 同质多进程 `EchoService`(:7001/:7002)；历史六服业务代码已删除，**不恢复**
+- **服务发现**：`MEndpointCache` + Registry 注册/心跳/EndpointChange；静态 `--peers` 不再是主模型
+- **日志**：`Source/Common/Runtime/Log` 新 **MLog** 管道（ring / dispatcher / sinks）；`LogTest` 目标可用；旧 `Logger.h` 已删
+- **反射**：`MCLASS` / `MSTRUCT` / `MPROPERTY` / `MFUNCTION` → `Build/Generated/`
+- **RPC**：`MRpcChannel` + 稳定 FunctionId；client-protocol step-1/2（去掉 `EClientMessageType` / `ForwardedClientCall`，单 FunctionId 路径）
+- **对象**：`MObject` + `TSharedPtr` + `IDisposable`；Actor 平面寻址 `MActorRouter`
+- **风格 C1**：`Docs/CodingStyle.md` + `.clang-format` + `scripts/check-style.sh`（ABI 黑名单）已合 main
+- **文档入口**：`CLAUDE.md` 已按 PoC 拓扑重写
+
+---
 
 ## 当前最优先
 
-### 1. 跑通跨进程链 2 真实场景
+### 1. 恢复 / 钉死 validate 绿基线
 
-当前 `EchoService::Echo` 走 `MRpcChannel::CallToActor`，链路 2 已经在客户端能收到回包，但 `MActorRouter` 只在本进程注册 Actor——EchoService_A 不知道 EchoService_B 上有 Actor 2001/2002。
-
-目标：
-
-- 让 `EchoService` 在收到对端连接（`RegisterRpcTransport` 之后）通过某种控制面协议（`MT_FunctionCall` 一个 `RegisterRemoteActors` ServerCall）把对端的 ActorIds 同步到本进程 `MActorRouter`
-- `EchoService::Echo` 命中本机 Actor 时走 `IsActorLocal` 短路直接返，否则走 `CallToActor`
-
-### 2. 落实 MClientManifest 真生成
-
-当前 `MClientManifest.generated.h` 是空 stub，`ClientManifest.h` 的 5 个 wrapper 都返回 nullptr。
+`Scripts/validate.py` 在近期 main 上曾出现 **chain timeout**（log 合入前后对照亦红，属链路/基线问题，勿当“日志回归”草率 revert）。
 
 目标：
 
-- `MHeaderTool` 扫描 `MFUNCTION(Client)` / `MFUNCTION(ClientCall)`，emit 到 `Build/Generated/MClientManifest.mgenerated.cpp`
-- `GatewayServer::HandleClientPacket` 用 `MClientManifest::FindByFunctionId` 替代硬编码的 `MClientFunctionRouteTable`
+- 三链可重复通过：本机 Actor / 跨 Echo Actor / 未知 Actor 错误路径
+- 失败时 `Logs/validate/*.log` 与 MLog 输出足以定位（注意 Inline 消息截断，长错误可能只见前缀）
+- 明确 Registry 就绪窗口：Echo 注册完成后再让 Gateway 打业务包
 
-### 3. 补一组真实协议样例
+### 2. 在 Registry 语义下证明跨进程 Actor 路由
 
-当前 `Protocol/Messages/` 只有 7 个文件，最具业务语义的 `FSampleEchoRequest/Response` 之外一片空白。
+旧方案「对端连接后 `RegisterRemoteActors` 控制面」属于 **Peers 静态时代**，**不要默认复活**。
 
 目标：
 
-- 至少补 3 个：`FCastSkillRequest/Response`（战斗）、`FQuerySceneResponse`（场景）、`FEnterSceneNotify`（下行通知）
-- 给 `MRpcChannel::SendToClient` 一个真实例子
+- Echo 启动 `RegisterLocal` 上报的 `ActorIds` 经 Registry 推送后，对端/`Gateway` 的 `MEndpointCache` + `MActorRouter`/`CallToActor` 能命中 2001 等远端 Actor
+- 文档与代码一致：跨进程依赖 **发现 + 懒连接**，不是启动期写死 peer 列表
+- 若仍缺「ActorId → ServerType」全局表，在 SD 层补齐设计，而不是加第二套控制面
+
+### 3. 落实 MClientManifest 真生成
+
+现状：`MClientManifest` 生成侧仍偏 stub；Gateway 查表路径已有，表可能为空。
+
+目标：
+
+- `MHeaderTool` 扫描 `MFUNCTION(Client)` / `MFUNCTION(ClientCall)` / 约定的 CallClient 标签，emit `Build/Generated/MClientManifest.mgenerated.*`
+- Gateway **只**经 `MClientManifest::FindByFunctionId` 路由；禁止把临时硬编码 Echo 固化成架构
+- worktree `clientmanifest-emit` 中的 `MEchoClient` + `FunctionParser` 改动可作为候选，需 rebase 到当前 main 再合
+
+### 4. 接完 server→client 推送骨架
+
+已合入：`MClientTargetResolver` + `MClientTargetContextGuard`。
+
+目标：
+
+- 连接上线/下线：`RegisterConn` / `UnregisterConn`
+- 处理请求期间：`MClientTargetContextGuard` 绑定当前连接
+- 至少一个 `CallClient` / Notify 样例端到端（可先 Echo 公告类）
+
+---
 
 ## 第二优先级
 
-### 4. 收口运行时基础层
+### 5. 协议与样例消息
 
-- `FiberAwait / FiberScheduler / MFUTURE` 当前 Windows backend 是 null 占位，调用 `MAwait` 会抛 `fiber_backend_unsupported`
-- 所有 service handler 当前走"同步返回 MFUTURE"，没有真挂起；如要真用 fiber，需要选 `libco` / `boost::context` 替代 deprecated 的 ucontext
+- 在 `Protocol/Messages/` 补少量真实形状消息（战斗/场景/下行 Notify 各一亦可）
+- `SendToClient` / downlink 有可跑脚本或 validate 断言
 
-### 5. 拆分 ReflectionPropertyTemplates.inl
+### 6. Coding-style C2–C5
 
-`Source/Common/Runtime/Reflect/ReflectionPropertyTemplates.inl`（1915 行）单一文件同时承担 JSON / Binary / CLI String 三种 exporter/importer。拆三个 inl 让编译失败时定位更快。
+见 `Docs/CodingStyle.md` §落地进度：Common / Servers / Tools+Protocol 全量 format + CLAUDE 快查收口。  
+**单独 PR**，勿与功能改动混提。
+
+### 7. 运行时基础
+
+- Fiber：Windows backend 仍受限；真挂起需选 backend（libco / boost::context 等）
+- 拆分超大 `ReflectionPropertyTemplates.inl`（JSON / Binary / CLI）
+
+### 8. 文档与仓库卫生
+
+- 过期 worktree / 已合分支清理（名实不符的 `improve-service-discovery` 挂载等）
+- 统一 `Docs/` vs `docs/` 路径（log design 当前在小写 `docs/`）
+- 根目录与各 worktree 旧 `TODO` 副本以 **本文件 + main** 为准
+
+---
 
 ## 不在本周期内
 
-- 战斗、Scene、Login、World、Mgo 业务代码 —— 已经在 PoC 范围内被 EchoService 替代
-- `MObjectAssetSmokeTool` 重启 —— 当前 `if(FALSE)` 屏蔽
-- `server_cluster.py / server_control_api.py / server_manager_tui.py`（共 4516 行 Python 运维）—— 等 2 服 PoC 稳了再统一替换
-- 持久化（`MongoPersistenceSink` / `MPersistenceSubsystem`）—— 当前不暴露，等业务需要再启用
+- 恢复 Login/World/Scene/Router/Mgo 业务树或 Player 对象树
+- K8s / Registry HA / mTLS
+- 大规模运维脚本替换（`server_cluster.py` 等）——等 PoC 三链稳定
+- 持久化子系统作为主路径暴露
+
+---
+
+## 推荐施工顺序
+
+```text
+① validate 绿基线
+② Registry 语义下跨 Echo CallToActor
+③ MClientManifest emit + Gateway 纯查表
+④ TargetResolver 接线 + CallClient 样例
+⑤ 协议样例 / style C2–C5 / fiber / 文档收尾
+```
+
+冲突时：**以代码 + `CLAUDE.md` + 本文件为准**；`Docs/RefactorArchitectureAndRpc.md` 中标注为历史的 World/Peers 叙事不要当施工图。

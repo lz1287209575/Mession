@@ -1,24 +1,35 @@
-# Mession 基建重构 — 架构与 RPC 系统设计
+# Mession 基建 — 架构与 RPC（现状 + 演进）
 
-> 起草：2026-06-12
-> 状态：v1（待审）
-> 范围：基建层（Common 框架、6 Server 骨架、跨服 RPC、UE 客户端接入路径）。
-> 不含业务实现（Combat/Player/Scene 业务内容）。
+> 原稿起草：2026-06-12（World 中间层 + 静态 peers 时代）  
+> **修订：2026-07-24** — 对齐当前 main：Registry 发现、无 World 编排、client-protocol FunctionId 路径、MLog  
+> 范围：基建与 PoC 拓扑。不含具体玩法业务实现。  
+> **施工入口以 `CLAUDE.md` / `Scripts/servers.py` / 本文件「现状」章为准。**
 
 ---
 
-## 0. 一页摘要
+## 0. 一页摘要（2026-07 现状）
 
-| 维度 | 决策 |
-|------|------|
-| 服务形态 | **同质多进程**——每个进程是 1 个 SampleService；6 服是历史命名，PoC 阶段合并为 1 个 SampleService 类 |
-| 寻址 | **Service.Instance 平面化**——`ActorId`（uint64）→ 进程 / Service |
-| 跨服 RPC | **只 ObjectCall**——`MRpcChannel::CallToActor(ActorId, Class, Method, Req) → MFUTURE(TResp)` |
-| 客户端接入 | **Gateway 单一入口**——UE → Gateway(8001) → World(8003) → SampleService(Actor) |
-| 客户端下行 | **`MRpcChannel::SendToClient(Conn, Class, Method, Resp)`**——唯一出口，必须经 Gateway |
-| 代码生成 | **保留 MHeaderTool**——`MFUNCTION(ServerCall/Client/ClientCall/Async/PlayerRPC/...)` 继续驱动反射 |
-| 协程 | **`MFUTURE(T) = SFutureResult<T>`**，内部用 `MFuture<TResult<T, FAppError>>` |
-| PoC 范围 | 2 个 SampleService 进程（A、B），演示 Actor 迁移；1 个 Gateway + 1 个 World |
+| 维度 | 决策（当前） |
+|------|----------------|
+| 服务形态 | **同质多进程**业务 worker（`EchoService`）+ 独立 **Gateway** + 独立 **MServiceRegistry** |
+| 寻址 | **ActorId（uint64）平面化** → 本机 `MActorRouter` / 远端经发现与 `CallToActor` |
+| 服务发现 | **MServiceRegistry + MEndpointCache**（注册 / 心跳 / EndpointChange / 懒连接）；**禁止**把静态 `--peers` 当主模型 |
+| 跨服 RPC | **`MRpcChannel::CallToActor`（ObjectCall）** 为主；按 `EServerType` 的粗粒度 Call 为辅 |
+| 客户端接入 | **Gateway 唯一对外端口**；UE/validate → Gateway → 后端 Service（**无 World 进程**） |
+| 客户端协议 | **稳定 FunctionId 单路径**（step-1/2 已合）；legacy `EClientMessageType` / `ForwardedClientCall` 已删 |
+| 客户端下行 | 经 Gateway（如 `PushClientDownlink`）；目标连接框架：`MClientTargetResolver` |
+| 代码生成 | **保留 MHeaderTool**；`MClientManifest` **真 emit 仍是缺口** |
+| 日志 | **MLog** 异步管道（`Common/Runtime/Log`）；旧 `Logger` 已移除 |
+| 协程 | **`MFUTURE(T)`** = `SFutureResult<T>` / `MFuture<TResult<T, FAppError>>`（真挂起 backend 仍有限） |
+
+### 0.1 历史设计（已废弃作施工图）
+
+| 旧决策 | 状态 |
+|--------|------|
+| Gateway → **World(8003)** → SampleService | **未采用**；编排职责收在 Gateway 路由 + Echo 业务 |
+| `MT_ClientProxy` 透传 World | **已淘汰**（与 client-protocol 收口一致） |
+| 启动参数静态 `--peers` 全连接 | **已替换**为 Registry |
+| 六服 Login/World/Scene/Router/Mgo 业务骨架 | **已删除**，PoC 不恢复 |
 
 ---
 
@@ -26,454 +37,257 @@
 
 ### 1.1 目标
 
-1. **同质多进程架构**——6 服不是最终形态；每个进程都是同一种逻辑服务，差异在启动参数决定的 Service 名
-2. **跨服 RPC 走唯一一条路径**（ObjectCall）—— 客户端→Server→对象，2 层语义
-3. **Service.Instance 平面化寻址**——`ActorId`（uint64）定位，不存在 Player 树状结构
-4. **保留 MHeaderTool**——`MFUNCTION` 宏继续驱动 ServerCall 路由、参数反射、客户端下行生成
-5. **UE 客户端接入路径明确**——`MRpcChannel::SendToClient` 单一出口
+1. 同质多进程：业务进程同类，差异在 `--inst` / `--actors` / Service 配置  
+2. 跨服对象调用统一走 Actor 平面寻址  
+3. 发现与连接生命周期集中（Registry + Cache）  
+4. 客户端只认识 Gateway；服务端不直连 UE 做玩法推送  
+5. 保留 MHeaderTool 驱动的反射与稳定 FunctionId  
 
 ### 1.2 非目标
 
-- 不实现业务（Combat/Player/Scene 的具体内容）
-- 不重写 6 服——PoC 阶段合并为 1 个 SampleService 类
-- 不做 K8s 部署、监控、告警等运维侧设计
+- 恢复已删玩法对象树（Player/Combat/…）  
+- Registry HA、跨机自动发现（K8s/DNS/etcd 另案）  
+- 完整 fiber 运行时选型落地（见 TODO）  
 
 ### 1.3 关键约束
 
-- **新基建优先**：用户已落地的 `MActorRouter` / `MRpcChannel` / `MServerCallProxyBase` / `MFUTURE(T)` 是设计核心，不倒退
-- **MHeaderTool 不可删**：`Client/ServerCall/ClientCall/Async/PlayerRPC` 等 transport 标签已就位
-- **服务器是同质进程**：每个进程只持一个 ServiceName；多 Service 需多进程
+- `MActorRouter` / `MRpcChannel` / `MFUTURE` / `MEndpointCache` 是主路径，不倒退到 ObjectCallRoot 树或静态 peer 表  
+- `MFUNCTION` transport 标签继续由 MHeaderTool 解析  
+- 每个业务进程一种逻辑服务角色（PoC 即 Echo）  
 
 ---
 
-## 2. 现状基线（已落地 — 不可改）
+## 2. 现状基线（代码已落地）
 
 | 组件 | 路径 | 角色 |
 |------|------|------|
-| `MActorRouter` | `Common/Net/Routing/ActorRouter.{h,cpp}` | 进程内 Actor（uint64）→ ServerType + ConnectionId 路由表 |
-| `MRpcChannel` | `Common/Net/Rpc/MRpcChannel.{h,cpp}` | 统一 ServerCall + ClientCall 入口 |
-| `IRpcTransportResolver` | `Common/Net/Rpc/RpcRuntimeContext.h` | 抽象 server→transport |
-| `MServerRuntimeContext` | 同上 | 默认实现：TMap<EServerType, MServerConnection> + RegisterRpcTransport |
-| `MFUTURE(T)` | `Common/Runtime/Async/MAsync.h` | SFutureResult<T> 别名 = MFuture<TResult<T, FAppError>> |
-| `MServerCallProxyBase` | `Servers/App/ServerCallProxy.h` | ServerCall 代理基类 |
-| `CallServerFunction<TResp>(Conn, "Class", "Method", Req)` | `Common/Net/Rpc/RpcServerCall.h` | 稳定 ID 路径：编译期 MGET_STABLE_RPC_FUNCTION_ID |
-| `MFUNCTION(ServerCall)` | `MHeaderTool/.../FunctionParser.h` | 已支持 ServerCall/ClientCall/Client/Async/PlayerRPC |
-| `MObjectCallRouter` | `Servers/App/ObjectCallRouter.{h,cpp}` | **旧机制**（按 EObjectCallRootType 寻址）—— **应退役** |
-| `MObjectCallRegistry` | `Servers/App/ObjectCallRegistry.h` | **旧机制**（RootType → Resolver）—— **应退役** |
-| 6 个 Server 骨架 | `Servers/{Gateway,Login,World,Scene,Router,Mgo}/*` | 已是空骨架：保留 Init/OnAccept/ShutdownConnections，业务 RPC 全部移除 |
+| `MActorRouter` | `Common/Net/Routing/ActorRouter.*` | 进程内 Actor 路由；远端连接经 `MEndpointCache::GetOrConnect` |
+| `MRpcChannel` | `Common/Net/Rpc/MRpcChannel.*` | 统一 Server / Client 侧 RPC 入口 |
+| `MEndpointCache` | `Common/Net/ServiceDiscovery/EndpointCache.*` | Registry 客户端：缓存 endpoint、懒连接、心跳 |
+| Registry 协议 / 类型 | `Common/Net/ServiceDiscovery/{Endpoint,RegistryProtocol}.*` | 注册包、推送、序列化 |
+| `MServiceRegistry` | `Servers/ServiceRegistry/*` | 独立发现进程 |
+| Gateway / Echo | `Servers/Gateway/*`, `Servers/EchoService/*` | 入口 + 业务 worker |
+| `MService` / `MServiceMain` | `Servers/App/*` | 反射 CLI 配置、生命周期、**MLog::Init** |
+| Client protocol | `Common/Net/Rpc/{RpcDispatch,RpcTransport,RpcClientCall}.*` 等 | FunctionId 路径（step-1/2） |
+| `MClientTargetResolver` | `Common/Net/ClientCall/*` | server→client 目标解析框架（接线未完） |
+| `MClientManifest` | `Common/Net/Rpc/MClientManifest*` | **表结构在；生成仍可能为空 stub** |
+| `MLog` | `Common/Runtime/Log/*` | 异步日志 |
+| `MFUTURE` | `Common/Runtime/Async/MAsync.h` | 异步结果类型 |
+| `MHeaderTool` | `Source/Tools/MHeaderTool/*` | 反射与（规划中）Manifest emit |
 
-### 2.1 已删除的业务（不需要恢复，重新设计）
+### 2.1 已删除且不恢复
 
-- `World/Player/*` — Player 对象树、状态、命令运行时
-- `World/WorldClient*` — UE 客户端适配层
-- `World/Backend/*` — World→其它服的方法包装
-- `Scene/Combat/*` — Monster、Skill、Combat Runtime
-- `Login/LoginSession*` — 登录会话业务
-- `Mgo/MgoPlayerState*` — 持久化业务
-- `Gateway/Rpc/GatewayBackendRpc*` — Gateway 异质业务
+- `World/Player/*`、WorldClient、Scene/Combat 业务、Login 会话业务、Mgo 玩家状态业务等  
+- 旧 `ObjectCallRouter` / `ObjectCallRegistry` 树寻址（以 Actor 平面为准）  
+- 静态 peers 作为发现主路径  
 
 ---
 
-## 3. 目标架构
+## 3. 目标 / 现状架构
 
-### 3.1 总体结构
+### 3.1 总体结构（当前实现）
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│ UE 客户端（自带 RpcManifest / 反射表）                    │
-└────────────────────┬─────────────────────────────────────┘
-                     │ EClientMessageType::MT_FunctionCall (13)
-                     │ [13][FunctionId:2B][CallId:8B][Size:4B][Payload]
+┌──────────────────────────────────────────────┐
+│ UE / Scripts/validate.py                     │
+└────────────────────┬─────────────────────────┘
+                     │ MT_FunctionCall
+                     │ FunctionId + CallId + Payload
                      ▼
-        ┌────────────────────────┐
-        │     Gateway (8001)     │ 唯一对外端口
-        │  - 接受 UE TCP 连接    │
-        │  - 上行：MT_ClientProxy 透传到 World
-        │  - 下行：MRpcChannel::SendToClient
-        │  - 维护 (ConnId → ClientConnection) 表
-        └────────────┬───────────┘
-                     │ MT_ClientProxy(30) [0x1E][BEConnId:8B][原ClientPacket]
+              ┌──────────────┐
+              │ Gateway:8001 │  查 MClientManifest（待真表）
+              │ EndpointCache│  GetOrConnect(EServerType)
+              └──────┬───────┘
+                     │ ServerCall / 业务 RPC
+         ┌───────────┴───────────┐
+         ▼                       ▼
+  ┌─────────────┐         ┌─────────────┐
+  │ Echo A:7001 │         │ Echo B:7002 │
+  │ actors 1001…│         │ actors 2001…│
+  └──────┬──────┘         └──────┬──────┘
+         │                       │
+         └───────────┬───────────┘
+                     │ --registry=
                      ▼
-        ┌────────────────────────┐
-        │     World (8003)       │ 业务编排者
-        │  - 接受 ClientProxy    │
-        │  - 拆出 ClientFunctionId → 找到对应 (ServiceName, ActorId)
-        │  - MRpcChannel::CallToActor(ActorId, Class, Method, Req)
-        │  - 接收响应后回推给 Gateway
-        └────────────┬───────────┘
-                     │ MRpcChannel::CallToActor
-                     │ → MActorRouter::FindActor(ActorId).ServerType
-                     │ → IRpcTransportResolver::ResolveServerTransport
-                     │ → SendServerCallMessage
-                     ▼
-┌──────────────────────────────────────────────────────────┐
-│  业务服务进程（同质多进程 — 启动参数决定 ServiceName）    │
-│  ┌──────────────┐  ┌──────────────┐                      │
-│  │ SampleSvc A  │  │ SampleSvc B  │ ...                  │
-│  │ (pid 7001)   │  │ (pid 7002)   │                      │
-│  │ 注册 Actor:  │  │ 注册 Actor:  │                      │
-│  │  1001→Self   │  │  2001→Self   │                      │
-│  │  1002→Self   │  │              │                      │
-│  │              │  │              │                      │
-│  │ MFUNCTION    │  │ MFUNCTION    │                      │
-│  │ (ServerCall) │  │ (ServerCall) │                      │
-│  │ 的 Method    │  │ 的 Method    │                      │
-│  └──────────────┘  └──────────────┘                      │
-└──────────────────────────────────────────────────────────┘
+              ┌─────────────────┐
+              │ Registry:18000  │
+              └─────────────────┘
 ```
+
+启动顺序（`Scripts/servers.py`）：Registry → Echo×N → Gateway。
 
 ### 3.2 关键不变量
 
-1. **同进程只能持有一个 ServiceName**——多 Service 需多进程
-2. **ActorId 进程内唯一**——`MActorRouter::RegisterActor` 重复 ID 覆盖
-3. **ClientCall 必须走 Gateway 出口**——任何 server 都**不直接** `Send` 到 client TCP socket，必须通过 Gateway 的 `PushClientDownlink` ServerCall
-4. **跨服 ServerCall 通过 Resolver**——`MRpcChannel::Call(Resolver, ...)` 内部用 `IRpcTransportResolver::ResolveServerTransport`，**禁止**直接 `CallServerFunction(Connection, ...)` 绕过 resolver
-5. **ObjectCall 寻址用 `CallToActor`**——`Call(EServerType, ...)` 仅用于"按 Service 路由、不关心实例"（PoC 阶段不暴露）
+1. 客户端只连 Gateway；业务进程默认不对外暴露给 UE  
+2. ActorId 在约定命名空间内可路由；本机注册进 `MActorRouter`  
+3. **Client 下行必须经 Gateway**（禁止业务进程直写 UE socket 作为主路径）  
+4. 跨服连接解析优先 **`MEndpointCache`**，不手写对端地址表  
+5. 客户端 API 路由长期依赖 **生成 Manifest**，不依赖永久硬编码  
 
-### 3.5 Object 生命周期与所有权
+### 3.3 寻址语义
 
-#### 设计目标
+| 维度 | 旧（已删） | 现在 |
+|------|------------|------|
+| 寻址 | RootType + 对象路径树 | **ActorId 平面** |
+| 发现 | 静态 peers / 手写连接 | **Registry + EndpointCache** |
+| 客户端编排 | World 拆包转发 | **Gateway 查表 + 调后端** |
+| 下行 | 多路径混杂 | Gateway 统一出口（推送 resolver 在补齐中） |
 
-让上层调用方**完全不需要关心 MObject 的释放**。`NewMObject<T>(Outer, Name)` 签名保持不变（仍返回 `T*`），底层用 `TSharedPtr<MObject>` 接管默认资源；**非托管资源**通过 `IDisposable` 接口显式释放（C# 风格）。
+### 3.4 Object 生命周期与所有权
 
-#### 三个核心 API
+（原则未变，摘要保留。）
 
-| API | 签名 | 所有权语义 |
-|-----|------|-----------|
-| `NewMObject<T>(Outer, Name, args...)` | `T*` | 内部 `MakeShared<T>(...)`；`Outer != nullptr` 时挂到 `Outer->Children`；`Outer == nullptr` 时 `AddToRoot()` |
-| `CreateDefaultSubObject<T>(Owner, ...)` | 同上 + `MarkAsDefaultSubObject` | 同上 |
-| ~~`DestroyMObject`~~ | **删除** —— 不再暴露 | — |
+- 默认所有权：`TSharedPtr` / Outer 子树；**不暴露** `DestroyMObject`  
+- 非托管资源：`IDisposable::Dispose()`，须幂等；析构可兜底  
+- Dispose **不**强制链式调 Children；Children 随引用析构  
+- `MObject` 管内存，`MActorRouter` 管 Actor 路由，二者解耦  
+- Actor 实例可以是 `MObject`，也可以是轻量状态；Router 不强制 MObject  
 
-**为什么删 `DestroyMObject`**：底层引用计数自动回收，上层不需要触发释放的 API。如果业务需要"立刻释放"，把它的所有 `TSharedPtr` 引用全部 reset 即可（`RemoveFromRoot()` 或从 Owner Children 数组移除）。
-
-#### IDisposable 接口（C# 风格）
-
-```cpp
-class IDisposable {
-public:
-    virtual ~IDisposable() = default;
-
-    // 业务层主动释放非托管资源；必须是幂等的
-    virtual void Dispose() = 0;
-
-    // 接口默认提供，外部不要重写
-protected:
-    void MarkDisposed() { bDisposed = true; }
-    bool IsDisposed() const { return bDisposed; }
-private:
-    bool bDisposed = false;
-};
-```
-
-**语义**：
-- `Dispose()` 是**业务层主动释放非托管资源**的入口
-- **调用时机**：
-  1. **业务层显式调用**（推荐）：Actor 主动下线、连接关闭、服务停止时调 `Dispose()`
-  2. **MObject 析构时兜底**：`~MObject` 检测 `dynamic_cast<IDisposable*>(this)`，若 `!bDisposed` 自动调一次（防止业务忘了）
-- **`Dispose()` 必须幂等**：第二次调 no-op
-
-**适用场景**：
-
-| 场景 | 举例 |
-|------|------|
-| 持有非托管资源 | TCP 连接、文件句柄、DB 连接、GPU 资源、Lua state |
-| 注册了回调需反注册 | `MActorRouter::UnregisterActor`、事件订阅、计时器 |
-| 启动了子线程/定时器 | 定时 Tick、Async loop |
-| 外部系统对象句柄 | 第三方库注册的对象、跨进程引用 |
-
-**不适用场景**（不需要实现 IDisposable）：
-- 纯数据对象（只有 `MPROPERTY`）
-- 不持有外部资源的 Service（如 `MRouterRegistry` 只持 `TMap`）
-
-#### Dispose 传播：非链式
-
-- Parent::Dispose() **不**主动调 Children::Dispose()
-- Children 在自己 `~MObject()` 析构时，**若**是 IDisposable 且 `!bDisposed` 才兜底调一次
-- **理由**：Owner 主动 Dispose 通常是"我要下线"，但 Owner 不该负责 Children 释放的细节；Children 自己析构时再释放更自然
-- **业务模式**：Service Shutdown 时**不**递归 Dispose 所有子对象（让 shared_ptr 析构链触发）；只在业务层明确"我先释放某某资源"时调 `Dispose()`
-
-#### Outer 链 = 强根（UE 风格）
-
-- `MObject::Children`：`TArray<TSharedPtr<MObject>>`
-- `MObject::Outer`：`MObject*` raw 指针（避免循环）
-- `SetOuter(newOuter)`：
-  - 旧 Outer `RemoveChildObject(this)`（Children erase 对应 TSharedPtr → 引用 -1）
-  - 新 Outer `AddChildObject(this)`（Children 追加 TSharedPtr → 引用 +1）
-- **释放时序**：Outer 析构 → `Children.clear()` → 每个 TSharedPtr 析构 → 引用为 0 的 Child `delete` → 递归
-- **每个 Child 析构时**：先 `~MObject()`（内含 IDisposable 兜底），再走 MObject 默认清理
-
-#### Root 集（无 Outer 的对象）
-
-- `MObject::GetRootSet()`：`TSet<TSharedPtr<MObject>>`
-- `AddToRoot()`：把 TSharedPtr 插入 Root 集
-- 进程退出前 main 返回前清空一次，触发所有 Root 对象 `delete`
-
-#### 构造时强制检测循环 Outer 引用
-
-`NewMObject<T>(Outer, Name, ...)` 内部：
-1. `check(Outer != this)` — 不能自己 Outer 自己
-2. `check(!HasOuterChainContains(Outer, this))` — 从 `Outer` 上行 walk Outer 链，若任何祖先 `== this`，**已形成环**（A 是 B 的祖先，把 B Outer 给 A 会成环）
-3. 违反 LOG_FATAL（不可恢复）
-
-#### 调用方约定
-
-- **不要**手动 `delete` MObject（如果非托管资源，用 `Dispose()`）
-- **不要**写循环 Outer 引用（构造时 assert 兜底）
-- **不要**在 `MObject` 析构函数里访问 `Outer` 或 `Children`（可能已部分释放）
-- **持有 MObject** 用 raw `T*` 指针（依赖 Owner 存活）；**不持有仅观察** 用 `TWeakPtr<MObject>`
-- **实现 IDisposable**：仅当持有非托管资源；`Dispose()` 必须幂等
-- **触发 Dispose 的两种方式**：业务主动 / MObject 析构兜底（双保险）
-- **不要**在 `Dispose()` 里调 `delete this` 或 `RemoveFromRoot()`（shared_ptr 会处理）
-
-#### 与 `MActorRouter` 的关系
-
-- `MObject` 管内存
-- `MActorRouter` 管 `ActorId → ServerType` 路由
-- **二者完全解耦** —— 通过 Service 进程内显式协调
-
-Actor 实例**可以**是 MObject（需要 `MPROPERTY` 域标记时），**也可以**是 plain struct（不需要反射时）。`MActorRouter` 不强制 MObject 化。
-
-#### 旧代码改造点
-
-| 调用点 | 现状 | 改造 |
-|--------|------|------|
-| `if (!X) X = NewMObject<...>(this, ...)` | WorldServer InitServices 等 | 保留（`NewMObject` 允许多次同名创建） |
-| `DestroyMObject(Object)` | PlayerManager/MonsterManager 有 | **删除调用点** |
-| 析构里释放 socket/file/db | 当前散落 | 集中到 `Dispose()` |
-| 循环 Outer 引用 | 旧 Player 树有风险 | 构造时 assert |
-| 持有 MObject raw ptr | Server 多数 | 不变（依赖 Owner 存活） |
-
-### 3.3 寻址语义对比
-
-| 维度 | 旧（已删） | 新（设计） |
-|------|------------|------------|
-| 寻址维度 | `EObjectCallRootType` + RootId + ObjectPath（树） | `ServiceName` + `ActorId`（平面） |
-| 跨服定位 | `MObjectCallRegistry::ResolveOwnerServerType`（注册表） | `MActorRouter::FindActor(ActorId).ServerType`（动态路由） |
-| 实例注册 | `MPlayerManager` 创建 Player 时注册 | Service 启动时 `MActorRouter::RegisterActor` 批量 |
-| 服务端查找 | `MObjectCall::MDetail::ResolveLocalTargetObject`（子树遍历） | Service 内部 `TMap<ActorId, ServiceInstance*>` O(1) |
-| 客户端调用 | `WorldClient::Client_*`（每服薄壳） | Gateway → ClientProxy → World → CallToActor |
-| 客户端下行 | `WorldServer::QueueClientNotify` → `Gateway::PushClientDownlink` | `MRpcChannel::SendToClient(Connection, Class, Method, Response)`（**统一**） |
+细节与 Outer 环检测约定同既有实现（`Common/Runtime/Object`）；新增代码勿再引入手动 `delete` MObject。
 
 ---
 
-## 4. 跨服 RPC 系统设计
+## 4. 跨服 RPC 与客户端协议
 
-### 4.1 三种调用语义（不重叠）
+### 4.1 调用语义
 
-| 名称 | 入口 | 用途 | 寻址 |
-|------|------|------|------|
-| **ClientCall** | `MRpcChannel::SendToClient(Conn, Class, Method, Resp)` | Server → Client | 固定 ConnId（UE 物理连接） |
-| **ServerCall（PoC 不暴露）** | `MRpcChannel::Call(Resolver, EServerType, Class, Method, Req)` | Server A → Server B，**不关心实例** | EServerType 粗粒度路由 |
-| **ObjectCall** | `MRpcChannel::CallToActor(Resolver, ActorId, Class, Method, Req)` | Server A → Server B 上的某个 Service 实例 | ActorId 精确寻址 |
+| 名称 | 入口（概念） | 用途 | 寻址 |
+|------|----------------|------|------|
+| **ObjectCall** | `MRpcChannel::CallToActor(...)` | 打到某 Actor 所在进程 | ActorId |
+| **ServerCall（类型级）** | `Call` + `EServerType` | 不关心具体实例时 | 类型 + Cache 选实例 |
+| **Client 下行** | Gateway `PushClientDownlink` / channel SendToClient 族 | Server → UE | 连接 / TargetResolver |
 
-**ObjectCall 内部流程**（`MActorRouter::SendToActor`）：
-1. `MActorRouter::FindActor(ActorId)` → `SActorRoute{ ActorId, ServerType, ConnectionId }`
-2. `Resolver->ResolveServerTransport(Route.ServerType)` → `MServerConnection`
-3. `CallServerFunction<TResp>(Connection, TargetClass, FunctionName, Request)` → `MFUTURE(TResp)`
+ObjectCall 典型步骤：
 
-### 4.2 协议层（不修改）
+1. 解析 Actor 所在 `EServerType`（本机路由表和/或发现侧元数据）  
+2. `MEndpointCache::GetOrConnect(Type)` → `MServerConnection`  
+3. `CallServerFunction` / 稳定 FunctionId 发 RPC  
+4. `MFUTURE` / `TResult` 回传错误  
 
-- **客户端上行**：`[0x0D][FunctionId:2B][CallId:8B][Size:4B][Payload]`
-- **客户端下行**：`[0x0D][FunctionId:2B][Size:4B][Payload]`（无 CallId，UE 端走回调）
-- **ServerCall 请求**：`MT_FunctionCall(0x1C)[FunctionId:2B][CallId:8B][Size:4B][Payload]`
-- **ServerCall 响应**：`MT_FunctionResponse(0x1D)[FunctionId:2B][CallId:8B][bSuccess:1B][Size:4B][Payload]`
-- **ClientProxy 转发**：`MT_ClientProxy(0x1E)[BEConnId:8B][原ClientPacket]`
-- **稳定 ID 机制**：`MGET_STABLE_RPC_FUNCTION_ID(ClassName, MethodName)` 编译期生成
+### 4.2 协议层（PoC）
+
+- **客户端上行**：FunctionCall 包 + **FunctionId** + CallId + Payload（具体帧布局以 `RpcTransport` / validate 为准）  
+- **服间**：FunctionCall / FunctionResponse + 稳定 FunctionId  
+- **已移除**：依赖 `EClientMessageType` 多类型分支、`ForwardedClientCall` 消息族、以 World 为中心的 ClientProxy 编排叙事  
+- **稳定 ID**：`MGET_STABLE_RPC_FUNCTION_ID` / 名称哈希；重命名保 ID 用 `Api` / `ClientApi`  
 
 ### 4.3 错误传播
 
-- **底层**：`MFUTURE(T) = MFuture<TResult<T, FAppError>>`
-- **FAppError**：`{ Code: MString, Message: MString }`
-- **`Get()` 失败时抛 `FFutureResultError`**（`Common/Runtime/Async/MAsync.h:30`）
-- **`GetResult()` 失败时返回原始 `TResult`**（不抛）
-- **错误日志约定**：每个 ServerCall 调用方都应 `.Then([](MFuture<...> C) { if (C.Get().IsErr()) LOG_WARN(...); })` 或在协程中 try/catch
+- `MFUTURE(T)` → `TResult<T, FAppError>`  
+- 调用方应对 `IsErr()` / 异常路径打日志（`LOG_*` / category 宏）  
+- DEBUG 下发现严重不一致可 `LOG_FATAL` / `MLogIsDebugBuild()` 分级（见 EndpointCache / Registry）  
+
+### 4.4 服务发现（摘要）
+
+详见 `Docs/superpowers/specs/2026-07-13-service-registry-design.md`。
+
+- Service：`--registry=host:port`，`RegisterLocal` + 周期 Heartbeat  
+- Registry：内存表，超时 unhealthy / 驱逐，向 watcher 推 `EndpointChange`  
+- Cache：按类型 round-robin 健康实例、断线重连  
 
 ---
 
-## 5. PoC 设计（2 链 SampleService）
+## 5. PoC 进程与验收
 
-### 5.1 PoC 目标
+### 5.1 进程布局（实现）
 
-证明以下链路**端到端跳通**：
-1. **链 1（UE→SampleServiceA）**：测试脚本发送 MT_FunctionCall(13) 到 Gateway(8001) → MT_ClientProxy(30) → World(8003) → 拆 ClientFunctionId → MRpcChannel::CallToActor(ActorId=1001, "MSampleService", "Echo", Req) → SampleSvc A → 回包给 UE
-2. **链 2（SampleServiceA→SampleServiceB）**：SampleSvc A 收到 Echo 后内部 `MRpcChannel::CallToActor(ActorId=2001, "MSampleService", "Echo", Req)` → 跨进程跳到 SampleSvc B → B 回包 → A 收包 → A 拼装最终响应回 UE
+| 进程 | 默认端口 | 关键参数 | 职责 |
+|------|----------|----------|------|
+| MServiceRegistry | 18000 | `--listen` | 发现 |
+| EchoService A/B | 7001 / 7002 | `--registry` `--actors` `--inst` | 业务 + 本地 Actor |
+| GatewayServer | 8001 | `--registry` | 客户端入口 |
 
-### 5.2 进程布局
+另：日志相关 CLI（`--log-file` / `--log-config` / …）由各服务 Config 反射字段 + `MServiceMain` 初始化 MLog。
 
-| 进程 | 端口 | ServiceName | 启动参数 | 注册 Actor | 暴露 Method |
-|------|------|-------------|----------|------------|-------------|
-| Gateway | 8001 | — | `--listen=8001 --world=127.0.0.1:8003` | — | `PushClientDownlink`(已有) |
-| World | 8003 | — | `--listen=8003 --gateways=[]` | — | `DispatchClientCall`(新)、`DispatchObjectCall`(新) |
-| SampleSvc A | 7001 | `MSampleService` | `--listen=7001 --service=MSampleService --peers=127.0.0.1:8003,127.0.0.1:7002 --actors=1001,1002` | 1001, 1002 | `Echo`(新, MFUNCTION ServerCall) |
-| SampleSvc B | 7002 | `MSampleService` | `--listen=7002 --service=MSampleService --peers=127.0.0.1:8003,127.0.0.1:7001 --actors=2001,2002` | 2001, 2002 | `Echo`(新, MFUNCTION ServerCall) |
+### 5.2 链路验收（意图）
 
-### 5.3 关键代码点
-
-#### 5.3.1 SampleService（合并后）
-
-```cpp
-// Source/Servers/SampleService/SampleService.h
-MCLASS(Type=Service)
-class MSampleService : public MNetServerBase, public MObject, public MServerRuntimeContext
-{
-    MGENERATED_BODY(MSampleService, MObject, 0)
-public:
-    bool Init(int InPort = 0);
-    void Tick();
-    uint16 GetListenPort() const override;
-    void OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
-    void ShutdownConnections() override;
-    void OnRunStarted() override;
-
-    // Actor-based RPC
-    MFUNCTION(ServerCall)
-    MFuture<TResult<FSampleEchoResponse, FAppError>> Echo(const FSampleEchoRequest& Req);
-
-private:
-    void RegisterActors(const TVector<uint64>& ActorIds);
-    TSharedPtr<MServerConnection> WorldConn;
-
-    TMap<uint64, TSharedPtr<FSampleActorState>> Actors;
-};
-```
-
-#### 5.3.2 World 端 DispatchClientCall
-
-```cpp
-// Source/Servers/World/WorldServer.cpp（伪代码）
-MFUTURE(FForwardedClientCallResponse) MWorldServer::DispatchClientCall(
-    const FForwardedClientCallRequest& Request)
-{
-    // 1. 解析 ClientFunctionId → (ServiceName, MethodName)（读 ClientManifest）
-    // 2. 提取 Request.Payload 中的 ActorId（约定在 payload 头部 8 字节）
-    // 3. MRpcChannel::CallToActor(GetRpcTransportResolver(),
-    //                               ActorId,
-    //                               ServiceName, MethodName,
-    //                               PayloadTail)
-    // 4. 响应 → BuildClientFunctionPacket(FunctionId, Result.Payload, Packet)
-    //         → 通过 Gateway::PushClientDownlink
-}
-```
-
-#### 5.3.3 测试脚本
-
-```python
-# Scripts/poc_sample_service.py
-# 启动 Gateway + World + SampleSvcA + SampleSvcB
-# 用 socket 发 MT_FunctionCall(13) 到 Gateway:8001
-# 期望：收到 ClientCall 响应，payload 含 "B→A→UE"
-```
-
-### 5.4 PoC 验收标准
-
-| 编号 | 验收项 | 通过条件 |
-|------|--------|----------|
-| AC-1 | Gateway 启动 | 监听 8001，5s 内接受 TCP |
-| AC-2 | World 启动 | 监听 8003，5s 内接受 TCP |
-| AC-3 | SampleSvcA/B 启动 | 监听 7001/7002，5s 内接受 TCP |
-| AC-4 | 跨服连接建立 | A→World, B→World 双向 Connected，Actor 注册到 MActorRouter |
-| AC-5 | 链 1 跳通 | UE 模拟包 → A.Echo → A 回包，UE 收到 |
-| AC-6 | 链 2 跳通 | A.Echo 内部 B.Echo → B 回包 → A 拼装回包，UE 收到 "B→A→UE" |
-| AC-7 | 错误传播 | 故意调不存在的 ActorId（9999），UE 收到 "actor_not_found" 错误 |
-| AC-8 | 协程风格 | A.Echo 用 MFUTURE 而非裸 callback |
-
----
-
-## 6. 不一致点与需要修改/删除的文件
-
-### 6.1 必须修改
-
-| 文件 | 改动 | 原因 |
+| 编号 | 场景 | 期望 |
 |------|------|------|
-| `Source/Servers/World/WorldServer.cpp` | `DispatchClientCall` 从 `not_implemented` 改为解析 ClientManifest + CallToActor | 当前 stub 无业务 |
-| `Source/Servers/World/WorldServer.cpp` | `HandleGatewayPacket` MT_ClientProxy 分支：拆出 ConnId + ClientPacket，**直接调本对象的 `DispatchClientCall`（同步路径）**或塞入协程 | 当前直接改首字节为 MT_FunctionCall 路径错 |
-| `Source/Servers/World/WorldServer.cpp` | 删除 `FPlayerRootResolverStub`（我之前加的，方向错） | 跟 Service.Instance 平面化冲突 |
-| `Source/Servers/World/WorldServer.cpp` | 保留 `ObjectCallRouter` 但标记为 deprecated；新建 `MObjectCallDispatcher` 走 CallToActor | 不一次性砍旧机制 |
-| `Source/Servers/World/WorldServer.cpp` | `QueueClientNotify` 改用 `MRpcChannel::SendToClient(World→Gateway Connection, ...)`，但**实际推送仍经 Gateway** | 简化下行路径 |
-| `Source/Servers/World/WorldServer.cpp` | 删除 Login/Scene/Mgo 单独连接，统一用 `RegisterRpcTransport(EServerType::AnyService, ...)` | 6 服合并 |
+| AC-1 | Registry / Echo / Gateway 启动 | 端口监听；Registry 上有注册 |
+| AC-2 | 链本机 Actor（如 1001） | Client→Gateway→EchoA→回包 |
+| AC-3 | 链远端 Actor（如 2001） | 经发现/CallToActor 到 EchoB 再回包 |
+| AC-4 | 未知 Actor | 明确错误，而非挂死 |
+| AC-5 | Manifest（完成后） | 无硬编码表仍能路由 Client FunctionId |
 
-### 6.2 必须删除（旧机制退役）
+驱动脚本：`Scripts/validate.py`、`Scripts/servers.py`（**不是**旧文中的 World 四进程脚本）。
 
-| 文件 | 删除原因 |
-|------|----------|
-| `Source/Servers/App/ObjectCallRouter.{h,cpp}` | 用 MActorRouter 替代 |
-| `Source/Servers/App/ObjectCallRegistry.{h,cpp}` | 用 MActorRouter 替代 |
-| `Source/Servers/App/ObjectCall.h` | 同上 |
-| `Source/Servers/App/MRouterRegistry.h`（空文件） | 同上 |
-| `Source/Servers/World/WorldClient*.{h,cpp}` | 已删，无需动 |
+### 5.3 已知缺口（与 `TODO.md` 一致）
 
-### 6.3 PoC 阶段新增
+1. validate 全链偶发/持续 timeout — **优先修基线**  
+2. 跨 Echo 在 Registry 语义下是否完全闭环 — 需证明  
+3. `MClientManifest` 真生成  
+4. `MClientTargetResolver` 全路径接线 + CallClient 样例  
 
-| 文件 | 作用 |
-|------|------|
-| `Source/Servers/SampleService/SampleService.{h,cpp}` | 合并后的 SampleService（替代 Login/Scene/Router/Mgo 4 服） |
-| `Source/Servers/SampleService/SampleServiceMain.cpp` | main 入口，解析启动参数决定 ServiceName + ActorIds |
-| `Source/Servers/SampleService/SampleServiceEcho.{h,cpp}` | Echo RPC 实现 + 测试 Actor 状态 |
-| `Source/Protocol/Messages/SampleService/FSampleEchoMessages.h` | FSampleEchoRequest/Response |
-| `Source/Protocol/Messages/Common/ClientFunctionRoute.h` | ClientFunctionId → (ServiceName, MethodName) 路由表（ClientManifest 替代） |
-| `Scripts/poc_sample_service.py` | 启动 + 测试脚本 |
-| `CMakeLists.txt` | 新增 SampleService target；删除 4 个旧 Server target（Login/Scene/Router/Mgo） |
+---
 
-### 6.4 不修改（保留现状）
+## 6. 演进对照（原稿任务清单状态）
 
-| 组件 | 原因 |
-|------|------|
-| `Common/Net/Routing/ActorRouter.{h,cpp}` | 已是新基建核心 |
-| `Common/Net/Rpc/MRpcChannel.{h,cpp}` | 已是新基建核心 |
-| `Common/Net/Rpc/RpcServerCall.h` + `.cpp` | CallServerFunction 走稳定 ID，无需改 |
-| `Common/Runtime/Async/MAsync.h` | MFUTURE 已就位 |
-| `MHeaderTool/.../*` | 反射宏已支持所有 transport |
-| `Servers/Gateway/GatewayServer.{h,cpp}` | 已经是"透传 + 维护连接表"骨架，仅做小幅对齐 |
+| 原稿项 | 状态 |
+|--------|------|
+| 删 ObjectCall 树寻址、六服业务 | **已做** |
+| SampleService / Echo 同质进程 | **已做**（名 `EchoService`） |
+| World::DispatchClientCall | **不做**；职责在 Gateway |
+| 静态 peers 互联 | **已替换为 Registry** |
+| ClientManifest 手写/生成 | **生成仍 TODO** |
+| 链 1/2 脚本验收 | **有 validate；绿性需重新钉死** |
+| MLog / client-protocol step-1/2 / TargetResolver | **后增已合 main** |
+
+### 6.1 不要再按原稿改的文件
+
+- 不要重建 `Servers/World/*` 编排层作为 PoC 必经之路  
+- 不要恢复 `ForwardedClientCall` / 多 `EClientMessageType` 客户端模型  
+- 不要把 `RegisterRemoteActors` 静态互相同步当作默认架构（除非 SD 证明不足且评审另开设计）  
 
 ---
 
 ## 7. 风险与缓解
 
-| 风险 | 影响 | 缓解 |
-|------|------|------|
-| **MObjectCallRouter 删除**会破坏 6 服启动（WorldServer `Init` 中 `NewMObject<MObjectCallRouter>`） | World 启动失败 | 删前先把 WorldServer.cpp 改成不依赖 |
-| **`MClientManifest.generated.h` 当前是空 stub**（`FindByFunctionId` 返回 nullptr） | ClientFunctionId → 路由表查不到 | PoC 阶段手写一个 `ClientFunctionRoute.h`，存 2-3 个测试路由 |
-| **MActorRouter 跨进程不同步** | 进程 B 不知道 Actor X 在 A 上 | PoC 阶段假设启动时静态配置；后续接 Router/控制面服务 |
-| **MFUNCTION(ServerCall) 在不同进程的 MSampleService 上生成相同 FunctionId** | 反射 ID 冲突 | MHeaderTool 已用 `(ClassName, MethodName)` 哈希，**应该不会冲突**；PoC 阶段验证 |
-| **World 单独一个进程可能成为热点** | 单点失败 | PoC 阶段接受；后续设计 World 集群 |
+| 风险 | 缓解 |
+|------|------|
+| Manifest 空表导致 Gateway 无法路由 | 真 emit + 校验；过渡期明确 PoC fallback 且标 temporary |
+| Registry 未就绪就打业务包 | validate/servers 启动顺序与就绪等待；Cache 重连 |
+| 跨进程 Actor 元数据不全 | 用 Registry ActorIds + 推送闭环；补测试 |
+| 文档与代码漂移 | `CLAUDE.md` + 本文「现状」+ `TODO.md` 同步改 |
+| 日志 Inline 截断影响排障 | 排障用文件 sink / 加长策略（见 log design） |
 
 ---
 
-## 8. 验收里程碑
+## 8. 里程碑（滚动）
 
-- [ ] **M1**：本文档通过审阅
-- [ ] **M2**：删除 MObjectCallRouter/Registry 相关旧代码，WorldServer 启动通过
-- [ ] **M3**：新增 SampleService 进程，Echo 单机跳通
-- [ ] **M4**：新增 World::DispatchClientCall 实现 ClientManifest 查表
-- [ ] **M5**：测试脚本证明链 1 + 链 2 跳通，AC-1~AC-8 全过
-- [ ] **M6**：把 Login/Scene/Router/Mgo 4 个 Server target 从 CMakeLists 移除
+- [x] M1 同质 Echo + Gateway 骨架  
+- [x] M2 去掉旧 ObjectCall 树 / 六服业务  
+- [x] M3 Registry + EndpointCache  
+- [x] M4 MLog 替换旧 Logger  
+- [x] M5 client-protocol FunctionId 收口 + TargetResolver 框架  
+- [ ] M6 validate 三链稳定绿  
+- [ ] M7 Manifest 真生成 + Gateway 纯查表  
+- [ ] M8 CallClient 端到端 + TargetResolver 接线  
+- [ ] M9 风格 C2–C5 / 文档路径统一等收尾  
 
 ---
 
 ## 附录 A：术语表
 
-- **Actor**——个 uint64 标识的逻辑实体；在 PoC 阶段对应一个 SampleService 实例
-- **ActorId**——Actor 的 uint64 ID；在 MActorRouter 中作为 key
-- **Service**——个进程提供的能力集合；同质多进程下每个进程就是一个 Service
-- **ServiceName**——个进程的逻辑名；在 PoC 阶段所有 SampleService 进程都叫 `MSampleService`
-- **ObjectCall**——按 ActorId 寻址的跨服 RPC
-- **ServerCall**——按 EServerType 寻址的跨服 RPC（PoC 不暴露）
-- **ClientCall**——Server → Client 的下行调用，必须经 Gateway
-- **Resolver**——`IRpcTransportResolver`，把 EServerType 映射到 MServerConnection
+- **Actor / ActorId** — 平面逻辑实体及其 uint64 id  
+- **EchoService** — PoC 同质业务进程（历史文稿中的 SampleService）  
+- **Registry** — `MServiceRegistry` 发现进程  
+- **EndpointCache** — 进程内发现缓存与连接池  
+- **ObjectCall** — 按 ActorId 的跨服调用  
+- **ClientCall / CallClient** — 客户端相关 RPC / 服务端推客户端（命名以 MFUNCTION 标签为准）  
+- **FunctionId** — 稳定反射/RPC 函数 id  
+- **Gateway** — 唯一客户端入口  
 
-## 附录 B：现状 / 目标 / 改动文件 一览表
+## 附录 B：相关文档
 
-| 状态 | 类别 | 文件 |
-|------|------|------|
-| 已落地（不改） | 新基建 | `Common/Net/Routing/ActorRouter.*` |
-| 已落地（不改） | 新基建 | `Common/Net/Rpc/MRpcChannel.*` |
-| 已落地（不改） | 新基建 | `Common/Net/Rpc/RpcRuntimeContext.h` |
-| 已落地（不改） | 新基建 | `Common/Net/Rpc/RpcServerCall.*` |
-| 已落地（不改） | 新基建 | `Common/Runtime/Async/MAsync.h` |
-| 已落地（不改） | 新基建 | `Servers/App/ServerCallProxy.h` |
-| 已落地（不改） | 代码生成 | `MHeaderTool/...` |
-| 已落地（保留） | 骨架 | `Servers/Gateway/GatewayServer.*` |
-| 已落地（保留） | 骨架 | `Servers/Login/LoginServer.*`、`Servers/Scene/*`、`Servers/Router/*`、`Servers/Mgo/*`（PoC 阶段合并后删除） |
-| 已落地（修改） | 编排 | `Servers/World/WorldServer.*`（DispatchClientCall 改实现） |
-| 旧机制（删除） | 退役 | `Servers/App/ObjectCallRouter.*`、`ObjectCallRegistry.*`、`ObjectCall.h` |
-| 新增 | PoC | `Servers/SampleService/*`、`Protocol/Messages/SampleService/*`、`Scripts/poc_sample_service.py` |
+| 文档 | 内容 |
+|------|------|
+| `CLAUDE.md` | 给代理/开发的仓库地图与命令 |
+| `TODO.md` | 当前优先级 backlog |
+| `Docs/superpowers/specs/2026-07-13-service-registry-design.md` | 发现设计 |
+| `docs/superpowers/specs/2026-07-14-log-module-design.md` | 日志设计 |
+| `Docs/CodingStyle.md` | 代码风格（C1 已合；C2–C5 TODO） |
+| `Docs/superpowers/specs/2026-07-07-actor-rpc-refactor.md` | Actor RPC 重构上下文 |
+
+## 附录 C：原稿结构说明
+
+2026-06 版中的 World 四进程图、§6 必改 WorldServer 清单、§5.3 SampleService 伪代码保留思想价值（Actor 平面、CallToActor、下行经 Gateway），**拓扑与文件清单已过时**。若需考古，请用 git history 查看本文件旧版本。
