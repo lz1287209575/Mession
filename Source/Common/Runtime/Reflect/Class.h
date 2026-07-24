@@ -159,19 +159,14 @@ public:
     }
 };
 
-enum class EGeneratedClientCallHandlerResult : uint8
-{
-    Failed = 0,
-    ParamBindingFailed = 1,
-    Responded = 2,
-    Deferred = 3,
-};
+// step-2: EGeneratedClientCallHandlerResult / FClientParamBinder / FClientCallHandler
+// 全部随 RpcDispatch 重构删除。原 client 侧 dispatch 由 Gateway 端
+// 反射 (MClientManifest::FindByFunctionId + MRpcChannel::Call) 接管。
+// server-side ServerCall 路径仍保留(FServerCallHandler + ServerCallHandler)。
 
 class MFunctionObject
 {
 public:
-    using FClientParamBinder = bool(*)(uint64 ConnectionId, const TByteArray& Payload, TByteArray& OutParamStorage);
-    using FClientCallHandler = EGeneratedClientCallHandlerResult(*)(MObject* Object, uint64 ConnectionId, const TByteArray& Payload, TByteArray& OutResponsePayload);
     using FServerCallHandler = bool(*)(MObject* Object, const TByteArray& Payload);
 
     MString Name;
@@ -181,13 +176,6 @@ public:
     EServerType EndpointServerType = EServerType::Unknown;
     MString ClientApiName;
     MString Transport;
-    MString MessageName;
-    MString RouteName;
-    MString TargetName;
-    MString AuthMode;
-    MString WrapMode;
-    FClientParamBinder ClientParamBinder = nullptr;
-    FClientCallHandler ClientCallHandler = nullptr;
     FServerCallHandler ServerCallHandler = nullptr;
 
     using FunctionPtr = void(*)(void*);

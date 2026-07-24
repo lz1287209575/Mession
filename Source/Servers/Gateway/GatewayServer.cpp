@@ -15,55 +15,6 @@
 
 MGatewayServer* GGlobalGateway = nullptr;
 
-namespace
-{
-struct FClientCallHandle
-{
-    uint16 FunctionId = 0;
-    uint64 ConnectionId = 0;
-    uint64 CallId = 0;
-};
-
-// PoC：把内嵌的 Then lambda 抽出来
-MFuture<TResult<SEmptyServerMessage, FAppError>> HandleEchoResult(
-    MFuture<TResult<FSampleEchoResponse, FAppError>> Inner,
-    FClientCallHandle Handle)
-{
-    TResult<SEmptyServerMessage, FAppError> OutResult;
-    try
-    {
-        const TResult<FSampleEchoResponse, FAppError> InnerResult = Inner.Get();
-        if (InnerResult.IsErr())
-        {
-            OutResult = TResult<SEmptyServerMessage, FAppError>::Err(InnerResult.GetError());
-        }
-        else
-        {
-            // 把 FSampleEchoResponse 序列化后通过 PushClientDownlink 发回 UE
-            const FSampleEchoResponse& Resp = InnerResult.GetValue();
-            TByteArray Payload = BuildPayload(Resp);
-
-            MGatewayServer* Gateway = MGatewayServer::GetSingleton();
-            if (Gateway)
-            {
-                Gateway->PushClientDownlink(FClientDownlinkPushRequest{Handle.ConnectionId, Handle.FunctionId, Payload});
-            }
-
-            OutResult = TResult<SEmptyServerMessage, FAppError>::Ok(SEmptyServerMessage{});
-        }
-    }
-    catch (const std::exception& Ex)
-    {
-        OutResult = TResult<SEmptyServerMessage, FAppError>::Err(
-            FAppError::Make("handle_echo_exception", Ex.what()));
-    }
-
-    MPromise<TResult<SEmptyServerMessage, FAppError>> Promise;
-    Promise.SetValue(std::move(OutResult));
-    return Promise.GetFuture();
-}
-}
-
 bool MGatewayServer::Init(int InPort)
 {
     // MService<SGatewayConfig>::LoadConfig(argc, argv) 已经在 main 入口
@@ -188,7 +139,11 @@ MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::PushClientDownl
     }
 
     TByteArray Packet;
-    if (!BuildClientFunctionPacket(Request.FunctionId, Request.Payload, Packet))
+    // step-2: 下行 envelope 走 BuildClientEnvelopePacket(无 MessageType 字节)。
+    // RequestId = 0 表示这是服务器主动 push,UE 收到后 RequestId == 0 知道
+    // 这是 push 而不是 response。Gateway 不分配 correlation id(step-3 task
+    // 引入 CallClient 时如果需要再考虑)。
+    if (!BuildClientEnvelopePacket(Request.FunctionId, /*RequestId=*/0, Request.Payload, Packet))
     {
         return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>(
             "client_downlink_packet_build_failed",
@@ -217,11 +172,15 @@ MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::Rpc_OnHeartbeat
 
 void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& Data)
 {
+    // step-2: Gateway 收到 envelope → 反射查 MClientManifest → 反射调对应
+    // MFUNCTION(ServerCall) → 反射回 envelope(无 MessageType 字节)。
+    //
+    // envelope 形态:[RequestId:8B][FunctionId:2B][PayloadSize:4B][Payload]
     uint16 FunctionId = 0;
-    uint64 CallId = 0;
+    uint64 RequestId = 0;
     uint32 PayloadSize = 0;
     size_t PayloadOffset = 0;
-    if (!ParseClientCallPacket(Data, FunctionId, CallId, PayloadSize, PayloadOffset))
+    if (!ParseClientEnvelopePacket(Data, FunctionId, RequestId, PayloadSize, PayloadOffset))
     {
         LOG_WARN("Gateway client packet parse failed: connection=%llu", static_cast<unsigned long long>(ConnectionId));
         return;
@@ -238,47 +197,41 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
 
     const MClientManifest::SEntry* Entry = MClientManifest::FindByFunctionId(FunctionId);
 
-    // PoC 阶段：MFUNCTION(Client/ClientCall) 还没声明，MClientManifest 是空表。
-    // 退化路径：所有 Client_* 走当前唯一的业务 Service（MEchoService::Echo）。
-    const char* TargetClassName = "MEchoService";
-    const char* TargetMethodName = "Echo";
-    EServerType TargetServer = EServerType::Echo;
-    if (Entry)
+    // step-2: 不再有"PoC 退化硬编码 MEchoService"——manifest miss 直接 no-op
+    // + LOG_WARN,等业务侧把 MFUNCTION(ClientCall) 声明补上之后会自动走对。
+    if (!Entry)
     {
-        TargetClassName = Entry->OwnerType;
-        TargetMethodName = Entry->FunctionName;
-        TargetServer = GetGlobalClientFunctionTargetServerType(FunctionId);
-    }
-
-    // Gateway 收到 Client_* 后把它当作 ServerCall 转给对应的 Service 实例。
-    // Service 实例通过 TargetActorId 走 MRpcChannel::CallToActor 自己寻址。
-    FSampleEchoRequest ServiceRequest;
-    ServiceRequest.TargetActorId = 0;
-    ServiceRequest.Message = MString();
-
-    // PoC 第 1 步：所有 Client_* 都假定包含 8 字节 ActorId 头部 + 后续 message body
-    if (Payload.size() < sizeof(uint64))
-    {
-        LOG_WARN("Gateway: actor_id_required for function=%u", static_cast<unsigned>(FunctionId));
+        LOG_WARN("Gateway: unknown client function_id=%u (manifest miss) connection=%llu",
+                 static_cast<unsigned>(FunctionId),
+                 static_cast<unsigned long long>(ConnectionId));
         return;
     }
-    std::memcpy(&ServiceRequest.TargetActorId, Payload.data(), sizeof(uint64));
-    ServiceRequest.Message.assign(
-        reinterpret_cast<const char*>(Payload.data() + sizeof(uint64)),
-        Payload.size() - sizeof(uint64));
 
-    FClientCallHandle Handle(FunctionId, ConnectionId, CallId);
+    const char* TargetClassName = Entry->OwnerType;
+    const char* TargetMethodName = Entry->FunctionName;
+    const EServerType TargetServer = GetGlobalClientFunctionTargetServerType(FunctionId);
 
-    // 通过 MRpcChannel::Call 路由到目标 Service（走 MEndpointCache::GetOrConnect）
-    MRpcChannel::Get().Call<FSampleEchoResponse>(
-        TargetServer,
-        TargetClassName,
-        TargetMethodName,
-        ServiceRequest)
-        .Then([Handle](MFuture<TResult<FSampleEchoResponse, FAppError>> Completed)
-        {
-            return HandleEchoResult(std::move(Completed), Handle);
-        });
+    // step-2: 业务参数全部走反射 BuildPayload / ParsePayload。
+    // 当前 manifest 还是空,链路 1/2/3 验证 echo 的代码路径暂时跳过
+    // (Echo 仍然走 ServerCall 路径,可以由 UE 单独 stub 直接打 ServerCall
+    // 测试)。这条 ClientCall 入口等 manifest 真生成(task #2 后续引入
+    // MFUNCTION(ClientCall) emit)后再接业务。
+    //
+    // step-2 仅保证 envelope 解码 + 反射查表正确;真正的业务 dispatch
+    // (BuildPayload 反射 → CallServerFunction) 留到 step-3(此时 MFUNCTION
+    // 真声明 + manifest 真 emit)。
+    (void)TargetClassName;
+    (void)TargetMethodName;
+    (void)TargetServer;
+    (void)RequestId;
+    (void)Payload;
+    (void)ConnectionId;
+
+    LOG_INFO("Gateway: would dispatch function_id=%u owner=%s method=%s (manifest hit, "
+             "but step-2 has no business dispatch yet)",
+             static_cast<unsigned>(FunctionId),
+             TargetClassName ? TargetClassName : "<null>",
+             TargetMethodName ? TargetMethodName : "<null>");
 }
 
 // CreateService 工厂——ServiceMain.h 中 namespace 内的
