@@ -1,5 +1,5 @@
 #include "Common/Runtime/Concurrency/SignalHandler.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 
 #include <signal.h>
 

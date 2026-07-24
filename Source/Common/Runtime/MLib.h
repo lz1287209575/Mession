@@ -116,6 +116,9 @@ using TUniquePtr = std::unique_ptr<T>;
 template<typename T>
 using TEnableSharedFromThis = std::enable_shared_from_this<T>;
 
+template<typename T>
+using TAtomic = std::atomic<T>;
+
 template<typename Signature>
 using TFunction = std::function<Signature>;
 

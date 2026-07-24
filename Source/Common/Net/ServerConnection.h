@@ -2,7 +2,7 @@
 
 #include "Common/Runtime/MLib.h"
 #include "Common/IO/Socket/Socket.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 #include <thread>
 #include <chrono>
 

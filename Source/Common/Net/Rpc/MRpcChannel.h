@@ -6,7 +6,7 @@
 #include "Common/Net/ServiceDiscovery/EndpointCache.h"
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Reflect/Reflection.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 
 #include <utility>
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/Reflect/Property.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 #include "Common/Net/ServerConnection.h"
 #include <stdexcept>
 #include <typeindex>

@@ -5,7 +5,7 @@
 #include "Common/Net/ServiceDiscovery/Endpoint.h"
 #include "Common/Net/ServiceDiscovery/EndpointCache.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Id.h"
 
@@ -51,7 +51,9 @@ bool MEchoService::Init(int InPort)
     }
 
     bRunning = true;
-    MLogger::LogStartupBanner(Config.ServiceName.c_str(), Config.ListenPort, 0);
+    CORE_LOG(Info, ":: Mession Game Server :: (v%s)", "1.0.0");
+    NET_LOG(Info, "Starting %s on port %u", Config.ServiceName.c_str(),
+        static_cast<unsigned>(Config.ListenPort));
 
     // 标记本进程本地 Server 信息——MServerConnection 响应包分发时依赖 LocalInfo。
     MServerConnection::SetLocalInfo(Config.LocalServerId, Config.LocalServerType, Config.ServiceName.c_str());

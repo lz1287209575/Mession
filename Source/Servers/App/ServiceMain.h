@@ -3,7 +3,7 @@
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Servers/App/ServiceId.h"
 #include "Servers/App/MService.h"
-#include "Common/Runtime/Log/Logger.h"
+#include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Concurrency/SignalHandler.h"
 
 namespace MServiceMain
@@ -72,6 +72,49 @@ int Run(int argc, char** argv)
         return 1;
     }
 
+    // Initialize the new logging pipeline. We always read the config that
+    // LoadConfig filled in (--log-file / --log-config / etc. all land in
+    // SLogInitParams via reflection); MLog::Init is idempotent so service
+    // binaries that already inited during main() are unaffected.
+    {
+        const TConfig& Cfg = MService<TConfig>::GetConfig();
+        SLogInitParams Params;
+        Params.GlobalDefaultLevel = ELogLevel::Info;
+        Params.bEnableConsole     = true;
+        // When a --log-config file is supplied, file path / rotation policy
+        // come from the JSON; otherwise we fall back to a per-service default
+        // that honors --log-file / --log-rotate-bytes / --log-archives.
+        if (Cfg.LogConfigPath.empty())
+        {
+            if (!Cfg.LogFilePath.empty())
+            {
+                Params.FilePath = Cfg.LogFilePath;
+            }
+            else
+            {
+                Params.FilePath = MString("Logs/service.jsonl");
+            }
+            Params.bUseColor        = false;
+            Params.RotatedFileBytes = Cfg.LogRotateBytes;
+            Params.NumArchives      = Cfg.LogArchives;
+        }
+        else
+        {
+            Params.FilePath = "";  // let JSON config override
+        }
+        Params.ConfigPath = Cfg.LogConfigPath;
+
+        TVector<SLogCategoryConfig> CatCfgs;
+        TVector<SLogRouteConfig>    RouteCfgs;
+        if (!Params.ConfigPath.empty())
+        {
+            MLogApplyConfigFile(Params.ConfigPath, Params, CatCfgs, RouteCfgs);
+        }
+        MLog::Init(Params);
+        if (!CatCfgs.empty())   MLog::ApplyCategoryConfig(CatCfgs);
+        if (!RouteCfgs.empty()) MLog::ApplyRouteConfig(RouteCfgs);
+    }
+
     TSharedPtr<MObject> ServiceObj = MServiceMain::CreateService<TService>();
     if (!ServiceObj)
     {
@@ -100,6 +143,8 @@ int Run(int argc, char** argv)
     // exit, which is the same shape as the double-free we fixed by removing
     // RemoveFromRoot() from ~MObject.
     Service->Shutdown();
+
+    MLog::Shutdown();
 
     // ServiceObj goes out of scope here, TSharedPtr releases once,
     // ~MObject runs IDisposable::Dispose() exactly once.
