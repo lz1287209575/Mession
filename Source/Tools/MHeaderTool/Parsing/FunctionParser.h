@@ -91,6 +91,9 @@ public:
 
                 if (bIsAsyncMacro)
                 {
+                    // TODO(cpp17-p0-followup): MFUTURE prefix support is kept for source
+                    // compatibility after the macro was removed (see spec commit 5548558).
+                    // Drop this branch and migrate any legacy call sites in a follow-up PR.
                     // 跳过空白查找 MFUTURE(...)
                     while (asyncSearchPos < classBody.size() &&
                            std::isspace(static_cast<unsigned char>(classBody[asyncSearchPos])))

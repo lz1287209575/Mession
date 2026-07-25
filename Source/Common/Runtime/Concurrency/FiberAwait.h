@@ -7,6 +7,9 @@
 
 #include <stdexcept>
 
+// NOTE: legacy ucontext-backed path; new code should use the spec §7
+// state-machine async/await model. See Docs/superpowers/specs/2026-07-24-cpp17-async-await.md.
+
 class MPlayerCommandContext;
 
 template<typename T>
