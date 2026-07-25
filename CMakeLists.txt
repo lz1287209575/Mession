@@ -3,7 +3,7 @@ project(Mession VERSION 1.0.0 LANGUAGES CXX)
 option(MESSION_USE_MONGOCXX "Enable MongoDB C++ driver integration for MgoServer" OFF)
 
 # C++标准
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -220,7 +220,7 @@ if(MSVC)
     )
 else()
     list(APPEND MESSION_HEADERTOOL_BOOTSTRAP_COMMAND
-        -std=c++20
+        -std=c++17
         -O2
         "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool/MHeaderTool.cpp"
         -I "${CMAKE_SOURCE_DIR}/Source"
