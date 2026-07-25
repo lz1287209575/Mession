@@ -87,7 +87,7 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
     // 隐式转换为基类（供旧的实现代码使用 MFuture<TResult<...>> 返回类型）
     operator Super() const { return *this; }
 
-    // 从 TResult<T, FAppError> 构造（供 co_return 使用）
+    // 从 TResult<T, FAppError> 构造（async 函数体内 early-return 路径）
     SFutureResult(const TResult<T, FAppError>& Result)
     {
         MPromise<TResult<T, FAppError>> Promise;
