@@ -132,7 +132,7 @@ void MEchoService::RegisterLocalActors()
     }
 }
 
-MFUTURE(FSampleEchoResponse) MEchoService::Echo(const FSampleEchoRequest& Request)
+SFutureResult<FSampleEchoResponse> MEchoService::Echo(const FSampleEchoRequest& Request)
 {
     if (Request.TargetActorId == 0)
     {

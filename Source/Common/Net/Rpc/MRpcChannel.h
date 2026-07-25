@@ -38,7 +38,7 @@ public:
     // ============================================
 
     template<typename TResponse, typename TRequest>
-    MFUTURE(TResponse) Call(
+    SFutureResult<TResponse> Call(
         EServerType TargetServer,
         const char* ClassName,
         const char* MethodName,
@@ -61,7 +61,7 @@ public:
 
     // 带 Actor 路由
     template<typename TResponse, typename TRequest>
-    MFUTURE(TResponse) CallToActor(
+    SFutureResult<TResponse> CallToActor(
         uint64 ActorId,
         const char* ClassName,
         const char* MethodName,

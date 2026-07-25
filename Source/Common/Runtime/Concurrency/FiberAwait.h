@@ -105,12 +105,12 @@ T MAwaitOk(SFutureResult<T> Future);
 // Backward compat: TPlayerCommandFuture is an alias for MFuture<TResult<T, FAppError>>
 // SFutureResult<T> inherits from the same base — both work with the SFutureResult overload.
 template<typename T>
-[[deprecated("Use SFutureResult<T> (MFUTURE(T)) instead of TPlayerCommandFuture<T>")]]
+[[deprecated("Use SFutureResult<T> instead of TPlayerCommandFuture<T>")]]
 T MAwaitOk(TPlayerCommandFuture<T> Future);
 
 void MAwaitOk(SFutureResult<void> Future);
 
-[[deprecated("Use SFutureResult<void> (MFUTURE(void)) instead of TPlayerCommandFuture<void>")]]
+[[deprecated("Use SFutureResult<void> instead of TPlayerCommandFuture<void>")]]
 void MAwaitOk(TPlayerCommandFuture<void> Future);
 
 namespace MPlayerCommandDetail

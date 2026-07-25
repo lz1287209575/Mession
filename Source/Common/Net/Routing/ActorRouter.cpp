@@ -45,7 +45,7 @@ bool MActorRouter::IsActorLocal(uint64 ActorId) const
     return Route.ActorId != 0 && Route.ServerType == EServerType::Unknown;
 }
 
-MFUTURE(FLocateActorResult) MActorRouter::LocateActor(uint64 ActorId) const
+SFutureResult<FLocateActorResult> MActorRouter::LocateActor(uint64 ActorId) const
 {
     SActorRoute Route = FindActor(ActorId);
 

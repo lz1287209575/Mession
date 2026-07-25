@@ -13,7 +13,7 @@
  *
  *   // 方式1：MEventBus::Await<T>(event) 工厂方法
  *   MFunction(Async)
- *   MFUTURE(FPlayerLoginEvent) WaitForLogin(uint64 PlayerId)
+ *   SFutureResult<FPlayerLoginEvent> WaitForLogin(uint64 PlayerId)
  *   {
  *       FPlayerLoginEvent Event;
  *       AWAIT_EVENT(Event);       // fiber 挂起，等待事件触发一次

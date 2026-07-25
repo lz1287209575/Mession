@@ -20,11 +20,11 @@ public:
     SActorRoute FindActor(uint64 ActorId) const;
     bool IsActorLocal(uint64 ActorId) const;
 
-    MFUTURE(FLocateActorResult) LocateActor(uint64 ActorId) const;
+    SFutureResult<FLocateActorResult> LocateActor(uint64 ActorId) const;
 
     // 模板方式：传类名+函数名
     template<typename TResponse, typename TRequest>
-    MFUTURE(TResponse) SendToActor(
+    SFutureResult<TResponse> SendToActor(
         uint64 ActorId,
         const char* TargetClassName,
         const char* FunctionName,
@@ -46,7 +46,7 @@ private:
 // ============================================
 
 template<typename TResponse, typename TRequest>
-MFUTURE(TResponse) MActorRouter::SendToActor(
+SFutureResult<TResponse> MActorRouter::SendToActor(
     uint64 ActorId,
     const char* TargetClassName,
     const char* FunctionName,

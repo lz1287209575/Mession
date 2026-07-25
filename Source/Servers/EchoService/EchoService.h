@@ -86,7 +86,7 @@ public:
 
     // EchoService 暴露的 ServerCall——Gateway 通过 MClientManifest 把 Client_* 转到本类后调用。
     MFUNCTION(ServerCall)
-    MFUTURE(FSampleEchoResponse) Echo(const FSampleEchoRequest& Request);
+    SFutureResult<FSampleEchoResponse> Echo(const FSampleEchoRequest& Request);
 
     // 传输层握手 / 心跳桩——MServerConnection::SendHandshake / SendHeartbeat 会通过
     // MRpc::CallRemote 调 Rpc_OnServerHandshake / Rpc_OnHeartbeat。
