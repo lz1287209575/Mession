@@ -132,3 +132,33 @@ TEST_CASE(LogSinks_RollingFileWritesJsonLines)
 
     std::remove(kPath);
 }
+
+TEST_CASE(LogSinks_MSpanSmokeTest)
+{
+    // Guards the cpp17 MSpan<T> surface used by TSpan / TSpanMutable against
+    // drift: ctor, data(), size(), empty(), range-for. If any of these break,
+    // every Log TU that constructs a TSpan/TSpanMutable will fail to compile
+    // long before this test runs — but having the explicit assertions makes
+    // the intent obvious and catches subtler regressions.
+
+    int Ints[] = {10, 20, 30, 40};
+    TSpan<const int> View(Ints, 4);
+    EXPECT_EQ(View.data(), Ints);
+    EXPECT_EQ(View.size(), static_cast<size_t>(4));
+    EXPECT_TRUE(!View.empty());
+
+    int Sum = 0;
+    for (const int& V : View) Sum += V;
+    EXPECT_EQ(Sum, 100);
+
+    TSpan<const int> Empty;
+    EXPECT_EQ(Empty.data(), nullptr);
+    EXPECT_EQ(Empty.size(), static_cast<size_t>(0));
+    EXPECT_TRUE(Empty.empty());
+
+    char Buf[16] = {};
+    TSpanMutable<char> Scratch(Buf, sizeof(Buf));
+    EXPECT_EQ(Scratch.data(), Buf);
+    EXPECT_EQ(Scratch.size(), static_cast<size_t>(16));
+    EXPECT_TRUE(!Scratch.empty());
+}

@@ -248,6 +248,28 @@ struct TPropertyStringImporterAggregate
     }
 };
 
+// cpp17 replacement for `if constexpr (requires { T::ImportFromCompactString; })`
+// overload-resolution dispatch between the aggregate-importer path (when
+// `&T::ImportFromCompactString` is well-formed) and the per-type importer
+// fallback. Specializations come in matching pairs (primary + fallback).
+template<typename T, typename = void>
+struct TPropertySetValueFromStringDispatch
+{
+    static bool Call(const MProperty* Prop, void* Object, const MString& Value, MString* OutError)
+    {
+        return TPropertyStringImporter<T>::Import(Prop, Object, Value, OutError);
+    }
+};
+
+template<typename T>
+struct TPropertySetValueFromStringDispatch<T, std::enable_if_t<std::is_member_object_pointer_v<decltype(&T::ImportFromCompactString)>>>
+{
+    static bool Call(const MProperty* Prop, void* Object, const MString& Value, MString* OutError)
+    {
+        return TPropertyStringImporterAggregate<T>::Import(Prop, Object, Value, OutError);
+    }
+};
+
 template<typename TElement>
 struct TPropertyStringImporter<TVector<TElement>>
 {
@@ -345,14 +367,9 @@ public:
         // Prefer MSTRUCT aggregate importer (which calls T::ImportFromCompactString)
         // when the type is a marked aggregate. Otherwise fall back to the per-type
         // POD importer.
-        if constexpr (requires { T::ImportFromCompactString; })
-        {
-            return TPropertyStringImporterAggregate<T>::Import(this, Object, Value, OutError);
-        }
-        else
-        {
-            return TPropertyStringImporter<T>::Import(this, Object, Value, OutError);
-        }
+        // cpp17: overload resolution on `&T::ImportFromCompactString` (was
+        // `if constexpr (requires { T::ImportFromCompactString; })` under C++20).
+        return TPropertySetValueFromStringDispatch<T>::Call(this, Object, Value, OutError);
     }
 };
 

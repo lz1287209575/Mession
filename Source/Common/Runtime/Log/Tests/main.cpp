@@ -65,6 +65,9 @@ int main()
     std::printf("[ LogSinks_RollingFileWritesJsonLines ]\n");
     Test_LogSinks_RollingFileWritesJsonLines();
 
+    std::printf("[ LogSinks_MSpanSmokeTest ]\n");
+    Test_LogSinks_MSpanSmokeTest();
+
     std::printf("[ LogPerf_EnqueueP99UnderOneUs ]\n");
     Test_LogPerf_EnqueueP99UnderOneUs();
 

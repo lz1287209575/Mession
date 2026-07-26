@@ -169,11 +169,29 @@ constexpr uint32 MAX_PACKET_SIZE = 65535;
 constexpr uint32 MAX_PLAYER_COUNT = 10000;
 constexpr float DEFAULT_TICK_RATE = 1.0f / 60.0f;
 
-// 只读缓冲区视图（C++20），协议解析等场景使用项目别名
-#if MESSION_CPLUSPLUS >= 202002L
-#include <span>
+// 缓冲区视图：协议解析与日志序列化场景使用项目别名
+// （非拥有式指针 + 长度，对应原 C++20 std::span 的最小可用子集）
 template<typename T>
-using TSpan = std::span<const T>;
+struct MSpan
+{
+    T*     Data = nullptr;
+    size_t Size = 0;
+
+    constexpr MSpan() = default;
+    constexpr MSpan(T* Ptr, size_t Count) : Data(Ptr), Size(Count) {}
+
+    constexpr T*       data() const noexcept { return Data; }
+    constexpr size_t   size() const noexcept { return Size; }
+    constexpr bool     empty() const noexcept { return Size == 0; }
+
+    // 范围 for（只读枚举）。所有现有 for 循环都遍历 TSpan<const T>；
+    // TSpanMutable 路径没有 range-for 需求，因此这里只暴露 const 迭代器。
+    constexpr const T* begin() const noexcept { return Data; }
+    constexpr const T* end()   const noexcept { return Data + Size; }
+};
+
 template<typename T>
-using TSpanMutable = std::span<T>;
-#endif
+using TSpan = MSpan<const T>;
+
+template<typename T>
+using TSpanMutable = MSpan<T>;

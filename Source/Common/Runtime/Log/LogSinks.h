@@ -51,11 +51,12 @@ public:
     // / RollingFileSink) override it.
     //
     // Note on the buffer type: the brief's snippet shows `TSpan<char>` but
-    // the project's TSpan alias is `std::span<const T>`, which would make
-    // the buffer read-only. The intent ("sink fills it with serialized text
-    // and writes to its underlying stream") requires a mutable scratch
-    // buffer, so we use `TSpanMutable<char>` = `std::span<char>` here. The
-    // caller is still expected to provide the storage.
+    // TSpan is the project's read-only buffer view alias (now backed by the
+    // cpp17-compatible MSpan<const T>), which would make the buffer read-only.
+    // The intent ("sink fills it with serialized text and writes to its
+    // underlying stream") requires a mutable scratch buffer, so we use
+    // TSpanMutable<char> (= MSpan<char>) here. The caller is still expected
+    // to provide the storage.
     virtual void WriteBatch(TSpan<const SLogRecord> /*Batch*/, TSpanMutable<char> /*OutBuffer*/) {}
     virtual void Flush() {}
     virtual ELogLevel MinLevel() const { return ELogLevel::Trace; }
