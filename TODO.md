@@ -2,7 +2,7 @@
 
 当前 PoC 待办。与 `CLAUDE.md`、本仓库实现对齐。
 
-**更新时间基线：2026-07-24**（main @ log 模块 + coding-style C1 + client-protocol step-1/2 + MClientTargetResolver 已合入之后）
+**更新时间基线：2026-07-26**（main @ log 模块 + coding-style C1 + client-protocol step-1/2 + MClientTargetResolver 已合入之后 + P0 async cleanup 已合入）
 
 ---
 
@@ -15,6 +15,7 @@
 - **RPC**：`MRpcChannel` + 稳定 FunctionId；client-protocol step-1/2（去掉 `EClientMessageType` / `ForwardedClientCall`，单 FunctionId 路径）
 - **对象**：`MObject` + `TSharedPtr` + `IDisposable`；Actor 平面寻址 `MActorRouter`
 - **风格 C1**：`Docs/CodingStyle.md` + `.clang-format` + `scripts/check-style.sh`（ABI 黑名单）已合 main
+- **P0 异步清理（2026-07-25）**：`CMAKE_CXX_STANDARD 17` + 编译器显式 `-std=c++17`；`MFUTURE(T)` → `SFutureResult<T>`（7 个源文件）；`MFUTURE` 宏已删；doxygen 示例中 `co_await`/`co_return` 已改为指向 `Docs/superpowers/specs/2026-07-24-cpp17-async-await.md` 父 spec；`FiberAwait` 标注 legacy。规范：`Docs/superpowers/specs/2026-07-25-cpp17-p0-cleanup.md`。注：`LogSinks.h:59` 的 `TSpan`/`std::span` C++20 依赖是已知 follow-up，不在 P0 范围。
 - **文档入口**：`CLAUDE.md` 已按 PoC 拓扑重写
 
 ---
