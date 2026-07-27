@@ -63,6 +63,7 @@ bool MEchoService::Init(int InPort)
     // 2. BindRegistry：拆 host:port 触发首次 TCP 连接
     // 3. RegisterLocal：发 Register packet
     MEndpointCache::Get().AttachEventLoop(&EventLoop);
+    MEndpointCache::Get().SetServiceInstance(this);   // P2: install business dispatch target
     MString RegHost;
     uint16 RegPort = 0;
     if (!ParseAddrPort(Config.RegistryAddr, RegHost, RegPort))
@@ -132,6 +133,16 @@ void MEchoService::RegisterLocalActors()
     }
 }
 
+#include "Servers/EchoService/EchoFrame.h"
+
+SFutureResult<FSampleEchoResponse> MEchoService::EchoAwait(const FSampleEchoRequest& Request)
+{
+    // TSharedPtr keeps the Frame alive past this stack frame so any pending
+    // CallToActor resume (via Context->Post) finds a valid `this`.
+    auto Frame = MakeShared<FEchoFrame>();
+    return Frame->Run(Request, this);
+}
+
 SFutureResult<FSampleEchoResponse> MEchoService::Echo(const FSampleEchoRequest& Request)
 {
     if (Request.TargetActorId == 0)
@@ -194,3 +205,19 @@ SFutureResult<FSampleEchoResponse> MEchoService::Echo(const FSampleEchoRequest& 
 //   3. 命名要求：函数名必须严格等于 "Create" + Service 类名（无名字
 //      mangling 干扰，dlopen/dlsym 也能拿到同一符号）。当前 Service
 //      都不需要第 2 步，但保留扩展空间。
+
+// P2 stub implementations for Rpc_OnServerHandshake / Rpc_OnHeartbeat.
+// These were previously declared but not defined; P2 wires the ServerCall
+// dispatch (Finding A+B) so generated handlers actually invoke them.
+// Both are pure ack-style: zero-payload SEmptyServerMessage Ok on the wire.
+MFuture<TResult<SEmptyServerMessage, FAppError>> MEchoService::Rpc_OnServerHandshake(uint32 /*DummyServerId*/)
+{
+    SEmptyServerMessage Empty{};
+    return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Empty));
+}
+
+MFuture<TResult<SEmptyServerMessage, FAppError>> MEchoService::Rpc_OnHeartbeat(uint32 /*Seq*/)
+{
+    SEmptyServerMessage Empty{};
+    return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Empty));
+}

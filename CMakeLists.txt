@@ -476,6 +476,7 @@ mession_add_service(GatewayServer MGatewayServer SGatewayConfig Source/Servers/G
 mession_add_service(EchoService MEchoService SEchoServiceConfig Source/Servers/EchoService/EchoService.h
     SOURCES
         Source/Servers/EchoService/EchoService.cpp
+        Source/Servers/EchoService/EchoFrame.cpp
     GENERATED_GROUPS shared sample
     GENERATED_SOURCES
         ${MESSION_GENERATED_DIR}/FSampleEchoRequest.mgenerated.cpp
@@ -537,6 +538,32 @@ target_link_libraries(MAsyncTest
         mession_common
 )
 configure_mession_compile_options(MAsyncTest)
+
+# AsyncFrameTest - P2 vertical-slice unit test (FEchoFrame AWAIT_OK state machine)
+# Drives the Frame state machine on synthetic ready/pending futures without
+# standing up real network. Exercises the macro + AwaitOk + Resume path that
+# MEchoService::EchoAwait uses in production.
+add_executable(AsyncFrameTest
+    Source/Servers/EchoService/Tests/main.cpp
+    # FEchoFrame::AwaitOk lives in EchoFrame.cpp; tests must link the .o
+    # directly since the EchoService executable target isn't available as
+    # a library yet.
+    Source/Servers/EchoService/EchoFrame.cpp
+)
+target_include_directories(AsyncFrameTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${MESSION_GENERATED_DIR}
+)
+target_link_libraries(AsyncFrameTest
+    PRIVATE
+        mession_common
+        mession_netdriver
+)
+configure_mession_compile_options(AsyncFrameTest)
+add_dependencies(AsyncFrameTest mession_reflection_codegen)
+mession_attach_generated_groups(AsyncFrameTest shared)
 
 # 安装目标
 install(TARGETS

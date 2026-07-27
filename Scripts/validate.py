@@ -132,6 +132,7 @@ def compute_stable_id(scope: str, member: str) -> int:
 
 
 ECHO_FUNCTION_ID = compute_stable_id("MEchoService", "Echo")
+ECHOAWAIT_FUNCTION_ID = compute_stable_id("MEchoService", "EchoAwait")
 
 
 def pack_string(value: str) -> bytes:
@@ -357,6 +358,33 @@ def run_test_chain_remote(sock: socket.socket) -> bool:
     return True
 
 
+def run_test_chain_remote_async(sock: socket.socket) -> bool:
+    """P2: same chain as chain_remote but goes through EchoAwait (the
+    Frame-based async handler). Exercises AWAIT_OK(CallToActor) over the wire.
+
+    Note: EchoAwait forwards to Echo (the same target Actor + class+method),
+    then chains the response back to the client through the same wire envelope.
+    """
+    log("Test 2b (chain_remote_async): Client -> Gateway -> EchoService_A.EchoAwait -> EchoService_B.Echo -> Actor 2001")
+    request = make_echo_request(target_actor_id=make_actor_id("Echo", 2001), message="hello remote async")
+    response = call_echo(sock, ECHOAWAIT_FUNCTION_ID, call_id=2, payload=request)
+    if not response["b_success"]:
+        log(f"  FAIL: response not successful: {response}")
+        return False
+    echo = parse_echo_response(response["payload"])
+    if echo is None:
+        log("  FAIL: payload not parseable as FSampleEchoResponse")
+        return False
+    if echo["echo"] != "hello remote async [echoed]":
+        log(f"  FAIL: echo mismatch: {echo}")
+        return False
+    if echo["source_server_name"] != "MEchoService":
+        log(f"  FAIL: source server mismatch: {echo}")
+        return False
+    log(f"  OK: {echo}")
+    return True
+
+
 def run_test_error_unknown(sock: socket.socket) -> bool:
     log("Test 3 (error_unknown): Client -> Gateway -> EchoService -> Actor 9999 (not registered)")
     request = make_echo_request(target_actor_id=9999, message="hello ghost")
@@ -468,6 +496,8 @@ def run_validation(
             if 1 in enabled_tests and not run_test_chain_local(sock):
                 ok = False
             if ok and 2 in enabled_tests and not run_test_chain_remote(sock):
+                ok = False
+            if ok and 4 in enabled_tests and not run_test_chain_remote_async(sock):
                 ok = False
             if ok and 3 in enabled_tests and not run_test_error_unknown(sock):
                 ok = False

@@ -1,9 +1,12 @@
 #include "Common/Net/ServiceDiscovery/EndpointCache.h"
 
 #include "Common/Net/Rpc/RpcManifest.h"
+#include "Common/Net/Rpc/RpcServerCall.h"
+#include "Common/Net/Rpc/RpcTransport.h"
 #include "Common/Runtime/EventLoop/EventLoop.h"
 #include "Common/Runtime/Id.h"
 #include "Common/Runtime/Log/Log.h"
+#include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Time.h"
 
 #include <atomic>
@@ -28,7 +31,31 @@ TVector<EServerType> EnumerateBusinessServerTypes()
     // 历史 6 服合并为 SampleService 后不再单独注册。新业务类型按需追加。
     return Types;
 }
+
+// P2: 把每个 peer connection 的入站包分发到 DispatchBackendServerCallPacket
+// (incoming MT_FunctionCall) 或 HandleServerCallResponse (incoming MT_FunctionResponse).
+// 静态 helper(只在 EndpointCache.cpp 内,避免 MEndpointCache 公开 API 膨胀)。
+void AttachDispatchToConnection(TSharedPtr<MServerConnection> Conn, MObject* Service)
+{
+    if (!Conn || !Service) return;
+    Conn->SetOnMessage(
+        [Service](TSharedPtr<MServerConnection> Sender, uint8 PacketType, const TByteArray& Data)
+        {
+            switch (static_cast<EServerMessageType>(PacketType))
+            {
+                case EServerMessageType::MT_FunctionCall:
+                    DispatchBackendServerCallPacket(Service, Sender, Data);
+                    break;
+                case EServerMessageType::MT_FunctionResponse:
+                    HandleServerCallResponse(Data);
+                    break;
+                default:
+                    LOG_WARN("MEndpointCache: unknown packet type=%u on inbound", PacketType);
+                    break;
+            }
+        });
 }
+} // anonymous namespace
 
 MEndpointCache& MEndpointCache::Get()
 {
@@ -40,6 +67,23 @@ void MEndpointCache::AttachEventLoop(MNetEventLoop* EventLoop)
 {
     std::lock_guard<std::mutex> Lock(Mutex_);
     EventLoop_ = EventLoop;
+}
+
+void MEndpointCache::SetServiceInstance(MObject* ServiceInstance)
+{
+    std::lock_guard<std::mutex> Lock(Mutex_);
+    ServiceInstance_ = ServiceInstance;
+    // Re-attach existing pooled connections that may have been created
+    // before SetServiceInstance was called.
+    for (auto& KV : ConnectionPool_)
+    {
+        AttachDispatchToConnection(KV.second, ServiceInstance);
+    }
+}
+
+MObject* MEndpointCache::GetServiceInstance() const
+{
+    return ServiceInstance_;
 }
 
 void MEndpointCache::BindRegistry(const MString& Addr, uint16 Port)
@@ -376,6 +420,8 @@ TSharedPtr<MServerConnection> MEndpointCache::LazyConnect(const FServiceEndpoint
         return nullptr;
     }
     ConnectionPool_[Ep.ServerId] = PeerConn;
+    // P2: wire inbound packet dispatch (MT_FunctionCall/Response).
+    AttachDispatchToConnection(PeerConn, ServiceInstance_);
     return PeerConn;
 }
 

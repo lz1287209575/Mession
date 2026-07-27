@@ -88,6 +88,10 @@ public:
     MFUNCTION(ServerCall)
     SFutureResult<FSampleEchoResponse> Echo(const FSampleEchoRequest& Request);
 
+    // P2: Frame-based async demo — AWAIT_OK(CallToActor) under the hood.
+    MFUNCTION(ServerCall, Async)
+    SFutureResult<FSampleEchoResponse> EchoAwait(const FSampleEchoRequest& Request);
+
     // 传输层握手 / 心跳桩——MServerConnection::SendHandshake / SendHeartbeat 会通过
     // MRpc::CallRemote 调 Rpc_OnServerHandshake / Rpc_OnHeartbeat。
     //

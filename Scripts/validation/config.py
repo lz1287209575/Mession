@@ -8,15 +8,18 @@ from typing import List, Optional, Sequence, Set
 from build_systems import add_build_system_arguments
 
 
-# PoC 阶段只有 3 条链路：
-#   - chain_local:    Client → Gateway → EchoService_A（命中本机 Actor）
-#   - chain_remote:   Client → Gateway → EchoService_A → EchoService_B（跨进程 hop）
-#   - error_unknown:  Client → Gateway → 不存在的 ActorId → 错误回包
-ALL_TEST_IDS = {1, 2, 3}
+# PoC 阶段链路:
+#   - chain_local:        Client → Gateway → EchoService_A(命中本机 Actor)
+#   - chain_remote:       Client → Gateway → EchoService_A → EchoService_B(跨进程 hop)
+#   - chain_remote_async:  Client → Gateway → EchoService_A.EchoAwait(Frame/await)
+#                          → EchoService_B.Echo → Actor 2001(P2)
+#   - error_unknown:      Client → Gateway → 不存在的 ActorId → 错误回包
+ALL_TEST_IDS = {1, 2, 3, 4}
 SUITE_TESTS = {
     "all": ALL_TEST_IDS,
     "chain_local": {1},
     "chain_remote": {1, 2},
+    "chain_remote_async": {1, 2, 4},   # needs 1 + 2 setup + the new async test
     "error_unknown": {1, 3},
 }
 
