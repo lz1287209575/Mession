@@ -1,5 +1,7 @@
 #include "Common/Net/Rpc/RpcServerCall.h"
 
+#include "Common/Runtime/Async/MAsync.h"
+#include "Common/Runtime/Async/AsyncContext.h"
 #include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Time.h"
 
@@ -254,17 +256,58 @@ bool DispatchServerCall(
         ResponseTarget,
     };
     FScopedServerCallContext Scope(Context);
-    if (!Function->ServerCallHandler(TargetInstance, Payload))
+
+    SFutureResult<TByteArray> RespFuture = Function->ServerCallHandler(TargetInstance, Payload);
+
+    if (RespFuture.IsReady())
     {
-        (void)ResponseTarget->SendServerCallResponse(
-            FunctionId,
-            CallId,
-            false,
-            BuildPayload(FAppError::Make("server_call_invoke_failed", Function->Name)));
-        return false;
+        // Ready path: dispatch response/error inline.
+        TResult<TByteArray, FAppError> Result = RespFuture.GetResult();
+        if (Result.IsErr())
+        {
+            (void)ResponseTarget->SendServerCallResponse(
+                FunctionId, CallId, false, BuildPayload(Result.GetError()));
+        }
+        else
+        {
+            (void)ResponseTarget->SendServerCallResponse(
+                FunctionId, CallId, true, std::move(Result.GetValue()));
+        }
+        return true;
     }
 
-    return true;
+    // Pending path: continuation goes through ambient MAsyncContext::Post.
+    MAsync::MAsyncContext* Ctx = MAsync::MAsyncContext::Current();
+    if (!Ctx)
+    {
+        LOG_ERROR("Pending ServerCall has no MAsyncContext — synthesizing error");
+        (void)ResponseTarget->SendServerCallResponse(
+            FunctionId, CallId, false,
+            BuildPayload(FAppError::Make("async_context_missing")));
+        return true;
+    }
+
+    RespFuture.Then(
+        [Ctx, ResponseTarget, FunctionId, CallId]
+        (SFutureResult<TByteArray> F) mutable
+        {
+            Ctx->Post(
+                [F = std::move(F), ResponseTarget, FunctionId, CallId]() mutable
+                {
+                    TResult<TByteArray, FAppError> Result = F.GetResult();
+                    if (Result.IsErr())
+                    {
+                        (void)ResponseTarget->SendServerCallResponse(
+                            FunctionId, CallId, false, BuildPayload(Result.GetError()));
+                    }
+                    else
+                    {
+                        (void)ResponseTarget->SendServerCallResponse(
+                            FunctionId, CallId, true, std::move(Result.GetValue()));
+                    }
+                });
+        });
+    return true;   // true = "we accepted the call"; not "completed synchronously"
 }
 
 uint64 RegisterServerCall(

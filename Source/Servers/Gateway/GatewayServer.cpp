@@ -46,6 +46,7 @@ bool MGatewayServer::Init(int InPort)
 
     // 注册到 Registry：AttachEventLoop → BindRegistry → RegisterLocal
     MEndpointCache::Get().AttachEventLoop(&EventLoop);
+    MEndpointCache::Get().SetServiceInstance(this);   // P2: install business dispatch target
     MString RegHost;
     uint16 RegPort = 0;
     if (!ParseAddrPort(Config.RegistryAddr, RegHost, RegPort))

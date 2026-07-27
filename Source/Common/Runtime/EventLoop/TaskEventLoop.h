@@ -9,9 +9,12 @@ class MTaskEventLoop : public ITaskRunner, public IEventLoopStep
 public:
     void PostTask(TTask Task) override;
 
+    bool IsCurrentThread() const override;
+
     void RunOnce(int timeoutMs = 0) override;
 
 private:
     TDeque<TTask> PendingTasks;
     mutable std::mutex TaskMutex;
+    TAtomic<MThreadId> OwnerThreadId {};   // 默认空 id；RunOnce 首次进入时固化
 };

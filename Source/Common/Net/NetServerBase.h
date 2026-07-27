@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
+#include "Common/Runtime/Async/AsyncContext.h"
 #include "Common/Runtime/EventLoop/EventLoop.h"
 #include "Common/Runtime/EventLoop/TaskEventLoop.h"
 #include "Common/Runtime/EventLoop/NetEventLoop.h"
@@ -35,6 +36,9 @@ protected:
     bool bRunning = false;
     bool bShutdownDone = false;
     bool bStepsRegistered = false;
+
+    /** P1: ambient MAsyncContext bound to TaskLoop; installed in Run(), cleared at exit. */
+    TSharedPtr<MAsync::MLoopAsyncContext> LoopContext;
 
     /** 监听端口，由子类从配置返回 */
     virtual uint16 GetListenPort() const = 0;

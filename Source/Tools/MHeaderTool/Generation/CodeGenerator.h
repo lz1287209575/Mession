@@ -440,18 +440,41 @@ private:
         std::string handlerName = "MHeaderTool_HandleServerCall_" + SanitizeIdentifier(parsedClass.Name) + "_" + SanitizeIdentifier(func.Name);
         const auto& requestParam = func.Params[0];
 
-        out << "inline bool " << handlerName << "(MObject* Object, const TByteArray& Payload)\n";
+        // Extract raw response type from `SFutureResult<FResp>` (CodeGenerator.h:766 ExtractResponseType).
+        const std::string responseType = ExtractResponseType(func.ReturnStorageType);
+
+        out << "inline SFutureResult<TByteArray> " << handlerName << "(MObject* Object, const TByteArray& Payload)\n";
         out << "{\n";
         out << "    auto* TypedObject = static_cast<" << parsedClass.Name << "*>(Object);\n";
-        out << "    if (!TypedObject) return false;\n";
+        out << "    if (!TypedObject)\n";
+        out << "    {\n";
+        out << "        return MServerCallAsyncSupport::MakeErrorFuture<TByteArray>(MString(\"server_call_invalid_object\"));\n";
+        out << "    }\n";
         out << "    " << requestParam.StorageType << " RequestValue {};\n";
         out << "    auto ParseResult = ParsePayload(Payload, RequestValue, \"" << func.Name << "\");\n";
-        out << "    if (!ParseResult.IsOk()) return false;\n";
+        out << "    if (!ParseResult.IsOk())\n";
+        out << "    {\n";
+        out << "        return MServerCallAsyncSupport::MakeErrorFuture<TByteArray>(ParseResult.GetError(), MString());\n";
+        out << "    }\n";
         out << "    const SServerCallContext Context = CaptureCurrentServerCallContext();\n";
-        out << "    if (!Context.IsValid()) return false;\n";
         out << "    (void)Context;\n";
-        out << "    TypedObject->" << func.Name << "(RequestValue);\n";
-        out << "    return true;\n";
+        out << "    SFutureResult<" << responseType << "> Inner = TypedObject->" << func.Name << "(std::move(RequestValue));\n";
+        out << "    MPromise<TResult<TByteArray, FAppError>> OutPromise;\n";
+        out << "    auto OutFuture = OutPromise.GetFuture();\n";
+        out << "    if (Inner.IsReady())\n";
+        out << "    {\n";
+        out << "        TResult<" << responseType << ", FAppError> R = Inner.GetResult();\n";
+        out << "        if (R.IsErr()) OutPromise.SetValue(TResult<TByteArray, FAppError>::Err(R.GetError()));\n";
+        out << "        else OutPromise.SetValue(TResult<TByteArray, FAppError>::Ok(BuildPayload(R.GetValue())));\n";
+        out << "        return SFutureResult<TByteArray>(OutFuture);\n";
+        out << "    }\n";
+        out << "    Inner.Then([OutPromise](MFuture<TResult<" << responseType << ", FAppError>> F) mutable\n";
+        out << "    {\n";
+        out << "        TResult<" << responseType << ", FAppError> R = F.Get();\n";
+        out << "        if (R.IsErr()) OutPromise.SetValue(TResult<TByteArray, FAppError>::Err(R.GetError()));\n";
+        out << "        else OutPromise.SetValue(TResult<TByteArray, FAppError>::Ok(BuildPayload(R.GetValue())));\n";
+        out << "    });\n";
+        out << "    return SFutureResult<TByteArray>(OutFuture);\n";
         out << "}\n";
         out << "\n";
     }
@@ -649,6 +672,29 @@ private:
             }
             out << "        InClass->RegisterFunction(Func);\n";
         }
+        else if (func.Transport == "ServerCall")
+        {
+            // ServerCall transport: wire the generated handler (decodes request,
+            // calls the typed method, bridges SFutureResult<TResp> ->
+            // SFutureResult<TByteArray> via ready/pending branches — see
+            // GenerateServerCallHandler) onto MFunctionObject::ServerCallHandler.
+            // Applies uniformly to MFUNCTION(ServerCall) and MFUNCTION(ServerCall, Async);
+            // the Async flag is preserved on the parsed function for P3 codegen.
+            std::string handlerName = "MHeaderTool_HandleServerCall_" + SanitizeIdentifier(parsedClass.Name) + "_" + SanitizeIdentifier(func.Name);
+            out << "        auto* Func = new MFUNC_OBJECT();\n";
+            out << "        Func->Name = \"" << func.Name << "\";\n";
+            out << "        Func->Flags = " << BuildFunctionFlagsExpr(func) << ";\n";
+            out << "        Func->ParamSize = sizeof(" << paramStructName << ");\n";
+            for (const auto& param : func.Params)
+            {
+                out << "        Func->Params.push_back(CreateOffsetProperty<" << param.StorageType << ">(\""
+                    << param.Name << "\", EPropertyType::" << param.PropertyKind << ", offsetof("
+                    << paramStructName << ", " << param.Name << ")));\n";
+            }
+            out << "        Func->Transport = \"" << func.Transport << "\";\n";
+            out << "        Func->ServerCallHandler = " << handlerName << ";\n";
+            out << "        InClass->RegisterFunction(Func);\n";
+        }
         else if (func.Transport != "ServerCall")
         {
             out << "        auto* Func = CreateNativeFunction<&ThisClass::" << func.Name << ">(\"" << func.Name << "\", "
@@ -677,7 +723,16 @@ private:
             auto flagTokens = SplitTopLevelPipes(token);
             for (const auto& flagToken : flagTokens)
             {
-                if (flagToken.empty() || flagToken == "NetServer" || flagToken == "NetClient" ||
+                // Skip tokens that are transport / role labels (handled elsewhere
+                // by Func->Transport / Func->bIsAsync / Func->bIsClient / etc.),
+                // not EFunctionFlags enum values. Most importantly:
+                //   - "Async" -> captured in parsed->bIsAsync (P3 codegen consumer);
+                //     P2 treats it identically to non-Async ServerCall (the
+                //     GenerateServerCallHandler already supports pending futures).
+                //   - "ServerCall" / "ClientCall" / transport labels -> emit
+                //     separately as Func->Transport, not in the flags bitmask.
+                if (flagToken.empty() || flagToken == "Async" ||
+                    flagToken == "NetServer" || flagToken == "NetClient" ||
                     flagToken == "Client" || flagToken == "ClientCall" || flagToken == "ServerCall" || flagToken == "RPC")
                 {
                     continue;
@@ -765,21 +820,31 @@ private:
     // 从 MFuture<TResult<T, E>> 中提取 T（原始响应类型）
     std::string ExtractResponseType(const std::string& returnType) const
     {
-        // 匹配 MFuture<TResult<SuccessType, ErrorType>>
-        // CallRemoteByName<TResponse> 返回 MFuture<TResult<TResponse, FAppError>>
-        // 所以我们需要传递 SuccessType（第一个模板参数）
-        const std::string mfuturePrefix = "MFuture<TResult<";
-        if (returnType.find(mfuturePrefix) == 0)
+        // Strip SFutureResult<X> / MFuture<TResult<X, Y>> wrappers (and any
+        // combination), returning the raw response type X. Used by the
+        // generated ServerCall handler so it can call the typed method and
+        // pattern-match on `TResult<RespType, FAppError>`.
+        const std::string sfPrefix = "SFutureResult<";
+        const std::string mfPrefix  = "MFuture<TResult<";
+
+        std::string T = returnType;
+        // Outer wrapper: SFutureResult<Inner>
+        if (T.rfind(sfPrefix, 0) == 0 && T.back() == '>')
         {
-            size_t start = mfuturePrefix.size();
-            // 找到逗号位置（在 ErrorType 之前）
-            size_t comma = returnType.find(',', start);
+            std::string Inner = T.substr(sfPrefix.size(), T.size() - sfPrefix.size() - 1);
+            return ExtractResponseType(Inner);
+        }
+        // Inner wrapper: MFuture<TResult<X, Y>>
+        if (T.rfind(mfPrefix, 0) == 0 && T.back() == '>')
+        {
+            std::string Inner = T.substr(mfPrefix.size(), T.size() - mfPrefix.size() - 1);
+            size_t comma = Inner.find(',');
             if (comma != std::string::npos)
             {
-                return returnType.substr(start, comma - start);
+                return Inner.substr(0, comma);
             }
         }
-        return returnType;
+        return T;
     }
 
     SOptions Options_;

@@ -6,6 +6,12 @@
 #include <stdexcept>
 #include <typeindex>
 
+// Forward declaration to avoid pulling in MAsync.h's AppMessages.h chain here.
+// `SFutureResult<TByteArray>` is the actual handler return type; the full
+// typedef + impl live in MAsync.h (loaded transitively where used).
+template<typename T>
+struct SFutureResult;
+
 class MObject;
 class MReflectArchive;
 
@@ -167,7 +173,7 @@ public:
 class MFunctionObject
 {
 public:
-    using FServerCallHandler = bool(*)(MObject* Object, const TByteArray& Payload);
+    using FServerCallHandler = SFutureResult<TByteArray>(*)(MObject* Object, const TByteArray& Payload);
 
     MString Name;
     EFunctionFlags Flags = EFunctionFlags::None;

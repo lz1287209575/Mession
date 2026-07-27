@@ -123,6 +123,7 @@ configure_mession_compile_options(mession_core)
 # Common 库（公共组件：日志/RPC/连接等中层能力）
 set(MESSION_COMMON_SOURCES
     Source/Common/Asset/UAssetPackageReader.cpp
+    Source/Common/Runtime/Async/AsyncContext.cpp
     Source/Common/Runtime/Concurrency/FiberAwait.cpp
     Source/Common/Runtime/Concurrency/FiberScheduler.cpp
     Source/Common/Runtime/Concurrency/SignalHandler.cpp
@@ -521,6 +522,21 @@ target_link_libraries(LogTest
         mession_common
 )
 configure_mession_compile_options(LogTest)
+
+# MAsyncTest - P1 async primitives unit tests (MAsyncContext + Get redline)
+add_executable(MAsyncTest
+    Source/Common/Runtime/Async/Tests/main.cpp
+)
+target_include_directories(MAsyncTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+)
+target_link_libraries(MAsyncTest
+    PRIVATE
+        mession_common
+)
+configure_mession_compile_options(MAsyncTest)
 
 # 安装目标
 install(TARGETS

@@ -9,4 +9,9 @@ public:
     using TTask = TFunction<void()>;
     virtual ~ITaskRunner() = default;
     virtual void PostTask(TTask Task) = 0;
+
+    /** True iff the calling thread is the loop that drains this runner's tasks.
+     *  Default = true（保守返回；具体 runner 应 override）。
+     *  Used by MAsyncContext::IsSameContext() for Get-redline detection. */
+    virtual bool IsCurrentThread() const { return true; }
 };

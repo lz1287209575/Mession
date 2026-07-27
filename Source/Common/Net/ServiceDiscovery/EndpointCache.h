@@ -45,6 +45,11 @@ public:
     // unhealthy → 返回 nullptr，调用方走 RPC 错误路径。
     TSharedPtr<MServerConnection> GetOrConnect(EServerType TargetServerType);
 
+    // P2: 安装业务的 MObject* 用于接收 MT_FunctionCall / MT_FunctionResponse。
+    // Setup at Service::Init after AttachEventLoop. Non-owning — Service 进程级单例。
+    void SetServiceInstance(MObject* ServiceInstance);
+    MObject* GetServiceInstance() const;
+
     // 处理 Registry 推过来的 EndpointChange。Seq 必须 >= LastSeq_ 否则拒绝。
     void OnEndpointChange(EServerType ServerType, uint64 Seq, const TVector<FServiceEndpoint>& NewEndpoints);
 
@@ -88,4 +93,5 @@ private:
     TSet<EServerType> PendingListTypes_;
     std::mutex Mutex_;
     MNetEventLoop* EventLoop_ = nullptr;      // not owned
+    MObject* ServiceInstance_ = nullptr;      // P2: not owned; process-lifetime
 };

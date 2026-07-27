@@ -32,6 +32,10 @@ void MNetServerBase::Run()
         bStepsRegistered = true;
     }
 
+    // P1: install ambient MAsyncContext bound to this process's TaskLoop.
+    LoopContext = MakeShared<MAsync::MLoopAsyncContext>(GetTaskRunner());
+    MAsync::MAsyncContext::SetCurrent(LoopContext.Get());
+
     while (bRunning)
     {
         if (MSignalHandler::IsShutdownRequested())
@@ -44,6 +48,10 @@ void MNetServerBase::Run()
         TickBackends();
         PumpServerCallMaintenance();
     }
+
+    // P1: clear ambient so no dangling pointer survives Shutdown.
+    MAsync::MAsyncContext::SetCurrent(nullptr);
+    LoopContext.reset();
 
     EventLoop.UnregisterListener(ListenerId);
     ListenerId = 0;

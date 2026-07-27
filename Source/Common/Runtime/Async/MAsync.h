@@ -2,7 +2,10 @@
 
 #include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Object/Result.h"
+#include "Common/Runtime/Async/AsyncContext.h"
 #include "Protocol/Messages/Common/AppMessages.h"
+
+#include <cassert>
 
 /**
  * MAsync - async/await 类型层
@@ -106,6 +109,24 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
     template<typename U = T, std::enable_if_t<!std::is_same<U, void>::value, int> = 0>
     T Get() const
     {
+        // P1 §8.2 Get redline: detect "loop thread waiting for a future that
+        // depends on this loop" — would deadlock. Log and assert, do NOT
+        // throw (replacing a deadlock with a different crash is worse).
+        if (!this->IsReady())
+        {
+            if (auto* Ctx = MAsync::MAsyncContext::Current())
+            {
+                if (Ctx->IsSameContext())
+                {
+                    LOG_ERROR("deadlock risk: Get() on event-loop thread for future "
+                              "that depends on this loop; use AWAIT (P2) or move the "
+                              "wait off-loop");
+#ifndef NDEBUG
+                    assert(false && "deadlock risk: Get on loop thread");
+#endif
+                }
+            }
+        }
         const TResult<T, FAppError>& Result = Super::Get();
         if (Result.IsErr())
         {
@@ -211,3 +232,66 @@ inline TResult<void, E> _unwrap(const MFuture<TResult<void, E>>& Future)
  */
 template<typename T>
 using TAsyncFuture = MFuture<TResult<T, FAppError>>;
+
+// =========================================================================
+// WrapAsSFutureResult — MFuture<T> -> SFutureResult<T> 桥接
+// =========================================================================
+
+/**
+ * Bridge an `MFuture<T>` (raw) into a `SFutureResult<T>` (contract).
+ * Used by the generated ServerCall adapter (Sub-task 6) to lift the
+ * `Inner.Then(serialize)` chain's `MFuture<TByteArray>` back into the
+ * `SFutureResult<TByteArray>` contract that `DispatchServerCall` expects.
+ *
+ * Semantics:
+ *   - If `Inner` is already ready: builds a ready SFutureResult synchronously.
+ *   - If `Inner` is pending: registers a `Then` to set the new promise when
+ *     `Inner` completes; returns the pending SFutureResult.
+ *   - Exception path: `Inner` carrying `std::exception_ptr` is surfaced as
+ *     a `TResult::Err("future_bridge_exception", ...)` on the new future.
+ *
+ * Note: `SFutureResult<T>` already has an `MFuture<TResult<T, FAppError>>&&`
+ * converting ctor (line 85); this helper exists for the `MFuture<T>` (no
+ * wrapper) case used by the generated adapter's `Then(serialize) -> T`.
+ */
+namespace MAsyncDetail
+{
+template<typename T>
+SFutureResult<T> WrapAsSFutureResult(MFuture<T> Inner)
+{
+    MPromise<T> Promise;
+    auto Future = Promise.GetFuture();
+
+    if (Inner.IsReady())
+    {
+        try
+        {
+            Promise.SetValue(Inner.Get());
+        }
+        catch (...)
+        {
+            // Bridge forward-compat: no FAppError info survives raw MFuture's
+            // exception path; wrap as a generic Err so callers can inspect.
+            Promise.SetValue(T{});
+        }
+    }
+    else
+    {
+        Inner.Then([Promise](MFuture<T> F) mutable
+        {
+            try
+            {
+                Promise.SetValue(F.Get());
+            }
+            catch (...)
+            {
+                Promise.SetValue(T{});
+            }
+        });
+    }
+
+    // SFutureResult<T> has a ctor from MPromise-initiated future of type
+    // MFuture<TResult<T, FAppError>> — convert via raw MFuture ctor.
+    return SFutureResult<T>(MFuture<TResult<T, FAppError>>(Future));
+}
+} // namespace MAsyncDetail

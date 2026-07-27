@@ -21,6 +21,9 @@
 #include <atomic>
 #include <mutex>
 #include <chrono>
+#include <condition_variable>
+#include <future>
+#include <shared_mutex>
 #include <thread>
 
 #if defined(_MSVC_LANG)
@@ -121,6 +124,27 @@ using TAtomic = std::atomic<T>;
 
 template<typename Signature>
 using TFunction = std::function<Signature>;
+
+// 线程 / 同步原语非模板别名（命名约定：T* 仅模板 STL 别名；非模板 STL 用 M* 沿 MString/MName 先例）
+using MThread             = std::thread;
+using MThreadId           = std::thread::id;
+using MMutex              = std::mutex;
+using MRecursiveMutex     = std::recursive_mutex;
+using MConditionVariable  = std::condition_variable;
+using MSharedMutex        = std::shared_mutex;
+using MLaunch             = std::launch;
+
+// RAII 锁模板别名
+template<typename T>      using TLockGuard       = std::lock_guard<T>;
+template<typename T>      using TUniqueLock      = std::unique_lock<T>;
+template<typename T>      using TSharedLock      = std::shared_lock<T>;
+
+// 一次性异步 future（与 SFutureResult 同族 S*）
+template<typename T>      using SFuture          = std::future<T>;
+template<typename Clock, typename Duration>
+using STimePoint                                = std::chrono::time_point<Clock, Duration>;
+template<typename Rep, typename Period = std::ratio<1>>
+using SChronoDuration                           = std::chrono::duration<Rep, Period>;
 
 template<typename K, typename V, typename Hash = std::hash<K>, typename KeyEqual = std::equal_to<K>>
 using TUnorderedMap = std::unordered_map<K, V, Hash, KeyEqual>;
