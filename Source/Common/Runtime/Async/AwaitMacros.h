@@ -23,8 +23,10 @@
 // spec §7.3 v1 子集: 单语句级 await、≤8/函数、顺序;for/while 内 await 禁;
 // 不在 Async 内 Get() 依赖本 context 的 future(P1 §8.2 红线)。
 //
-// 注意: AWAIT_OK 仅供 Frame::Run() 内(以及 Frame::Resume() 内)调用 — 调用处
-// 必须有局部变量名 `Frame`(这是宏展开的隐式契约)。Frame 是 P2 的 FEchoFrame。
+// 注意: AWAIT_OK 仅供 Frame 局部作用域调用 — 调用处必须有局部变量名 `Frame`
+// (这是宏展开的隐式契约)。Frame 是 MHeaderTool 在
+// `<Class>_AsyncFrames.h` 中生成的 `MHeaderTool_AsyncFrame_<Class>_<Func>`
+// 结构体(P3 v1 inline-body 设计 — see spec 2026-07-24 §7.3)。
 // =========================================================================
 
 #define AWAIT_OK(expr) Frame->AwaitOk(expr)

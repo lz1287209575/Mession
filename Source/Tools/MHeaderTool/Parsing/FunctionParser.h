@@ -130,13 +130,28 @@ public:
 
                 if (!bInlineBody && declEnd != std::string::npos)
                 {
+                    // P3 fix: detect inline bodies that contain ';' inside
+                    // (e.g. `MakeShared<Foo>();` before the body). The
+                    // existing logic only fired when '{' appeared before
+                    // the FIRST ';' — but for v1 inline bodies (auto Frame
+                    // = MakeShared<...>();) the first ';' is *inside* the
+                    // body, so declEnd ended up at that ';' and the body
+                    // was excluded. We now check: is there a '{' whose
+                    // matching '}' is AFTER the first ';' (i.e. the first
+                    // ';' is INSIDE a body — inline body marker)?
+                    // Important: keep the bracePos < declEnd guard so a
+                    // non-inline function (whose own ';' precedes the
+                    // NEXT function's '{') isn't misclassified.
                     size_t bracePos = classBody.find('{', declStart);
-                    if (bracePos != std::string::npos && (declEnd == std::string::npos || bracePos < declEnd))
+                    if (bracePos != std::string::npos && bracePos < declEnd)
                     {
                         size_t braceClose = FindMatching(classBody, bracePos, '{', '}');
-                        if (braceClose != std::string::npos)
+                        if (braceClose != std::string::npos && braceClose > declEnd)
                         {
-                            declEnd = bracePos;
+                            // First ';' is INSIDE the body (bracePos..braceClose).
+                            // This is the v1 inline-body pattern — use braceClose
+                            // as declEnd and mark inline body.
+                            declEnd = braceClose;
                             bInlineBody = true;
                         }
                     }

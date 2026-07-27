@@ -133,15 +133,10 @@ void MEchoService::RegisterLocalActors()
     }
 }
 
-#include "Servers/EchoService/EchoFrame.h"
-
-SFutureResult<FSampleEchoResponse> MEchoService::EchoAwait(const FSampleEchoRequest& Request)
-{
-    // TSharedPtr keeps the Frame alive past this stack frame so any pending
-    // CallToActor resume (via Context->Post) finds a valid `this`.
-    auto Frame = MakeShared<FEchoFrame>();
-    return Frame->Run(Request, this);
-}
+// P3 v1 inline-body design: MEchoService::EchoAwait has its body in
+// EchoService.h. The generated MHeaderTool_AsyncFrame_MEchoService_EchoAwait
+// struct (MHeaderTool-generated) supplies the AwaitOk helper; AWAIT_OK
+// expands to Frame->AwaitOk(expr). See spec 2026-07-24 §7.3.
 
 SFutureResult<FSampleEchoResponse> MEchoService::Echo(const FSampleEchoRequest& Request)
 {

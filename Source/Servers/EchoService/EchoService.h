@@ -10,12 +10,27 @@
 #include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Id.h"
 #include "Common/Runtime/Reflect/Reflection.h"
+#include "Common/Runtime/Reflect/Reflection.h"
+#include "Common/Runtime/Async/MAsync.h"
+#include "Common/Runtime/Async/AwaitMacros.h"
+#include "Common/Net/Rpc/MRpcChannel.h"
 #include "Servers/App/ServiceId.h"
 #include "Servers/App/ServerCallAsyncSupport.h"
 #include "Servers/App/ServiceMain.h"
 #include "Protocol/Messages/Common/AppMessages.h"
 #include "Protocol/Messages/Common/ControlPlaneMessages.h"
 #include "Protocol/Messages/EchoService/FSampleEchoMessages.h"
+
+// P3 v1 inline-body design: the generated Frame struct
+// (`MHeaderTool_AsyncFrame_MEchoService_EchoAwait`) lives in a separate
+// generated header, NOT the per-class MEchoService.mgenerated.h. Reason:
+// MEchoService.mgenerated.h includes this user header, so including
+// MEchoService.mgenerated.h from here would create a circular include.
+// The AsyncFrames header is one-way: this header includes it, but it
+// does NOT include this header back. The Frame struct must come AFTER
+// FSampleEchoMessages.h (so ReqType/RespType are visible) and BEFORE
+// class MEchoService (so the inline async body can reference the Frame).
+#include "MEchoService_AsyncFrames.h"
 
 class MEchoService;
 extern MEchoService* GGlobalEchoService;
@@ -88,9 +103,20 @@ public:
     MFUNCTION(ServerCall)
     SFutureResult<FSampleEchoResponse> Echo(const FSampleEchoRequest& Request);
 
-    // P2: Frame-based async demo — AWAIT_OK(CallToActor) under the hood.
+    // P3: Frame-based async demo — user body constructs the generated Frame
+    // inline, sets its context (Service/Request/Ctx), and returns AWAIT_OK.
+    // No `Awaits=...` metadata: the await target is the user's expression
+    // text, not a macro tag (per spec 2026-07-24 §7.3 v1 inline-body design).
     MFUNCTION(ServerCall, Async)
-    SFutureResult<FSampleEchoResponse> EchoAwait(const FSampleEchoRequest& Request);
+    SFutureResult<FSampleEchoResponse> EchoAwait(const FSampleEchoRequest& Request)
+    {
+        auto Frame = MakeShared<MHeaderTool_AsyncFrame_MEchoService_EchoAwait>();
+        Frame->Service = this;
+        Frame->Request = Request;
+        Frame->Ctx = MAsync::MAsyncContext::Current();
+        return AWAIT_OK(MRpcChannel::Get().CallToActor<FSampleEchoResponse>(
+            Request.TargetActorId, "MEchoService", "Echo", Request));
+    }
 
     // 传输层握手 / 心跳桩——MServerConnection::SendHandshake / SendHeartbeat 会通过
     // MRpc::CallRemote 调 Rpc_OnServerHandshake / Rpc_OnHeartbeat。

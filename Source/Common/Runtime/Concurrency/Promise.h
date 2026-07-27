@@ -1,8 +1,16 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
+#include "Common/Runtime/Object/Result.h"
 #include <exception>
 #include <condition_variable>
+
+// FAppError lives in Protocol/Messages/Common/AppMessages.h, but Promise.h
+// is a low-level building block that shouldn't depend on protocol types.
+// Forward-declare it so MFuture<TResult<T, FAppError>> can be referenced
+// without pulling the protocol header. Callers that need full FAppError
+// access (operators, methods) include AppMessages.h themselves.
+struct FAppError;
 
 template<typename T>
 class MFuture;
@@ -67,6 +75,10 @@ public:
     void Wait() const;
     T Await() const;
     T Get() const;
+    // P3 v1: non-destructive view of resolved value (does NOT move out).
+    // Pre-condition: IsReady() must be true; calling on a non-ready
+    // future throws (same contract as Wait/Await).
+    const T& Peek() const;
 
     void Then(TFunction<void(MFuture<T>)> Callback);
 
@@ -239,6 +251,26 @@ template<typename T>
 T MFuture<T>::Get() const
 {
     return Await();
+}
+
+// P3 v1: non-destructive read of the resolved value. Returns a const
+// reference to the stored T so callers can inspect the value without
+// moving it out of the shared state. Pre-condition: caller must have
+// observed IsReady() == true (or called Wait/Await first); calling on
+// a non-ready future throws std::runtime_error.
+template<typename T>
+const T& MFuture<T>::Peek() const
+{
+    if (!State)
+    {
+        throw std::runtime_error("Peek on invalid MFuture");
+    }
+    std::unique_lock<std::mutex> Lock(State->Mutex);
+    if (!State->Ready)
+    {
+        throw std::runtime_error("Peek on non-ready MFuture");
+    }
+    return *State->Value;
 }
 
 template<typename T>

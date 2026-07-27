@@ -147,6 +147,17 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
     }
 
     // 返回原始 TResult，不抛
+    template<typename U = T, std::enable_if_t<!std::is_same<U, void>::value, int> = 0>
+    const TResult<T, FAppError>& PeekResult() const
+    {
+        // P3 v1: non-destructive view of the resolved value. Unlike Get()
+        // (which moves the value out via MFuture::Get()), PeekResult keeps
+        // the underlying state intact so callers can return the same
+        // SFutureResult and the value remains queryable. The result is
+        // only valid when IsReady() returns true; pre-ready callers
+        // must block via Get()/Wait() instead.
+        return Super::Peek();
+    }
     TResult<T, FAppError> GetResult() const
     {
         return Super::Get();

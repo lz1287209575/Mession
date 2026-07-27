@@ -334,6 +334,18 @@ int main(int argc, char** argv)
             }
             std::cerr << "DEBUG: classesToGenerate has " << classesToGenerate.size() << " types\n";
 
+            // P3: pre-group classes by source header path. GenerateHeader
+            // needs ALL classes from the same header (not just the one being
+            // generated) to emit Async Frame struct definitions before the
+            // user header include — otherwise sibling per-class files
+            // (e.g. SEchoServiceConfig.mgenerated.h) would not see the
+            // Frame struct when the user header has inline async bodies.
+            std::map<std::string, std::vector<MHT::SParsedClass>> classesByHeader;
+            for (const auto& cls : classesToGenerate)
+            {
+                classesByHeader[cls.HeaderPath.string()].push_back(cls);
+            }
+
             // 生成代码
             MHT::CodeGenerator codeGen(options);
             size_t generatedCount = 0;
@@ -347,9 +359,24 @@ int main(int argc, char** argv)
                 }
 
                 // 生成头文件
-                std::string headerCode = codeGen.GenerateHeader(cls);
+                std::string headerCode = codeGen.GenerateHeader(
+                    cls, classesByHeader[cls.HeaderPath.string()]);
                 fs::path headerPath = options.OutputDir / (MHT::SanitizeIdentifier(cls.Name) + ".mgenerated.h");
                 MHT::WriteFile(headerPath, headerCode);
+
+                // P3 v1 inline-body design: emit Frame struct definitions
+                // into a separate `<ClassName>_AsyncFrames.h` file. The user
+                // header must #include this file before `class <ClassName>`
+                // so inline async bodies can reference the Frame. Skip if
+                // the class has no async functions (caller can omit the
+                // include entirely).
+                std::string asyncHeaderCode = codeGen.EmitAsyncFramesHeader(cls);
+                if (!asyncHeaderCode.empty())
+                {
+                    fs::path asyncHeaderPath = options.OutputDir /
+                        (MHT::SanitizeIdentifier(cls.Name) + "_AsyncFrames.h");
+                    MHT::WriteFile(asyncHeaderPath, asyncHeaderCode);
+                }
 
                 // 生成源文件
                 std::string sourceCode = codeGen.GenerateSource(cls);
