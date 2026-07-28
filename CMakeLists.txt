@@ -563,6 +563,25 @@ configure_mession_compile_options(AsyncFrameTest)
 add_dependencies(AsyncFrameTest mession_reflection_codegen)
 mession_attach_generated_groups(AsyncFrameTest shared)
 
+# FreeAsyncFuncGenTest - P4 vertical-slice unit test for free-function
+# MFUNCTION(Async) Frame generation. Verifies ProcessFreeFunctions scans
+# namespace-scope MFUNCTION(Async), rejects transport-tag combinations,
+# and EmitFreeAsyncFramesHeader emits the expected struct.
+add_executable(FreeAsyncFuncGenTest
+    Source/Tools/MHeaderTool/Tests/FreeAsyncFuncGenTest.cpp
+)
+target_include_directories(FreeAsyncFuncGenTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+)
+target_link_libraries(FreeAsyncFuncGenTest
+    PRIVATE
+        mht_lib
+        mession_core
+)
+configure_mession_compile_options(FreeAsyncFuncGenTest)
+
 # 安装目标
 install(TARGETS
     GatewayServer
