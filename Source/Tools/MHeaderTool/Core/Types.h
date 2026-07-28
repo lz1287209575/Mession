@@ -117,6 +117,24 @@ struct SParsedClass
 };
 
 // ============================================================================
+// Free Async Function (P4 — spec 2026-07-28 §B)
+// ============================================================================
+//
+// Captures a namespace-scope free function declared with `MFUNCTION(Async)`.
+// Unlike `SParsedFunction` (which lives inside a class), this struct has no
+// owning class — only the header path + function identity. Consumed by
+// `CodeGenerator::EmitFreeAsyncFramesHeader` to emit one Frame struct per
+// free async function into `<Header>_FreeAsyncFrames.mgenerated.h`.
+
+struct SFreeAsyncFunc
+{
+    fs::path HeaderPath;
+    std::string Name;
+    std::string ResponseType;
+    std::string AsyncBody;
+};
+
+// ============================================================================
 // Validation Schema
 // ============================================================================
 
