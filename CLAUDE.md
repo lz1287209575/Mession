@@ -124,6 +124,15 @@ After changing reflection macros or reflected types: rebuild so `Build/Generated
 
 ClientCall stable IDs default from function identity; use `Api=...` / `ClientApi=...` when renames must keep wire IDs.
 
+## C++17 async model — quick reference
+
+- **Contract**: every async function returns `SFutureResult<T>` (no exceptions on the result path; `Get()` throws `FFutureResultError` on err). The legacy `MFUTURE(T)` macro is gone.
+- **Mark async methods**: `MFUNCTION(..., Async)` (class members) or `MFUNCTION(Async)` (free functions). `MASYNC` was considered in P0–P3 and dropped in P4 — do not reintroduce.
+- **Await**: `AWAIT_OK(expr)` — only inside an `Async` function; the macro expands to `Frame->AwaitOk(expr)` so a local `Frame` must exist in scope.
+- **Sync barrier**: `F.Get()` / `F.Wait()` outside Async functions. Never on the event-loop thread for a future that depends on that loop (spec §8.2 redline — `MAsyncContext::IsSameContext` triggers assert in DEBUG).
+- **Fiber is legacy**: `MAwait` / `MAwaitOk` / `TPlayerCommandFuture` deleted in P4. `MFiberScheduler` remains only for player-command infrastructure.
+- Full design: `Docs/superpowers/specs/2026-07-24-cpp17-async-await.md`; P4 wrap (free-func codegen, deletions): `Docs/superpowers/specs/2026-07-28-async-p4-wrap.md`.
+
 ## Recommended reading
 
 1. `Docs/RefactorArchitectureAndRpc.md` — original refactor narrative (**partially outdated**: World middle-tier / six-server diagrams; still useful for Actor/RPC intent)
