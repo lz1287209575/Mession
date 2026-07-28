@@ -76,7 +76,7 @@ description: P4 wrap-up for the cpp17 async/await refactor — extend
 |------|------|
 | `Source/Tools/MHeaderTool/MHeaderTool.cpp` | 新增 `ProcessFreeFunctions(headerText)` 路径;在 `allClasses` 收集阶段同步收集 `SFreeAsyncFunc` 列表(只识别 `MFUNCTION(Async)`,拒绝 `MFUNCTION(ServerCall, Async)` 等带 transport 的形式) |
 | `Source/Tools/MHeaderTool/Generation/CodeGenerator.{h,cpp}` | 新增 `EmitFreeAsyncFramesHeader(collectedFuncs)` —— 输出 `<Header>_FreeAsyncFrames.mgenerated.h`,含每个自由函数一个 `MHeaderTool_AsyncFrame_Free_<FuncName>` struct(`AwaitOk` pass-through + State 字段 + 外层 `MPromise`) |
-| `Source/Tools/MHeaderTool/Parsing/FunctionParser.h` | 抽出 `ParseAsyncFunctionDeclaration(macroArgs, decl)`,被 class-method 路径和自由函数路径共用 |
+| `Source/Tools/MHeaderTool/Parsing/FunctionParser.h` | **可选重构**:若发现 class-method 路径与自由函数路径共享 ≥3 行 token 解析逻辑,抽出 `ParseAsyncFunctionDeclaration(macroArgs, decl)` 公共函数;否则保持两份独立(避免无意义抽象) |
 | `Source/Tools/MHeaderTool/Core/Types.h` | 新增 `SFreeAsyncFunc { string HeaderPath; string Name; string ResponseType; string AsyncBody; }` |
 
 ### 3.2 FiberAwait.h 删除(§C)
@@ -93,7 +93,7 @@ description: P4 wrap-up for the cpp17 async/await refactor — extend
 | 文件 | 改动 |
 |------|------|
 | `Docs/superpowers/specs/2026-07-24-cpp17-async-await.md` | §2 第 2 条 `MAwait` 改为「`MAwait` 自 P4 起删除;Fiber 基础设施保留到独立 PR」;§6.2 重写为「自由函数用 `MFUNCTION(Async)`;不引入 `MASYNC`」并删除 `MASYNC` 宏示例;§7.4 表格删除 `MAwait` 列;§14 P4 行内容更新为本次实际收口;§16.8 改为「Fiber = legacy,非 C# 向主模型(`MAwait` 自 P4 起删除)」;§17 Q4 删除 |
-| `CLAUDE.md` | `Recommended reading` 段附近加 5-10 行「C++17 异步模型快查」表(贴 spec §18 附录 A 核心示例 + 指向父 spec 与本 spec) |
+| `CLAUDE.md` | `Recommended reading` 段**之前**新增一节「C++17 异步模型快查」(5-10 行,贴 spec §18 附录 A 核心示例 + 指向父 spec 与本 spec) |
 
 ### 3.4 单测
 
