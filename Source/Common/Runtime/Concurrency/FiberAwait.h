@@ -9,8 +9,9 @@
 
 // NOTE: legacy ucontext-backed path; new code should use the spec §7
 // state-machine async/await model. See Docs/superpowers/specs/2026-07-24-cpp17-async-await.md.
-// P4 (spec 2026-07-28 §C): MAwait / MAwaitOk / TPlayerCommandFuture deleted
-// (2026-07-28). The remaining surface here is the player-command runtime
+// P4 (spec 2026-07-28 §C): legacy Fiber await surface removed; see
+// 2026-07-28-async-p4-wrap.md §C for the full deletion list.
+// The remaining surface here is the player-command runtime
 // plumbing (MHasCurrentPlayerCommand / MCurrentPlayerCommand / MCheckPoint /
 // MYield / MPlayerCommandDetail::SuspendCurrentCommandUntil), which is
 // kept in place for callers that legitimately run inside MFiberScheduler.

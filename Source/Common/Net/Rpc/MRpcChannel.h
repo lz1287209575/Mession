@@ -18,7 +18,7 @@
  * Server-side transport resolution（选 connection / lazy connect）由
  * MEndpointCache 全局单例负责——Caller 不用再传 IRpcTransportResolver。
  *
- * 用法(spec 2026-07-24 §18 附录 A — P4 后不再使用 MAwaitOk):
+ * 用法(spec 2026-07-24 §18 附录 A):
  *
  * // ServerCall: 调用远程服务器,得到 ready/pending SFutureResult<FResp>
  * auto fut = MRpcChannel::Get().Call<FResponse>(
