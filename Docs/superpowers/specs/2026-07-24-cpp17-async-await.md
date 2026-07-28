@@ -36,7 +36,7 @@
 ## 2. 非目标
 
 1. **C++20 `co_await` / `co_return` / `std::coroutine_traits`** 作为主路径（本 spec 明确不用）。  
-2. **全站有栈 fiber 作为默认执行模型**（现有 `MFiberScheduler` / `MAwait` 不扩展为主 API）。  
+2. **全站有栈 fiber 作为默认执行模型**（`MFiberScheduler` 保留作 player-command 基础设施；`MAwait` / `MAwaitOk` 已于 P4 删除，见 `2026-07-28-async-p4-wrap.md` §C）。  
 3. **完整复刻 .NET `SynchronizationContext` 生态**（无 OperationStarted 全家桶、无第三方上下文插件市场）。  
 4. **跨进程异步上下文**（仅进程内）。  
 5. **任意控制流的完整 C# 编译器**（v1 状态机语言子集见 §7.3）。  
@@ -65,7 +65,7 @@
 | C# | Mession（本 spec） | 备注 |
 |----|-------------------|------|
 | `Task<T>` | `SFutureResult<T>` | 唯一业务异步合同 |
-| `async` | `MFUNCTION(..., Async)` 或内部 `MASYNC`（§6.2） | 标记「可 AWAIT、可未完成」 |
+| `async` | `MFUNCTION(..., Async)`（类成员 + 自由函数统一入口，§6.2） | 标记「可 AWAIT、可未完成」 |
 | `await expr` | `AWAIT(expr)` / `AWAIT_OK(expr)` | 宏 + 状态机，**非** fiber |
 | `Task.FromResult` / 已完成 Task | `MakeSuccessFuture` / 已 Ready 的 future | 同步 handler 主路径 |
 | `t.Result` / `GetAwaiter().GetResult()` | `Get()` / 阻塞 Wait 语义 | **同步屏障**；有线程红线 |
@@ -122,25 +122,26 @@
 
 ### 6.2 内部异步函数（非 RPC 入口）
 
-RPC 入口用 `MFUNCTION`；工具函数也需要 await 时，采用显式标记（**推荐 v1 方案**）：
+RPC 入口用 `MFUNCTION`；工具函数（自由函数、namespace-scope helper）需要 await 时，使用 **`MFUNCTION(Async)`** 标记——与类成员路径走完全相同的 MHeaderTool 状态机生成（spec §7.2；P4 引入，见 `2026-07-28-async-p4-wrap.md` §B）。
 
 ```cpp
-// 名称以实施 PR 为准；语义如下
-MASYNC
-SFutureResult<FFoo> LoadFooAsync(...);
+// 自由函数示例（P4 之后）—— 与类成员 MFUNCTION(..., Async) 等价
+MFUNCTION(Async)
+SFutureResult<FFoo> LoadFooAsync(int Seed);
 ```
 
-- `MASYNC` = 与 `MFUNCTION(..., Async)` 同等的「可 AWAIT / 生成状态机」资格。  
-- **不**做「仅因返回 `SFutureResult` 就自动当 async」的静默推断（避免误生成）。  
+- **不**做「仅因返回 `SFutureResult` 就自动当 async」的静默推断（避免误生成）。
+- 自由函数上 `MFUNCTION(Async)` 不允许带 `ServerCall` / `ClientCall` / `RPC` 等 transport tag——MHeaderTool 会在该误用上报错并引用 `2026-07-28` spec。
 - 若实现阶段证明宏噪音过大，可开附录变体「返回类型 + 含 AWAIT 才生成」；默认仍是显式标记。
+- P0–P3 期间曾考虑过的 `MASYNC` 宏已由 P4 决定**不引入**（`MFUNCTION(Async)` 同时覆盖类成员与自由函数）。
 
 ### 6.3 传染性（硬 + 软）
 
 **硬（工具强制）**
 
-1. `AWAIT`/`AWAIT_OK` 只能出现在 `Async`/`MASYNC` 函数中。  
+1. `AWAIT`/`AWAIT_OK` 只能出现在 `MFUNCTION(..., Async)` 函数中（类成员 + 自由函数均适用）。  
 2. 被 `AWAIT` 的表达式类型必须是 `SFutureResult<T>`（或本 spec 明确列出的别名，v1 仅此一种）。  
-3. Async/`MASYNC` 函数的返回类型必须是 `SFutureResult<T>`。
+3. `MFUNCTION(..., Async)` 函数的返回类型必须是 `SFutureResult<T>`。
 
 **软（设计允许，对齐 `Task.Result`）**
 
@@ -173,7 +174,7 @@ v1 默认：**业务优先 `AWAIT_OK`**；需要区分错误时用 `AWAIT` + 显
 
 ### 7.2 MHeaderTool 职责
 
-对每个 `Async`/`MASYNC` 且需要生成的函数：
+对每个 `MFUNCTION(..., Async)` 且需要生成的函数：
 
 1. 解析函数体中的 `AWAIT`/`AWAIT_OK` 锚点。  
 2. 生成 `F{Func}_AsyncFrame`（或匿名命名空间内结构）：  
@@ -204,16 +205,16 @@ v1 默认：**业务优先 `AWAIT_OK`**；需要区分错误时用 `AWAIT` + 显
 
 **垂直切片验收（P2）**：`Echo`（或等价）内 **一次** `AWAIT_OK(CallToActor(...))`，端到端回包，事件循环不因 await 卡死。
 
-### 7.4 与 Fiber `MAwait` 的隔离
+### 7.4 与 Fiber 的隔离
 
-| | `AWAIT`（本 spec） | `MAwait`（现状 Fiber） |
-|--|-------------------|------------------------|
+| | `AWAIT`（本 spec） | Fiber path（`MFiberScheduler`） |
+|--|-------------------|--------------------------------|
 | 模型 | 无栈状态机语义 | 有栈 ucontext fiber |
 | 入口 | Async 状态机 Frame | `MFiberScheduler::CreateExecution` |
-| 主路径 | **是** | **否（legacy）** |
+| 主路径 | **是** | **否（仅 player-command 基础设施）** |
 | Windows | 与 Linux 同一套状态机 | null backend 不可 suspend |
 
-实施期：文档与头文件注释标明 `MAwait` deprecated；禁止新代码在 service handler 使用 `MAwait`。
+P4 收口后：`MAwait` / `MAwaitOk` / `TPlayerCommandFuture` 已删除（`2026-07-28-async-p4-wrap.md` §C）。`FiberAwait.h` 仅保留 player-command runtime 钩子（`MHasCurrentPlayerCommand` / `MCurrentPlayerCommand` / `MCheckPoint` / `MYield` / `MPlayerCommandDetail::SuspendCurrentCommandUntil`）。业务层 handler 一律走本 spec 状态机路径。
 
 ---
 
@@ -338,7 +339,7 @@ else
 
 ```text
                     ┌──────────────────────────┐
-                    │  MFUNCTION / MASYNC      │
+                    │  MFUNCTION(Async)        │
                     │  + Async 标记            │
                     └────────────┬─────────────┘
                                  │ 源码 + AWAIT 锚点
@@ -381,7 +382,7 @@ else
 |------|------|
 | `Source/Common/Runtime/Async/MAsync.h` | 强化 `SFutureResult` 文档；deprecate `MFUTURE` |
 | `Source/Common/Runtime/Async/AsyncContext.h`（新） | `MAsyncContext` / `MLoopAsyncContext` |
-| `Source/Common/Runtime/Async/AwaitMacros.h`（新） | `AWAIT`/`AWAIT_OK`/`MASYNC` 宏（与生成约定配合） |
+| `Source/Common/Runtime/Async/AwaitMacros.h`（新） | `AWAIT`/`AWAIT_OK` 宏 + `MFUNCTION(Async)` 自由函数支持（与生成约定配合） |
 | `Source/Common/Runtime/Concurrency/Promise.h` | 按需：Then 与 Post 协作（最小改） |
 | `Source/Common/Runtime/Concurrency/Fiber*` | 不扩展；注释 deprecated |
 | `Source/Tools/MHeaderTool/**` | Async 扫描、状态机生成、错误诊断 |
@@ -398,7 +399,7 @@ else
 | **P1 运行时** | `MLoopAsyncContext`；dispatch 支持 pending `SFutureResult`；Get 红线 assert/日志 | 单测或最小 demo：pending future 能回包；loop 线程危险 Get 可检测 |
 | **P2 垂直切片** | 一个 `ServerCall, Async` + 单点 `AWAIT_OK(CallToActor)`（可先手写 Frame，Tool 后补） | 跨 Echo 或本机二次 RPC 线性写法跑通；loop 不因 await 卡死 |
 | **P3 Tool** | MHeaderTool 生成状态机；迁移示例 handler 去 `MFUTURE` | 生成代码编译通过；与手写切片行为一致 |
-| **P4 收口** | `MASYNC` 内部函数；Fiber API 文档退役；风格/CLAUDE 快查 | 新异步代码只走本 spec 路径 |
+| **P4 收口** | `MFUNCTION(Async)` 扩展到自由函数（不再引入 `MASYNC`）；删除 `MAwait` / `MAwaitOk` / `TPlayerCommandFuture`；父 spec 同步升级；`CLAUDE.md` 加 async 快查表 | 新异步代码只走本 spec 路径；grep `MAwait` / `MASYNC` / `TPlayerCommandFuture` 仅命中已废弃的基础设施注释 |
 
 ---
 
@@ -410,7 +411,7 @@ else
 | Tool 生成 bug 难调 | Frame 可 LOG State；保留手写 Frame 参考实现 |
 | `SetValue` 同步 Then 踩线程 | 状态机路径强制 `Context.Post` |
 | 误用 `Get` 死锁 | §8 + Context 检测 + code review |
-| 双模型（Fiber + AWAIT）混乱 | 命名隔离 + 禁止新代码 MAwait |
+| 双模型（Fiber + AWAIT）混乱 | P4 收口：`MAwait` / `MAwaitOk` / `TPlayerCommandFuture` 已删除；`FiberAwait.h` 仅保留 player-command 基础设施；业务一律走状态机路径 |
 | CMake 20 vs 目标 17 | P0 统一；CI 用 17 编译 |
 
 ---
@@ -419,12 +420,12 @@ else
 
 1. 语言目标 **C++17**，主路径 **不用** `co_await`。  
 2. 合同类型 **`SFutureResult<T>`**，**废弃 `MFUTURE` 包装**。  
-3. **`MFUNCTION(..., Async)`**（及内部 **`MASYNC`**）= async 标记。  
+3. **`MFUNCTION(..., Async)`** = async 标记（统一覆盖类成员 + namespace-scope 自由函数；不再引入 `MASYNC`）。  
 4. **`AWAIT` 仅 Async 内**（硬传染）；**非**要求全调用栈所有函数皆 Async。  
 5. **`Get`/`Wait` ≈ `Task.Result`**，可在同步边界终结传染，受事件循环红线约束。  
 6. 实现 = **宏 + MHeaderTool 状态机 + Then + Post**。  
 7. **`MAsyncContext`** = 薄 SyncContext，v1 贴 Loop。  
-8. **Fiber / `MAwait`** = legacy，非 C# 向主模型。
+8. **Fiber** = 仅作 player-command 基础设施保留；`MAwait` / `MAwaitOk` / `TPlayerCommandFuture` 已于 P4 删除（`2026-07-28-async-p4-wrap.md` §C），不再是非主模型——已**移除**。
 
 ---
 
@@ -435,7 +436,6 @@ else
 | Q1 | pending 完成时是否 **永远** `Post`，还是 `IsSameContext` 时 inline？ | v1 **永远 Post** |
 | Q2 | `AWAIT`（非 OK）是否 v1 就做？ | v1 可先只做 **`AWAIT_OK`** |
 | Q3 | 全局改造 `Then` 自动 Post，还是仅状态机 Post？ | **仅状态机硬要求 Post** |
-| Q4 | `MASYNC` 宏拼写/放哪头文件？ | `AwaitMacros.h` 或 `MAsync.h` |
 | Q5 | CMake 改 17 与本功能 PR 合并还是拆开？ | **P0 可单独 PR 改标准 + 文档** |
 
 ---
@@ -485,3 +485,4 @@ Bar(Req).Then([](SFutureResult<FResp> F) { /* ... */ });
 | 日期 | 说明 |
 |------|------|
 | 2026-07-24 | v1：C++17、SFutureResult、Async/AWAIT、Get 屏障、MAsyncContext、Fiber legacy、分期验收 |
+| 2026-07-28 | v2：P4 收口后修订——`MASYNC` 不引入；`MAwait` / `MAwaitOk` / `TPlayerCommandFuture` 删除；§6.2 / §7.4 / §14 / §16.8 / §17 Q4 同步（见 `2026-07-28-async-p4-wrap.md`） |
