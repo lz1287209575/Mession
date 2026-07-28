@@ -14,17 +14,14 @@
  * - SFutureResult<T>: MFuture<TResult<T, FAppError>> 的别名，Get() err 时抛 FFutureResultError
  * - FFutureResultError: 统一 async 函数错误类型
  *
- * 用法(占位,C++17 异步模型完整说明见父 spec):
- *   // 见 Docs/superpowers/specs/2026-07-24-cpp17-async-await.md §5.1
- *   // 同步短路径(返回已 Ready 的 SFutureResult):
- *   MFUNCTION(ServerCall)
- *   SFutureResult<FResp> Foo(const FReq& R)
- *   {
- *       return MServerCallAsyncSupport::MakeSuccessFuture(FResp{});
- *   }
+ * 用法（占位,C++17 异步模型完整说明见父 spec §5.1 / §7）:
  *
- *   // 异步线性(本 PR 尚未引入,见 spec §7 与 P2 实施):
- *   //   FResp Remote = AWAIT_OK(CallToActor(...));
+ * 业务侧声明异步函数时,在函数签名上挂 transport 标签（如 class 上的
+ * ServerCall / ClientCall / Async,namespace-scope 自由函数只允许纯
+ * Async,见 spec 2026-07-28 §B）。函数体返回 SFutureResult<FResp> 或
+ * 在帧内使用 AWAIT_OK(expr) 来挂起等待另一个 async 调用。完整 codegen
+ * 由 MHeaderTool 完成,见 Docs/superpowers/specs/2026-07-24-cpp17-async-await.md
+ * §7 与 §18 附录 A。
  */
 
 // ============================================
@@ -73,7 +70,7 @@ private:
  *
  * 语义：
  * - 继承 MFuture<TResult<T, FAppError>>，完整保留 future 语义
- * - Get(): err 时抛 FFutureResultError（用于 fiber 内的 MAwait）
+ * - Get(): err 时抛 FFutureResultError（用于同步等待 ready future 的场景）
  * - GetResult(): err 时不抛，返回原始 TResult（用于需要判断错误的场景）
  * - IsOk() / IsErr() / GetError(): 便捷查询
  */
@@ -119,7 +116,7 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
                 if (Ctx->IsSameContext())
                 {
                     LOG_ERROR("deadlock risk: Get() on event-loop thread for future "
-                              "that depends on this loop; use AWAIT (P2) or move the "
+                              "that depends on this loop; use AWAIT_OK (P4) or move the "
                               "wait off-loop");
 #ifndef NDEBUG
                     assert(false && "deadlock risk: Get on loop thread");
@@ -234,8 +231,11 @@ inline TResult<void, E> _unwrap(const MFuture<TResult<void, E>>& Future)
 } // namespace MAsyncDetail
 
 // ============================================
-// 便捷别名（与现有 TPlayerCommandFuture 兼容）
+// 便捷别名（与 MFuture<TResult<T, FAppError>> 形态一致）
 // ============================================
+//
+// 业务统一走 SFutureResult<T>（spec §5.1）。TAsyncFuture 是历史遗留的
+// 透传别名;新代码禁止使用,改用 SFutureResult<T>。
 
 /**
  * TAsyncFuture<T> — async 函数内部等待其他 async 函数时的返回类型

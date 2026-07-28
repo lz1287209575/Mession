@@ -18,12 +18,18 @@
  * Server-side transport resolution（选 connection / lazy connect）由
  * MEndpointCache 全局单例负责——Caller 不用再传 IRpcTransportResolver。
  *
- * 用法:
+ * 用法(spec 2026-07-24 §18 附录 A — P4 后不再使用 MAwaitOk):
  *
- * // ServerCall: 调用远程服务器
- * auto response = MRpcChannel::Get().Call<FResponse>(
+ * // ServerCall: 调用远程服务器,得到 ready/pending SFutureResult<FResp>
+ * auto fut = MRpcChannel::Get().Call<FResponse>(
  *     EServerType::Echo, "MEchoService", "Echo", request);
- * FResponse result = MAwaitOk(response);
+ * fut.Then([](SFutureResult<FResponse> F)
+ * {
+ *     if (F.IsOk()) { // use F.GetResult().GetValue()
+ *     }
+ *     else          { // handle F.GetError()
+ *     }
+ * });
  *
  * // ClientCall: 发送到客户端
  * MRpcChannel::Get().SendToClient(connection, "MPlayerController", "OnNotify", response);
