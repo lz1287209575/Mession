@@ -611,6 +611,29 @@ int main(int argc, char** argv)
                 ++generatedCount;
             }
 
+            // P4: emit one `<Header>_FreeAsyncFrames.mgenerated.h` per header
+            // that contains at least one `MFUNCTION(Async)` free function.
+            // ProcessFreeFunctions was called above in Task 2 wiring;
+            // for the actual integration in main() we re-scan here to keep
+            // the per-header grouping symmetric with the class pass.
+            TMap<std::string, std::vector<MHT::SFreeAsyncFunc>> FreeByHeader;
+            {
+                std::vector<MHT::SFreeAsyncFunc> AllFree = ProcessFreeFunctions(fileContents);
+                for (auto& Func : AllFree)
+                {
+                    FreeByHeader[Func.HeaderPath.string()].push_back(std::move(Func));
+                }
+            }
+            for (const auto& [HeaderStr, Funcs] : FreeByHeader)
+            {
+                std::string FreeCode = codeGen.EmitFreeAsyncFramesHeader(
+                    Funcs, fs::path(HeaderStr));
+                fs::path BaseName = fs::path(HeaderStr).stem();
+                fs::path FreePath = options.OutputDir /
+                    (MHT::SanitizeIdentifier(BaseName.string()) + "_FreeAsyncFrames.mgenerated.h");
+                MHT::WriteFile(FreePath, FreeCode);
+            }
+
             // 统计
             size_t classCount = 0, structCount = 0, enumCount = 0;
             for (const auto& cls : allClasses)
