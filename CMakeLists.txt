@@ -602,6 +602,7 @@ target_include_directories(AsyncDemo
 target_link_libraries(AsyncDemo
     PRIVATE
         mession_common
+        mession_netdriver
 )
 configure_mession_compile_options(AsyncDemo)
 add_dependencies(AsyncDemo mession_reflection_codegen)
