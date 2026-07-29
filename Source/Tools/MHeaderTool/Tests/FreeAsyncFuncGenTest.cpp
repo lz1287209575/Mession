@@ -75,10 +75,39 @@ TEST_CASE(FreeAsyncFunc_ServerCallAsync_Rejected)
     EXPECT_TRUE(bThrew);
 }
 
+TEST_CASE(FreeAsyncFuncGenTest_HeaderWithMFUNCTIONInComment_Ignored)
+{
+    // P4 wrap regression: the doc comment line below mentions
+    // `MFUNCTION(Async)` purely as documentation, not as a real marker.
+    // ProcessFreeFunctions must ignore it and only pick up the real marker
+    // further down. Without the comment-skip pre-pass in MHeaderToolLib.cpp,
+    // a fake `future`/`whatever` entry used to appear because comment bytes
+    // were scanned by the literal `MFUNCTION(` substring search.
+    const std::string Header =
+        "#pragma once\n"
+        "// see MFUNCTION(Async) markers below\n"
+        "namespace myns {\n"
+        "MFUNCTION(Async)\n"
+        "SFutureResult<int> RealAsync(int Seed);\n"
+        "}\n";
+    auto Contents = OneHeader("RealAsync.h", Header);
+    auto Funcs = ProcessFreeFunctions(Contents);
+    EXPECT_TRUE(Funcs.size() == 1);
+    EXPECT_TRUE(Funcs[0].Name == "RealAsync");
+}
+
 int main()
 {
     std::printf("Running FreeAsyncFuncGenTest (P4)\n");
+
+    std::printf("[ FreeAsyncFunc_PlainAsync_Accepted ]\n");
     Test_FreeAsyncFunc_PlainAsync_Accepted();
+
+    std::printf("[ FreeAsyncFunc_ServerCallAsync_Rejected ]\n");
     Test_FreeAsyncFunc_ServerCallAsync_Rejected();
+
+    std::printf("[ FreeAsyncFuncGenTest_HeaderWithMFUNCTIONInComment_Ignored ]\n");
+    Test_FreeAsyncFuncGenTest_HeaderWithMFUNCTIONInComment_Ignored();
+
     RUN_TESTS();
 }
