@@ -39,13 +39,77 @@ std::vector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
 
     const std::string Needle = "MFUNCTION(";
 
-    for (const auto& [HeaderPath, Contents] : FileContents)
+    for (const auto& [HeaderPath, OriginalContents] : FileContents)
     {
         // Skip headers that have no reflection markers — mirrors main()'s
         // `HeaderScanner::HasReflectionMarkers` short-circuit.
-        if (Contents.find("MFUNCTION") == std::string::npos)
+        if (OriginalContents.find("MFUNCTION") == std::string::npos)
         {
             continue;
+        }
+
+        // Comment-skip pre-pass (P4 wrap regression — fix). `MFUNCTION(...)`
+        // mentioned inside a `// ...` or `/* ... */` comment would otherwise be
+        // picked up by the scan loop and produce a malformed codegen entry
+        // (real example: AsyncDemo.h documents `MFUNCTION(Async)` markers in a
+        // block comment). Replace comment bytes with spaces (preserving
+        // newlines) so reported line numbers don't drift; the brace-mask and
+        // scan loop then operate on a comment-free view. Known limitation:
+        // string/char literals are not handled — a "..." or '...' containing
+        // `MFUNCTION(` would still match (acceptable; fixture files do not
+        // exercise this edge case).
+        std::string Contents = OriginalContents;
+        {
+            size_t Index = 0;
+            while (Index < Contents.size())
+            {
+                const char Char = Contents[Index];
+                const char Next = (Index + 1 < Contents.size()) ? Contents[Index + 1] : '\0';
+                if (Char == '/' && Next == '/')
+                {
+                    // Line comment — replace bytes up to (but not including) '\n'.
+                    Contents[Index] = ' ';
+                    Contents[Index + 1] = ' ';
+                    Index += 2;
+                    while (Index < Contents.size() && Contents[Index] != '\n')
+                    {
+                        Contents[Index] = ' ';
+                        ++Index;
+                    }
+                }
+                else if (Char == '/' && Next == '*')
+                {
+                    // Block comment — replace bytes up to and including '*/'.
+                    Contents[Index] = ' ';
+                    Contents[Index + 1] = ' ';
+                    Index += 2;
+                    while (Index + 1 < Contents.size()
+                           && !(Contents[Index] == '*' && Contents[Index + 1] == '/'))
+                    {
+                        Contents[Index] = ' ';
+                        ++Index;
+                    }
+                    if (Index + 1 < Contents.size())
+                    {
+                        Contents[Index] = ' ';
+                        Contents[Index + 1] = ' ';
+                        Index += 2;
+                    }
+                    else
+                    {
+                        // Unterminated block comment — mask through end of file.
+                        while (Index < Contents.size())
+                        {
+                            Contents[Index] = ' ';
+                            ++Index;
+                        }
+                    }
+                }
+                else
+                {
+                    ++Index;
+                }
+            }
         }
 
         // v1 simplification (spec §6 risk register): mask only class/struct
