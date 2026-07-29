@@ -582,6 +582,31 @@ target_link_libraries(FreeAsyncFuncGenTest
 )
 configure_mession_compile_options(FreeAsyncFuncGenTest)
 
+# AsyncDemo - P4 wrap end-to-end example. One executable that drives two
+# MFUNCTION(Async) free functions (ComputeAsync -> ChainAsync) through one
+# awaited inner future, one await chain, and one sync barrier. No service
+# registry, no EchoService, no event loop — just a plain executable that
+# prints "AsyncDemo: result = 43" and exits 0. The generated header
+# Build/Generated/AsyncDemo_FreeAsyncFrames.mgenerated.h is produced by
+# MHeaderTool on the next codegen run (see mession_reflection_codegen
+# dependency below).
+add_executable(AsyncDemo
+    Source/Examples/AsyncDemo/AsyncDemo.cpp
+)
+target_include_directories(AsyncDemo
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${MESSION_GENERATED_DIR}
+)
+target_link_libraries(AsyncDemo
+    PRIVATE
+        mession_common
+)
+configure_mession_compile_options(AsyncDemo)
+add_dependencies(AsyncDemo mession_reflection_codegen)
+mession_attach_generated_groups(AsyncDemo shared)
+
 # 安装目标
 install(TARGETS
     GatewayServer
