@@ -582,53 +582,16 @@ target_link_libraries(FreeAsyncFuncGenTest
 )
 configure_mession_compile_options(FreeAsyncFuncGenTest)
 
-# AsyncDemo - P4 wrap end-to-end example. One executable that drives two
-# MFUNCTION(Async) free functions (ComputeAsync -> ChainAsync) through one
-# awaited inner future, one await chain, and one sync barrier. No service
-# registry, no EchoService, no event loop — just a plain executable that
-# prints "AsyncDemo: result = 43" and exits 0. The generated header
-# Build/Generated/AsyncDemo_FreeAsyncFrames.mgenerated.h is produced by
-# MHeaderTool on the next codegen run (see mession_reflection_codegen
-# dependency below).
-add_executable(AsyncDemo
-    Source/Examples/AsyncDemo/AsyncDemo.cpp
-)
-target_include_directories(AsyncDemo
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-        ${MESSION_GENERATED_DIR}
-)
-target_link_libraries(AsyncDemo
-    PRIVATE
-        mession_common
-        mession_netdriver
-)
-configure_mession_compile_options(AsyncDemo)
-add_dependencies(AsyncDemo mession_reflection_codegen)
-mession_attach_generated_groups(AsyncDemo shared)
-
-# AsyncDemoTest - P4 wrap example smoke tests. Runs the same ComputeAsync
-# / ChainAsync scenario as AsyncDemo.cpp's main(), but via EXPECT_TRUE
-# assertions under TestHarness.h. No real network, no event loop.
-add_executable(AsyncDemoTest
-    Source/Examples/AsyncDemo/AsyncDemoImpl.cpp
-    Source/Examples/AsyncDemo/Tests/main.cpp
-)
-target_include_directories(AsyncDemoTest
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-        ${MESSION_GENERATED_DIR}
-)
-target_link_libraries(AsyncDemoTest
-    PRIVATE
-        mession_common
-        mession_netdriver
-)
-configure_mession_compile_options(AsyncDemoTest)
-add_dependencies(AsyncDemoTest mession_reflection_codegen)
-mession_attach_generated_groups(AsyncDemoTest shared)
+# -----------------------------------------------------------------------
+# Optional examples
+# -----------------------------------------------------------------------
+# BUILD_ASYNC_DEMO: builds Source/Examples/AsyncDemo (end-to-end C++17 async
+# example, two MFUNCTION(Async) free funcs + AsyncDemoTest smoke). Default
+# ON so the example is visible; set OFF to fully decouple.
+option(BUILD_ASYNC_DEMO "Build the AsyncDemo end-to-end C++17 async example" ON)
+if(BUILD_ASYNC_DEMO)
+    add_subdirectory(Source/Examples/AsyncDemo)
+endif()
 
 # 安装目标
 install(TARGETS
