@@ -608,6 +608,28 @@ configure_mession_compile_options(AsyncDemo)
 add_dependencies(AsyncDemo mession_reflection_codegen)
 mession_attach_generated_groups(AsyncDemo shared)
 
+# AsyncDemoTest - P4 wrap example smoke tests. Runs the same ComputeAsync
+# / ChainAsync scenario as AsyncDemo.cpp's main(), but via EXPECT_TRUE
+# assertions under TestHarness.h. No real network, no event loop.
+add_executable(AsyncDemoTest
+    Source/Examples/AsyncDemo/AsyncDemoImpl.cpp
+    Source/Examples/AsyncDemo/Tests/main.cpp
+)
+target_include_directories(AsyncDemoTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${MESSION_GENERATED_DIR}
+)
+target_link_libraries(AsyncDemoTest
+    PRIVATE
+        mession_common
+        mession_netdriver
+)
+configure_mession_compile_options(AsyncDemoTest)
+add_dependencies(AsyncDemoTest mession_reflection_codegen)
+mession_attach_generated_groups(AsyncDemoTest shared)
+
 # 安装目标
 install(TARGETS
     GatewayServer
