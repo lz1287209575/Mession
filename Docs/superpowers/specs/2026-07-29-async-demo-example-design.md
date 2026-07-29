@@ -67,8 +67,20 @@ SFutureResult<int> ComputeAsync(int Seed)
 SFutureResult<int> ChainAsync(int Seed)
 {
     auto Frame = MakeShared<MHeaderTool_AsyncFrame_Free_ChainAsync>();
-    int Inner = AWAIT_OK(ComputeAsync(Seed));
-    return AWAIT_OK(/* derived SFutureResult<int> */);  // Wrap (Inner + 1) in ready-Ok
+    // AWAIT_OK expands to Frame->AwaitOk(expr) which returns SFutureResult<int>
+    // (the awaited future itself, pass-through). v1 futures are synchronously
+    // ready after ComputeAsync's MPromise.SetValue, so we can PeekResult
+    // immediately. P5+ will introduce a real state-machine await that yields
+    // control on pending futures.
+    SFutureResult<int> Inner = AWAIT_OK(ComputeAsync(Seed));
+    const int InnerValue = Inner.PeekResult().GetValue();
+
+    // Build a derived ready-Ok future and return it through AWAIT_OK so the
+    // Frame captures it (mirrors how a real async function returns its final
+    // SFutureResult<T>).
+    MPromise<TResult<int, FAppError>> P;
+    P.SetValue(TResult<int, FAppError>::Ok(InnerValue + 1));
+    return AWAIT_OK(SFutureResult<int>(P.GetFuture()));
 }
 
 } // namespace AsyncDemoNS
