@@ -13,6 +13,8 @@ It is **not** a toy: every line goes through the same MHeaderTool codegen pipeli
 
 ## 2. Build & run
 
+By default (`-DBUILD_ASYNC_DEMO=ON`, the project default), the example is included in the regular build:
+
 ```bash
 # Configure + build (full project)
 cmake -S /root/Mession -B /root/Mession/Build -DCMAKE_BUILD_TYPE=Release
@@ -29,7 +31,9 @@ cmake --build /root/Mession/Build --target AsyncDemoTest -j4
 # stdout:  === Results: 13 passed, 0 failed ===
 ```
 
-That is the whole build pipeline. There is no Registry to start, no `Scripts/servers.py`, no `--registry=...` flag.
+To fully decouple the example from the project, configure with `-DBUILD_ASYNC_DEMO=OFF`. The example's own CMake file (`Source/Examples/AsyncDemo/CMakeLists.txt`) is self-contained — it links only `mession_common`, no service registry, no event loop, no transport, no `mession_netdriver`. The same is true for `AsyncDemoTest`.
+
+There is no Registry to start, no `Scripts/servers.py`, no `--registry=...` flag.
 
 ## 3. Step-by-step walk
 
