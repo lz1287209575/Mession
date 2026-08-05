@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(Mession VERSION 1.0.0 LANGUAGES CXX)
+project(Mession VERSION 1.0.0 LANGUAGES CXX C)
 include(FetchContent)
 option(MESSION_USE_MONGOCXX "Enable MongoDB C++ driver integration for MgoServer" OFF)
 
@@ -227,7 +227,8 @@ add_subdirectory(Source/Common/Script/Tests)
 # Lua 5.4 + Teal script engine (Task 1 of 2026-08-05 plan)
 option(MESSION_USE_LUA "Enable Lua 5.4 + Teal script engine" ON)
 if(MESSION_USE_LUA)
-    add_subdirectory(Source/Common/Script/lua)
+    add_subdirectory(Source/Common/Script/lua)  # vendor Lua 5.4.7
+    add_subdirectory(Source/Common/Script/Lua)  # mession_lua impl
 endif()
 
 # MHeaderTool - 反射代码生成工具 (模块化版本)
