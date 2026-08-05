@@ -3,6 +3,8 @@ add_library(mession_script_abstract STATIC
     EReloadMode.h
     EReloadResult.h
     SScriptEngineConfig.h
+    TVariant.h
+    TVariant.cpp
 )
 
 target_include_directories(mession_script_abstract
