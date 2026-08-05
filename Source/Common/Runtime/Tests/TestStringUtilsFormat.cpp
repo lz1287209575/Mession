@@ -31,6 +31,12 @@ TEST_CASE(MFormat_ToString_ArithmeticAndString)
     EXPECT_TRUE(MFormat::ToString(MString("plain")) == MString("plain"));
 }
 
+TEST_CASE(MStringUtil_ToString_DelegatesToMFormat)
+{
+    EXPECT_TRUE(MStringUtil::ToString(int32(42)) == MString("42"));
+    EXPECT_TRUE(MStringUtil::ToString(double64(2.5)) == MString("2.5"));
+}
+
 TEST_CASE(MStringBuilder_StateQueries)
 {
     MStringBuilder B;

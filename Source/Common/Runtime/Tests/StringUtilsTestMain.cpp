@@ -28,6 +28,9 @@ int main()
     std::printf("[ MFormat_ToString_ArithmeticAndString ]\n");
     Test_MFormat_ToString_ArithmeticAndString();
 
+    std::printf("[ MStringUtil_ToString_DelegatesToMFormat ]\n");
+    Test_MStringUtil_ToString_DelegatesToMFormat();
+
     std::printf("[ MStringBuilder_StateQueries ]\n");
     Test_MStringBuilder_StateQueries();
 

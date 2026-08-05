@@ -135,30 +135,11 @@ private:
 // 项目内字符串工具：统一入口，避免散落 std::to_string / 手写 trim
 namespace MStringUtil
 {
-// 数值转 FString（项目封装，后续可统一字节序/格式）
-inline MString ToString(int32 Value)
+// 数值 / 字符串转 MString — 委托 MFormat::ToString,保留旧重载的 6 个调用形式
+template <typename T>
+inline MString ToString(T Value)
 {
-    return std::to_string(Value);
-}
-inline MString ToString(int64 Value)
-{
-    return std::to_string(Value);
-}
-inline MString ToString(uint32 Value)
-{
-    return std::to_string(Value);
-}
-inline MString ToString(uint64 Value)
-{
-    return std::to_string(Value);
-}
-inline MString ToString(float Value)
-{
-    return std::to_string(Value);
-}
-inline MString ToString(double Value)
-{
-    return std::to_string(Value);
+    return MFormat::ToString(Value);
 }
 
 // 去除首尾空白（不分配新串时修改原串并返回引用）
