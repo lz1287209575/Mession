@@ -320,7 +320,7 @@ TEST_CASE(MFormat_Format_HexAndPadding)
 TEST_CASE(MFormat_Format_InvalidRaises)
 {
     bool bThrew = false;
-    try { MFormat::Format("{0}", 1); } // 只有一个参数,索引越界
+    try { MFormat::Format("{5}", 1); } // 越界位置引用 → fmt 抛异常
     catch (const fmt::format_error&) { bThrew = true; }
     EXPECT_TRUE(bThrew);
 }
