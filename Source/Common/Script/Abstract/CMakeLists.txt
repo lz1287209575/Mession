@@ -7,6 +7,7 @@ add_library(mession_script_abstract STATIC
     TVariant.cpp
     ScriptErrorCodes.h
     IScriptModule.h
+    IScriptEngine.h
 )
 
 target_include_directories(mession_script_abstract
