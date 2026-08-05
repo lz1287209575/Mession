@@ -201,6 +201,7 @@ configure_mession_compile_options(mession_netdriver)
 
 # Script Abstract layer (Task 1 of 2026-08-04 plan)
 add_subdirectory(Source/Common/Script/Abstract)
+add_subdirectory(Source/Common/Script/Tests)
 
 # MHeaderTool - 反射代码生成工具 (模块化版本)
 add_subdirectory(Source/Tools/MHeaderTool)
