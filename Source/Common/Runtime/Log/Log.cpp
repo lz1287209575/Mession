@@ -56,10 +56,10 @@ namespace
     // (excluding trailing NUL) or 0 if the result overflowed.
     size_t FormatInline(const char* Fmt, va_list Args, char* Out, size_t OutSize)
     {
-        // The SLogRecord payload is exactly 16B; we keep the message there
-        // when it fits, otherwise the caller falls back to a TLS heap
-        // allocation (omitted in this PoC — oversized messages are
-        // truncated to kMaxInlineMessage - 1 bytes).
+        // va_list 路径:fmt 在 C++17 下无直接 va_list → format_args 的官方 API。
+        // fmt::make_format_args 需要编译期参数类型,vsnprintf 是此路径上
+        // 最简实现。后续若 fmt 提供 va_list 支持(0.x 或 1.x 实验分支)
+        // 再切换。
         if (OutSize == 0) return 0;
         const int N = std::vsnprintf(Out, OutSize, Fmt, Args);
         if (N < 0) { Out[0] = '\0'; return 0; }
