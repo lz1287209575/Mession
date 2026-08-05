@@ -16,6 +16,39 @@
 #include <Windows.h>
 #endif
 
+// --- fmt 薄包装 -------------------------------------------------------------
+#include <fmt/format.h>
+
+namespace MFormat
+{
+// 主入口 — 替代 std::to_string / snprintf / ostringstream 拼装
+template <typename... TArgs>
+MString Format(MStringView Fmt, const TArgs&... Args)
+{
+    // const lvalue 引用: rvalue 实参自动延长生命周期至调用结束,lvalue 直接绑定。
+    // 比 TTuple + std::apply 简得多,代价为零。
+    return fmt::vformat(Fmt, fmt::make_format_args(Args...));
+}
+
+// 类型安全数值转字符串 — 替代 MStringUtil::ToString 重载
+template <typename T>
+MString ToString(T Value)
+{
+    if constexpr (TIsSame<T, MString>)
+    {
+        return Value;
+    }
+    else if constexpr (std::is_arithmetic_v<T>)
+    {
+        return fmt::format("{}", Value);
+    }
+    else
+    {
+        return fmt::format("{}", Value);
+    }
+}
+}
+
 // 项目内字符串工具：统一入口，避免散落 std::to_string / 手写 trim
 namespace MStringUtil
 {

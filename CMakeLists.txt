@@ -560,6 +560,24 @@ target_link_libraries(MAsyncTest
 )
 configure_mession_compile_options(MAsyncTest)
 
+# StringUtilsTest - MFormat / MStringBuilder unit tests
+# StringUtilsTestMain.cpp #includes TestStringUtilsFormat.cpp directly (see file
+# comment for rationale); do not add TestStringUtilsFormat.cpp to the source list
+# to avoid ODR-multiple-definition.
+add_executable(StringUtilsTest
+    Source/Common/Runtime/Tests/StringUtilsTestMain.cpp
+)
+target_include_directories(StringUtilsTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+)
+target_link_libraries(StringUtilsTest
+    PRIVATE
+        mession_common
+)
+configure_mession_compile_options(StringUtilsTest)
+
 # InnerTypeTest - SFutureResult<T>::InnerType 编译期契约测试
 add_executable(InnerTypeTest
     Source/Common/Runtime/Async/Tests/InnerTypeTest.cpp
