@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
+#include "Common/Runtime/StringUtils.h"
 #include <cstring>
 
 // 如果定义了 USE_NLOHMANN_JSON，则内部实现委托给 nlohmann::json；
@@ -304,9 +305,7 @@ private:
             default:
                 if (static_cast<unsigned char>(C) < 0x20)
                 {
-                    char Buf[7];
-                    std::snprintf(Buf, sizeof(Buf), "\\u%04x", C & 0xff);
-                    Out += Buf;
+                    Out += MFormat::Format("\\u{:04x}", static_cast<unsigned char>(C));
                 }
                 else
                 {
