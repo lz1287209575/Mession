@@ -199,6 +199,9 @@ target_link_libraries(mession_netdriver
 )
 configure_mession_compile_options(mession_netdriver)
 
+# Script Abstract layer (Task 1 of 2026-08-04 plan)
+add_subdirectory(Source/Common/Script/Abstract)
+
 # MHeaderTool - 反射代码生成工具 (模块化版本)
 add_subdirectory(Source/Tools/MHeaderTool)
 
@@ -538,6 +541,36 @@ target_link_libraries(MAsyncTest
         mession_common
 )
 configure_mession_compile_options(MAsyncTest)
+
+# InnerTypeTest - SFutureResult<T>::InnerType 编译期契约测试
+add_executable(InnerTypeTest
+    Source/Common/Runtime/Async/Tests/InnerTypeTest.cpp
+)
+target_include_directories(InnerTypeTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+)
+target_link_libraries(InnerTypeTest
+    PRIVATE
+        mession_common
+)
+configure_mession_compile_options(InnerTypeTest)
+
+# AwaitableTest - TAwaitable<...> 4 形态 + R 推导编译期契约测试
+add_executable(AwaitableTest
+    Source/Common/Runtime/Async/Tests/AwaitableTest.cpp
+)
+target_include_directories(AwaitableTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+)
+target_link_libraries(AwaitableTest
+    PRIVATE
+        mession_common
+)
+configure_mession_compile_options(AwaitableTest)
 
 # AsyncFrameTest - P3 vertical-slice unit test for the MHeaderTool-generated
 # AsyncFrame. Verifies the auto-generated `MHeaderTool_AsyncFrame_<Class>_<Func>`
