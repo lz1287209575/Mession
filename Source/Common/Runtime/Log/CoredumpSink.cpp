@@ -107,8 +107,7 @@ namespace
                 default:
                     if (static_cast<unsigned char>(C) < 0x20)
                     {
-                        char Esc[8];
-                        std::snprintf(Esc, sizeof(Esc), "\\u%04x", C);
+                        const MString Esc = MFormat::Format("\\u{:04x}", static_cast<unsigned char>(C));
                         Out += Esc;
                     }
                     else
@@ -184,15 +183,14 @@ void MCoredumpSink::HandleFatal(const SConfig& Config,
     Out << "]}\n";
 
     // 3) Process/system context.
-    char Pid[32];
-    std::snprintf(Pid, sizeof(Pid), "%d", static_cast<int>(::getpid()));
+    const MString Pid = MFormat::Format("{}", static_cast<int>(::getpid()));
     MString Status = ReadFileOrEmpty("/proc/self/status");
     MString Maps   = ReadFileOrEmpty("/proc/self/maps");
     char Host[256] = {};
     if (::gethostname(Host, sizeof(Host) - 1) != 0) Host[0] = '\0';
 
     MJsonWriter Ctx = MJsonWriter::Object();
-    Ctx.Key("pid");        Ctx.Value(MString(Pid));
+    Ctx.Key("pid");        Ctx.Value(Pid);
     Ctx.Key("hostname");   Ctx.Value(MString(Host));
     Ctx.Key("status");     Ctx.Value(Status);
     Ctx.Key("maps_excerpt"); Ctx.Value(Maps.substr(0, std::min<size_t>(Maps.size(), 8192)));
