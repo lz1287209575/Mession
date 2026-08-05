@@ -34,3 +34,6 @@ cmake_install.cmake
 Makefile
 
 .cache
+
+# Worktrees (isolated dev workspaces)
+.worktrees/
