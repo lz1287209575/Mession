@@ -12,7 +12,7 @@
 
 int main()
 {
-    std::printf("Running StringUtilsTest (Task 3)...\n");
+    std::printf("Running StringUtilsTest...\n");
 
     std::printf("[ MFormat_Format_IntegerSubstitution ]\n");
     Test_MFormat_Format_IntegerSubstitution();
@@ -26,6 +26,8 @@ int main()
     std::printf("[ MFormat_ToString_ArithmeticAndString ]\n");
     Test_MFormat_ToString_ArithmeticAndString();
 
+    std::printf("[ MStringBuilder_StateQueries ]\n");
+    Test_MStringBuilder_StateQueries();
+
     RUN_TESTS();
-    return 0;
 }

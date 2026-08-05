@@ -30,3 +30,21 @@ TEST_CASE(MFormat_ToString_ArithmeticAndString)
     EXPECT_TRUE(MFormat::ToString(double64(1.5)) == MString("1.5"));
     EXPECT_TRUE(MFormat::ToString(MString("plain")) == MString("plain"));
 }
+
+TEST_CASE(MStringBuilder_StateQueries)
+{
+    MStringBuilder B;
+    EXPECT_TRUE(B.Empty());
+    EXPECT_EQ(B.Size(), size_t(0));
+    EXPECT_EQ(B.Capacity(), size_t(0));
+
+    MStringBuilder B2(64);
+    EXPECT_EQ(B2.Size(), size_t(0));
+    EXPECT_TRUE(B2.Capacity() >= 64);
+
+    MStringBuilder::Reserve(B, 128);
+    EXPECT_TRUE(B.Capacity() >= 128);
+
+    MStringBuilder::Clear(B);
+    EXPECT_EQ(B.Size(), size_t(0));
+}

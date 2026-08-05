@@ -49,6 +49,50 @@ MString ToString(T Value)
 }
 }
 
+// --- MStringBuilder: TByteArray 后端的流式构造器 --------------------------------
+// 注意: 类与同名 namespace 不能共存于同一作用域(硬 C++ 错误),故 Reserve/Clear/
+// ToString 作为类静态成员实现 — 调用语法 `MStringBuilder::Reserve(B, n)` 与 brief
+// 字面声明的自由函数调用完全一致。
+class MStringBuilder
+{
+public:
+    MStringBuilder() = default;
+    explicit MStringBuilder(size_t InitialCapacity)
+    {
+        Buf.reserve(InitialCapacity);
+    }
+
+    size_t      Size()     const noexcept { return Buf.size(); }
+    bool        Empty()    const noexcept { return Buf.empty(); }
+    size_t      Capacity() const noexcept { return Buf.capacity(); }
+    MStringView View()     const noexcept
+    {
+        return MStringView(reinterpret_cast<const char*>(Buf.data()), Buf.size());
+    }
+
+    // 仅供 fmt::format_to(std::back_inserter(...)) 与外部算法访问
+    TByteArray&       Buffer()       noexcept { return Buf; }
+    const TByteArray& Buffer() const noexcept { return Buf; }
+
+    static void Reserve(MStringBuilder& Builder, size_t Capacity)
+    {
+        Builder.Buf.reserve(Capacity);
+    }
+
+    static void Clear(MStringBuilder& Builder) noexcept
+    {
+        Builder.Buf.clear();
+    }
+
+    static MString ToString(const MStringBuilder& Builder)
+    {
+        return MString(reinterpret_cast<const char*>(Builder.Buf.data()), Builder.Buf.size());
+    }
+
+private:
+    TByteArray Buf;
+};
+
 // 项目内字符串工具：统一入口，避免散落 std::to_string / 手写 trim
 namespace MStringUtil
 {
