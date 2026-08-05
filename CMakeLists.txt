@@ -229,6 +229,7 @@ option(MESSION_USE_LUA "Enable Lua 5.4 + Teal script engine" ON)
 if(MESSION_USE_LUA)
     add_subdirectory(Source/Common/Script/lua)  # vendor Lua 5.4.7
     add_subdirectory(Source/Common/Script/Lua)  # mession_lua impl
+    add_subdirectory(Source/Common/Script/Lua/Tests)
 endif()
 
 # MHeaderTool - 反射代码生成工具 (模块化版本)
