@@ -47,16 +47,15 @@ namespace
         // 64-byte scratch carries the formatted string; copy into Buffer
         // with memcpy so the call-site size analysis only sees a single
         // bounded copy.
-        char FmtBuf[64];
-        std::snprintf(FmtBuf, sizeof(FmtBuf),
-            "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
+        const MString FmtBuf = MFormat::Format(
+            "{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}.{:03d}Z",
             Tm.tm_year + 1900, Tm.tm_mon + 1, Tm.tm_mday,
             Tm.tm_hour, Tm.tm_min, Tm.tm_sec, Millis);
-        const size_t Len = std::strlen(FmtBuf);
+        const size_t Len = FmtBuf.size();
         if (BufferSize > 0)
         {
             const size_t Copy = (Len >= BufferSize) ? (BufferSize - 1) : Len;
-            std::memcpy(Buffer, FmtBuf, Copy);
+            std::memcpy(Buffer, FmtBuf.data(), Copy);
             Buffer[Copy] = '\0';
         }
     }
@@ -142,23 +141,21 @@ void MRollingFileSink::RotateLocked()
     int FreeSuffix = 1;
     while (FreeSuffix <= static_cast<int>(NumArchives) + 8)
     {
-        char Candidate[1024];
-        std::snprintf(Candidate, sizeof(Candidate), "%s.%d",
-            FilePath.c_str(), FreeSuffix);
-        if (FileSizeOrZero(MString(Candidate)) == 0 &&
-            ::access(Candidate, F_OK) != 0)
+        const MString Candidate = MFormat::Format("{}.{}",
+            FilePath, FreeSuffix);
+        if (FileSizeOrZero(Candidate) == 0 &&
+            ::access(Candidate.c_str(), F_OK) != 0)
         {
             break;
         }
         ++FreeSuffix;
     }
 
-    char ArchivePath[1024];
-    std::snprintf(ArchivePath, sizeof(ArchivePath), "%s.%d",
-        FilePath.c_str(), FreeSuffix);
+    const MString ArchivePath = MFormat::Format("{}.{}",
+        FilePath, FreeSuffix);
     // rename the live log to the archive slot; if a stale file lives there,
     // overwrite it (rename(2) atomically replaces on POSIX).
-    if (::rename(FilePath.c_str(), ArchivePath) != 0)
+    if (::rename(FilePath.c_str(), ArchivePath.c_str()) != 0)
     {
         // Rename failed — give up rotation and reopen a fresh live file
         // so subsequent writes still go somewhere.
@@ -184,11 +181,11 @@ void MRollingFileSink::RotateLocked()
         const int MaxScan = FreeSuffix + 64;
         for (int N = 0; N < OldestKept && N < MaxScan; ++N)
         {
-            char Old[1024];
-            std::snprintf(Old, sizeof(Old), "%s.%d", FilePath.c_str(), N);
-            if (::access(Old, F_OK) == 0)
+            const MString Old = MFormat::Format("{}.{}",
+                FilePath, N);
+            if (::access(Old.c_str(), F_OK) == 0)
             {
-                ::unlink(Old);
+                ::unlink(Old.c_str());
             }
         }
     }
@@ -260,18 +257,14 @@ void MRollingFileSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<ch
 
         // Append "\n" so the result is a proper JSON Line.
         char* Cursor = BufBegin;
-        const int HeaderN = std::snprintf(Cursor, static_cast<size_t>(BufEnd - Cursor),
-            "%s\n", Line.c_str());
-        if (HeaderN <= 0)
-        {
-            continue;
-        }
-        const size_t BytesToWrite = static_cast<size_t>(HeaderN);
-        if (Cursor + BytesToWrite >= BufEnd)
+        const MString HeaderStr = MFormat::Format("{}\n", Line);
+        const size_t BytesToWrite = HeaderStr.size();
+        if (BytesToWrite == 0 || Cursor + BytesToWrite >= BufEnd)
         {
             // Truncated — skip the record rather than write a partial line.
             continue;
         }
+        std::memcpy(Cursor, HeaderStr.data(), BytesToWrite);
 
         // Rotation: if writing this record would push us past the size
         // threshold, rotate first. The threshold check is on the live
