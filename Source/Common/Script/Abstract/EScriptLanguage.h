@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 
 namespace mession::script {
 
@@ -29,3 +30,7 @@ namespace mession::script {
     }
 
 } // namespace mession::script
+
+// 反射注册 — MHeaderTool 扫描 MENUM 宏 emit MHeaderTool_Generated_RegisterEnum_<Name>()
+// 注册后 MObject::FindEnum("EScriptLanguage") 可查询
+MENUM(EScriptLanguage)

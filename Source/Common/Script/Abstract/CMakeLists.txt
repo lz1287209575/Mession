@@ -17,7 +17,7 @@ target_include_directories(mession_script_abstract
 )
 
 target_link_libraries(mession_script_abstract
-    PUBLIC mession_common
+    PUBLIC mession_common fmt::fmt-header-only
 )
 
 target_compile_options(mession_script_abstract PRIVATE

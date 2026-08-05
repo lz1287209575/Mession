@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 
 namespace mession::script {
 
@@ -11,3 +12,5 @@ namespace mession::script {
     };
 
 } // namespace mession::script
+
+MENUM(EReloadMode)
