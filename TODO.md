@@ -110,3 +110,27 @@
 ```
 
 冲突时：**以代码 + `CLAUDE.md` + 本文件为准**；`Docs/RefactorArchitectureAndRpc.md` 中标注为历史的 World/Peers 叙事不要当施工图。
+
+---
+
+## 已知 bug 记录
+
+### MHeaderTool namespace-level enum 被误判为 nested
+
+**现象**:`Source/Tools/MHeaderTool/Parsing/EnumParser.h:257` 的 `IsNestedEnum` 只向后找 `class / struct / public: / private:` 关键字,不识别 `namespace` 作为 enclosing scope。所以 namespace 级 enum(如 `mession::script::EScriptLanguage`、现有的 `EServiceRegistryResult` 等)被误判为 nested,emit 出返回 `nullptr` 的 no-op 注册函数,**反射系统查不到这些 enum 的 value 列表**。
+
+**影响**:`MObject::FindEnum("EScriptLanguage")` 返回 `nullptr`,反射侧序列化 enum 时拿不到 value 表。代码侧用 enum 类型作为 `MFUNCTION` 参数仍然可以编译,但运行时反射查不到 enum value。
+
+**触发条件**:`enum class Foo : uint8 { ... }` 出现在 namespace 内(不是 class 内、不是顶层全局)。
+
+**修法**:改 `EnumParser.h:257` 的 `IsNestedEnum`,让它也识别 namespace scope(向上扫描 `namespace X {` 时增加 bracket 计数,确认 enum 是否在 namespace 内)。修完后 namespace 级 enum 正常反射。
+
+**绕过**:在 MHeaderTool 修好之前,这些 enum 在反射侧查不到,但**不阻断业务**:业务侧用 enum 类型声明 `MFUNCTION` 参数仍然编译通过,只是反射查表得 fallback 到硬编码。
+
+**下次触及**:MMO 业务动态枚举(表情包状态、动画状态、装备稀有度等)接入时,会需要这些 enum 的反射序列化,届时一并修 MHeaderTool。
+
+---
+
+## Script Engine abstract layer 已落地
+
+2026-08-04:`Source/Common/Script/Abstract/{EScriptLanguage,EReloadMode,EReloadResult,SScriptEngineConfig,TVariant,ScriptErrorCodes,IScriptModule,IScriptEngine,IScriptRepl,ScriptBridge}.h` + `TVariant.cpp` + Tests。详见 `Docs/superpowers/plans/2026-08-04-script-engine-abstract.md` 与 ledger `.superpowers/sdd/script-engine-abstract-impl/progress.md`。
