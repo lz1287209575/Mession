@@ -37,16 +37,14 @@ namespace
         // 64-byte scratch carries the formatted string; copy into Buffer
         // with a single %s so the call-site size analysis only has to handle
         // a single %s of bounded upper length.
-        char FmtBuf[64];
-        std::snprintf(FmtBuf, sizeof(FmtBuf),
-            "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
+        const MString FmtBuf = MFormat::Format(
+            "{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}.{:03d}Z",
             Tm.tm_year + 1900, Tm.tm_mon + 1, Tm.tm_mday,
             Tm.tm_hour, Tm.tm_min, Tm.tm_sec, Millis);
-        const size_t Len = std::strlen(FmtBuf);
         if (BufferSize > 0)
         {
-            const size_t Copy = (Len >= BufferSize) ? (BufferSize - 1) : Len;
-            std::memcpy(Buffer, FmtBuf, Copy);
+            const size_t Copy = (FmtBuf.size() >= BufferSize) ? (BufferSize - 1) : FmtBuf.size();
+            std::memcpy(Buffer, FmtBuf.data(), Copy);
             Buffer[Copy] = '\0';
         }
     }
