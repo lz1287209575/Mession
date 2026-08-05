@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(Mession VERSION 1.0.0 LANGUAGES CXX)
+include(FetchContent)
 option(MESSION_USE_MONGOCXX "Enable MongoDB C++ driver integration for MgoServer" OFF)
 
 # C++标准
@@ -93,6 +94,21 @@ function(configure_mession_compile_options TargetName)
     endif()
 endfunction()
 
+# --- fmt (FetchContent, header-only) ---------------------------------------
+set(FMT_HEADER_ONLY ON CACHE BOOL "Use fmt header-only build" FORCE)
+set(FMT_DIR "" CACHE PATH "Local fmt source directory (skips FetchContent)")
+if(FMT_DIR AND EXISTS "${FMT_DIR}/CMakeLists.txt")
+    set(FMT_SOURCE_DIR "${FMT_DIR}")
+else()
+    FetchContent_Declare(
+        fmt
+        GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+        GIT_TAG        11.0.2
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(fmt)
+endif()
+
 # Core 库（底层运行时：Common 下的网络/并发/事件循环基础能力）
 set(MESSION_CORE_SOURCES
     Source/Common/Net/HttpDebugServer.cpp
@@ -118,6 +134,7 @@ endif()
 if(WIN32)
     target_link_libraries(mession_core PUBLIC ws2_32)
 endif()
+target_link_libraries(mession_core PUBLIC fmt::fmt-header-only)
 configure_mession_compile_options(mession_core)
 
 # Common 库（公共组件：日志/RPC/连接等中层能力）
