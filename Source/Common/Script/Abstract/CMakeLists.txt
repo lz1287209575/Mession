@@ -8,6 +8,7 @@ add_library(mession_script_abstract STATIC
     ScriptErrorCodes.h
     IScriptModule.h
     IScriptEngine.h
+    IScriptRepl.h
 )
 
 target_include_directories(mession_script_abstract
