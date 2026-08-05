@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
+#include <cassert>
+#include <iterator>
 #include <string>
 #if MESSION_CPLUSPLUS >= 201703L
 #include <string_view>
@@ -87,6 +89,43 @@ public:
     static MString ToString(const MStringBuilder& Builder)
     {
         return MString(reinterpret_cast<const char*>(Builder.Buf.data()), Builder.Buf.size());
+    }
+
+    static void Append(MStringBuilder& Builder, MStringView Text)
+    {
+        const char* P = Text.data();
+        const size_t N = Text.size();
+        Builder.Buffer().insert(Builder.Buffer().end(), P, P + N);
+    }
+
+    static void Append(MStringBuilder& Builder, char Ch)
+    {
+        Builder.Buffer().push_back(static_cast<uint8>(Ch));
+    }
+
+    static void Append(MStringBuilder& Builder, const char* CStr)
+    {
+        assert(CStr != nullptr);
+        Append(Builder, MStringView(CStr));
+    }
+
+    static void Append(MStringBuilder& Builder, const MString& Str)
+    {
+        Append(Builder, MStringView(Str));
+    }
+
+    static void AppendByte(MStringBuilder& Builder, uint8 Byte)
+    {
+        Builder.Buffer().push_back(Byte);
+    }
+
+    template <typename... TArgs>
+    static void AppendFormat(MStringBuilder& Builder, MStringView Fmt, TArgs&&... Args)
+    {
+        fmt::format_to(
+            std::back_inserter(Builder.Buffer()),
+            Fmt,
+            std::forward<TArgs>(Args)...);
     }
 
 private:

@@ -4,11 +4,13 @@
 // that the test TU increments, we #include the test source directly. This
 // collapses the test TU into main.cpp so they share internal-linkage statics
 // (matches the LogTest/main.cpp pattern).
-// Note: do NOT add TestStringUtilsFormat.cpp to the StringUtilsTest add_executable
-// source list — it would cause ODR-multiple-definition of TEST_CASE funcs.
+// Note: do NOT add TestStringUtilsFormat.cpp / TestStringUtilsBuilder.cpp to the
+// StringUtilsTest add_executable source list — it would cause ODR-multiple-
+// definition of TEST_CASE funcs.
 
 #include "Common/Runtime/Tests/TestHarness.h"
 #include "Common/Runtime/Tests/TestStringUtilsFormat.cpp"
+#include "Common/Runtime/Tests/TestStringUtilsBuilder.cpp"
 
 int main()
 {
@@ -28,6 +30,15 @@ int main()
 
     std::printf("[ MStringBuilder_StateQueries ]\n");
     Test_MStringBuilder_StateQueries();
+
+    std::printf("[ MStringBuilder_Append_AllOverloads ]\n");
+    Test_MStringBuilder_Append_AllOverloads();
+
+    std::printf("[ MStringBuilder_AppendFormat_MatchesFormat ]\n");
+    Test_MStringBuilder_AppendFormat_MatchesFormat();
+
+    std::printf("[ MStringBuilder_AppendFormat_Streaming ]\n");
+    Test_MStringBuilder_AppendFormat_Streaming();
 
     RUN_TESTS();
 }
