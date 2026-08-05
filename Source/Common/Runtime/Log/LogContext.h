@@ -2,9 +2,9 @@
 #include "Common/Runtime/MLib.h"
 #include <array>
 
-// Note: brief writes MStringView for the parameter type, but the codebase already
-// declares `namespace MStringView` in StringUtils.h. We use the project's existing
-// TStringView alias (= std::string_view) to avoid the name clash.
+// Note: brief writes MStringView for the parameter type. The codebase renamed
+// `namespace MStringView` to `namespace MStringViewUtil` in StringUtils.h to
+// avoid the name clash with the MStringView type alias.
 
 class MLogContext
 {
@@ -18,9 +18,9 @@ public:
         MString Value;
     };
 
-    void Set(TStringView Key, TStringView Value);
-    void Set(TStringView Key, int64 Value);
-    void Unset(TStringView Key);
+    void Set(MStringView Key, MStringView Value);
+    void Set(MStringView Key, int64 Value);
+    void Unset(MStringView Key);
 
     uint32 CaptureSnapshot();   // 返回 snapshot id,写入 GSnapshotPool
     void   ReleaseSnapshot(uint32 SnapshotId);
@@ -47,7 +47,7 @@ struct SContextSnapshot
 class MLogContextScope
 {
 public:
-    MLogContextScope(TStringView Key, TStringView Value)
+    MLogContextScope(MStringView Key, MStringView Value)
     {
         MLogContext::GetTLS().Set(Key, Value);
         SavedKey = Key;
@@ -57,6 +57,6 @@ public:
         MLogContext::GetTLS().Unset(SavedKey);
     }
 private:
-    TStringView SavedKey;
+    MStringView SavedKey;
 };
 

@@ -105,41 +105,41 @@ inline MString Join(const TVector<MString>& Parts, char Delim)
 }
 
 #if MESSION_CPLUSPLUS >= 201703L
-// TStringView 工具：只读视图上的 Trim/转换/前后缀判断（不分配时用 View）
-namespace MStringView
+// MStringView 工具：只读视图上的 Trim/转换/前后缀判断（不分配时用 View）
+namespace MStringViewUtil
 {
-inline TStringView TrimView(TStringView View)
+inline MStringView TrimView(MStringView View)
 {
     const char* Whitespace = " \t\r\n";
     auto Start = View.find_first_not_of(Whitespace);
-    if (Start == TStringView::npos)
+    if (Start == MStringView::npos)
     {
-        return TStringView();
+        return MStringView();
     }
     auto End = View.find_last_not_of(Whitespace);
-    return View.substr(Start, End == TStringView::npos ? TStringView::npos : (End - Start + 1));
+    return View.substr(Start, End == MStringView::npos ? MStringView::npos : (End - Start + 1));
 }
 
-inline MString ToFString(TStringView View)
+inline MString ToFString(MStringView View)
 {
     return MString(View);
 }
 
-inline bool StartsWith(TStringView View, TStringView Prefix)
+inline bool StartsWith(MStringView View, MStringView Prefix)
 {
     return View.size() >= Prefix.size() &&
            View.compare(0, Prefix.size(), Prefix) == 0;
 }
 
-inline bool EndsWith(TStringView View, TStringView Suffix)
+inline bool EndsWith(MStringView View, MStringView Suffix)
 {
     return View.size() >= Suffix.size() &&
            View.compare(View.size() - Suffix.size(), Suffix.size(), Suffix) == 0;
 }
 
-inline bool Contains(TStringView View, TStringView Needle)
+inline bool Contains(MStringView View, MStringView Needle)
 {
-    return View.find(Needle) != TStringView::npos;
+    return View.find(Needle) != MStringView::npos;
 }
 }
 #endif

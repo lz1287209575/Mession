@@ -50,8 +50,8 @@ namespace mession::script {
         virtual void                      UnregisterModule(MClass* OwningClass)            = 0;
 
         // ====== 全局读写 ======
-        virtual void              SetGlobal(TStringView Key, const TVariant& Value) = 0;
-        virtual TResult<TVariant> GetGlobal(TStringView Key)                        = 0;
+        virtual void              SetGlobal(MStringView Key, const TVariant& Value) = 0;
+        virtual TResult<TVariant> GetGlobal(MStringView Key)                        = 0;
 
         // ====== 错误传递 ======
         virtual MString GetErrorString(int32 State, void* Frame) const = 0;

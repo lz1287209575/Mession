@@ -16,8 +16,8 @@ namespace mession::script {
 
         virtual bool             Connect(TSharedPtr<IScriptEngine> Engine) = 0;
         virtual bool             ReadLine(MString& OutLine)                = 0;
-        virtual void             WriteLine(TStringView Line)               = 0;
-        virtual TResult<MString> Eval(TStringView Code)                    = 0;
+        virtual void             WriteLine(MStringView Line)               = 0;
+        virtual TResult<MString> Eval(MStringView Code)                    = 0;
         virtual void             Interrupt()                               = 0;
         virtual void             Disconnect()                              = 0;
 
