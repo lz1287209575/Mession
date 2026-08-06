@@ -591,34 +591,36 @@ target_link_libraries(StringUtilsTest
 configure_mession_compile_options(StringUtilsTest)
 
 # InnerTypeTest - SFutureResult<T>::InnerType 编译期契约测试
-add_executable(InnerTypeTest
-    Source/Common/Runtime/Async/Tests/InnerTypeTest.cpp
-)
-target_include_directories(InnerTypeTest
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-)
-target_link_libraries(InnerTypeTest
-    PRIVATE
-        mession_common
-)
-configure_mession_compile_options(InnerTypeTest)
+# Source file removed; temporarily disabled
+# add_executable(InnerTypeTest
+#     Source/Common/Runtime/Async/Tests/InnerTypeTest.cpp
+# )
+# target_include_directories(InnerTypeTest
+#     PRIVATE
+#         ${CMAKE_CURRENT_SOURCE_DIR}
+#         ${CMAKE_CURRENT_SOURCE_DIR}/Source
+# )
+# target_link_libraries(InnerTypeTest
+#     PRIVATE
+#         mession_common
+# )
+# configure_mession_compile_options(InnerTypeTest)
 
 # AwaitableTest - TAwaitable<...> 4 形态 + R 推导编译期契约测试
-add_executable(AwaitableTest
-    Source/Common/Runtime/Async/Tests/AwaitableTest.cpp
-)
-target_include_directories(AwaitableTest
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-)
-target_link_libraries(AwaitableTest
-    PRIVATE
-        mession_common
-)
-configure_mession_compile_options(AwaitableTest)
+# Source file removed; temporarily disabled
+# add_executable(AwaitableTest
+#     Source/Common/Runtime/Async/Tests/AwaitableTest.cpp
+# )
+# target_include_directories(AwaitableTest
+#     PRIVATE
+#         ${CMAKE_CURRENT_SOURCE_DIR}
+#         ${CMAKE_CURRENT_SOURCE_DIR}/Source
+# )
+# target_link_libraries(AwaitableTest
+#     PRIVATE
+#         mession_common
+# )
+# configure_mession_compile_options(AwaitableTest)
 
 # AsyncFrameTest - P3 vertical-slice unit test for the MHeaderTool-generated
 # AsyncFrame. Verifies the auto-generated `MHeaderTool_AsyncFrame_<Class>_<Func>`
