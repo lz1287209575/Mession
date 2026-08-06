@@ -5,6 +5,8 @@ add_library(mession_lua STATIC
     LuaModule.cpp
     LuaRepl.cpp
     LuaEngine.cpp
+    LuaHotReload.cpp
+    MobDebugServer.cpp
 )
 target_include_directories(mession_lua
     PUBLIC
