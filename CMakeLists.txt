@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.15)
 project(Mession VERSION 1.0.0 LANGUAGES CXX C)
+
+# 供 MHeaderTool libtooling 接入 — ClangTool 读取 compile_commands.json
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "" FORCE)
+
 include(FetchContent)
 option(MESSION_USE_MONGOCXX "Enable MongoDB C++ driver integration for MgoServer" OFF)
 
