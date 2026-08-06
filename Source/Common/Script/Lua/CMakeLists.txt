@@ -3,6 +3,7 @@ add_library(mession_lua STATIC
     LuaTypeBridge.cpp
     LuaCoroutineBridge.cpp
     LuaModule.cpp
+    LuaRepl.cpp
 )
 target_include_directories(mession_lua
     PUBLIC
