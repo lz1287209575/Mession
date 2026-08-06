@@ -409,6 +409,10 @@ public:
                     parsed.Transport = "ServerCall";
                     parsed.bIsRpc = true;
                 }
+                else if (part == "LuaBind")
+                {
+                    parsed.Transport = "LuaBind";
+                }
                 else if (part == "RPC")
                 {
                     parsed.bIsRpc = true;
