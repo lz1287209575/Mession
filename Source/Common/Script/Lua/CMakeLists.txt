@@ -4,6 +4,7 @@ add_library(mession_lua STATIC
     LuaCoroutineBridge.cpp
     LuaModule.cpp
     LuaRepl.cpp
+    LuaEngine.cpp
 )
 target_include_directories(mession_lua
     PUBLIC

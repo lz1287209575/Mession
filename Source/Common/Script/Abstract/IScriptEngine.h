@@ -44,6 +44,10 @@ namespace mession::script {
         virtual TResult<void> CallFunction(MFunctionObject* Fn, const TScriptArgs& Args)   = 0;
         virtual TResult<void> CallFunctionById(uint64 FunctionId, const TScriptArgs& Args) = 0;
 
+        // ====== Script → C++ 创建业务对象 ======
+        virtual TResult<MObject*> CreateInstance(MClass* Cls, const TScriptArgs& Args) = 0;
+        virtual TResult<uint64>   CreateActor(MClass* Cls, const TScriptArgs& Args)    = 0;
+
         // ====== 模块管理 ======
         virtual TSharedPtr<IScriptModule> CreateModule(MClass* OwningClass)                = 0;
         virtual void                      RegisterModule(TSharedPtr<IScriptModule> Module) = 0;
