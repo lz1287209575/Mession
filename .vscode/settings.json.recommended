@@ -1,0 +1,13 @@
+{
+    "_comment": "Copy to .vscode/settings.json for VS Code Lua/Teal LSP setup",
+    "Lua.workspace.library": [
+        "${workspaceFolder}/Build/Generated/lua",
+        "${workspaceFolder}/Source/Common/Script/lua/src"
+    ],
+    "Lua.diagnostics.globals": [
+        "Mession"
+    ],
+    "files.associations": {
+        "*.tl": "lua"
+    }
+}
