@@ -1,6 +1,7 @@
 add_library(mession_lua STATIC
     LuaScriptState.cpp
     LuaTypeBridge.cpp
+    LuaCoroutineBridge.cpp
 )
 target_include_directories(mession_lua
     PUBLIC
