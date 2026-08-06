@@ -2,6 +2,7 @@ add_library(mession_lua STATIC
     LuaScriptState.cpp
     LuaTypeBridge.cpp
     LuaCoroutineBridge.cpp
+    LuaModule.cpp
 )
 target_include_directories(mession_lua
     PUBLIC
@@ -12,5 +13,7 @@ target_link_libraries(mession_lua
     PUBLIC
         mession_lua_vendor
         mession_common
+        mession_script_abstract
+        fmt::fmt-header-only
 )
 configure_mession_compile_options(mession_lua)
