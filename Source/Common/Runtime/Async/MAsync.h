@@ -80,6 +80,9 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
     using Super = MFuture<TResult<T, FAppError>>;
     using Super::Super;
 
+    // InnerType — 协议层取内层类型的统一入口 (codegen / Awaitable.h 模板用)
+    using InnerType = T;
+
     // 从基类隐式构造（供 FiberAwait 适配层使用）
     SFutureResult(const Super& Other) : Super(Other) {}
     SFutureResult(Super&& Other) : Super(std::move(Other)) {}

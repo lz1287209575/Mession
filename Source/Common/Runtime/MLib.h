@@ -25,6 +25,8 @@
 #include <future>
 #include <shared_mutex>
 #include <thread>
+#include <tuple>
+#include <type_traits>
 
 #if defined(_MSVC_LANG)
     #define MESSION_CPLUSPLUS _MSVC_LANG
@@ -159,7 +161,7 @@ template<typename T, typename Hash = std::hash<T>, typename KeyEqual = std::equa
 using TUnorderedMultiSet = std::unordered_multiset<T, Hash, KeyEqual>;
 
 #if MESSION_CPLUSPLUS >= 201703L
-using TStringView = std::string_view;
+using MStringView = std::string_view;
 #endif
 
 template<typename T>
@@ -167,6 +169,41 @@ using TOptional = std::optional<T>;
 
 template<typename TFirst, typename TSecond>
 using TPair = std::pair<TFirst, TSecond>;
+
+// 类型特征模板别名
+// 命名沿用项目 T* 约定,省略 std 的 `_v` 后缀。
+template<typename T, typename U>
+constexpr bool TIsSame = std::is_same_v<T, U>;
+
+template<typename T>
+constexpr bool TIsVoid = TIsSame<T, void>;
+
+template<typename T>
+constexpr bool TIsReference = std::is_reference_v<T>;
+
+template<typename T>
+constexpr bool TIsConst = std::is_const_v<T>;
+
+template<typename T>
+constexpr bool TIsVolatile = std::is_volatile_v<T>;
+
+template<typename T>
+constexpr bool TIsArray = std::is_array_v<T>;
+
+template<typename T>
+constexpr bool TIsFunction = std::is_function_v<T>;
+
+template<typename T>
+constexpr bool TIsDefaultConstructible = std::is_default_constructible_v<T>;
+
+template<typename T>
+constexpr bool TIsCopyConstructible = std::is_copy_constructible_v<T>;
+
+template<typename T>
+constexpr bool TIsMoveConstructible = std::is_move_constructible_v<T>;
+
+template<typename... TArgs>
+using TTuple = std::tuple<TArgs...>;
 
 // 文件流
 #include <fstream>

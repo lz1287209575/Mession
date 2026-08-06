@@ -11,7 +11,7 @@ MLogContext& MLogContext::GetTLS()
     return GThisThreadContext;
 }
 
-void MLogContext::Set(TStringView Key, TStringView Value)
+void MLogContext::Set(MStringView Key, MStringView Value)
 {
     for (size_t i = 0; i < EntryCount; ++i)
     {
@@ -27,12 +27,12 @@ void MLogContext::Set(TStringView Key, TStringView Value)
     }
 }
 
-void MLogContext::Set(TStringView Key, int64 Value)
+void MLogContext::Set(MStringView Key, int64 Value)
 {
     Set(Key, std::to_string(Value));
 }
 
-void MLogContext::Unset(TStringView Key)
+void MLogContext::Unset(MStringView Key)
 {
     for (size_t i = 0; i < EntryCount; ++i)
     {
