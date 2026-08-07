@@ -9,6 +9,7 @@
 # so tests can link it without colliding with MHeaderTool.cpp's main()).
 add_library(mht_lib STATIC
     MHeaderToolLib.cpp
+    AST/ASTReflectionVisitor.cpp
 )
 target_link_libraries(mht_lib PUBLIC
     mession_core
