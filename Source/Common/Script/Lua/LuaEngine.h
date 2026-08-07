@@ -43,6 +43,14 @@ public:
     void                                     RegisterModule(TSharedPtr<mession::script::IScriptModule> Module) override;
     void                                     UnregisterModule(MClass* OwningClass) override;
 
+    // C++ 持有脚本侧 class 实例(跨 VM 通用)
+    TResult<TScriptInstanceHandle> CreateInstanceByClassName(
+        const MString& ClassName, const TScriptArgs& Args) override;
+    TResult<TVariant> InvokeInstanceMethod(
+        TScriptInstanceHandle Handle, const MString& MethodName,
+        const TScriptArgs& Args) override;
+    void ReleaseInstance(TScriptInstanceHandle Handle) override;
+
     void                       SetGlobal(MStringView Key, const mession::script::TVariant& Value) override;
     TResult<mession::script::TVariant> GetGlobal(MStringView Key) override;
 

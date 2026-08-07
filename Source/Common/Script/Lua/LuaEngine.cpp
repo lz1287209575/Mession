@@ -1,4 +1,7 @@
 #include "Common/Script/Lua/LuaEngine.h"
+#include "Common/Script/Abstract/IScriptEngine.h"
+#include "Common/Script/Abstract/TScriptInstanceHandle.h"
+#include "Common/Script/Abstract/ScriptErrorCodes.h"
 #include "Common/Script/Lua/LuaTypeBridge.h"
 #include "Common/Script/Lua/LuaModule.h"
 #include "Common/Script/Lua/LuaCoroutineBridge.h"
@@ -223,6 +226,168 @@ TResult<mession::script::TVariant> MLuaEngine::GetGlobal(MStringView Key)
     }
     lua_pop(L, 1);
     return TResult<mession::script::TVariant>::Ok(Out);
+}
+
+TResult<TScriptInstanceHandle> MLuaEngine::CreateInstanceByClassName(
+    const MString& ClassName, const TScriptArgs& Args)
+{
+    if (!State || !State->IsValid())
+    {
+        return TResult<TScriptInstanceHandle>::Err(MString("engine_not_initialized"));
+    }
+    lua_State* L = State->GetLuaState();
+    int OldTop = lua_gettop(L);
+
+    lua_getglobal(L, ClassName.c_str());
+    if (!lua_istable(L, -1))
+    {
+        lua_settop(L, OldTop);
+        return TResult<TScriptInstanceHandle>::Err(
+            MString(ScriptErrorCodes::kClassNotFound) + MString(": ") + ClassName);
+    }
+
+    bool bUseNew = false;
+    lua_getfield(L, -1, "new");
+    bUseNew = lua_isfunction(L, -1);
+    lua_pop(L, 1);
+
+    if (bUseNew)
+    {
+        lua_getfield(L, -1, "new");
+        lua_insert(L, -2);
+        for (size_t i = 0; i < Args.Count; ++i)
+        {
+            switch (Args.Values[i].GetType())
+            {
+            case EVariantType::Int:    PushInteger(L, Args.Values[i].AsInt().GetValue()); break;
+            case EVariantType::Bool:   PushBoolean(L, Args.Values[i].AsBool().GetValue()); break;
+            case EVariantType::Double: PushNumber(L, Args.Values[i].AsDouble().GetValue()); break;
+            case EVariantType::String: PushString(L, Args.Values[i].AsString().GetValue()); break;
+            case EVariantType::Null:   PushNil(L); break;
+            }
+        }
+        if (lua_pcall(L, static_cast<int>(Args.Count) + 1, 1, 0) != LUA_OK)
+        {
+            MString Err = lua_isstring(L, -1) ? lua_tostring(L, -1) : MString("lua_call_failed");
+            lua_settop(L, OldTop);
+            return TResult<TScriptInstanceHandle>::Err(Err);
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < Args.Count; ++i)
+        {
+            switch (Args.Values[i].GetType())
+            {
+            case EVariantType::Int:    PushInteger(L, Args.Values[i].AsInt().GetValue()); break;
+            case EVariantType::Bool:   PushBoolean(L, Args.Values[i].AsBool().GetValue()); break;
+            case EVariantType::Double: PushNumber(L, Args.Values[i].AsDouble().GetValue()); break;
+            case EVariantType::String: PushString(L, Args.Values[i].AsString().GetValue()); break;
+            case EVariantType::Null:   PushNil(L); break;
+            }
+        }
+        if (lua_pcall(L, static_cast<int>(Args.Count), 1, 0) != LUA_OK)
+        {
+            MString Err = lua_isstring(L, -1) ? lua_tostring(L, -1) : MString("lua_call_failed");
+            lua_settop(L, OldTop);
+            return TResult<TScriptInstanceHandle>::Err(Err);
+        }
+    }
+
+    if (lua_isnil(L, -1))
+    {
+        lua_settop(L, OldTop);
+        return TResult<TScriptInstanceHandle>::Err(MString(ScriptErrorCodes::kFactoryReturnNil));
+    }
+
+    int Ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    return TResult<TScriptInstanceHandle>::Ok(TScriptInstanceHandle(Ref));
+}
+
+TResult<TVariant> MLuaEngine::InvokeInstanceMethod(
+    TScriptInstanceHandle Handle, const MString& MethodName,
+    const TScriptArgs& Args)
+{
+    if (!Handle.IsValid())
+    {
+        return TResult<TVariant>::Err(MString(ScriptErrorCodes::kInvalidArg));
+    }
+    if (!State || !State->IsValid())
+    {
+        return TResult<TVariant>::Err(MString("engine_not_initialized"));
+    }
+    lua_State* L = State->GetLuaState();
+    int OldTop = lua_gettop(L);
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, Handle.GetId());
+    if (lua_isnil(L, -1))
+    {
+        lua_settop(L, OldTop);
+        return TResult<TVariant>::Err(MString(ScriptErrorCodes::kInstanceReleased));
+    }
+
+    lua_getfield(L, -1, MethodName.c_str());
+    if (!lua_isfunction(L, -1))
+    {
+        lua_settop(L, OldTop);
+        return TResult<TVariant>::Err(
+            MString(ScriptErrorCodes::kMethodNotFound) + MString(": ") + MethodName);
+    }
+
+    lua_insert(L, -2);
+
+    for (size_t i = 0; i < Args.Count; ++i)
+    {
+        switch (Args.Values[i].GetType())
+        {
+        case EVariantType::Int:    PushInteger(L, Args.Values[i].AsInt().GetValue()); break;
+        case EVariantType::Bool:   PushBoolean(L, Args.Values[i].AsBool().GetValue()); break;
+        case EVariantType::Double: PushNumber(L, Args.Values[i].AsDouble().GetValue()); break;
+        case EVariantType::String: PushString(L, Args.Values[i].AsString().GetValue()); break;
+        case EVariantType::Null:   PushNil(L); break;
+        }
+    }
+
+    if (lua_pcall(L, static_cast<int>(Args.Count) + 1, 1, 0) != LUA_OK)
+    {
+        MString Err = lua_isstring(L, -1) ? lua_tostring(L, -1) : MString("method_call_failed");
+        lua_settop(L, OldTop);
+        return TResult<TVariant>::Err(Err);
+    }
+
+    TResult<TVariant> Out = TResult<TVariant>::Ok(TVariant::MakeNull());
+    int Type = lua_type(L, -1);
+    switch (Type)
+    {
+    case LUA_TNIL:
+        Out = TResult<TVariant>::Ok(TVariant::MakeNull());
+        break;
+    case LUA_TBOOLEAN:
+        Out = TResult<TVariant>::Ok(TVariant::MakeBool(lua_toboolean(L, -1) != 0));
+        break;
+    case LUA_TNUMBER:
+        Out = TResult<TVariant>::Ok(TVariant::MakeDouble(lua_tonumber(L, -1)));
+        break;
+    case LUA_TSTRING:
+    {
+        size_t Len = 0;
+        const char* P = lua_tolstring(L, -1, &Len);
+        Out = TResult<TVariant>::Ok(TVariant::MakeString(MString(P, Len)));
+        break;
+    }
+    default:
+        Out = TResult<TVariant>::Ok(TVariant::MakeNull());
+        break;
+    }
+    lua_settop(L, OldTop);
+    return Out;
+}
+
+void MLuaEngine::ReleaseInstance(TScriptInstanceHandle Handle)
+{
+    if (!Handle.IsValid()) return;
+    if (!State || !State->IsValid()) return;
+    luaL_unref(State->GetLuaState(), LUA_REGISTRYINDEX, Handle.GetId());
 }
 
 MString MLuaEngine::GetErrorString(int32 /*State*/, void* /*Frame*/) const
