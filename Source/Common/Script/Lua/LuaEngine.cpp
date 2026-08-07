@@ -64,6 +64,13 @@ TResult<void> MLuaEngine::Shutdown()
     return TResult<void>::Ok();
 }
 
+TUniquePtr<MLuaScriptState> MLuaEngine::ReplaceState(TUniquePtr<MLuaScriptState> NewState)
+{
+    TUniquePtr<MLuaScriptState> Old = std::move(State);
+    State = std::move(NewState);
+    return Old;
+}
+
 TResult<EReloadResult> MLuaEngine::Reload(EReloadMode /*Mode*/)
 {
     return TResult<EReloadResult>::Ok(EReloadResult::Success);

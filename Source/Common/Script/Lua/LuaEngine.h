@@ -24,6 +24,13 @@ public:
     void           StepCoroutines() override;
     TResult<void> Shutdown() override;
 
+    // 内部:Hot reload 替换 State(Replace Old State with New State)
+    // 旧 State 由调用方持有,负责 lua_close
+    TUniquePtr<MLuaScriptState> ReplaceState(TUniquePtr<MLuaScriptState> NewState);
+
+    // Hot reload 内部 helper:暴露旧 State 引用供 Drain / CountPendingCalls
+    MLuaScriptState& GetStateForReload() { return *State; }
+
     TResult<EReloadResult> Reload(EReloadMode Mode) override;
 
     TResult<void> CallFunction(MFunctionObject* Fn, const mession::script::TScriptArgs& Args) override;
