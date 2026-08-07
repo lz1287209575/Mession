@@ -345,6 +345,9 @@ function(mession_define_generated_group GroupName)
             ${CMAKE_CURRENT_SOURCE_DIR}/Source
             ${MESSION_GENERATED_DIR}
     )
+    target_link_libraries(${TargetName}
+        PUBLIC fmt::fmt-header-only
+    )
     configure_mession_compile_options(${TargetName})
 endfunction()
 
