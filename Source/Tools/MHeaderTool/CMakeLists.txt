@@ -37,3 +37,18 @@ configure_mession_compile_options(MHeaderTool)
 target_compile_options(MHeaderTool PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/GR->
 )
+
+# A1 — libtooling 集成
+find_package(Clang 17 REQUIRED CONFIG)
+
+target_include_directories(mht_lib PRIVATE ${Clang_INCLUDE_DIRS})
+target_link_libraries(mht_lib PRIVATE ${Clang_LIBRARIES})
+
+target_compile_definitions(mht_lib PRIVATE
+    CLANG_VERSION_MAJOR=${LLVM_VERSION_MAJOR}
+    CLANG_VERSION_MINOR=${LLVM_VERSION_MINOR}
+)
+
+target_compile_options(mht_lib PRIVATE
+    $<$<CXX_COMPILER_ID:GNU>:-Wno-unused-parameter>
+)
