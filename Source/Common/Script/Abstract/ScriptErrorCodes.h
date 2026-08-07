@@ -27,6 +27,12 @@ namespace mession::script {
         inline constexpr const char* kNotFound      = "not_found";
         inline constexpr const char* kInvalidArg    = "invalid_arg";
         inline constexpr const char* kUnimplemented = "unimplemented";
+
+        // Script 实例句柄专用
+        inline constexpr const char* kClassNotFound    = "class_not_found";
+        inline constexpr const char* kFactoryReturnNil = "factory_returned_nil";
+        inline constexpr const char* kInstanceReleased = "instance_released";
+        inline constexpr const char* kMethodNotFound   = "method_not_found";
     } // namespace ScriptErrorCodes
 
     // FScriptError:VM 抛出的错误描述
