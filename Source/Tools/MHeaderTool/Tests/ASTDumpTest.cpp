@@ -19,6 +19,14 @@ namespace mession::headercodegen {
 
         std::printf("ASTDump found %zu records, %zu functions, %zu enums\n", IR.Records.size(), IR.Functions.size(), IR.Enums.size());
 
+        // Task 4 sign-off requires per-name verifiability — iterate Records and print
+        // each Name so the artifact can be grep'd. Skeleton deliberately has no
+        // reflection-macro filter (Task 6 will add it); the inflated count is expected.
+        std::printf("---records---\n");
+        for (const SParsedRecord& R : IR.Records) {
+            std::printf("  %s\n", R.Name.c_str());
+        }
+
         EXPECT_TRUE(IR.Records.size() > 0);
     }
 
