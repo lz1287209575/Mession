@@ -39,7 +39,7 @@ namespace mession::headercodegen {
         Func.Name       = FD->getNameAsString();
         Func.HeaderPath = FD->getBeginLoc().printToString(Ctx.getSourceManager());
         Func.SourceLine = Ctx.getSourceManager().getSpellingLineNumber(FD->getBeginLoc());
-        IR.Functions.push_back(std::move(Func));
+        IR.FreeFunctions.push_back(std::move(Func));
         return true;
     }
 

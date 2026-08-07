@@ -8,7 +8,7 @@
 namespace mession::headercodegen {
 
     TEST_CASE(ASTDump_RunOnSourceRoot) {
-        SOptions Options;
+        MHeaderTool::SOptions Options;
         Options.SourceRoot = std::filesystem::absolute("Source").generic_string();
         Options.bVerbose   = false;
 
@@ -17,7 +17,7 @@ namespace mession::headercodegen {
         MClangToolRunner Runner;
         SParseIR         IR = Runner.RunDump(Options);
 
-        std::printf("ASTDump found %zu records, %zu functions, %zu enums\n", IR.Records.size(), IR.Functions.size(), IR.Enums.size());
+        std::printf("ASTDump found %zu records, %zu functions, %zu enums\n", IR.Records.size(), IR.FreeFunctions.size(), IR.Enums.size());
 
         // Task 4 sign-off requires per-name verifiability — iterate Records and print
         // each Name so the artifact can be grep'd. Skeleton deliberately has no

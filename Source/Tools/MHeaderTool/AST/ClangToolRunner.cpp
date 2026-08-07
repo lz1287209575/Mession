@@ -30,7 +30,7 @@ namespace mession::headercodegen {
 
     } // namespace
 
-    SParseIR MClangToolRunner::RunDump(const SOptions& InOptions) {
+    SParseIR MClangToolRunner::RunDump(const MHeaderTool::SOptions& InOptions) {
         SParseIR IR;
 
         // 加载 compile_commands.json — ClangTool 入口

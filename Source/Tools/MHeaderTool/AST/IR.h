@@ -103,6 +103,29 @@ struct SParsedTypeAlias
     fs::path HeaderPath;
 };
 
+// spec §2.3: 反射函数（RPC / client surface / async / 普通）
+// 注意 SParsedFunction 持有 SParsedRecord::Functions 与 SParseIR::FreeFunctions；
+// 而 SParsedRecord 本身在字段中引用了 SParsedFunction——此处先前置声明。
+struct SParsedFunction;
+
+// spec §2.3: 单个 await 站点（AWAIT_OK / TAwaitable<...> / 裸 Awaitable）
+struct SAwaitSite
+{
+    EAwaitSiteKind Kind        = EAwaitSiteKind::AwaitOkMacro;
+    uint32         SourceLine  = 0;
+    MString        AwaitExprText;
+    MString        TargetVarName;
+};
+
+// spec §2.3: 跨 await 点仍然 live 的局部变量（用于状态机持久化）
+struct SLiveVarDecl
+{
+    MString     Name;
+    SParsedType Type;
+    uint32      DeclLine = 0;
+    bool        bLiveAcrossAwait = false;
+};
+
 // spec §2.3: class/struct 反射记录（核心 IR 节点）
 struct SParsedRecord
 {
@@ -125,29 +148,6 @@ struct SParsedRecord
     TMap<MString, MString> TypeAliases;
     bool                   bHasAsyncFunctions = false;
 };
-
-// spec §2.3: 单个 await 站点（AWAIT_OK / TAwaitable<...> / 裸 Awaitable）
-struct SAwaitSite
-{
-    EAwaitSiteKind Kind        = EAwaitSiteKind::AwaitOkMacro;
-    uint32         SourceLine  = 0;
-    MString        AwaitExprText;
-    MString        TargetVarName;
-};
-
-// spec §2.3: 跨 await 点仍然 live 的局部变量（用于状态机持久化）
-struct SLiveVarDecl
-{
-    MString     Name;
-    SParsedType Type;
-    uint32      DeclLine = 0;
-    bool        bLiveAcrossAwait = false;
-};
-
-// spec §2.3: 反射函数（RPC / client surface / async / 普通）
-// 注意 SParsedFunction 持有 SParsedRecord::Functions 与 SParseIR::FreeFunctions；
-// 而 SParsedRecord 本身在字段中引用了 SParsedFunction——此处先前置声明。
-struct SParsedFunction;
 
 // spec §2.3: 反射函数（完整版）
 struct SParsedFunction

@@ -7,7 +7,7 @@ namespace mession::headercodegen {
 
     class MClangToolRunner {
         public:
-        SParseIR RunDump(const SOptions& InOptions);
+        SParseIR RunDump(const MHeaderTool::SOptions& InOptions);
     };
 
 } // namespace mession::headercodegen
