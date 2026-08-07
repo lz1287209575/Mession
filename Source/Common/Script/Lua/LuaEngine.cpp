@@ -248,7 +248,10 @@ TResult<TScriptInstanceHandle> MLuaEngine::CreateInstanceByClassName(
 
     bool bUseNew = false;
     lua_getfield(L, -1, "new");
-    bUseNew = lua_isfunction(L, -1);
+    if (lua_isfunction(L, -1))
+    {
+        bUseNew = true;
+    }
     lua_pop(L, 1);
 
     if (bUseNew)
@@ -270,7 +273,7 @@ TResult<TScriptInstanceHandle> MLuaEngine::CreateInstanceByClassName(
         {
             MString Err = lua_isstring(L, -1) ? lua_tostring(L, -1) : MString("lua_call_failed");
             lua_settop(L, OldTop);
-            return TResult<TScriptInstanceHandle>::Err(Err);
+            return TResult<TScriptInstanceHandle>::Err(MString("[new_path] ") + Err);
         }
     }
     else
@@ -324,6 +327,16 @@ TResult<TVariant> MLuaEngine::InvokeInstanceMethod(
     {
         lua_settop(L, OldTop);
         return TResult<TVariant>::Err(MString(ScriptErrorCodes::kInstanceReleased));
+    }
+
+    // 对象必须是 table / userdata(支持 __index);number / string / bool / nil 都不行
+    int ObjType = lua_type(L, -1);
+    if (ObjType != LUA_TTABLE && ObjType != LUA_TUSERDATA)
+    {
+        lua_settop(L, OldTop);
+        return TResult<TVariant>::Err(
+            MString("[invalid_arg] instance is not a table/userdata (type=") +
+            MString(std::to_string(ObjType).c_str()) + MString(")"));
     }
 
     lua_getfield(L, -1, MethodName.c_str());

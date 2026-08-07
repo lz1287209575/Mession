@@ -31,6 +31,13 @@ public:
     // Hot reload 内部 helper:暴露旧 State 引用供 Drain / CountPendingCalls
     MLuaScriptState& GetStateForReload() { return *State; }
 
+    // 测试 / 业务代码加载辅助:把 Lua 字节流加载到当前 State
+    MString LoadBufferIntoState(const char* Name, const char* Bytes, size_t Size)
+    {
+        if (!State || !State->IsValid()) return MString("engine_not_initialized");
+        return State->LoadBuffer(Name, Bytes, Size);
+    }
+
     TResult<EReloadResult> Reload(EReloadMode Mode) override;
 
     TResult<void> CallFunction(MFunctionObject* Fn, const mession::script::TScriptArgs& Args) override;

@@ -17,6 +17,7 @@ target_link_libraries(mession_lua
     PUBLIC
         mession_lua_vendor
         mession_common
+        mession_netdriver
         mession_script_abstract
         fmt::fmt-header-only
 )
