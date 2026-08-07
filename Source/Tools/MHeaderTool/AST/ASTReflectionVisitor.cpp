@@ -45,15 +45,17 @@ bool MASTReflectionVisitor::VisitCXXRecordDecl(clang::CXXRecordDecl* RD)
 
     if (auto Args = ExtractMacroArgs(Prefix, "MCLASS("))
     {
-        Record.bHasMClassMarker = true;
-        Record.ReflectionType   = ExtractMacroValue(*Args, "Type").value_or("Object");
-        Record.Owner            = ExtractMacroValue(*Args, "Owner").value_or("");
-        Record.InjectionClass   = ExtractMacroValue(*Args, "InjectionClass").value_or("");
+        Record.Kind              = ERecordKind::Class;
+        Record.bHasMClassMarker  = true;
+        Record.ReflectionType    = ExtractMacroValue(*Args, "Type").value_or("Object");
+        Record.Owner             = ExtractMacroValue(*Args, "Owner").value_or("");
+        Record.InjectionClass    = ExtractMacroValue(*Args, "InjectionClass").value_or("");
     }
     else if (auto Args = ExtractMacroArgs(Prefix, "MSTRUCT("))
     {
+        Record.Kind              = ERecordKind::Struct;
         Record.bHasMStructMarker = true;
-        Record.ReflectionType = "Struct";
+        Record.ReflectionType    = "Struct";
     }
 
     if (auto Args = ExtractMacroArgs(Prefix, "MGENERATED_BODY("))
@@ -122,7 +124,10 @@ bool MASTReflectionVisitor::VisitFunctionDecl(clang::FunctionDecl* FD)
         Func.AsyncBody = GetSourceText(FD->getBody()->getSourceRange());
     }
 
-    Func.bIsAsync = IsSFutureResultType(Func.ReturnType);
+    // MFUNCTION(...) arg extraction — Transport / RpcKind / Endpoint / MessageName / Route / Target / Auth / Wrap / ClientApi
+    ApplyMFUNCTIONMacroArgs(Prefix, Func);
+
+    Func.bIsAsync = Func.bHasAsyncMeta || IsSFutureResultType(Func.ReturnType);
 
     if (Func.bIsAsync)
     {
@@ -282,6 +287,41 @@ TOptional<MString> MASTReflectionVisitor::ExtractMacroArgs(
     if (Depth != 0) return {};
 
     return SrcText.substr(OpenParen + 1, CloseParen - OpenParen - 2);
+}
+
+void MASTReflectionVisitor::ApplyMFUNCTIONMacroArgs(
+    const MString& Prefix, SParsedFunction& OutFunc) const
+{
+    auto Args = ExtractMacroArgs(Prefix, "MFUNCTION(");
+    if (!Args) return;
+    const TVector<MString> Parts = SplitMacroArgs(*Args);
+    for (const MString& Part : Parts)
+    {
+        const size_t EqPos = Part.find('=');
+        if (EqPos != MString::npos)
+        {
+            const MString Key = Part.substr(0, EqPos);
+            const MString Val = Part.substr(EqPos + 1);
+            if      (Key == "Endpoint")  OutFunc.Endpoint   = Val;
+            else if (Key == "Message")   OutFunc.MessageName = Val;
+            else if (Key == "Route")     OutFunc.Route      = Val;
+            else if (Key == "Target")    OutFunc.Target     = Val;
+            else if (Key == "Auth")      OutFunc.Auth       = Val;
+            else if (Key == "Wrap")      OutFunc.Wrap       = Val;
+            else if (Key == "Api" || Key == "ClientApi") OutFunc.ClientApi = Val;
+        }
+        else
+        {
+            if      (Part == "ServerCall") { OutFunc.Transport = EFunctionTransport::ServerCall; OutFunc.bIsRpc = true; }
+            else if (Part == "ClientCall") { OutFunc.Transport = EFunctionTransport::ClientCall; OutFunc.bIsRpc = true; }
+            else if (Part == "Client")     { OutFunc.Transport = EFunctionTransport::Client; }
+            else if (Part == "NetServer")  { OutFunc.RpcKind   = ERpcKind::Server;          OutFunc.bIsRpc = true; }
+            else if (Part == "NetClient")  { OutFunc.RpcKind   = ERpcKind::Client;          OutFunc.bIsRpc = true; }
+            else if (Part == "RPC")        { OutFunc.bIsRpc    = true; }
+            else if (Part == "Async")      { OutFunc.bHasAsyncMeta = true; }
+            else if (Part == "PlayerRPC")  { OutFunc.bHasAsyncMeta = true; OutFunc.Transport = EFunctionTransport::ServerCall; OutFunc.bIsRpc = true; }
+        }
+    }
 }
 
 TOptional<MString> MASTReflectionVisitor::ExtractMacroValue(

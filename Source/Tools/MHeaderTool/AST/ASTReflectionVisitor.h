@@ -25,6 +25,8 @@ private:
     MString        GetSurroundingSourceText(clang::SourceLocation Loc, uint32 LookbackBytes) const;
     MString        GetSourceText(clang::SourceRange Range) const;
 
+    void ApplyMFUNCTIONMacroArgs(const MString& Prefix, SParsedFunction& OutFunc) const;
+
     TOptional<MString> ExtractMacroArgs(const MString& SrcText, const MString& MacroName) const;
     TOptional<MString> ExtractMacroValue(const MString& MacroArgs, const MString& Key) const;
     TVector<MString>   SplitMacroArgs(const MString& Args) const;
