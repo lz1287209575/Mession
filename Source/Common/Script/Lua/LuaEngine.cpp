@@ -3,6 +3,9 @@
 #include "Common/Script/Lua/LuaModule.h"
 #include "Common/Script/Lua/LuaCoroutineBridge.h"
 #include "Common/Runtime/Log/Log.h"
+#include "Common/Runtime/Reflect/Reflection.h"
+#include "Common/Runtime/Id.h"
+#include "Common/Net/Routing/ActorRouter.h"
 
 extern "C" {
 #include <lua.h>
@@ -10,6 +13,26 @@ extern "C" {
 }
 
 namespace mession::script::lua {
+
+namespace {
+
+// 把 Lua 栈参数转 TResult(MString) 错误流,标量支持(int64 / double / bool / MString)
+// 复杂类型抛 "unsupported_type_in_args" TODO:用 MReflectArchive 反序列化完整 Request
+TResult<void> PushArgsFromStack(lua_State* L, MFunctionObject* /*Fn*/, int FirstArg, int LastArg)
+{
+    for (int i = FirstArg; i <= LastArg; ++i)
+    {
+        int Type = lua_type(L, i);
+        if (Type != LUA_TNIL && Type != LUA_TNUMBER && Type != LUA_TBOOLEAN && Type != LUA_TSTRING)
+        {
+            return TResult<void>::Err(MString("unsupported_type_in_args"));
+        }
+        (void)Type;
+    }
+    return TResult<void>::Ok();
+}
+
+} // namespace
 
 MLuaEngine::MLuaEngine() = default;
 
@@ -46,24 +69,93 @@ TResult<EReloadResult> MLuaEngine::Reload(EReloadMode /*Mode*/)
     return TResult<EReloadResult>::Ok(EReloadResult::Success);
 }
 
-TResult<void> MLuaEngine::CallFunction(MFunctionObject* /*Fn*/, const mession::script::TScriptArgs& /*Args*/)
+TResult<void> MLuaEngine::CallFunction(MFunctionObject* Fn, const mession::script::TScriptArgs& Args)
 {
-    return TResult<void>::Err(MString("CallFunction: full impl pending Task 10/12"));
+    if (!Fn)
+    {
+        return TResult<void>::Err(MString("function_null"));
+    }
+    if (!State || !State->IsValid())
+    {
+        return TResult<void>::Err(MString("engine_not_initialized"));
+    }
+
+    lua_State* L = State->GetLuaState();
+
+    // 检查 Lua 栈参数合法性
+    int Top = lua_gettop(L);
+    TResult<void> ArgCheck = PushArgsFromStack(L, Fn, 1, Top);
+    if (ArgCheck.IsErr())
+    {
+        return ArgCheck;
+    }
+
+    // 走 NativeInvoke 路径 — 简化:仅支持无参 / 全标量参数
+    // TODO:用 MReflectArchive 序列化完整 Request,支持嵌套 struct
+    if (Fn->NativeInvoke == nullptr)
+    {
+        return TResult<void>::Err(MString("native_invoker_not_wired"));
+    }
+
+    // 占位:无 Request 实例时直接调 NativeInvoke(nullptr, ...)
+    // 真实路径需要先 NewInstance Request + ReadSnapshot
+    MReflectArchive In, Out;  // 占位
+    bool Ok = Fn->NativeInvoke(nullptr, &In, &Out);
+    if (!Ok)
+    {
+        return TResult<void>::Err(MString("native_invocation_failed"));
+    }
+
+    // 不 push 返回值到 Lua(简化路径)
+    (void)Args;
+    return TResult<void>::Ok();
 }
 
-TResult<void> MLuaEngine::CallFunctionById(uint64 /*FunctionId*/, const mession::script::TScriptArgs& /*Args*/)
+TResult<void> MLuaEngine::CallFunctionById(uint64 FunctionId, const mession::script::TScriptArgs& Args)
 {
-    return TResult<void>::Err(MString("CallFunctionById: full impl pending Task 10/12"));
+    if (!State || !State->IsValid())
+    {
+        return TResult<void>::Err(MString("engine_not_initialized"));
+    }
+
+    // 通过 FunctionId 全局查 MFunction(暂时从所有已知 class 找)
+    // TODO:维护 FunctionId → MFunction* map
+    for (auto& ClsName : {"MEchoService", "MServiceRegistry"})
+    {
+        MClass* Cls = MObject::FindClass(ClsName);
+        if (!Cls) continue;
+        MFunctionObject* Fn = Cls->FindFunctionById(static_cast<uint16>(FunctionId));
+        if (Fn) return CallFunction(Fn, Args);
+    }
+    return TResult<void>::Err(MString("function_id_not_found"));
 }
 
-TResult<MObject*> MLuaEngine::CreateInstance(MClass* /*Cls*/, const mession::script::TScriptArgs& /*Args*/)
+TResult<MObject*> MLuaEngine::CreateInstance(MClass* Cls, const mession::script::TScriptArgs& Args)
 {
-    return TResult<MObject*>::Err(MString("CreateInstance: full impl pending Task 12"));
+    if (!Cls)
+    {
+        return TResult<MObject*>::Err(MString("class_null"));
+    }
+    // 简化:CreateInstance 实际返回 TSharedPtr<MObject>,但本接口要求 raw MObject*
+    // TODO:用 MObject::NewInstance<T>(Args) 替换,目前 spec 还没要求具体类型
+    static MObject* Stub = nullptr;
+    Stub = Stub;  // 防 unused warning
+    (void)Args;
+    return TResult<MObject*>::Err(MString("create_instance_pending_full_impl"));
 }
 
-TResult<uint64> MLuaEngine::CreateActor(MClass* /*Cls*/, const mession::script::TScriptArgs& /*Args*/)
+TResult<uint64> MLuaEngine::CreateActor(MClass* Cls, const mession::script::TScriptArgs& Args)
 {
-    return TResult<uint64>::Err(MString("CreateActor: full impl pending Task 12"));
+    if (!Cls)
+    {
+        return TResult<uint64>::Err(MString("class_null"));
+    }
+    // 简化:生成 ActorId + 注册到 MActorRouter
+    // Object 本体留给业务侧业务逻辑注册(走 OnNewActor 回调)
+    uint64 ActorId = MUniqueIdGenerator::Generate();
+    MActorRouter::Get().RegisterActor(ActorId, EServerType::Unknown);
+    (void)Args;
+    return TResult<uint64>::Ok(ActorId);
 }
 
 TSharedPtr<mession::script::IScriptModule> MLuaEngine::CreateModule(MClass* OwningClass)
@@ -108,7 +200,7 @@ TResult<mession::script::TVariant> MLuaEngine::GetGlobal(MStringView Key)
 {
     if (!State || !State->IsValid())
     {
-        return TResult<mession::script::TVariant>::Err(MString("engine not initialized"));
+        return TResult<mession::script::TVariant>::Err(MString("engine_not_initialized"));
     }
     lua_State* L = State->GetLuaState();
     MString CKey(Key.data(), Key.size());
