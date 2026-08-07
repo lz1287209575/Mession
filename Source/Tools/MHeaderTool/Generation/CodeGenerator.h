@@ -2,11 +2,19 @@
 
 #include "Core/Types.h"
 #include "Util/StringUtil.h"
+#include "AST/IR.h"
 #include <filesystem>
 #include <sstream>
 #include <regex>
 
 namespace fs = std::filesystem;
+
+// IR types live in mession::headercodegen; the legacy CodeGenerator class
+// itself stays in MHeaderTool to preserve the existing main()/test linkage.
+// A3 (Task 11-13) will fold them into a single namespace.
+using mession::headercodegen::SParsedRecord;
+using mession::headercodegen::SParsedFunction;
+using mession::headercodegen::SParsedProperty;
 
 namespace MHeaderTool
 {
@@ -22,6 +30,32 @@ public:
         : Options_(options)
     {
     }
+
+    // A2 (Task 7) — IR-based generator entry points. Mirror the legacy
+    // `GenerateHeader` / `GenerateSource` / `EmitAsyncFramesHeader` shape,
+    // but consume `SParsedRecord` from the AST path (Task 8 main() will
+    // dispatch to these once it migrates off the string-parser). The
+    // legacy methods above stay as the fallback until A3 cleanup removes
+    // them. Method bodies live in `Generation/CodeGenerator.cpp`.
+
+    // 生成 IR 头文件内容
+    //
+    // AsyncFrame-classes: classes from the same header that have at least
+    // one `MFUNCTION(..., Async)` function. The Frame struct definitions
+    // themselves are emitted into a separate `<ClassName>_AsyncFrames.h`
+    // file (see EmitAsyncFramesHeaderFromIR) — they cannot live in the
+    // per-class .mgenerated.h because that file includes the user header
+    // (creating a circular include if the user header tries to pull in
+    // the generated file).
+    MString GenerateHeaderFromIR(
+        const SParsedRecord& InRecord,
+        const TVector<SParsedRecord>& AllRecordsInSameHeader) const;
+
+    // 生成 IR 源文件内容
+    MString GenerateSourceFromIR(const SParsedRecord& InRecord) const;
+
+    // IR 版本的 AsyncFrames 头文件 emit（A3 cleanup 删除 legacy 版本）
+    MString EmitAsyncFramesHeaderFromIR(const SParsedRecord& InRecord) const;
 
     // 生成头文件内容
     //

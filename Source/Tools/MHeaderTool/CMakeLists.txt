@@ -7,9 +7,14 @@
 
 # Library TU — contains ProcessFreeFunctions (extracted from MHeaderTool.cpp
 # so tests can link it without colliding with MHeaderTool.cpp's main()).
+# Generation/CodeGenerator.cpp carries the IR-based generator entry points
+# (A2 / Task 7: GenerateHeaderFromIR / GenerateSourceFromIR /
+# EmitAsyncFramesHeaderFromIR). The legacy inline generators still live
+# in CodeGenerator.h; A3 cleanup removes them.
 add_library(mht_lib STATIC
     MHeaderToolLib.cpp
     AST/ASTReflectionVisitor.cpp
+    Generation/CodeGenerator.cpp
 )
 target_link_libraries(mht_lib PUBLIC
     mession_core
