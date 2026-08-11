@@ -137,7 +137,7 @@ ClientCall stable IDs default from function identity; use `Api=...` / `ClientApi
 
 1. `Docs/RefactorArchitectureAndRpc.md` — original refactor narrative (**partially outdated**: World middle-tier / six-server diagrams; still useful for Actor/RPC intent)
 2. `Docs/superpowers/specs/2026-07-13-service-registry-design.md` — Registry + EndpointCache
-3. `docs/superpowers/specs/2026-07-14-log-module-design.md` — log design (note lowercase `docs/` path)
+3. `Docs/superpowers/specs/2026-07-14-log-module-design.md` — log design
 4. `Docs/CodingStyle.md` — coding style + C2–C5 backlog
 5. `Docs/superpowers/specs/2026-07-07-actor-rpc-refactor.md` — actor RPC refactor context
 6. `Docs/superpowers/specs/2026-07-24-cpp17-async-await.md` — **C++17 async model** (`SFutureResult`, `Async`/`AWAIT`, `MAsyncContext`; not C++20 coroutines / not fiber-first)

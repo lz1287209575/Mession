@@ -125,7 +125,7 @@ git worktree list                                  # 6 项,核对 path 拼写
 
 - `.gitignore` 补 `.opencode/`、`.claude/worktrees/`(后者其实已忽略,复核)
 - 6 个 `core.*` 文件 git 索引清理(已从磁盘删但 index 仍标 D)
-- `docs/` → `Docs/` 归一(3 个 plan + 2 个早期 spec 合并)
+- `docs/` → `Docs/` 归一(3 个 plan + 2 个早期 spec 合并) — 2026-08-11 完成于 Step 2 commit `chore(docs): unify docs/ into Docs/`
 - `.worktrees/mheadercodegen-ast/TODO.md` 副本处理(随该 worktree 下轮一起处理)
 - 远端 `origin/worktree-improve-service-discovery` 删除(需评估是否值得 `git push --delete`)
 - `mheadercodegen-ast` 10 个 commit 的合并 / rebase / 归档决策

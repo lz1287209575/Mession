@@ -284,7 +284,7 @@ ObjectCall 典型步骤：
 | `CLAUDE.md` | 给代理/开发的仓库地图与命令 |
 | `TODO.md` | 当前优先级 backlog |
 | `Docs/superpowers/specs/2026-07-13-service-registry-design.md` | 发现设计 |
-| `docs/superpowers/specs/2026-07-14-log-module-design.md` | 日志设计 |
+| `Docs/superpowers/specs/2026-07-14-log-module-design.md` | 日志设计 |
 | `Docs/CodingStyle.md` | 代码风格（C1 已合；C2–C5 TODO） |
 | `Docs/superpowers/specs/2026-07-07-actor-rpc-refactor.md` | Actor RPC 重构上下文 |
 
