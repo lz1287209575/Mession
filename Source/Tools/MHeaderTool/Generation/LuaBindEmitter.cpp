@@ -1,6 +1,5 @@
 #include "LuaBindEmitter.h"
-#include "Parsing/ClassParser.h"
-#include "Parsing/PropertyParser.h"
+#include "Core/Types.h"
 
 #include <fstream>
 

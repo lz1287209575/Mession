@@ -44,3 +44,5 @@ Makefile
 
 # Tooling state (opencode CLI database, etc.)
 .opencode/
+# AI runtime state
+.reasonix/

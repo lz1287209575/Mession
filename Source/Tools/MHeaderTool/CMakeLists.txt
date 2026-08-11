@@ -7,9 +7,16 @@
 
 # Library TU — contains ProcessFreeFunctions (extracted from MHeaderTool.cpp
 # so tests can link it without colliding with MHeaderTool.cpp's main()).
+# Generation/CodeGenerator.cpp carries the IR-based generator entry points
+# (A2 / Task 7: GenerateHeaderFromIR / GenerateSourceFromIR /
+# EmitAsyncFramesHeaderFromIR). The legacy inline generators still live
+# in CodeGenerator.h; A3 cleanup removes them.
 add_library(mht_lib STATIC
     MHeaderToolLib.cpp
     Generation/LuaBindEmitter.cpp
+    AST/ASTReflectionVisitor.cpp
+    AST/ASTPipeline.cpp
+    Generation/CodeGenerator.cpp
 )
 target_link_libraries(mht_lib PUBLIC
     mession_core
@@ -38,3 +45,48 @@ configure_mession_compile_options(MHeaderTool)
 target_compile_options(MHeaderTool PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/GR->
 )
+
+# A1 — libtooling 集成
+find_package(Clang 17 REQUIRED CONFIG)
+
+target_include_directories(mht_lib PUBLIC ${CLANG_INCLUDE_DIRS})
+target_link_libraries(mht_lib PUBLIC ${CLANG_LIBRARIES})
+
+target_compile_definitions(mht_lib PRIVATE
+    CLANG_VERSION_MAJOR=${LLVM_VERSION_MAJOR}
+    CLANG_VERSION_MINOR=${LLVM_VERSION_MINOR}
+)
+
+target_compile_options(mht_lib PRIVATE
+    $<$<CXX_COMPILER_ID:GNU>:-Wno-unused-parameter>
+)
+
+# Provide individual clang library targets as PUBLIC so transitive consumers
+# (ASTDumpTest, future libtooling executables) link against them. The
+# CLANG_LIBRARIES variable is not populated by the Clang CMake config; instead
+# we enumerate the targets that libtooling-based TUs actually use.
+if(NOT TARGET mht_clang_libs)
+    add_library(mht_clang_libs INTERFACE)
+    target_link_libraries(mht_clang_libs INTERFACE
+        clangTooling
+        clangFrontend
+        clangFrontendTool
+        clangSerialization
+        clangParse
+        clangAST
+        clangASTMatchers
+        clangBasic
+        clangSema
+        clangLex
+        clangEdit
+        clangDriver
+        clangRewrite
+        clangAnalysis
+        clangDynamicASTMatchers
+    )
+endif()
+target_link_libraries(mht_lib PUBLIC mht_clang_libs)
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Tests/CMakeLists.txt")
+    add_subdirectory(Tests)
+endif()
