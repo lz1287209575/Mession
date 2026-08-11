@@ -87,6 +87,7 @@
 - 过期 worktree / 已合分支清理（名实不符的 `improve-service-discovery` 挂载等）
   - 2026-08-11:删除 W1/W2/W3/W4(clientmanifest-emit / debug-baseline-timeout / improve-service-discovery / clienttarget-resolver);详见 `Docs/superpowers/specs/2026-08-11-repo-step1-worktree-cleanup-design.md`。后续候选:`mheadercodegen-ast` 独立重构、`refactor/base-project-structure`、`worktree-mheadertool-refactor`、远端 `origin/worktree-improve-service-discovery` 删除。
   - 2026-08-11 补刀:Step 1 漏删本地分支 `worktree-improve-service-discovery`(与远端同名,1 commit `2f6adb9` 不在 main);Step 2 已 `git branch -D` 删除;远端 `origin/worktree-improve-service-discovery` 仍存在、commit 可从 origin 重新拉回,7 天内 reflog 也可恢复。
+  - 2026-08-11:`scripts/` 2 个 shell(`check-style.sh` + `install-hooks.sh`)合入 `Scripts/`;改 5 处外部引用(CLAUDE.md、TODO.md、CodingStyle.md、.pre-commit-config.yaml、2026-07-14-coding-style/design.md)与脚本自引用。`build/`(旧 Ninja 产物)已删,`Build/`(CLAUDE.md 钦定)保留。
   - **历史 index 漂移待修**:`K8s/*.yaml`(10 个)与 `EditorAssets/Combat/Monsters/Slime.masset.json` 在 HEAD 树中,index 缺、磁盘也无;`git diff --cached` 报 D,但与本次操作无关。下轮决定:用 `git rm` 真的删 / 或 `git checkout HEAD -- <paths>` 还原到工作区。
   - 2026-08-11:删除 `refactor/base-project-structure` 与 `worktree-mheadertool-refactor`(均已合入 main,本地无 worktree 挂载)。同步:忽略 `.opencode/`、防 core.* 重提交;`docs/` → `Docs/` 归一(5 文件已迁)。
 - 统一 `Docs/` vs `docs/` 路径（log design 当前在小写 `docs/`）— 2026-08-11 完成(见上)
