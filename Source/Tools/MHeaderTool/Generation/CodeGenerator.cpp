@@ -52,12 +52,13 @@ SParsedProperty ToLegacyProperty(const mession::headercodegen::SParsedProperty& 
     Out.Name         = In.Name;
     Out.Type         = In.Type.CanonicalName;
     Out.FlagsExpr    = In.FlagsExpr;
+    // Mirror FlagsExpr to MacroArgs so legacy BuildPropertyFlagsExpr
+    // (which scans the MacroArgs token stream, not FlagsExpr) gets the
+    // actual MPROPERTY(...) args instead of an empty string. Without
+    // this, every flagged MPROPERTY(PersistentData|Replicated) emits
+    // EPropertyFlags::None in the registered property.
+    Out.MacroArgs    = In.FlagsExpr;
     Out.Owner        = In.Owner;
-    // MacroArgs / Metadata / PropertyKind are reconstructed from FlagsExpr
-    // for legacy helpers that scan the raw token stream (e.g.
-    // BuildPropertyFlagsExpr). Empty here means the legacy helpers will
-    // treat it as "no explicit flags", which matches the IR's default
-    // (EPropertyFlags::None) when FlagsExpr is empty.
     return Out;
 }
 
