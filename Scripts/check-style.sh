@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/check-style.sh - CI 用的 clang-format 检查脚本
+# Scripts/check-style.sh - CI 用的 clang-format 检查脚本
 # Spec: Docs/superpowers/specs/2026-07-14-coding-style/design.md
 #
 # 退出码:

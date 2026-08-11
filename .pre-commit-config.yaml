@@ -4,7 +4,7 @@
 # 安装:
 #   1. pip install pre-commit
 #   2. pre-commit install
-#   3. bash scripts/install-hooks.sh   (可选,只安装 clang-format 二进制)
+#   3. bash Scripts/install-hooks.sh   (可选,只安装 clang-format 二进制)
 
 # 当 clang-format 缺失时,跳过而不是失败 — 见 hooks[].additional_dependencies
 default_language_version:

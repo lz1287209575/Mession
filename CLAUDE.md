@@ -32,7 +32,7 @@ python3 Scripts/verify_protocol.py
 cmake --build Build --target LogTest -j4 && ./Bin/LogTest
 
 # Style toolchain (C1 landed; bulk format C2–C5 still TODO — see Docs/CodingStyle.md)
-bash scripts/check-style.sh
+bash Scripts/check-style.sh
 ```
 
 ## PoC Topology (current truth)
@@ -96,7 +96,7 @@ UE / Scripts/validate.py
 
 ### Style
 - Full rules: **`Docs/CodingStyle.md`** (ColumnLimit 240, Allman braces, etc.)
-- Tooling: `.clang-format`, `scripts/check-style.sh` (includes reflected-ABI guard), optional pre-commit via `scripts/install-hooks.sh`
+- Tooling: `.clang-format`, `Scripts/check-style.sh` (includes reflected-ABI guard), optional pre-commit via `Scripts/install-hooks.sh`
 - **C1 (docs + tools) is on main; C2–C5 bulk reformat is TODO** — avoid huge format-only PRs mixed with features
 
 ### STL wrapping

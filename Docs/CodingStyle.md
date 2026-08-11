@@ -1,7 +1,7 @@
 # C++ 代码风格规范 (Coding Style)
 
 > 适用范围:`Source/`、`Protocol/`、`tests/` 下所有 C++ 源码。
-> 强制性:本规范由 `.clang-format` + pre-commit + `scripts/check-style.sh` 机器强制;任何与之冲突的个人习惯以本文档为准。
+> 强制性:本规范由 `.clang-format` + pre-commit + `Scripts/check-style.sh` 机器强制;任何与之冲突的个人习惯以本文档为准。
 > 配套:本规范的**设计依据与背景**见 `Docs/superpowers/specs/2026-07-14-coding-style/design.md`。
 
 ---
@@ -606,7 +606,7 @@ clang-format --dry-run --Werror Source/Common/Net/ServiceDiscovery/Endpoint.cpp
 
 ```bash
 # 一次性安装
-bash scripts/install-hooks.sh
+bash Scripts/install-hooks.sh
 
 # 之后每次 commit,pre-commit 会跑 clang-format
 # 失败:git commit 被拒,运行 clang-format -i <file> 修复后重试
@@ -614,7 +614,7 @@ bash scripts/install-hooks.sh
 
 ### 10.3 CI 检查
 
-`scripts/check-style.sh` 对 `Source/` 全部 `.h`/`.cpp` 跑 `clang-format --dry-run --Werror`,失败非零退出。CI 必跑这一步。
+`Scripts/check-style.sh` 对 `Source/` 全部 `.h`/`.cpp` 跑 `clang-format --dry-run --Werror`,失败非零退出。CI 必跑这一步。
 
 ### 10.4 Build/Generated/ 排除
 
@@ -635,7 +635,7 @@ MHeaderTool 生成的代码在 `Build/Generated/`,**不参与**风格检查。
 
 ## 12. 落地进度（TODO）
 
-本文件与工具链（`.clang-format` / `.pre-commit-config.yaml` / `scripts/check-style.sh` / `scripts/install-hooks.sh` / design spec）为 **C1：规范 + 工具**，已先合入 `main`。
+本文件与工具链（`.clang-format` / `.pre-commit-config.yaml` / `Scripts/check-style.sh` / `Scripts/install-hooks.sh` / design spec）为 **C1：规范 + 工具**，已先合入 `main`。
 
 **尚未做（后续单独 PR，避免与功能改动抢 diff）：**
 
@@ -647,7 +647,7 @@ MHeaderTool 生成的代码在 `Build/Generated/`,**不参与**风格检查。
 | **C4** | 全量 format `Source/Tools/**` + `Source/Protocol/**` | TODO |
 | **C5** | `CLAUDE.md` 快查表收口 + 全量 `check-style.sh` / build / validate 验收 | TODO |
 
-约束：C2–C5 期间 **禁止改反射字段名/顺序**（`scripts/check-style.sh` ABI 黑名单）；纯格式变更，不改 runtime 行为。
+约束：C2–C5 期间 **禁止改反射字段名/顺序**（`Scripts/check-style.sh` ABI 黑名单）；纯格式变更，不改 runtime 行为。
 
 实施计划见 worktree / 后续补档：`Docs/superpowers/plans/2026-07-14-coding-style-implementation.md`。
 

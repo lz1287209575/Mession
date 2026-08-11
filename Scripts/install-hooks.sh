@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# scripts/install-hooks.sh - 安装 clang-format 工具链与 pre-commit hook
+# Scripts/install-hooks.sh - 安装 clang-format 工具链与 pre-commit hook
 # Spec: Docs/superpowers/specs/2026-07-14-coding-style/design.md
 #
 # 用法:
-#   bash scripts/install-hooks.sh
+#   bash Scripts/install-hooks.sh
 
 set -euo pipefail
 
@@ -48,4 +48,4 @@ install_precommit
 echo "[install-hooks] done."
 echo "[install-hooks] next steps:"
 echo "  1. add $LOCAL_BIN to PATH:  export PATH=\"$LOCAL_BIN:\$PATH\""
-echo "  2. test with:               bash scripts/check-style.sh"
+echo "  2. test with:               bash Scripts/check-style.sh"

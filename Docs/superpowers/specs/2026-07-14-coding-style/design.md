@@ -8,12 +8,12 @@
 
 ## 0. 一句话
 
-把分散在 `CLAUDE.md`、源码注释、个人习惯里的代码约定合并为 `Docs/CodingStyle.md`,新增 `.clang-format` + `pre-commit` + `scripts/check-style.sh` 做机器强制,一次性把 43 个 `.cpp` + 107 个 `.h` 走完规范——只动格式与文件头注释,不动运行时行为,不动反射字段 ABI。
+把分散在 `CLAUDE.md`、源码注释、个人习惯里的代码约定合并为 `Docs/CodingStyle.md`,新增 `.clang-format` + `pre-commit` + `Scripts/check-style.sh` 做机器强制,一次性把 43 个 `.cpp` + 107 个 `.h` 走完规范——只动格式与文件头注释,不动运行时行为,不动反射字段 ABI。
 
 ## 1. 目标
 
 1. **集中可索引**:把分散约定合并到 `Docs/CodingStyle.md`。`CLAUDE.md` 只保留快查表 + 跳转到该文档。
-2. **机器可强制**:`.clang-format` 强制格式化;`pre-commit` 阻断违规提交;`scripts/check-style.sh` 在 CI 跑同一检查。
+2. **机器可强制**:`.clang-format` 强制格式化;`pre-commit` 阻断违规提交;`Scripts/check-style.sh` 在 CI 跑同一检查。
 3. **全量对齐**:43 个 `.cpp` + 107 个 `.h` 一次性走完规范,代码与文档一一对应。
 4. **关键规约**(完整内容见 § 5):
    - 命名:`M*` 类、`S*` 结构、`E*` 枚举、`I*` 接口、`bXxx` bool、PascalCase 函数/变量、`InXxx/OutXxx` 参数。
@@ -57,7 +57,7 @@
 ├── Docs/
 │   ├── CodingStyle.md               # 新增 — 完整代码风格文档
 │   └── superpowers/specs/2026-07-14-coding-style/design.md  # 本 spec
-├── scripts/
+├── Scripts/
 │   ├── check-style.sh               # 新增 — CI 用风格检查脚本
 │   └── install-hooks.sh             # 新增 — 本地 pre-commit 安装
 └── CLAUDE.md                        # 修改 — 顶部加快查表 + 跳转到 CodingStyle.md
@@ -176,8 +176,8 @@ Cpp20:
 ### 5.7 pre-commit 与 CI 集成
 
 - `.pre-commit-config.yaml` 注册 `clang-format` hook,对暂存文件检查。
-- `scripts/check-style.sh` 对 `Source/` 全部 `.h`/`.cpp` 跑 `clang-format --dry-run --Werror`,失败非零退出。
-- CI 工作流(若存在)新增 step:`bash scripts/check-style.sh`。
+- `Scripts/check-style.sh` 对 `Source/` 全部 `.h`/`.cpp` 跑 `clang-format --dry-run --Werror`,失败非零退出。
+- CI 工作流(若存在)新增 step:`bash Scripts/check-style.sh`。
 
 ## 6. 全量重构执行
 
@@ -212,7 +212,7 @@ Cpp20:
 - 整组 PR 用 5 个独立 commit,任意 commit 可独立 `git revert`。
 - `.clang-format` 是单独 commit,先合入;若后续发现问题,删 `.clang-format` + 清缓存即可。
 - `Docs/CodingStyle.md` 是 markdown,任何错误就地修改不影响代码。
-- pre-commit hook 仅在本地生效,CI 不依赖 hook 本身,只跑 `scripts/check-style.sh`。
+- pre-commit hook 仅在本地生效,CI 不依赖 hook 本身,只跑 `Scripts/check-style.sh`。
 
 ### 7.3 缓解措施
 
@@ -234,7 +234,7 @@ Cpp20:
 5. `find Source -name '*.cpp' -o -name '*.h' | xargs clang-format --dry-run --Werror` 退出码 0。
 6. `Docs/CodingStyle.md` 已写完且每章都有至少一个示例。
 7. `.pre-commit-config.yaml` 实际生效:故意在某个 `.h` 加坏格式,`git commit` 应被拒。
-8. `scripts/check-style.sh` 在 CI 跑通。
+8. `Scripts/check-style.sh` 在 CI 跑通。
 9. **反射 ABI 兼容**:反射字段名数量、字段名拼写、字段顺序在 git diff 中只允许新增、不允许删除/改名(只允许重命名非反射字段)。
 
 ### 8.3 非功能性
