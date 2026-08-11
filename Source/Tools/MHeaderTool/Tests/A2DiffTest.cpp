@@ -1,11 +1,12 @@
 // A2DiffTest — byte-equal regression gate for the AST-based codegen path.
 //
 // Runs the IR pipeline (MASTPipeline::Run + CodeGenerator IR entry points) to
-// /tmp/a2_ir and diffs every shared filename against the legacy string-parser
-// output that already lives in Build/Generated/. Files only one path emits are
-// reported but do not fail the test — that's A3 / follow-up work (MObject /
-// Properties / TypeAliases / bInjection / Metadata IR fields are still empty
-// in the current AST visitor, so IR-side emits are intentionally incomplete).
+// /tmp/a2_ir and diffs every shared filename against the immutable legacy
+// baseline at /tmp/legacy_baseline/ (a one-time copy of
+// /root/Mession/Build/Generated/ taken BEFORE the AST path was introduced —
+// see commit d0785c8, the AST path that overwrote Build/Generated with AST
+// output). Files only one path emits are reported but do not fail the test —
+// that's A3 / follow-up work.
 //
 // Files BOTH paths emit must be byte-equal after timestamp-strip. That is the
 // regression gate for the A2 codegen migration.
@@ -87,7 +88,18 @@ namespace mession::headercodegen {
         }
 
         // --- 3. Bucket legacy-side filenames -------------------------------------
-        const fs::path   LegacyDir = "Build/Generated";
+        // /tmp/legacy_baseline/ is a one-time copy of the pre-AST
+        // /root/Mession/Build/Generated/ (commit d0785c8 overwrote
+        // Build/Generated with AST output, so Build/Generated/ is no longer a
+        // valid legacy baseline). The test prints a warning if the baseline
+        // is missing so a fresh checkout doesn't silently compare against an
+        // empty directory.
+        const fs::path   LegacyDir = "/tmp/legacy_baseline";
+        if (!fs::exists(LegacyDir)) {
+            std::printf("A2DiffTest: WARNING legacy baseline %s does not exist; "
+                        "run `cp -r /root/Mession/Build/Generated/ /tmp/legacy_baseline/` "
+                        "first to establish the pre-AST reference.\n", LegacyDir.c_str());
+        }
         TVector<MString> LegacySide;
         if (fs::exists(LegacyDir)) {
             for (const auto& Entry : fs::directory_iterator(LegacyDir)) {
@@ -108,26 +120,32 @@ namespace mession::headercodegen {
             return false;
         };
 
-        int NumShared     = 0;
-        int NumIdentical  = 0;
-        int NumDivergent  = 0;
-        int NumIROnly     = 0;
-        int NumLegacyOnly = 0;
+        int NumSharedEql   = 0;
+        int NumSharedNeq   = 0;
+        int NumIROnly      = 0;
+        int NumLegacyOnly  = 0;
 
         std::printf("\n=== A2DiffTest per-file comparison (after StripTimestamp) ===\n");
-        std::printf("%-50s  %-9s  %s\n", "Filename", "Status", "Notes");
-        std::printf("%-50s  %-9s  %s\n", "----------------------------------------", "---------", "----------------------------------------");
+        std::printf("%-50s  %-20s  %s\n", "Filename", "Status", "First divergence / note");
+        std::printf("%-50s  %-20s  %s\n", "----------------------------------------", "--------------------", "----------------------------------------");
+
+        // 找到 IR-side / legacy-side 文件名第一个出现差异的行号（返回 MString::npos 时等同完全相等）。
+        auto FirstDivergence = [](const MString& A, const MString& B) -> size_t {
+            const size_t Limit = std::min(A.size(), B.size());
+            for (size_t i = 0; i < Limit; ++i) {
+                if (A[i] != B[i]) return i;
+            }
+            return MString::npos;
+        };
 
         // Shared files: compare both directions so a file present on both sides
         // gets a single row, not two.
         for (const MString& Name : IRSide) {
             if (!Contains(LegacySide, Name)) {
                 ++NumIROnly;
-                std::printf("%-50s  %-9s  %s\n", Name.c_str(), "IR_ONLY", "emitted by AST path; not in legacy Build/Generated — A3 work");
+                std::printf("%-50s  %-20s  %s\n", Name.c_str(), "AST_ONLY", "emitted by AST path; not in legacy baseline — A3 work");
                 continue;
             }
-
-            ++NumShared;
 
             MString IRText     = ReadFile(IRDir / Name);
             MString StrippedIR = IRText;
@@ -139,11 +157,15 @@ namespace mession::headercodegen {
 
             const bool bEqual = (StrippedIR == StrippedLegacy);
             if (bEqual) {
-                ++NumIdentical;
-                std::printf("%-50s  %-9s  %s\n", Name.c_str(), "EQUAL", "");
+                ++NumSharedEql;
+                std::printf("%-50s  %-20s  %s\n", Name.c_str(), "AST_EQL_LEGACY", "");
             } else {
-                ++NumDivergent;
-                std::printf("%-50s  %-9s  %s\n", Name.c_str(), "DIVERGE", "see report; AST path diverges from legacy byte-content");
+                ++NumSharedNeq;
+                const size_t DivPos = FirstDivergence(StrippedIR, StrippedLegacy);
+                MString Note = (DivPos == MString::npos)
+                    ? MString("length differs (ir=") + std::to_string(StrippedIR.size()) + ", legacy=" + std::to_string(StrippedLegacy.size()) + ")"
+                    : MString("first diff at byte ") + std::to_string(DivPos);
+                std::printf("%-50s  %-20s  %s\n", Name.c_str(), "AST_NEQ_LEGACY", Note.c_str());
             }
 
             // EXPECT_TRUE for shared files is the regression gate. Divergences
@@ -152,29 +174,26 @@ namespace mession::headercodegen {
             EXPECT_TRUE(bEqual);
         }
 
-        // Legacy-only files: present in Build/Generated but not emitted by the
-        // AST path. Report them but do not fail — that's A3 / follow-up scope
-        // (MObject / Properties / TypeAliases / bInjection / Metadata IR fields
-        // are still empty, so the AST visitor can't see these types yet).
+        // Legacy-only files: present in legacy baseline but not emitted by the
+        // AST path. Report them but do not fail — that's A3 / follow-up scope.
         for (const MString& Name : LegacySide) {
             if (Contains(IRSide, Name)) {
                 continue;
             }
             ++NumLegacyOnly;
-            std::printf("%-50s  %-9s  %s\n", Name.c_str(), "LEGACY_ONLY", "in legacy Build/Generated; not emitted by AST path yet");
+            std::printf("%-50s  %-20s  %s\n", Name.c_str(), "LEGACY_ONLY", "in legacy baseline; not emitted by AST path yet");
         }
 
         std::printf("\n=== A2DiffTest summary ===\n");
-        std::printf("  shared files   : %d\n", NumShared);
-        std::printf("    identical    : %d\n", NumIdentical);
-        std::printf("    divergent    : %d\n", NumDivergent);
-        std::printf("  IR-only files  : %d\n", NumIROnly);
-        std::printf("  legacy-only    : %d\n", NumLegacyOnly);
-        std::printf("\nShared-file divergences are the regression gate. Legacy-only\n");
+        std::printf("  AST_EQL_LEGACY : %d\n", NumSharedEql);
+        std::printf("  AST_NEQ_LEGACY : %d\n", NumSharedNeq);
+        std::printf("  AST_ONLY       : %d\n", NumIROnly);
+        std::printf("  LEGACY_ONLY    : %d\n", NumLegacyOnly);
+        std::printf("\nAST_NEQ_LEGACY files are the regression gate. LEGACY_ONLY / AST_ONLY\n");
         std::printf("files are not gates — they exist because the AST visitor does not\n");
-        std::printf("yet populate Properties / TypeAliases / bInjection / Metadata, and\n");
-        std::printf("MCLASS / MGENERATED_BODY filtering for MObject is incomplete. That's\n");
-        std::printf("A3 / follow-up work; Task 9 is the measurement, A3 is the fix.\n");
+        std::printf("yet populate every IR field, and MCLASS / MGENERATED_BODY filtering\n");
+        std::printf("for some types is incomplete. That's A3 / follow-up work; Task 9 is\n");
+        std::printf("the measurement, A3 is the fix.\n");
     }
 
 } // namespace mession::headercodegen

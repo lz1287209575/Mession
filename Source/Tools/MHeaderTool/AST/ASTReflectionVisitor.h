@@ -13,6 +13,8 @@ public:
 
     bool TraverseDecl(clang::Decl* D);
     bool VisitCXXRecordDecl(clang::CXXRecordDecl* RD);
+    bool VisitFieldDecl(clang::FieldDecl* FD);
+    bool VisitTypeAliasDecl(clang::TypeAliasDecl* TAD);
     bool VisitFunctionDecl(clang::FunctionDecl* FD);
     bool VisitEnumDecl(clang::EnumDecl* ED);
 

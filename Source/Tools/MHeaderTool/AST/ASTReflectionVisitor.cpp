@@ -75,6 +75,61 @@ bool MASTReflectionVisitor::VisitCXXRecordDecl(clang::CXXRecordDecl* RD)
     return true;
 }
 
+bool MASTReflectionVisitor::VisitFieldDecl(clang::FieldDecl* FD)
+{
+    if (FD->isImplicit()) return true;
+    if (!FD->getBeginLoc().isValid()) return true;
+
+    // 仅在源文本中带 MPROPERTY(...) 的字段算反射属性
+    const MString Prefix = GetSurroundingSourceText(FD->getBeginLoc(), 256);
+    if (Prefix.find("MPROPERTY(") == MString::npos) return true;
+
+    // 找父类对应的 IR.Records 条目
+    const auto* Parent = llvm::dyn_cast<clang::CXXRecordDecl>(FD->getParent());
+    if (!Parent) return true;
+    SParsedRecord* Record = FindRecordByDecl(Parent);
+    if (!Record) return true;
+
+    SParsedProperty Out;
+    Out.Name              = FD->getNameAsString();
+    Out.Type              = QualTypeToSParsedType(FD->getType());
+
+    // 提取 MPROPERTY(...) 的原始实参列表，作为 FlagsExpr 落地
+    // 简化策略：直接复用 ExtractMacroArgs 拿到 args 原串;
+    // 若 MPROPERTY() 无参则 FlagsExpr 为空。
+    if (auto Args = ExtractMacroArgs(Prefix, "MPROPERTY("))
+    {
+        Out.FlagsExpr = *Args;
+        if (Args->find("Injection") != MString::npos)
+        {
+            Out.bInjection = true;
+        }
+        if (auto Owner = ExtractMacroValue(*Args, "Owner"))
+        {
+            Out.Owner = *Owner;
+        }
+    }
+
+    Record->Properties.push_back(std::move(Out));
+    return true;
+}
+
+bool MASTReflectionVisitor::VisitTypeAliasDecl(clang::TypeAliasDecl* TAD)
+{
+    if (TAD->isImplicit()) return true;
+    if (!TAD->getBeginLoc().isValid()) return true;
+
+    // 类型别名：仅记录到顶层 IR.TypeAliases（不挂到 Record.TypeAliases，
+    // 因为 CodeGenerator 走的是顶层 SParsedTypeAlias）
+    SParsedTypeAlias Out;
+    Out.Name          = TAD->getNameAsString();
+    Out.UnderlyingType = TAD->getUnderlyingType().getAsString();
+    Out.HeaderPath    = GetFilePath(TAD->getBeginLoc());
+
+    IR.TypeAliases.push_back(std::move(Out));
+    return true;
+}
+
 bool MASTReflectionVisitor::VisitFunctionDecl(clang::FunctionDecl* FD)
 {
     if (FD->isImplicit()) return true;
