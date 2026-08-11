@@ -14,6 +14,7 @@
 add_library(mht_lib STATIC
     MHeaderToolLib.cpp
     AST/ASTReflectionVisitor.cpp
+    AST/ASTPipeline.cpp
     Generation/CodeGenerator.cpp
 )
 target_link_libraries(mht_lib PUBLIC
