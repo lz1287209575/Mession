@@ -18,6 +18,10 @@ Bin/
 .DS_Store
 Thumbs.db
 
+# Crash dumps (Linux/macOS convention: core.<pid>)
+core
+core.*
+
 # Logs
 *.log
 __pycache__/
@@ -37,3 +41,6 @@ Makefile
 
 # Worktrees (isolated dev workspaces)
 .worktrees/
+
+# Tooling state (opencode CLI database, etc.)
+.opencode/
