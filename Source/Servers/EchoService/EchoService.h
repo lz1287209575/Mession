@@ -12,6 +12,7 @@
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Common/Runtime/Async/MAsync.h"
+#include "Common/Runtime/Async/Awaitable.h"
 #include "Common/Runtime/Async/AwaitMacros.h"
 #include "Common/Net/Rpc/MRpcChannel.h"
 #include "Servers/App/ServiceId.h"
@@ -34,6 +35,12 @@
 
 class MEchoService;
 extern MEchoService* GGlobalEchoService;
+
+// EchoAwait 的 await 目标（A 形态：TAwaitable<F,R,Args...> 的 F）——包装 CallToActor 为可调用。
+// 声明供 #ifdef 体内的 await 表达式引用；定义在 EchoService.cpp。
+SFutureResult<FSampleEchoResponse> CallEchoRemote(const FSampleEchoRequest& Request);
+
+
 
 MSTRUCT()
 struct SEchoServiceConfig
@@ -108,15 +115,7 @@ public:
     // No `Awaits=...` metadata: the await target is the user's expression
     // text, not a macro tag (per spec 2026-07-24 §7.3 v1 inline-body design).
     MFUNCTION(ServerCall, Async)
-    SFutureResult<FSampleEchoResponse> EchoAwait(const FSampleEchoRequest& Request)
-    {
-        auto Frame = MakeShared<MHeaderTool_AsyncFrame_MEchoService_EchoAwait>();
-        Frame->Service = this;
-        Frame->Request = Request;
-        Frame->Ctx = MAsync::MAsyncContext::Current();
-        return AWAIT_OK(MRpcChannel::Get().CallToActor<FSampleEchoResponse>(
-            Request.TargetActorId, "MEchoService", "Echo", Request));
-    }
+    SFutureResult<FSampleEchoResponse> EchoAwait(const FSampleEchoRequest& Request);
 
     // 传输层握手 / 心跳桩——MServerConnection::SendHandshake / SendHeartbeat 会通过
     // MRpc::CallRemote 调 Rpc_OnServerHandshake / Rpc_OnHeartbeat。
@@ -137,3 +136,14 @@ private:
     SEchoServiceConfig Config;
     TMap<uint64, MString> ActorMessages;
 };
+
+// A 形态：await 状态机驱动函数定义（codegen 解析时经宏可见；业务编译宏关只见
+// 声明，运行时由 <Class>_AwaitImpl.mgenerated.cpp 生成实现覆盖）。
+#ifdef MESSION_AWAIT_CODEGEN_SOURCE
+MFUNCTION(ServerCall, Async)
+SFutureResult<FSampleEchoResponse> MEchoService::EchoAwait(const FSampleEchoRequest& Request)
+{
+    return TAwaitable<decltype(&CallEchoRemote), FSampleEchoResponse,
+        const FSampleEchoRequest&>(Request);
+}
+#endif

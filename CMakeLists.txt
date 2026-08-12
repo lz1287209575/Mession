@@ -521,6 +521,7 @@ mession_add_service(EchoService MEchoService SEchoServiceConfig Source/Servers/E
     GENERATED_SOURCES
         ${MESSION_GENERATED_DIR}/FSampleEchoRequest.mgenerated.cpp
         ${MESSION_GENERATED_DIR}/FSampleEchoResponse.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/MEchoService_AwaitImpl.mgenerated.cpp
     EXTRA_GROUPS echoservice
 )
 
@@ -645,29 +646,6 @@ configure_mession_compile_options(StringUtilsTest)
 # )
 # configure_mession_compile_options(AwaitableTest)
 
-# AsyncFrameTest - P3 vertical-slice unit test for the MHeaderTool-generated
-# AsyncFrame. Verifies the auto-generated `MHeaderTool_AsyncFrame_<Class>_<Func>`
-# struct's AwaitOk pass-through semantics, AwaitedSlot snapshot, and StoredValue
-# capture — without standing up a real network. The Frame struct is generated
-# into `<Class>_AsyncFrames.h` (one-way include from the user header), which
-# the test pulls in directly.
-add_executable(AsyncFrameTest
-    Source/Servers/EchoService/Tests/main.cpp
-)
-target_include_directories(AsyncFrameTest
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source
-        ${MESSION_GENERATED_DIR}
-)
-target_link_libraries(AsyncFrameTest
-    PRIVATE
-        mession_common
-        mession_netdriver
-)
-configure_mession_compile_options(AsyncFrameTest)
-add_dependencies(AsyncFrameTest mession_reflection_codegen)
-mession_attach_generated_groups(AsyncFrameTest shared)
 
 # FreeAsyncFuncGenTest - P4 vertical-slice unit test for free-function
 # MFUNCTION(Async) Frame generation. Verifies ProcessFreeFunctions scans

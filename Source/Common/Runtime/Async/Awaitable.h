@@ -39,16 +39,25 @@ public:
     {
     }
 
-    // AsAwaiter() 由 P5 codegen 注入（KD-2 §4.1 / KD-6）：类型层只提供构造与
-    // 存储——TAwaitable 不持有 F 的运行时实例（F 是模板类型参数，业务侧写
-    // 完整三参/两参），codegen 在生成的状态机里直接调用真实函数名 / 绑定
-    // 实际 future 变量。此处占位，防止误用（业务侧 await 表达式在类型层
-    // 单独使用无意义，必须经 codegen 转换）。
+    // AsAwaiter() 由 await 状态机 codegen 注入（KD-2 §4.1 / KD-6）：类型层只提供
+    // 构造与存储——TAwaitable 不持有 F 的运行时实例（F 是模板类型参数），codegen
+    // 在生成的状态机里直接调用真实函数名。此处占位，防止误用。
     auto AsAwaiter()
     {
         static_assert(std::is_void_v<F>,
-            "TAwaitable::AsAwaiter() 由 P5 codegen 注入（KD-2 §4.1 / KD-6）；"
-            "类型层只提供构造与 StoredArgs 存储，运行时 await 由 codegen 生成的状态机驱动");
+            "TAwaitable::AsAwaiter() 由 await 状态机 codegen 注入；类型层只提供构造与存储");
+    }
+
+    // A 形态占位：业务头 `return TAwaitable<F,R>(args);`（#ifdef 保护体，codegen
+    // 解析时可见）需要能编译——本转换保证类型匹配。运行时由 codegen 生成的
+    // 驱动实现覆盖函数定义（业务编译时 #ifdef 体不可见，此转换不参与运行）。
+    operator SFutureResult<R>() const
+    {
+        MPromise<TResult<R, FAppError>> P;
+        P.SetValue(TResult<R, FAppError>::Err(FAppError{
+            "await_not_wired",
+            "TAwaitable 运行时需经 codegen 生成的状态机驱动实现"}));
+        return SFutureResult<R>(P.GetFuture());
     }
 
 private:

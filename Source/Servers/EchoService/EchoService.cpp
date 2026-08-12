@@ -216,3 +216,10 @@ MFuture<TResult<SEmptyServerMessage, FAppError>> MEchoService::Rpc_OnHeartbeat(u
     SEmptyServerMessage Empty{};
     return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Empty));
 }
+
+// EchoAwait 的 await 目标（A 形态包装）——CallToActor 封装为可调用自由函数。
+SFutureResult<FSampleEchoResponse> CallEchoRemote(const FSampleEchoRequest& Request)
+{
+    return MRpcChannel::Get().CallToActor<FSampleEchoResponse>(
+        Request.TargetActorId, "MEchoService", "Echo", Request);
+}

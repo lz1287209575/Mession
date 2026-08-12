@@ -1309,6 +1309,25 @@ public:
     // 本轮：单 await 形态（多 await 串行 / 循环 await 为 await 后续工作包）。
     // 不替换 P4 生成器（KD-16 共存期 = 0 前，P5 产物独立输出）。
 
+    // 参数槽类型：去 const 前缀 + 尾随 &/*（成员不能是引用/const 值）
+    static MString StripParamQualifiers(MString TypeName)
+    {
+        while (TypeName.rfind("const ", 0) == 0)
+        {
+            TypeName = TypeName.substr(6);
+            const size_t B = TypeName.find_first_not_of(" \t");
+            TypeName = (B == MString::npos) ? MString() : TypeName.substr(B);
+        }
+        while (!TypeName.empty()
+            && (TypeName.back() == '&' || TypeName.back() == '*'))
+        {
+            TypeName.pop_back();
+            const size_t E = TypeName.find_last_not_of(" \t");
+            TypeName = (E == MString::npos) ? MString() : TypeName.substr(0, E + 1);
+        }
+        return TypeName;
+    }
+
     // 从 `TAwaitable<F, R, Args...>(args...)` 提取 F / R / args 文本
     static bool ParseTAwaitableText(
         const MString& Text, MString& OutF, MString& OutR, MString& OutArgs)
@@ -1836,7 +1855,7 @@ public:
         Out << "    // 函数参数\n";
         for (const auto& P : Func.Params)
         {
-            Out << "    " << P.Type.CanonicalName << " " << P.Name << "{};\n";
+            Out << "    " << StripParamQualifiers(P.Type.CanonicalName) << " " << P.Name << "{};\n";
         }
         bool bHasLive = false;
         for (const auto& L : Func.LiveAcrossAwait)

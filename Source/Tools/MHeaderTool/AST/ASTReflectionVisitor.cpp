@@ -303,13 +303,16 @@ bool MASTReflectionVisitor::VisitFunctionDecl(clang::FunctionDecl* FD)
         {
             if (auto* Found = FindRecordByDecl(RD))
             {
-                // 多个 TU 会访问同一类型——同一函数（Name + SourceLine）去重
-                for (const auto& F : Found->Functions)
+                // 去重：同名函数（声明 + #ifdef 定义 / 多 TU 重复）只保留一条——
+                // 优先保留有体的（定义），无体声明丢弃（A 形态业务：声明 + #ifdef 定义）。
+                for (auto& F : Found->Functions)
                 {
-                    if (F.Name == Func.Name && F.SourceLine == Func.SourceLine)
+                    if (F.Name != Func.Name) continue;
+                    if (F.AsyncBody.empty() && !Func.AsyncBody.empty())
                     {
-                        return true;
+                        F = std::move(Func);  // 定义替换声明
                     }
+                    return true;
                 }
                 Found->Functions.push_back(std::move(Func));
                 Found->bHasAsyncFunctions = Found->bHasAsyncFunctions || Func.bIsAsync;
