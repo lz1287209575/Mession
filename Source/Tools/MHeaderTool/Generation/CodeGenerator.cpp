@@ -379,7 +379,7 @@ SParsedClass ToLegacyEnum(const mession::headercodegen::SParsedEnum& In);  // �
 // ToLegacyClasses — 整树 IR → legacy SParsedClass 集合
 // ---------------------------------------------------------------------------
 //
-// A2 follow-up (P5 merge)。ManifestGenerators / LuaBindEmitter 仍消费
+// A2 follow-up (AST 重构 merge)。ManifestGenerators / LuaBindEmitter 仍消费
 // legacy `SParsedClass`（Core/Types.h）；AST 路径产出 `SParseIR`。这里
 // 复用 anonymous namespace 里的 ToLegacyClass（同一 TU 可见），逐 Record
 // 转换，与 GenerateHeaderFromIR 内部的单 Record 转换完全一致。

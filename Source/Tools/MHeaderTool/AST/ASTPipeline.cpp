@@ -259,6 +259,9 @@ SParseIR MASTPipeline::Run(const SOptions& InOptions)
                 if (A == "-Winvalid-pch") continue;
                 NewArgs.push_back(A);
             }
+            // await：业务头用 #ifdef MESSION_AWAIT_CODEGEN_SOURCE 保护 TAwaitable 体——
+            // 正常编译只见声明，MHeaderTool 解析时开宏才能看到 await 体。
+            NewArgs.push_back("-DMESSION_AWAIT_CODEGEN_SOURCE");
             C.CommandLine = std::move(NewArgs);
             Stripped.push_back(std::move(C));
         }
@@ -293,9 +296,11 @@ SParseIR MASTPipeline::Run(const SOptions& InOptions)
         const MString IncludeArg = MString("-I") + SourceRootAbs.generic_string();
         // fallback 直接解析 .h 文件：clang 对 .h 默认按 C 语言（struct 成员
         // 初始化在 C 里非法，如 `int X = 0;`）——必须显式 -x c++。
+        // 同样开 await codegen 宏（业务头 #ifdef MESSION_AWAIT_CODEGEN_SOURCE 保护 TAwaitable 体）。
         CDB = std::make_unique<clang::tooling::FixedCompilationDatabase>(
             SourceRootAbs.generic_string(),
-            TVector<MString>{ "-fsyntax-only", "-x", "c++", IncludeArg });
+            TVector<MString>{ "-fsyntax-only", "-x", "c++",
+                              "-DMESSION_AWAIT_CODEGEN_SOURCE", IncludeArg });
         CollectHeaders(SourceRootAbs, SourceFiles);
     }
 

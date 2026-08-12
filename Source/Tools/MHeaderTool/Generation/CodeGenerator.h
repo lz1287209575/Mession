@@ -60,14 +60,14 @@ public:
     // IR 版本的 AsyncFrames 头文件 emit（A3 cleanup 删除 legacy 版本）
     MString EmitAsyncFramesHeaderFromIR(const SParsedRecord& InRecord) const;
 
-    // A2 follow-up (P5 merge) — 把整个 IR 转成 legacy SParsedClass 集合，
+    // A2 follow-up (AST 重构 merge) — 把整个 IR 转成 legacy SParsedClass 集合，
     // 供 ManifestGenerators（CMake/Client manifest）与 LuaBindEmitter 消费。
     // 复用 MCodeGenerator.cpp 内的 ToLegacyClass shim，保证与逐 Record
     // 生成路径（GenerateHeaderFromIR 等）字节一致。
     TVector<SParsedClass> ToLegacyClasses(
         const mession::headercodegen::SParseIR& IR) const;
 
-    // A2 follow-up (P5 merge) — enum 生成。AST 路径的 SParseIR::Enums 走
+    // A2 follow-up (AST 重构 merge) — enum 生成。AST 路径的 SParseIR::Enums 走
     // legacy GenerateHeader/GenerateSource（经 ToLegacyEnum shim），与
     // 字符串解析版输出一致（namespace 级 scoped enum 为 no-op 注册 stub）。
     MString GenerateEnumHeaderFromIR(
@@ -1302,11 +1302,11 @@ public:
     // =====================================================================
     //
     // 输入：函数（bIsAsync + AwaitSites 含 TAwaitableCall + LiveAcrossAwait）。
-    // 输出：独立 `<Class>_P5AsyncFrames.h` 中的 Frame struct——
+    // 输出：独立 `<Class>_AwaitStateMachine.h` 中的 Frame struct——
     //   Start()  触发第一个 await（调 F(args) → AsAwaiter）
     //   Resume() 挂起完成后恢复（awaiter 已 ready → AwaitResume 取值）
     //   GetFuture() 返回 SFutureResult<R>（Promise 驱动）
-    // 本轮：单 await 形态（多 await 串行 / 循环 await 为 P5 后续工作包）。
+    // 本轮：单 await 形态（多 await 串行 / 循环 await 为 await 后续工作包）。
     // 不替换 P4 生成器（KD-16 共存期 = 0 前，P5 产物独立输出）。
 
     // 从 `TAwaitable<F, R, Args...>(args...)` 提取 F / R / args 文本
@@ -1467,7 +1467,7 @@ public:
     // 生成循环 await 状态机 Frame（KD-13 最小形态：单 for + 体内单 await）。
     // LoopEntry: cond 判断 → LoopBody(await) / LoopExit(return)
     // LoopBody 完成: 累加 → incr → LoopEntry
-    MString EmitP5LoopAsyncFrame(
+    MString EmitAwaitLoopStateMachine(
         const MString& NamePrefix,
         const fs::path& HeaderPath,
         const mession::headercodegen::SParsedFunction& Func,
@@ -1485,12 +1485,12 @@ public:
         }
 
         const MString FrameName =
-            "MHeaderTool_P5Frame_" + SanitizeIdentifier(NamePrefix) +
+            "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(NamePrefix) +
             "_" + SanitizeIdentifier(Func.Name);
 
         std::ostringstream Out;
         Out << "// " << FrameName
-            << ": P5 循环 await 状态机 Frame（KD-13 最小形态: 单 for + 单 await）\n";
+            << ": 循环 await 状态机 Frame（KD-13 最小形态: 单 for + 单 await）\n";
         Out << "struct " << FrameName << "\n";
         Out << "{\n";
         for (const auto& P : Func.Params)
@@ -1680,11 +1680,11 @@ public:
         return true;
     }
 
-    // 生成单个函数的 P5 Frame（单 await）。消费 IR 原生类型——AwaitSites /
+    // 生成单个函数的 await Frame（单 await）。消费 IR 原生类型——AwaitSites /
     // LiveAcrossAwait 只在 IR 的 SParsedFunction 上（legacy shim 不携带）。
-    // 生成单个函数的 P5 Frame（多 await 串行，KD-9/KD-12）。
+    // 生成单个函数的 await Frame（多 await 串行，KD-9/KD-12）。
     // 消费 IR 原生类型——AwaitSites/LiveAcrossAwait 只在 IR SParsedFunction 上。
-    MString EmitP5AsyncFrame(
+    MString EmitAwaitStateMachineFrame(
         const MString& NamePrefix,
         const fs::path& HeaderPath,
         const mession::headercodegen::SParsedFunction& Func) const
@@ -1703,7 +1703,7 @@ public:
         // 循环 await（KD-13）：AsyncBody 含 for 且首个 await 在循环体内 → 循环生成器
         if (Func.AsyncBody.find("for (") != MString::npos)
         {
-            const MString LoopFrame = EmitP5LoopAsyncFrame(NamePrefix, HeaderPath, Func, Sites[0]);
+            const MString LoopFrame = EmitAwaitLoopStateMachine(NamePrefix, HeaderPath, Func, Sites[0]);
             if (!LoopFrame.empty()) return LoopFrame;
             // 解析失败则回退串行路径
         }
@@ -1782,7 +1782,7 @@ public:
         }
 
         const MString FrameName =
-            "MHeaderTool_P5Frame_" + SanitizeIdentifier(NamePrefix) +
+            "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(NamePrefix) +
             "_" + SanitizeIdentifier(Func.Name);
 
         // 生成"触发 await K"块（ready 路径内联展开后续 await；缩进统一 8 空格）。
@@ -1823,7 +1823,7 @@ public:
         };
 
         std::ostringstream Out;
-        Out << "// " << FrameName << ": P5 状态机 Frame（await 串行, KD-9/KD-12）\n";
+        Out << "// " << FrameName << ": await 状态机 Frame（串行, KD-9/KD-12）\n";
         Out << "struct " << FrameName << "\n";
         Out << "{\n";
         Out << "    // 函数参数\n";
@@ -1932,8 +1932,8 @@ public:
         return Out.str();
     }
 
-    // 生成 `<Class>_P5AsyncFrames.h`（含该 Record 所有 async 函数的 P5 Frame）
-    MString EmitP5AsyncFramesHeader(
+    // 生成 `<Class>_AwaitStateMachine.h`（含该 Record 所有 async 函数的 await Frame）
+    MString EmitAwaitStateMachineHeader(
         const mession::headercodegen::SParsedRecord& Record) const
     {
         std::ostringstream Out;
@@ -1941,13 +1941,13 @@ public:
         for (const auto& F : Record.Functions)
         {
             if (!F.bIsAsync) continue;
-            const MString Frame = EmitP5AsyncFrame(Record.Name, Record.HeaderPath, F);
+            const MString Frame = EmitAwaitStateMachineFrame(Record.Name, Record.HeaderPath, F);
             if (!Frame.empty())
             {
                 if (!bAny)
                 {
                     Out << "#pragma once\n";
-                    Out << "// Generated by MHeaderTool (P5 状态机, 单 await 形态)\n";
+                    Out << "// Generated by MHeaderTool (await 状态机, 单 await 形态)\n";
                     Out << "// Source: " << Record.HeaderPath.string() << "\n\n";
                     Out << "#include \"Common/Runtime/Async/MAsync.h\"\n";
                     Out << "#include \"Common/Runtime/Async/Awaitable.h\"\n";
@@ -1961,9 +1961,9 @@ public:
         return bAny ? Out.str() : MString();
     }
 
-    // 自由函数 P5 Frame（AsyncDemo2 形态）：按 HeaderPath 分组输出，
+    // 自由函数 await Frame（AsyncDemo2 形态）：按 HeaderPath 分组输出，
     // Frame 名前缀 Free（对齐 P4 EmitFreeAsyncStateMachine 命名）。
-    MString EmitP5FreeAsyncFramesHeader(
+    MString EmitFreeAwaitStateMachineHeader(
         const TVector<mession::headercodegen::SParsedFunction>& FreeFuncs,
         const fs::path& HeaderPath) const
     {
@@ -1972,13 +1972,13 @@ public:
         for (const auto& F : FreeFuncs)
         {
             if (!F.bIsAsync) continue;
-            const MString Frame = EmitP5AsyncFrame("Free", HeaderPath, F);
+            const MString Frame = EmitAwaitStateMachineFrame("Free", HeaderPath, F);
             if (!Frame.empty())
             {
                 if (!bAny)
                 {
                     Out << "#pragma once\n";
-                    Out << "// Generated by MHeaderTool (P5 状态机, 自由函数)\n";
+                    Out << "// Generated by MHeaderTool (await 状态机, 自由函数)\n";
                     Out << "// Source: " << HeaderPath.string() << "\n\n";
                     Out << "#include \"Common/Runtime/Async/MAsync.h\"\n";
                     Out << "#include \"Common/Runtime/Async/Awaitable.h\"\n";
@@ -1990,6 +1990,50 @@ public:
             }
         }
         return bAny ? Out.str() : MString();
+    }
+
+    // 生成 await 状态机驱动 函数实现（对接 await Frame）：创建 Frame → 填参数槽 → Start → GetFuture。
+    // 业务头声明 + #ifdef MESSION_AWAIT_CODEGEN_SOURCE 内联体（codegen 解析用），
+    // 实现生成到 .AwaitImpl.mgenerated.cpp，链接时覆盖。
+    MString EmitAwaitFuncImpl(
+        const mession::headercodegen::SParsedRecord& Record,
+        const mession::headercodegen::SParsedFunction& Func) const
+    {
+        bool bHasAwait = false;
+        for (const auto& S : Func.AwaitSites)
+        {
+            if (S.Kind == mession::headercodegen::EAwaitSiteKind::TAwaitableCall)
+            {
+                bHasAwait = true;
+                break;
+            }
+        }
+        if (!bHasAwait) return {};
+
+        const MString FrameName =
+            "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(Record.Name) +
+            "_" + SanitizeIdentifier(Func.Name);
+        const MString ReturnType = Func.ReturnType.CanonicalName;
+
+        std::ostringstream Out;
+        Out << "// await 状态机驱动函数实现（codegen 生成，驱动状态机 Frame）\n";
+        Out << ReturnType << " " << Record.Name << "::" << Func.Name << "(";
+        for (size_t I = 0; I < Func.Params.size(); ++I)
+        {
+            if (I) Out << ", ";
+            Out << Func.Params[I].Type.CanonicalName << " " << Func.Params[I].Name;
+        }
+        Out << ")\n";
+        Out << "{\n";
+        Out << "    auto Frame = MakeShared<" << FrameName << ">();\n";
+        for (const auto& P : Func.Params)
+        {
+            Out << "    Frame->" << P.Name << " = " << P.Name << ";\n";
+        }
+        Out << "    Frame->Start();\n";
+        Out << "    return Frame->GetFuture();\n";
+        Out << "}\n";
+        return Out.str();
     }
 
     SOptions Options_;

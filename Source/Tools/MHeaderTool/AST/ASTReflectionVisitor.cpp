@@ -396,7 +396,7 @@ void MASTReflectionVisitor::CollectAwaitSites(
             return true;
         }
 
-        // P5：TAwaitable<F, R, Args...>(...) 是类构造。表达式形态是临时对象
+        // await：TAwaitable<F, R, Args...>(...) 是类构造。表达式形态是临时对象
         //（CXXTemporaryObjectExpr，独立回调）；变量声明形态是 CXXConstructExpr。
         // 都不是 CallExpr——VisitCallExpr 收集不到，这里补两处。
         bool CollectTAwaitable(clang::Expr* E)
@@ -428,7 +428,7 @@ void MASTReflectionVisitor::CollectAwaitSites(
             return CollectTAwaitable(CE);
         }
 
-        // P5 业务形态：`TAwaitable<F, R, Args...>(args...)` 作为表达式是
+        // await 业务形态：`TAwaitable<F, R, Args...>(args...)` 作为表达式是
         // 函数式转换（CXXFunctionalCastExpr），不是构造/临时对象。
         bool VisitCXXFunctionalCastExpr(clang::CXXFunctionalCastExpr* CE)
         {
