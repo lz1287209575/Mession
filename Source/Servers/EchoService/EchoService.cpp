@@ -1,5 +1,4 @@
 #include "Servers/EchoService/EchoService.h"
-#include "MEchoService_AwaitStateMachine.h"
 #include "Common/Net/Rpc/MRpcChannel.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Net/Rpc/RpcTransport.h"
@@ -226,11 +225,12 @@ SFutureResult<FSampleEchoResponse> CallEchoRemote(const FSampleEchoRequest& Requ
 }
 
 
-// MEchoService::EchoAwait — MFUNCTION(Async) 业务实现（用生成的状态机 Frame 驱动）
+// MFUNCTION(ServerCall, Async) 业务逻辑体（codegen 输入——方案 B：体在 .cpp）
+#ifdef MESSION_AWAIT_CODEGEN_SOURCE
+MFUNCTION(ServerCall, Async)
 SFutureResult<FSampleEchoResponse> MEchoService::EchoAwait(const FSampleEchoRequest& Request)
 {
-    auto Frame = MakeShared<MHeaderTool_AwaitFrame_MEchoService_EchoAwait>();
-    Frame->Request = Request;
-    Frame->Start();
-    return Frame->GetFuture();
+    return TAwaitable<decltype(&CallEchoRemote), FSampleEchoResponse,
+        const FSampleEchoRequest&>(Request);
 }
+#endif

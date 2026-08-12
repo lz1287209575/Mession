@@ -137,13 +137,3 @@ private:
     TMap<uint64, MString> ActorMessages;
 };
 
-// A 形态：await 状态机驱动函数定义（codegen 解析时经宏可见；业务编译宏关只见
-// 声明，运行时由 <Class>_AwaitImpl.mgenerated.cpp 生成实现覆盖）。
-#ifdef MESSION_AWAIT_CODEGEN_SOURCE
-MFUNCTION(ServerCall, Async)
-SFutureResult<FSampleEchoResponse> MEchoService::EchoAwait(const FSampleEchoRequest& Request)
-{
-    return TAwaitable<decltype(&CallEchoRemote), FSampleEchoResponse,
-        const FSampleEchoRequest&>(Request);
-}
-#endif

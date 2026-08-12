@@ -1004,14 +1004,28 @@ public:
         // ClangTool 并行解析多个 TU 时会 chdir 到各 compile_commands 的
         // directory（Build/ 下，且线程间互相干扰），fs::current_path() 不可用。
         // /root/Mession/Source/Servers/... → Servers/...
-        const MString P = headerPath.generic_string();
+        MString P = headerPath.generic_string();
         const MString Needle = "/Source/";
         const size_t Pos = P.find(Needle);
         if (Pos != MString::npos)
         {
-            return P.substr(Pos + Needle.size());
+            P = P.substr(Pos + Needle.size());
         }
-        return headerPath.filename().generic_string();
+        else
+        {
+            P = headerPath.filename().generic_string();
+        }
+        // 体在 .cpp（方案 B）时，生成实现 include 同名 .h（声明）而非 .cpp
+        const MString Lower = P;
+        if (Lower.size() > 4
+            && (Lower.substr(Lower.size() - 4) == ".cpp"
+                || Lower.substr(Lower.size() - 4) == ".cc"
+                || Lower.substr(Lower.size() - 3) == ".cxx"))
+        {
+            const size_t Dot = P.find_last_of('.');
+            if (Dot != MString::npos) P = P.substr(0, Dot) + ".h";
+        }
+        return P;
     }
 
     const char* GetTypeKindName(EParsedTypeKind kind) const
