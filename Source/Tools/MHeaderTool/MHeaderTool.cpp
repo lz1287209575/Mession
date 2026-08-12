@@ -217,6 +217,25 @@ int main(int argc, char** argv)
             const fs::path BaseName = fs::path(HeaderStr).stem();
             WriteFile(Options.OutputDir / (SanitizeIdentifier(BaseName.string()) + "_FreeAsyncFrames.mgenerated.h"),
                 FreeCode);
+
+        }
+    }
+
+    // P5 — 自由函数状态机 Frame（IR 原生分组——AwaitSites/LiveAcrossAwait
+    // 只在 IR SParsedFunction 上，legacy SFreeAsyncFunc 不携带）
+    {
+        std::map<fs::path, TVector<mession::headercodegen::SParsedFunction>> P5FreeByHeader;
+        for (const auto& Fn : IR.FreeFunctions)
+        {
+            P5FreeByHeader[Fn.HeaderPath].push_back(Fn);
+        }
+        for (const auto& [HeaderStr, Funcs] : P5FreeByHeader)
+        {
+            const MString P5Free = CodeGen.EmitP5FreeAsyncFramesHeader(Funcs, fs::path(HeaderStr));
+            if (P5Free.empty()) continue;
+            const fs::path BaseName = fs::path(HeaderStr).stem();
+            WriteFile(Options.OutputDir / (SanitizeIdentifier(BaseName.string()) + "_P5FreeAsyncFrames.h"),
+                P5Free);
         }
     }
 
