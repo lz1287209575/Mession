@@ -177,6 +177,57 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
     {
         return GetResult().GetError();
     }
+
+    // ============================================
+    // P5 类型层 — SAwaiter / AsAwaiter（KD-1, spec 2026-07-30-async-p5）
+    // ============================================
+    //
+    // 对齐 C# `GetAwaiter()` 协议层：任何返回 SFutureResult<T> 的表达式
+    // 都可被 await（codegen 经 TAwaitable 生成状态机）。三方法：
+    //   AwaitReady()           — 是否已就绪（同步路径不挂起）
+    //   AwaitSuspend(FrameT*)  — 未就绪时把续体（Frame->Resume()）挂到 Then
+    //   AwaitResume()          — 就绪后取值；Err 抛 FFutureResultError
+    // 协议层完全通用：新增 awaitable 类型只需实现这三方法（KD-1 §3.2）。
+    struct SAwaiter
+    {
+        SFutureResult<T> Self;
+
+        bool AwaitReady() const noexcept
+        {
+            return Self.IsReady();
+        }
+
+        template <typename FrameT>
+        void AwaitSuspend(FrameT* Frame)
+        {
+            // Frame 由 P5 codegen 生成（业务侧不可见，KD-6）；此处只依赖
+            // 其 Resume() 契约——future 完成时恢复状态机执行。
+            Self.Then([Frame](MFuture<TResult<T, FAppError>> /*F*/) mutable
+            {
+                Frame->Resume();
+            });
+        }
+
+        T AwaitResume()
+        {
+            const TResult<T, FAppError>& Result = Self.GetResult();
+            if (Result.IsErr())
+            {
+                throw FFutureResultError(Result.GetError());
+            }
+            if constexpr (!std::is_void_v<T>)
+            {
+                return Result.GetValue();
+            }
+        }
+    };
+
+    SAwaiter AsAwaiter()
+    {
+        SAwaiter Awaiter;
+        Awaiter.Self = *this;  // awaiter 持 future 副本（KD-1 §3.2）
+        return Awaiter;
+    }
 };
 
 // ============================================

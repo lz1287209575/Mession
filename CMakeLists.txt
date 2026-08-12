@@ -579,6 +579,22 @@ target_link_libraries(MAsyncTest
 )
 configure_mession_compile_options(MAsyncTest)
 
+# AwaitableTest — P5 类型层：SAwaiter 三方法 + TAwaitable 模板（KD-1 / KD-2）
+# AwaitableTest — P5 类型层：SAwaiter 三方法 + TAwaitable 模板（KD-1 / KD-2）
+add_executable(AwaitableTest
+    Source/Common/Runtime/Async/Tests/AwaitableTestMain.cpp
+)
+target_include_directories(AwaitableTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+)
+target_link_libraries(AwaitableTest
+    PRIVATE
+        mession_common
+)
+configure_mession_compile_options(AwaitableTest)
+
 # StringUtilsTest - MFormat / MStringBuilder unit tests
 # StringUtilsTestMain.cpp #includes TestStringUtilsFormat.cpp directly (see file
 # comment for rationale); do not add TestStringUtilsFormat.cpp to the source list
