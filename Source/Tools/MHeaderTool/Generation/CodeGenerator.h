@@ -1601,15 +1601,17 @@ public:
         Out << "\n";
         Out << "    void Finish()\n";
         Out << "    {\n";
-        if (!PostReturnExpr.empty())
+        if (!PostReturnExpr.empty()
+            && PostReturnExpr.find("TAwaitable<") == MString::npos)
         {
             Out << "        Promise.SetValue(TResult<" << R
                 << ", FAppError>::Ok(" << PostReturnExpr << "));\n";
         }
         else
         {
+            // A 形态：`return TAwaitable<F,R>(args)`——await 结果直接作为函数返回值
             Out << "        Promise.SetValue(TResult<" << R
-                << ", FAppError>::Ok());\n";
+                << ", FAppError>::Ok(std::move(AwaitResult1)));\n";
         }
         Out << "    }\n";
         Out << "\n";
@@ -1798,6 +1800,11 @@ public:
             {
                 Out += Indent + "    " + AssignVar[K] + " = " + AN + "->AwaitResume();\n";
             }
+            else
+            {
+                Out += Indent + "    AwaitResult" + std::to_string(K + 1) +
+                    " = " + AN + "->AwaitResume();\n";
+            }
             if (!SegCode[K].empty())
             {
                 Out += Indent + "    // await " + std::to_string(K + 1) + " 完成后续业务代码\n";
@@ -1855,6 +1862,8 @@ public:
         for (size_t K = 0; K < N; ++K)
         {
             Out << "    TOptional<SFutureResult<" << R[K] << ">::SAwaiter> Awaiter" << (K + 1) << ";\n";
+            // 裸 await（无赋值变量）时结果暂存槽；有赋值变量时冗余但保持（简化生成）
+            Out << "    " << R[K] << " AwaitResult" << (K + 1) << "{};\n";
         }
         Out << "    MPromise<TResult<" << R[0] << ", FAppError>> Promise;\n";
         Out << "    int State = 0;  // 0=初始, K=等待第 K 个 await 完成\n";
@@ -1891,6 +1900,10 @@ public:
             {
                 Out << "            " << AssignVar[K - 1] << " = Awaiter" << K << "->AwaitResume();\n";
             }
+            else
+            {
+                Out << "            AwaitResult" << K << " = Awaiter" << K << "->AwaitResume();\n";
+            }
             if (!SegCode[K - 1].empty() && K < N)
             {
                 Out << "            // await " << K << " 后续业务代码\n";
@@ -1912,15 +1925,17 @@ public:
         Out << "\n";
         Out << "    void Finish()\n";
         Out << "    {\n";
-        if (!PostReturnExpr.empty())
+        if (!PostReturnExpr.empty()
+            && PostReturnExpr.find("TAwaitable<") == MString::npos)
         {
             Out << "        Promise.SetValue(TResult<" << R[0]
                 << ", FAppError>::Ok(" << PostReturnExpr << "));\n";
         }
         else
         {
+            // A 形态：`return TAwaitable<F,R>(args)`——await 结果直接作为函数返回值
             Out << "        Promise.SetValue(TResult<" << R[0]
-                << ", FAppError>::Ok());\n";
+                << ", FAppError>::Ok(std::move(AwaitResult" << N << ")));\n";
         }
         Out << "    }\n";
         Out << "\n";
@@ -1995,8 +2010,10 @@ public:
     // 生成 await 状态机驱动 函数实现（对接 await Frame）：创建 Frame → 填参数槽 → Start → GetFuture。
     // 业务头声明 + #ifdef MESSION_AWAIT_CODEGEN_SOURCE 内联体（codegen 解析用），
     // 实现生成到 .AwaitImpl.mgenerated.cpp，链接时覆盖。
+    // 生成 await 状态机驱动函数实现（类成员或自由函数）。
+    // NamePrefix: 类名（成员，输出 Class::Func）或 "Free"（自由，输出 Func）。
     MString EmitAwaitFuncImpl(
-        const mession::headercodegen::SParsedRecord& Record,
+        const MString& NamePrefix,
         const mession::headercodegen::SParsedFunction& Func) const
     {
         bool bHasAwait = false;
@@ -2011,13 +2028,18 @@ public:
         if (!bHasAwait) return {};
 
         const MString FrameName =
-            "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(Record.Name) +
+            "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(NamePrefix) +
             "_" + SanitizeIdentifier(Func.Name);
         const MString ReturnType = Func.ReturnType.CanonicalName;
 
         std::ostringstream Out;
         Out << "// await 状态机驱动函数实现（codegen 生成，驱动状态机 Frame）\n";
-        Out << ReturnType << " " << Record.Name << "::" << Func.Name << "(";
+        Out << ReturnType << " ";
+        if (NamePrefix != "Free")
+        {
+            Out << NamePrefix << "::";
+        }
+        Out << Func.Name << "(";
         for (size_t I = 0; I < Func.Params.size(); ++I)
         {
             if (I) Out << ", ";
