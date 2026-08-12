@@ -15,21 +15,21 @@ namespace fs = std::filesystem;
 
 // Defined in MHeaderToolLib.cpp (extracted from MHeaderTool.cpp so tests can
 // link the function without colliding with MHeaderTool.cpp's main()).
-std::vector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
-    const std::map<fs::path, std::string>& FileContents);
+TVector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
+    const TMap<fs::path, MString>& FileContents);
 
-static TMap<fs::path, std::string> OneHeader(
-    const std::string& HeaderName,
-    const std::string& Body)
+static TMap<fs::path, MString> OneHeader(
+    const MString& HeaderName,
+    const MString& Body)
 {
-    TMap<fs::path, std::string> Map;
+    TMap<fs::path, MString> Map;
     Map[fs::path("/tmp/") / HeaderName] = Body;
     return Map;
 }
 
 TEST_CASE(FreeAsyncFunc_PlainAsync_Accepted)
 {
-    const std::string Header =
+    const MString Header =
         "#pragma once\n"
         "namespace myns {\n"
         "MFUNCTION(Async)\n"
@@ -42,17 +42,17 @@ TEST_CASE(FreeAsyncFunc_PlainAsync_Accepted)
     EXPECT_TRUE(Funcs[0].ResponseType == "int");
 
     // Round-trip: feed into the generator and verify the Frame struct name.
-    MHT::CodeGenerator Gen(MHT::SOptions{});
-    std::string Out = Gen.EmitFreeAsyncFramesHeader(
+    MHT::MCodeGenerator Gen(MHT::SOptions{});
+    MString Out = Gen.EmitFreeAsyncFramesHeader(
         Funcs, fs::path("/tmp/ComputeAsync.h"));
-    EXPECT_TRUE(Out.find("MHeaderTool_AsyncFrame_Free_ComputeAsync") != std::string::npos);
-    EXPECT_TRUE(Out.find("SFutureResult<int> AwaitedSlot;") != std::string::npos);
-    EXPECT_TRUE(Out.find("int StoredValue") != std::string::npos);
+    EXPECT_TRUE(Out.find("MHeaderTool_AsyncFrame_Free_ComputeAsync") != MString::npos);
+    EXPECT_TRUE(Out.find("SFutureResult<int> AwaitedSlot;") != MString::npos);
+    EXPECT_TRUE(Out.find("int StoredValue") != MString::npos);
 }
 
 TEST_CASE(FreeAsyncFunc_ServerCallAsync_Rejected)
 {
-    const std::string Header =
+    const MString Header =
         "#pragma once\n"
         "namespace myns {\n"
         "MFUNCTION(ServerCall, Async)\n"
@@ -67,10 +67,10 @@ TEST_CASE(FreeAsyncFunc_ServerCallAsync_Rejected)
     catch (const std::runtime_error& ex)
     {
         bThrew = true;
-        const std::string Msg = ex.what();
-        EXPECT_TRUE(Msg.find("ServerCall") != std::string::npos);
-        EXPECT_TRUE(Msg.find("2026-07-24") != std::string::npos);
-        EXPECT_TRUE(Msg.find("2026-07-28") != std::string::npos);
+        const MString Msg = ex.what();
+        EXPECT_TRUE(Msg.find("ServerCall") != MString::npos);
+        EXPECT_TRUE(Msg.find("2026-07-24") != MString::npos);
+        EXPECT_TRUE(Msg.find("2026-07-28") != MString::npos);
     }
     EXPECT_TRUE(bThrew);
 }
@@ -83,7 +83,7 @@ TEST_CASE(FreeAsyncFuncGenTest_HeaderWithMFUNCTIONInComment_Ignored)
     // further down. Without the comment-skip pre-pass in MHeaderToolLib.cpp,
     // a fake `future`/`whatever` entry used to appear because comment bytes
     // were scanned by the literal `MFUNCTION(` substring search.
-    const std::string Header =
+    const MString Header =
         "#pragma once\n"
         "// see MFUNCTION(Async) markers below\n"
         "namespace myns {\n"

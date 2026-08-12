@@ -32,14 +32,14 @@ public:
         }
 
         const fs::path manifestPath = CacheDir_ / "manifest.json";
-        std::string json = SerializeCache(cache);
+        MString json = SerializeCache(cache);
         return WriteFile(manifestPath, json);
     }
 
 private:
-    std::string SerializeCache(const SBuildCache& cache)
+    MString SerializeCache(const SBuildCache& cache)
     {
-        std::string json;
+        MString json;
         json += "{\n";
         json += "  \"version\": " + std::to_string(cache.Version_) + ",\n";
         json += "  \"createdAt\": " + std::to_string(
@@ -58,9 +58,9 @@ private:
         return json;
     }
 
-    std::string SerializeEntry(const STypeCacheEntry& entry)
+    MString SerializeEntry(const STypeCacheEntry& entry)
     {
-        std::string json;
+        MString json;
         json += "    {\n";
         json += "      \"typeName\": \"" + EscapeJsonString(entry.TypeName) + "\",\n";
         json += "      \"headerPath\": \"" + EscapeJsonString(entry.HeaderPath.generic_string()) + "\",\n";

@@ -17,7 +17,7 @@ class LuaBindEmitter
 public:
     static void Run(
         const std::filesystem::path& OutDir,
-        const std::vector<SParsedClass>& Classes);
+        const TVector<SParsedClass>& Classes);
 };
 
 } // namespace MHeaderTool

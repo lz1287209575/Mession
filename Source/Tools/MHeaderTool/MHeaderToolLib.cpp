@@ -25,24 +25,24 @@ namespace MHT = MHeaderTool;
 // IMPORTANT: When Task 2 was implemented, the body lived inline in
 // MHeaderTool.cpp. Copy the EXACT current implementation from there;
 // do not re-edit the logic. The move is a pure relocation.
-std::vector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
-    const std::map<fs::path, std::string>& FileContents)
+TVector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
+    const TMap<fs::path, MString>& FileContents)
 {
-    std::vector<MHT::SFreeAsyncFunc> Result;
+    TVector<MHT::SFreeAsyncFunc> Result;
 
     // Transport tags that must NOT appear on a free function (spec 2026-07-24 §6.1
     // + 2026-07-28 §B — transport is a class-method concept).
-    const TSet<std::string> TransportTags = {
+    const TSet<MString> TransportTags = {
         "ServerCall", "ClientCall", "RPC", "NetServer", "NetClient", "Client"
     };
 
-    const std::string Needle = "MFUNCTION(";
+    const MString Needle = "MFUNCTION(";
 
     for (const auto& [HeaderPath, OriginalContents] : FileContents)
     {
         // Skip headers that have no reflection markers — mirrors main()'s
         // `HeaderScanner::HasReflectionMarkers` short-circuit.
-        if (OriginalContents.find("MFUNCTION") == std::string::npos)
+        if (OriginalContents.find("MFUNCTION") == MString::npos)
         {
             continue;
         }
@@ -57,7 +57,7 @@ std::vector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
         // string/char literals are not handled — a "..." or '...' containing
         // `MFUNCTION(` would still match (acceptable; fixture files do not
         // exercise this edge case).
-        std::string Contents = OriginalContents;
+        MString Contents = OriginalContents;
         {
             size_t Index = 0;
             while (Index < Contents.size())
@@ -118,7 +118,7 @@ std::vector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
         // between the keyword and the matching `}`. Known limitation:
         // `class`/`struct` literals inside `// ...` or `/* ... */` comments
         // will be treated as keywords (P4 fixture files avoid that).
-        std::string Masked = Contents;
+        MString Masked = Contents;
         size_t Index = 0;
         int ClassDepth = 0;
         while (Index < Masked.size())
@@ -160,7 +160,7 @@ std::vector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
                 {
                     const size_t KeywordLen = IsClass ? 5 : 6;
                     const size_t BracePos = Masked.find('{', Index + KeywordLen);
-                    if (BracePos != std::string::npos)
+                    if (BracePos != MString::npos)
                     {
                         // Mask keyword + declaration header up to '{' (keep '{' visible
                         // so the inner brace-tracking loop sees it).
@@ -178,25 +178,25 @@ std::vector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
         }
 
         size_t SearchPos = 0;
-        while ((SearchPos = Masked.find(Needle, SearchPos)) != std::string::npos)
+        while ((SearchPos = Masked.find(Needle, SearchPos)) != MString::npos)
         {
             const size_t MacroOpen = Contents.find('(', SearchPos);
-            const size_t MacroClose = (MacroOpen == std::string::npos)
-                ? std::string::npos
+            const size_t MacroClose = (MacroOpen == MString::npos)
+                ? MString::npos
                 : MHT::FindMatching(Contents, MacroOpen, '(', ')');
-            if ((MacroOpen == std::string::npos) || (MacroClose == std::string::npos))
+            if ((MacroOpen == MString::npos) || (MacroClose == MString::npos))
             {
                 SearchPos = SearchPos + Needle.size();
                 continue;
             }
 
-            const std::string MacroArgs =
+            const MString MacroArgs =
                 Contents.substr(MacroOpen + 1, MacroClose - MacroOpen - 1);
 
             // Tokenize MacroArgs on ',' and reject any transport tag with an
             // exact match. Substring matching is wrong (e.g. "ClientCall"
             // would be flagged as carrying "Client" — see F4 review).
-            TVector<std::string> Tokens;
+            TVector<MString> Tokens;
             {
                 size_t TokenStart = 0;
                 for (size_t K = 0; K <= MacroArgs.size(); ++K)
@@ -208,7 +208,7 @@ std::vector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
                     }
                 }
             }
-            for (const std::string& Token : Tokens)
+            for (const MString& Token : Tokens)
             {
                 if (TransportTags.find(Token) != TransportTags.end())
                 {
@@ -240,13 +240,13 @@ std::vector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
                 ++DeclStart;
             }
             const size_t SigOpen = Contents.find('(', DeclStart);
-            if (SigOpen == std::string::npos)
+            if (SigOpen == MString::npos)
             {
                 SearchPos = MacroClose + 1;
                 continue;
             }
             const size_t SigClose = MHT::FindMatching(Contents, SigOpen, '(', ')');
-            if (SigClose == std::string::npos)
+            if (SigClose == MString::npos)
             {
                 SearchPos = MacroClose + 1;
                 continue;
@@ -271,17 +271,17 @@ std::vector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
                 SearchPos = MacroClose + 1;
                 continue;
             }
-            const std::string FuncName = Contents.substr(NameStart, NameEnd - NameStart);
+            const MString FuncName = Contents.substr(NameStart, NameEnd - NameStart);
 
             // Return type = everything from DeclStart up to the start of FuncName.
-            const std::string ReturnType =
+            const MString ReturnType =
                 MHT::Trim(Contents.substr(DeclStart, NameStart - DeclStart));
 
             // Response type = unwrap SFutureResult<T> to T. For now a local
             // string-stripping version; Task 3 Step 2 introduces a shared
             // helper in CodeGenerator.h that this code can switch to.
-            std::string ResponseType = ReturnType;
-            const std::string FutureResultPrefix = "SFutureResult<";
+            MString ResponseType = ReturnType;
+            const MString FutureResultPrefix = "SFutureResult<";
             if ((ResponseType.rfind(FutureResultPrefix, 0) == 0) &&
                 (!ResponseType.empty()) &&
                 (ResponseType.back() == '>'))

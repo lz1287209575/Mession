@@ -7,7 +7,7 @@ namespace MHeaderTool {
 
 void LuaBindEmitter::Run(
     const std::filesystem::path& OutDir,
-    const std::vector<SParsedClass>& Classes)
+    const TVector<SParsedClass>& Classes)
 {
     std::filesystem::create_directories(OutDir);
 

@@ -31,8 +31,8 @@ enum class EParsedTypeKind : uint8_t
 
 struct SValidationRule
 {
-    std::string FieldName;
-    std::string ValidatorName;
+    MString FieldName;
+    MString ValidatorName;
 };
 
 // ============================================================================
@@ -41,79 +41,79 @@ struct SValidationRule
 
 struct SParsedParameter
 {
-    std::string Type;
-    std::string StorageType;
-    std::string Name;
-    std::string PropertyKind;
+    MString Type;
+    MString StorageType;
+    MString Name;
+    MString PropertyKind;
 };
 
 struct SMetadataEntry
 {
-    std::string Key;
-    std::string Value;
+    MString Key;
+    MString Value;
 };
 
 struct SParsedProperty
 {
-    std::string MacroArgs;
-    std::string Type;
-    std::string Name;
-    std::string PropertyKind;
-    std::string FlagsExpr;
-    std::string Owner;
-    std::vector<SMetadataEntry> Metadata;
+    MString MacroArgs;
+    MString Type;
+    MString Name;
+    MString PropertyKind;
+    MString FlagsExpr;
+    MString Owner;
+    TVector<SMetadataEntry> Metadata;
 };
 
 struct SParsedFunction
 {
-    std::string MacroArgs;
-    std::string ReturnType;
-    std::string ReturnStorageType;
-    std::string ReturnPropertyKind;
-    std::string Name;
-    std::string Signature;
-    std::string Owner;
+    MString MacroArgs;
+    MString ReturnType;
+    MString ReturnStorageType;
+    MString ReturnPropertyKind;
+    MString Name;
+    MString Signature;
+    MString Owner;
     bool bConst = false;
     bool bHasValidate = false;
     bool bIsAsync = false;
     bool bIsRpc = false;
     bool bIsPlayerRpc = false;
     bool bReliable = true;
-    std::string AsyncBody;
-    std::string Transport;
-    std::string RpcKind;
-    std::string Endpoint;
-    std::string MessageName;
-    std::string Route;
-    std::string Target;
-    std::string Auth;
-    std::string Wrap;
-    std::string ClientApi;
-    std::vector<SParsedParameter> Params;
-    std::vector<SValidationRule> ValidationRules;
-    std::vector<std::string> DependencyList;
+    MString AsyncBody;
+    MString Transport;
+    MString RpcKind;
+    MString Endpoint;
+    MString MessageName;
+    MString Route;
+    MString Target;
+    MString Auth;
+    MString Wrap;
+    MString ClientApi;
+    TVector<SParsedParameter> Params;
+    TVector<SValidationRule> ValidationRules;
+    TVector<MString> DependencyList;
 };
 
 struct SParsedClass
 {
     EParsedTypeKind Kind = EParsedTypeKind::Class;
-    std::string Name;
+    MString Name;
     fs::path HeaderPath;
     size_t SourceLine = 0;  // 行号，用于去重
-    std::string ParentClass = "MObject";
-    std::string ClassFlagsExpr = "0";
-    std::string ReflectionType = "Object";
-    std::string Owner;
-    std::string InjectionClass;
-    std::vector<std::string> AllParentClasses;  // 所有基类，用于检查是否继承自 MServerCallProxyBase
-    std::vector<SParsedFunction> InjectionFunctions;
-    std::vector<SParsedProperty> InjectionProperties;
+    MString ParentClass = "MObject";
+    MString ClassFlagsExpr = "0";
+    MString ReflectionType = "Object";
+    MString Owner;
+    MString InjectionClass;
+    TVector<MString> AllParentClasses;  // 所有基类，用于检查是否继承自 MServerCallProxyBase
+    TVector<SParsedFunction> InjectionFunctions;
+    TVector<SParsedProperty> InjectionProperties;
     bool bScopedEnum = false;
-    std::string EnumUnderlyingType = "int32";
-    std::map<std::string, std::string> TypeAliases;
-    std::vector<SParsedProperty> Properties;
-    std::vector<SParsedFunction> Functions;
-    std::vector<std::string> EnumValues;
+    MString EnumUnderlyingType = "int32";
+    TMap<MString, MString> TypeAliases;
+    TVector<SParsedProperty> Properties;
+    TVector<SParsedFunction> Functions;
+    TVector<MString> EnumValues;
 };
 
 // ============================================================================
@@ -123,15 +123,15 @@ struct SParsedClass
 // Captures a namespace-scope free function declared with `MFUNCTION(Async)`.
 // Unlike `SParsedFunction` (which lives inside a class), this struct has no
 // owning class — only the header path + function identity. Consumed by
-// `CodeGenerator::EmitFreeAsyncFramesHeader` to emit one Frame struct per
+// `MCodeGenerator::EmitFreeAsyncFramesHeader` to emit one Frame struct per
 // free async function into `<Header>_FreeAsyncFrames.mgenerated.h`.
 
 struct SFreeAsyncFunc
 {
     fs::path HeaderPath;
-    std::string Name;
-    std::string ResponseType;
-    std::string AsyncBody;
+    MString Name;
+    MString ResponseType;
+    MString AsyncBody;
 };
 
 // ============================================================================
@@ -140,12 +140,12 @@ struct SFreeAsyncFunc
 
 struct SValidationSchemaField
 {
-    std::string Name;
-    std::string Kind;
-    std::optional<std::string> TypeName;
-    std::optional<std::string> ItemKind;
-    std::optional<std::string> ItemTypeName;
-    std::optional<size_t> Size;
+    MString Name;
+    MString Kind;
+    TOptional<MString> TypeName;
+    TOptional<MString> ItemKind;
+    TOptional<MString> ItemTypeName;
+    TOptional<size_t> Size;
 };
 
 // ============================================================================
@@ -172,6 +172,6 @@ struct SOptions
 // Type Aliases
 // ============================================================================
 
-using TRpcListMacroMap = std::map<std::string, std::vector<SParsedFunction>>;
+using TRpcListMacroMap = TMap<MString, TVector<SParsedFunction>>;
 
 }  // namespace MHeaderTool

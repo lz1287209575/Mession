@@ -25,7 +25,7 @@ public:
     }
 
     // 决定增量编译策略
-    SIncrementalDecision Decide(const std::vector<fs::path>& currentHeaders)
+    SIncrementalDecision Decide(const TVector<fs::path>& currentHeaders)
     {
         SIncrementalDecision decision;
 
@@ -46,8 +46,8 @@ public:
         }
 
         // 构建缓存中每个 header 对应的所有条目的哈希集合
-        std::map<fs::path, std::vector<uint64_t>> headerToHashes;
-        std::set<fs::path> cachedHeaders;
+        TMap<fs::path, TVector<uint64_t>> headerToHashes;
+        TSet<fs::path> cachedHeaders;
         for (const auto& entry : previousCache.TypeEntries)
         {
             headerToHashes[entry.HeaderPath].push_back(entry.HeaderFingerprint.ContentHash);
@@ -55,8 +55,8 @@ public:
         }
 
         // 将当前 header 转换为相对路径并去重（每个唯一 header 只处理一次）
-        std::set<fs::path> uniqueCurrentHeaders;
-        std::map<fs::path, fs::path> absoluteToRelative;
+        TSet<fs::path> uniqueCurrentHeaders;
+        TMap<fs::path, fs::path> absoluteToRelative;
         for (const auto& header : currentHeaders)
         {
             fs::path relPath = MakeRelativePath(header);
@@ -189,9 +189,9 @@ public:
         if (ec)
         {
             // 如果失败，尝试从 Source/ 开始提取
-            std::string pathStr = absPath.generic_string();
+            MString pathStr = absPath.generic_string();
             size_t sourcePos = pathStr.find("Source/");
-            if (sourcePos != std::string::npos)
+            if (sourcePos != MString::npos)
             {
                 return pathStr.substr(sourcePos);
             }
@@ -213,7 +213,7 @@ public:
 
     // 检查是否需要重新生成某个类型
     bool NeedsRegeneration(
-        const std::string& typeName,
+        const MString& typeName,
         const fs::path& headerPath,
         const SBuildCache& cache) const
     {
@@ -240,11 +240,11 @@ public:
     }
 
     // 获取需要重新生成的类型列表
-    std::vector<std::string> GetTypesToRegenerate(
-        const std::vector<fs::path>& affectedHeaders,
+    TVector<MString> GetTypesToRegenerate(
+        const TVector<fs::path>& affectedHeaders,
         const SBuildCache& cache) const
     {
-        std::vector<std::string> types;
+        TVector<MString> types;
 
         for (const auto& header : affectedHeaders)
         {

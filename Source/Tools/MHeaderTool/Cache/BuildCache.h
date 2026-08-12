@@ -42,14 +42,14 @@ struct SFileFingerprint
 
 struct STypeCacheEntry
 {
-    std::string TypeName;
+    MString TypeName;
     fs::path HeaderPath;
     SFileFingerprint HeaderFingerprint;
     uint64_t ParsedContentHash = 0;
     fs::path OutputHeader;
     fs::path OutputSource;
-    std::vector<std::string> DefinedTypes;
-    std::vector<std::string> IncludedHeaders;
+    TVector<MString> DefinedTypes;
+    TVector<MString> IncludedHeaders;
 
     bool IsValid() const
     {
@@ -67,12 +67,12 @@ struct SBuildCache
 
     uint32_t Version_ = Version;
     std::chrono::system_clock::time_point CreatedAt;
-    std::vector<STypeCacheEntry> TypeEntries;
-    std::string MHeaderToolVersion;
+    TVector<STypeCacheEntry> TypeEntries;
+    MString MHeaderToolVersion;
 
     // 快速查找
-    std::map<std::string, size_t> TypeNameToIndex;
-    std::map<fs::path, size_t> HeaderPathToIndex;
+    TMap<MString, size_t> TypeNameToIndex;
+    TMap<fs::path, size_t> HeaderPathToIndex;
 
     void BuildIndices()
     {
@@ -93,7 +93,7 @@ struct SBuildCache
         }
     }
 
-    const STypeCacheEntry* FindType(const std::string& typeName) const
+    const STypeCacheEntry* FindType(const MString& typeName) const
     {
         auto it = TypeNameToIndex.find(typeName);
         if (it != TypeNameToIndex.end())
@@ -128,10 +128,10 @@ enum class EIncrementalAction
 struct SIncrementalDecision
 {
     EIncrementalAction Action = EIncrementalAction::Skip;
-    std::string Reason;
-    std::vector<std::string> AffectedTypes;
-    std::vector<fs::path> AffectedFiles;
-    std::vector<fs::path> RemovedFiles;
+    MString Reason;
+    TVector<MString> AffectedTypes;
+    TVector<fs::path> AffectedFiles;
+    TVector<fs::path> RemovedFiles;
     size_t SkippedCount = 0;
     size_t RegeneratedCount = 0;
 };
@@ -142,11 +142,11 @@ struct SIncrementalDecision
 
 struct SChangeDetectionResult
 {
-    std::vector<fs::path> ChangedFiles;
-    std::vector<fs::path> AddedFiles;
-    std::vector<fs::path> RemovedFiles;
+    TVector<fs::path> ChangedFiles;
+    TVector<fs::path> AddedFiles;
+    TVector<fs::path> RemovedFiles;
     bool bRequiresFullRebuild = false;
-    std::string RebuildReason;
+    MString RebuildReason;
 };
 
 }  // namespace MHeaderTool

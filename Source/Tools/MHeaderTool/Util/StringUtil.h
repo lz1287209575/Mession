@@ -39,9 +39,9 @@ inline std::string_view TrimStartView(std::string_view sv)
 // String Conversion (non-allocating where possible)
 // ============================================================================
 
-inline std::string ToString(std::string_view sv)
+inline MString ToString(std::string_view sv)
 {
-    return std::string(sv);
+    return MString(sv);
 }
 
 inline bool StartsWith(std::string_view text, std::string_view prefix)
@@ -72,12 +72,12 @@ inline bool IsWhitespace(char ch)
 // String Operations
 // ============================================================================
 
-inline std::string Trim(std::string_view text)
+inline MString Trim(std::string_view text)
 {
     return ToString(TrimView(text));
 }
 
-inline std::string ReplaceAll(std::string text, std::string_view from, std::string_view to)
+inline MString ReplaceAll(MString text, std::string_view from, std::string_view to)
 {
     if (from.empty())
     {
@@ -85,7 +85,7 @@ inline std::string ReplaceAll(std::string text, std::string_view from, std::stri
     }
 
     size_t pos = 0;
-    while ((pos = text.find(from.data(), pos, from.size())) != std::string::npos)
+    while ((pos = text.find(from.data(), pos, from.size())) != MString::npos)
     {
         text.replace(pos, from.size(), to.data(), to.size());
         pos += to.size();
@@ -93,9 +93,9 @@ inline std::string ReplaceAll(std::string text, std::string_view from, std::stri
     return text;
 }
 
-inline std::string SanitizeIdentifier(std::string_view text)
+inline MString SanitizeIdentifier(std::string_view text)
 {
-    std::string result;
+    MString result;
     result.reserve(text.size());
     for (char ch : text)
     {
@@ -111,16 +111,16 @@ inline std::string SanitizeIdentifier(std::string_view text)
     return result;
 }
 
-inline std::string EscapeCppStringLiteral(std::string value)
+inline MString EscapeCppStringLiteral(MString value)
 {
     value = ReplaceAll(std::move(value), "\\", "\\\\");
     value = ReplaceAll(std::move(value), "\"", "\\\"");
     return value;
 }
 
-inline std::string EscapeJsonString(std::string_view text)
+inline MString EscapeJsonString(std::string_view text)
 {
-    std::string result;
+    MString result;
     result.reserve(text.size());
     for (char ch : text)
     {
@@ -143,7 +143,7 @@ inline std::string EscapeJsonString(std::string_view text)
 // Find Operations
 // ============================================================================
 
-inline size_t FindMatching(const std::string& text, size_t openPos, char openChar, char closeChar)
+inline size_t FindMatching(const MString& text, size_t openPos, char openChar, char closeChar)
 {
     int depth = 0;
     bool inString = false;
@@ -177,10 +177,10 @@ inline size_t FindMatching(const std::string& text, size_t openPos, char openCha
             }
         }
     }
-    return std::string::npos;
+    return MString::npos;
 }
 
-inline size_t SkipWhitespace(const std::string& text, size_t pos)
+inline size_t SkipWhitespace(const MString& text, size_t pos)
 {
     while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos])))
     {
@@ -189,7 +189,7 @@ inline size_t SkipWhitespace(const std::string& text, size_t pos)
     return pos;
 }
 
-inline bool IsKeywordAt(const std::string& text, size_t pos, std::string_view keyword)
+inline bool IsKeywordAt(const MString& text, size_t pos, std::string_view keyword)
 {
     if (pos + keyword.size() > text.size())
     {
@@ -210,9 +210,9 @@ inline bool IsKeywordAt(const std::string& text, size_t pos, std::string_view ke
 // Split Operations
 // ============================================================================
 
-inline std::vector<std::string> SplitTopLevelArgs(const std::string& text)
+inline TVector<MString> SplitTopLevelArgs(const MString& text)
 {
-    std::vector<std::string> parts;
+    TVector<MString> parts;
     size_t partStart = 0;
     int parenDepth = 0;
     int angleDepth = 0;
@@ -251,9 +251,9 @@ inline std::vector<std::string> SplitTopLevelArgs(const std::string& text)
     return parts;
 }
 
-inline std::vector<std::string> SplitTopLevelPipes(const std::string& text)
+inline TVector<MString> SplitTopLevelPipes(const MString& text)
 {
-    std::vector<std::string> parts;
+    TVector<MString> parts;
     size_t partStart = 0;
     int parenDepth = 0;
     int angleDepth = 0;
@@ -296,9 +296,9 @@ inline std::vector<std::string> SplitTopLevelPipes(const std::string& text)
 // Masking Operations
 // ============================================================================
 
-inline std::string MakeMaskedCopy(const std::string& text)
+inline MString MakeMaskedCopy(const MString& text)
 {
-    std::string result = text;
+    MString result = text;
     enum class EState : uint8_t
     {
         Normal,
@@ -413,7 +413,7 @@ inline std::string MakeMaskedCopy(const std::string& text)
 // Macro Helpers
 // ============================================================================
 
-inline std::string StripEnclosingPair(std::string value, char open, char close)
+inline MString StripEnclosingPair(MString value, char open, char close)
 {
     value = Trim(value);
     if (value.size() >= 2 && value.front() == open && value.back() == close)
@@ -423,7 +423,7 @@ inline std::string StripEnclosingPair(std::string value, char open, char close)
     return value;
 }
 
-inline std::string UnquoteStringLiteral(std::string value)
+inline MString UnquoteStringLiteral(MString value)
 {
     value = Trim(value);
     if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
@@ -433,17 +433,17 @@ inline std::string UnquoteStringLiteral(std::string value)
     return value;
 }
 
-inline std::optional<std::string> ExtractMacroValue(const std::string& macroArgs, std::string_view key)
+inline TOptional<MString> ExtractMacroValue(const MString& macroArgs, std::string_view key)
 {
-    for (const std::string& part : SplitTopLevelArgs(macroArgs))
+    for (const MString& part : SplitTopLevelArgs(macroArgs))
     {
         size_t equalsPos = part.find('=');
-        if (equalsPos == std::string::npos)
+        if (equalsPos == MString::npos)
         {
             continue;
         }
 
-        std::string candidateKey = Trim(part.substr(0, equalsPos));
+        MString candidateKey = Trim(part.substr(0, equalsPos));
         if (candidateKey != key)
         {
             continue;

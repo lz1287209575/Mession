@@ -13,19 +13,19 @@ namespace MHeaderTool
 // File Operations
 // ============================================================================
 
-inline std::string ReadFile(const fs::path& path)
+inline MString ReadFile(const fs::path& path)
 {
     std::ifstream input(path);
     if (!input)
     {
         return {};
     }
-    return std::string(
+    return MString(
         std::istreambuf_iterator<char>(input),
         std::istreambuf_iterator<char>());
 }
 
-inline bool WriteFile(const fs::path& path, const std::string& content)
+inline bool WriteFile(const fs::path& path, const MString& content)
 {
     std::ofstream output(path);
     if (!output)
@@ -75,9 +75,9 @@ inline fs::path MakeRelativePath(const fs::path& absolutePath, const fs::path& b
     if (ec)
     {
         // 如果失败，尝试从 Source/ 开始提取
-        std::string pathStr = absPath.generic_string();
+        MString pathStr = absPath.generic_string();
         size_t sourcePos = pathStr.find("Source/");
-        if (sourcePos != std::string::npos)
+        if (sourcePos != MString::npos)
         {
             return pathStr.substr(sourcePos);
         }

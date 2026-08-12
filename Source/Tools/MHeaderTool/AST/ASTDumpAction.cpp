@@ -65,7 +65,7 @@ namespace mession::headercodegen {
         GIR = InIR;
     }
 
-    std::unique_ptr<clang::ASTConsumer> MASTDumpAction::CreateASTConsumer(clang::CompilerInstance& CI, llvm::StringRef /*File*/) {
+    TUniquePtr<clang::ASTConsumer> MASTDumpAction::CreateASTConsumer(clang::CompilerInstance& CI, llvm::StringRef /*File*/) {
         assert(GIR && "MASTDumpAction::SetIR must be called before Tool.run");
         SParseIR& IR = *GIR;
 

@@ -128,7 +128,7 @@ class MASTReflectionAction : public clang::ASTFrontendAction
 public:
     explicit MASTReflectionAction(SParseIR& IR) : IRRef(IR) {}
 
-    std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
+    TUniquePtr<clang::ASTConsumer> CreateASTConsumer(
         clang::CompilerInstance& CI, llvm::StringRef /*File*/) override
     {
         CI.getDiagnostics().setClient(new clang::IgnoringDiagConsumer());
@@ -150,15 +150,15 @@ class MPCHStrippedCompilationDatabase : public clang::tooling::CompilationDataba
 {
 public:
     explicit MPCHStrippedCompilationDatabase(
-        std::vector<clang::tooling::CompileCommand> InCommands)
+        TVector<clang::tooling::CompileCommand> InCommands)
         : Commands(std::move(InCommands))
     {
     }
 
-    std::vector<clang::tooling::CompileCommand> getCompileCommands(
+    TVector<clang::tooling::CompileCommand> getCompileCommands(
         llvm::StringRef File) const override
     {
-        std::vector<clang::tooling::CompileCommand> Result;
+        TVector<clang::tooling::CompileCommand> Result;
         for (const auto& C : Commands)
         {
             if (C.Filename == File)
@@ -169,9 +169,9 @@ public:
         return Result;
     }
 
-    std::vector<std::string> getAllFiles() const override
+    TVector<MString> getAllFiles() const override
     {
-        std::vector<std::string> Result;
+        TVector<MString> Result;
         for (const auto& C : Commands)
         {
             Result.push_back(C.Filename);
@@ -179,13 +179,13 @@ public:
         return Result;
     }
 
-    std::vector<clang::tooling::CompileCommand> getAllCompileCommands() const override
+    TVector<clang::tooling::CompileCommand> getAllCompileCommands() const override
     {
         return Commands;
     }
 
 private:
-    std::vector<clang::tooling::CompileCommand> Commands;
+    TVector<clang::tooling::CompileCommand> Commands;
 };
 
 class MFactory : public clang::tooling::FrontendActionFactory
@@ -193,7 +193,7 @@ class MFactory : public clang::tooling::FrontendActionFactory
 public:
     explicit MFactory(SParseIR& IR) : IRRef(IR) {}
 
-    std::unique_ptr<clang::FrontendAction> create() override
+    TUniquePtr<clang::FrontendAction> create() override
     {
         return std::make_unique<MASTReflectionAction>(IRRef);
     }
@@ -215,9 +215,9 @@ SParseIR MASTPipeline::Run(const SOptions& InOptions)
     // 诊断又被 IgnoringDiagConsumer 吞掉，产出静默错误的 .mgenerated。
     // 候选目录：SourceRoot 本身 / 项目根（SourceRoot 父）/ cwd / cwd/Build。
     const fs::path SourceRootAbs = fs::absolute(InOptions.SourceRoot);
-    std::unique_ptr<clang::tooling::CompilationDatabase> CDB;
+    TUniquePtr<clang::tooling::CompilationDatabase> CDB;
     {
-        std::vector<fs::path> Candidates = {
+        TVector<fs::path> Candidates = {
             SourceRootAbs,
             SourceRootAbs.parent_path(),
             fs::current_path(),
@@ -242,14 +242,14 @@ SParseIR MASTPipeline::Run(const SOptions& InOptions)
     // 剥离 `-include <pch>` / `-Winvalid-pch` 等参数后重建 CDB。
     if (CDB)
     {
-        std::vector<clang::tooling::CompileCommand> Stripped;
+        TVector<clang::tooling::CompileCommand> Stripped;
         for (const auto& Cmd : CDB->getAllCompileCommands())
         {
             clang::tooling::CompileCommand C = Cmd;
-            std::vector<std::string> NewArgs;
+            TVector<MString> NewArgs;
             for (size_t I = 0; I < C.CommandLine.size(); ++I)
             {
-                const std::string& A = C.CommandLine[I];
+                const MString& A = C.CommandLine[I];
                 if (A == "-include" || A == "-include-pch")
                 {
                     if (I + 1 < C.CommandLine.size()) ++I;  // 跳过 PCH 路径
@@ -311,14 +311,14 @@ SParseIR MASTPipeline::Run(const SOptions& InOptions)
     // 头文件会重复产出 Record/Enum/FreeFunctions）。
     const size_t NThreads = std::min<size_t>(
         SourceFiles.size(), static_cast<size_t>(std::thread::hardware_concurrency()));
-    std::vector<TVector<MString>> Shards(NThreads);
+    TVector<TVector<MString>> Shards(NThreads);
     for (size_t I = 0; I < SourceFiles.size(); ++I)
     {
         Shards[I % NThreads].push_back(SourceFiles[I]);
     }
 
-    std::vector<SParseIR> ShardIRs(NThreads);
-    std::vector<std::thread> Workers;
+    TVector<SParseIR> ShardIRs(NThreads);
+    TVector<std::thread> Workers;
     Workers.reserve(NThreads);
     for (size_t T = 0; T < NThreads; ++T)
     {

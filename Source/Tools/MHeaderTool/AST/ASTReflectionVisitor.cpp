@@ -218,7 +218,7 @@ bool MASTReflectionVisitor::VisitTypeAliasDecl(clang::TypeAliasDecl* TAD)
     if (!TAD->getBeginLoc().isValid()) return true;
 
     // 类型别名：仅记录到顶层 IR.TypeAliases（不挂到 Record.TypeAliases，
-    // 因为 CodeGenerator 走的是顶层 SParsedTypeAlias）
+    // 因为 MCodeGenerator 走的是顶层 SParsedTypeAlias）
     SParsedTypeAlias Out;
     Out.Name          = TAD->getNameAsString();
     Out.UnderlyingType = TAD->getUnderlyingType().getAsString();

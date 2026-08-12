@@ -1,6 +1,6 @@
 // A2DiffTest — byte-equal regression gate for the AST-based codegen path.
 //
-// Runs the IR pipeline (MASTPipeline::Run + CodeGenerator IR entry points) to
+// Runs the IR pipeline (MASTPipeline::Run + MCodeGenerator IR entry points) to
 // /tmp/a2_ir and diffs every shared filename against the immutable legacy
 // baseline at /tmp/legacy_baseline/ (a one-time copy of
 // /root/Mession/Build/Generated/ taken BEFORE the AST path was introduced —
@@ -72,7 +72,7 @@ namespace mession::headercodegen {
 
         std::printf("A2DiffTest: IR pipeline produced %zu records\n", IR.Records.size());
 
-        MHeaderTool::CodeGenerator CodeGen(Options);
+        MHeaderTool::MCodeGenerator CodeGen(Options);
         for (const SParsedRecord& Record : IR.Records) {
             const MString HeaderCode = CodeGen.GenerateHeaderFromIR(Record, IR.Records);
             MHeaderTool::WriteFile(IRDir / (MHeaderTool::SanitizeIdentifier(Record.Name) + ".mgenerated.h"), HeaderCode);

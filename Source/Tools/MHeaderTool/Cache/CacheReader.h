@@ -49,20 +49,20 @@ public:
     }
 
 private:
-    bool ParseManifest(const std::string& content, SBuildCache& outCache)
+    bool ParseManifest(const MString& content, SBuildCache& outCache)
     {
         // 简单的版本检查
-        if (content.find("\"version\":") != std::string::npos)
+        if (content.find("\"version\":") != MString::npos)
         {
             // 找到版本号
             size_t versionPos = content.find("\"version\":");
             size_t colonPos = content.find(':', versionPos);
-            if (colonPos != std::string::npos)
+            if (colonPos != MString::npos)
             {
                 size_t start = colonPos + 1;
                 size_t end = content.find_first_of(",}\n", start);
-                if (end == std::string::npos) end = content.size();
-                std::string versionStr = content.substr(start, end - start);
+                if (end == MString::npos) end = content.size();
+                MString versionStr = content.substr(start, end - start);
                 outCache.Version_ = std::stoul(versionStr);
             }
         }
@@ -70,7 +70,7 @@ private:
         // 解析类型条目
         // 格式: "entries": [...]
         size_t entriesPos = content.find("\"entries\":");
-        if (entriesPos == std::string::npos)
+        if (entriesPos == MString::npos)
         {
             return false;
         }
@@ -78,12 +78,12 @@ private:
         // 简化的解析：提取每个条目的关键信息
         size_t arrayStart = content.find('[', entriesPos);
         size_t arrayEnd = content.find_last_of(']');
-        if (arrayStart == std::string::npos || arrayEnd == std::string::npos)
+        if (arrayStart == MString::npos || arrayEnd == MString::npos)
         {
             return false;
         }
 
-        std::string entriesContent = content.substr(arrayStart + 1, arrayEnd - arrayStart - 1);
+        MString entriesContent = content.substr(arrayStart + 1, arrayEnd - arrayStart - 1);
 
         // 提取每个条目（使用括号匹配来正确处理嵌套）
         size_t pos = 0;
@@ -127,7 +127,7 @@ private:
             }
 
             size_t entryEnd = pos;
-            std::string entryContent = entriesContent.substr(entryStart, entryEnd - entryStart + 1);
+            MString entryContent = entriesContent.substr(entryStart, entryEnd - entryStart + 1);
             ParseEntry(entryContent, outCache.TypeEntries);
             ++entryCount;
 
@@ -140,7 +140,7 @@ private:
         return true;
     }
 
-    void ParseEntry(const std::string& content, std::vector<STypeCacheEntry>& entries)
+    void ParseEntry(const MString& content, TVector<STypeCacheEntry>& entries)
     {
         STypeCacheEntry entry;
 
@@ -178,14 +178,14 @@ private:
         }
     }
 
-    std::optional<std::string> ExtractJsonString(const std::string& content, const std::string& key)
+    TOptional<MString> ExtractJsonString(const MString& content, const MString& key)
     {
-        std::string pattern = "\"" + key + "\"";
+        MString pattern = "\"" + key + "\"";
         size_t keyPos = content.find(pattern);
-        if (keyPos == std::string::npos) return std::nullopt;
+        if (keyPos == MString::npos) return std::nullopt;
 
         size_t colonPos = content.find(':', keyPos);
-        if (colonPos == std::string::npos) return std::nullopt;
+        if (colonPos == MString::npos) return std::nullopt;
 
         size_t valueStart = colonPos + 1;
         while (valueStart < content.size() && std::isspace(static_cast<unsigned char>(content[valueStart])))
@@ -203,14 +203,14 @@ private:
         return content.substr(valueStart + 1, valueEnd - valueStart - 1);
     }
 
-    std::optional<uint64_t> ExtractJsonNumber(const std::string& content, const std::string& key)
+    TOptional<uint64_t> ExtractJsonNumber(const MString& content, const MString& key)
     {
-        std::string pattern = "\"" + key + "\"";
+        MString pattern = "\"" + key + "\"";
         size_t keyPos = content.find(pattern);
-        if (keyPos == std::string::npos) return std::nullopt;
+        if (keyPos == MString::npos) return std::nullopt;
 
         size_t colonPos = content.find(':', keyPos);
-        if (colonPos == std::string::npos) return std::nullopt;
+        if (colonPos == MString::npos) return std::nullopt;
 
         size_t valueStart = colonPos + 1;
         while (valueStart < content.size() && std::isspace(static_cast<unsigned char>(content[valueStart])))

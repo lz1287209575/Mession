@@ -42,7 +42,7 @@ bool ParseArgs(int argc, char** argv, MHeaderTool::SOptions& options)
 {
     for (int i = 1; i < argc; ++i)
     {
-        std::string arg = argv[i];
+        MString arg = argv[i];
 
         if (arg == "--help" || arg == "-h")
         {
@@ -113,11 +113,11 @@ bool ParseArgs(int argc, char** argv, MHeaderTool::SOptions& options)
 // A2 (Task 8) — main rewritten to the AST path. Brief uses
 // `using namespace mession::headercodegen;` so unqualified
 // `MASTPipeline` / `SParseIR` / `SParsedRecord` resolve. The remaining
-// `MHeaderTool::` symbols (`SOptions`, `CodeGenerator`,
+// `MHeaderTool::` symbols (`SOptions`, `MCodeGenerator`,
 // `SanitizeIdentifier`, `WriteFile`, `CreateDirectory`) need their own
 // reachability — `using namespace MHeaderTool;` is the minimum-friction
 // way to honor the brief's "minimal qualification" intent. Renaming
-// `CodeGenerator` to `MCodeGenerator` (per the brief's snippet) is out
+// `MCodeGenerator` to `MCodeGenerator` (per the brief's snippet) is out
 // of scope for Task 8; that's an A3 cleanup item (Task 7 report §1).
 int main(int argc, char** argv)
 {
@@ -132,7 +132,7 @@ int main(int argc, char** argv)
 
     SParseIR IR = MASTPipeline::Run(Options);
 
-    CodeGenerator CodeGen(Options);
+    MCodeGenerator CodeGen(Options);
     TSet<MString> WrittenTypeNames;
     for (const auto& Record : IR.Records)
     {
@@ -178,7 +178,7 @@ int main(int argc, char** argv)
     //  - ResponseType 剥掉 `SFutureResult<` 前缀（对齐 ProcessFreeFunctions），
     //    否则 Frame 会生成 SFutureResult<SFutureResult<T>>。
     {
-        std::map<fs::path, std::vector<SFreeAsyncFunc>> FreeByHeader;
+        TMap<fs::path, TVector<SFreeAsyncFunc>> FreeByHeader;
         TSet<MString> SeenFreeFuncs;
         for (const auto& Fn : IR.FreeFunctions)
         {
@@ -214,7 +214,7 @@ int main(int argc, char** argv)
 
     // A2 follow-up (P5 merge) — CMake / Client manifest。旧 main 在字符串解析
     // 路径末尾生成这两个文件；AST 路径经 ToLegacyClasses 复用 ManifestGenerators。
-    const std::vector<SParsedClass> LegacyClasses = CodeGen.ToLegacyClasses(IR);
+    const TVector<SParsedClass> LegacyClasses = CodeGen.ToLegacyClasses(IR);
     if (!Options.CMakeManifestPath.empty())
     {
         ManifestGenerators ManifestGen(Options);

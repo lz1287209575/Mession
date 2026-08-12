@@ -1,8 +1,8 @@
 // ============================================================================
-// CodeGenerator - IR-based generator entry points (A2 / Task 7)
+// MCodeGenerator - IR-based generator entry points (A2 / Task 7)
 //
 // Mirrors the legacy `GenerateHeader` / `GenerateSource` /
-// `EmitAsyncFramesHeader` methods on `CodeGenerator`, but consumes
+// `EmitAsyncFramesHeader` methods on `MCodeGenerator`, but consumes
 // `SParsedRecord` from the AST path. The legacy implementations remain
 // inline in `Generation/CodeGenerator.h`; A3 cleanup will delete them.
 //
@@ -258,7 +258,7 @@ SParsedClass ToLegacyClass(const mession::headercodegen::SParsedRecord& In)
 //   * The legacy helpers require `ostringstream`; we use `MStringStream`
 //     alias per the brief's verbatim type.
 
-MString CodeGenerator::GenerateHeaderFromIR(
+MString MCodeGenerator::GenerateHeaderFromIR(
     const SParsedRecord& Record,
     const TVector<SParsedRecord>& /*AllRecordsInSameHeader*/) const
 {
@@ -298,7 +298,7 @@ MString CodeGenerator::GenerateHeaderFromIR(
 // matching `.mgenerated.h` + user header includes, then dispatch to the
 // legacy enum/struct/class source codegen via the IR → legacy shim.
 
-MString CodeGenerator::GenerateSourceFromIR(const SParsedRecord& Record) const
+MString MCodeGenerator::GenerateSourceFromIR(const SParsedRecord& Record) const
 {
     MStringStream Out;
     const MString IncludeName    = MakeIncludePathFromHeader(Record.HeaderPath);
@@ -330,7 +330,7 @@ MString CodeGenerator::GenerateSourceFromIR(const SParsedRecord& Record) const
 // then emit the dedicated `<ClassName>_AsyncFrames.h` contents. Delegates
 // to the existing `GenerateAsyncStateMachine` helper via the legacy shim.
 
-MString CodeGenerator::EmitAsyncFramesHeaderFromIR(const SParsedRecord& Record) const
+MString MCodeGenerator::EmitAsyncFramesHeaderFromIR(const SParsedRecord& Record) const
 {
     // AsyncFrames only apply to classes (not enums or structs).
     if (Record.Kind != mession::headercodegen::ERecordKind::Class)
@@ -383,7 +383,7 @@ SParsedClass ToLegacyEnum(const mession::headercodegen::SParsedEnum& In);  // �
 // legacy `SParsedClass`（Core/Types.h）；AST 路径产出 `SParseIR`。这里
 // 复用 anonymous namespace 里的 ToLegacyClass（同一 TU 可见），逐 Record
 // 转换，与 GenerateHeaderFromIR 内部的单 Record 转换完全一致。
-std::vector<SParsedClass> CodeGenerator::ToLegacyClasses(
+TVector<SParsedClass> MCodeGenerator::ToLegacyClasses(
     const mession::headercodegen::SParseIR& IR) const
 {
     // 只含 Records（类/结构）。enum 不进 manifest/构建组：
@@ -392,7 +392,7 @@ std::vector<SParsedClass> CodeGenerator::ToLegacyClasses(
     //  - AST 版会扫描到所有 Source/ 内 scoped enum（含用户内部实现 enum，
     //    如 MLuaVector.h 的 MScalarType）——若进 shared 组编译，其 .mgenerated.cpp
     //    include 用户头（可能带 <lua.h> 等外部依赖）会破坏构建。
-    std::vector<SParsedClass> Out;
+    TVector<SParsedClass> Out;
     Out.reserve(IR.Records.size());
     for (const auto& Record : IR.Records)
     {
@@ -424,13 +424,13 @@ SParsedClass ToLegacyEnum(const mession::headercodegen::SParsedEnum& In)
     return Out;
 }
 
-MString CodeGenerator::GenerateEnumHeaderFromIR(
+MString MCodeGenerator::GenerateEnumHeaderFromIR(
     const mession::headercodegen::SParsedEnum& InEnum) const
 {
     return GenerateHeader(ToLegacyEnum(InEnum), {});
 }
 
-MString CodeGenerator::GenerateEnumSourceFromIR(
+MString MCodeGenerator::GenerateEnumSourceFromIR(
     const mession::headercodegen::SParsedEnum& InEnum) const
 {
     return GenerateSource(ToLegacyEnum(InEnum));
