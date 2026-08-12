@@ -4,6 +4,7 @@
 // await 目标实现 + main 调用（真实场景由 ServerCall/RPC 自动分发）。
 
 #include "AwaitDemo.h"
+#include "ComplexDemo.h"
 
 #include <cstdio>
 
@@ -28,8 +29,17 @@ SFutureResult<int> AwaitDemoCompute(int Seed)
 
 int main()
 {
-    // 业务逻辑：Mid = 5*3 = 15 → await Helper(15) = 30 → 返回 30+1 = 31
+    // 单 await：Mid = 5*3 = 15 → await Helper(15) = 30 → 返回 30+1 = 31
     const int R = AwaitDemoCompute(5).GetResult().GetValue();
-    std::printf("AwaitDemo: compute=%d\n", R);
-    return R == 31 ? 0 : 1;
+    std::printf("AwaitDemo:     compute=%d\n", R);
+
+    // 多 await 串行：Total=10 → await1(10,1)=11 → Total=21 → await2(21,2)=23 → 21+23=44
+    const int C = ComplexChain(5).GetResult().GetValue();
+    std::printf("ComplexChain(5): %d\n", C);
+
+    // 循环 await：Sum += AsyncAdd(i, Sum)：i=0 → +0 → 0；i=1 → +1 → 1；i=2 → +3 → 4
+    const int L = ComplexLoop(3).GetResult().GetValue();
+    std::printf("ComplexLoop(3):  %d\n", L);
+
+    return (R == 31 && C == 44 && L == 4) ? 0 : 1;
 }

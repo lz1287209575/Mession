@@ -1638,7 +1638,7 @@ public:
             && PostReturnExpr.find("TAwaitable<") == MString::npos)
         {
             Out << "        Promise.SetValue(TResult<" << R
-                << ", FAppError>::Ok(" << PostReturnExpr << "));\n";
+                << ", FAppError>::Ok(" << StripValueWrapper(PostReturnExpr) << "));\n";
         }
         else
         {
@@ -1754,6 +1754,37 @@ public:
             bStripped = true;
         }
         return V;
+    }
+
+    // 存活变量声明去类型：`int Total = ...` → `Total = ...`（写回 Frame 槽）。
+    // Start/Resume 的代码段里，跨 await 存活变量的声明若保留类型前缀会变成
+    // 局部变量（遮蔽 Frame 槽，槽永远拿不到值）——去掉类型前缀即槽赋值。
+    MString StripLiveDeclTypes(
+        const MString& Code,
+        const TVector<mession::headercodegen::SLiveVarDecl>& Live) const
+    {
+        MString Out = Code;
+        for (const auto& L : Live)
+        {
+            if (L.Type.CanonicalName.empty()) continue;
+            const MString Decl = L.Type.CanonicalName + " " + L.Name;
+            size_t Pos = 0;
+            while ((Pos = Out.find(Decl, Pos)) != MString::npos)
+            {
+                const size_t After = Pos + Decl.size();
+                if (After >= Out.size()
+                    || Out[After] == '=' || Out[After] == ';' || Out[After] == ' ')
+                {
+                    Out = Out.substr(0, Pos) + L.Name + Out.substr(After);
+                    Pos += L.Name.size();
+                }
+                else
+                {
+                    Pos = After;
+                }
+            }
+        }
+        return Out;
     }
 
     // 生成单个函数的 await Frame（单 await）。消费 IR 原生类型——AwaitSites /
@@ -1955,6 +1986,7 @@ public:
             MString PreTrim = (B == MString::npos) ? MString() : Pre.substr(B, E - B + 1);
             if (!PreTrim.empty())
             {
+                PreTrim = StripLiveDeclTypes(PreTrim, Func.LiveAcrossAwait);
                 Out << "        // await 前业务代码\n";
                 Out << "        " << PreTrim << "\n";
             }
@@ -1981,7 +2013,7 @@ public:
             if (!SegCode[K - 1].empty() && K < N)
             {
                 Out << "            // await " << K << " 后续业务代码\n";
-                Out << "            " << SegCode[K - 1] << "\n";
+                Out << "            " << StripLiveDeclTypes(SegCode[K - 1], Func.LiveAcrossAwait) << "\n";
             }
             if (K < N)
             {

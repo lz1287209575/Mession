@@ -3,7 +3,9 @@
 # 含业务逻辑段，自包含），作为独立编译单元链接；业务 .cpp 不 include 生成文件。
 add_executable(AwaitDemo
     AwaitDemo.cpp
+    ComplexDemo.cpp
     ${MESSION_GENERATED_DIR}/AwaitDemo_FreeAwaitImpl.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/ComplexDemo_FreeAwaitImpl.mgenerated.cpp
 )
 target_include_directories(AwaitDemo
     PRIVATE
