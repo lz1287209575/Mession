@@ -154,6 +154,14 @@ int main(int argc, char** argv)
             WriteFile(Options.OutputDir / (SanitizeIdentifier(Record.Name) + "_AsyncFrames.h"),
                 AsyncHeader);
         }
+
+        // P5 — TAwaitable 单 await 状态机 Frame（独立文件，KD-16 共存期=0 前不替换 P4）
+        const MString P5Async = CodeGen.EmitP5AsyncFramesHeader(Record);
+        if (!P5Async.empty())
+        {
+            WriteFile(Options.OutputDir / (SanitizeIdentifier(Record.Name) + "_P5AsyncFrames.h"),
+                P5Async);
+        }
     }
 
     // A2 follow-up (P5 merge) — enum 生成（SParseIR::Enums → legacy shim）。

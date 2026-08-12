@@ -15,6 +15,9 @@ namespace fs = std::filesystem;
 using mession::headercodegen::SParsedRecord;
 using mession::headercodegen::SParsedFunction;
 using mession::headercodegen::SParsedProperty;
+using mession::headercodegen::SAwaitSite;
+using mession::headercodegen::EAwaitSiteKind;
+using mession::headercodegen::SLiveVarDecl;
 
 namespace MHeaderTool
 {
@@ -1292,6 +1295,193 @@ public:
         if (TypeName.find("<") != MString::npos) return;
         if (TypeName.find("::") != MString::npos) return;
         out << "#include \"" << TypeName << ".mgenerated.h\"\n";
+    }
+
+    // =====================================================================
+    // P5 — TAwaitable 单 await 状态机 Frame 生成（KD-12 最小形态）
+    // =====================================================================
+    //
+    // 输入：函数（bIsAsync + AwaitSites 含 TAwaitableCall + LiveAcrossAwait）。
+    // 输出：独立 `<Class>_P5AsyncFrames.h` 中的 Frame struct——
+    //   Start()  触发第一个 await（调 F(args) → AsAwaiter）
+    //   Resume() 挂起完成后恢复（awaiter 已 ready → AwaitResume 取值）
+    //   GetFuture() 返回 SFutureResult<R>（Promise 驱动）
+    // 本轮：单 await 形态（多 await 串行 / 循环 await 为 P5 后续工作包）。
+    // 不替换 P4 生成器（KD-16 共存期 = 0 前，P5 产物独立输出）。
+
+    // 从 `TAwaitable<F, R, Args...>(args...)` 提取 F / R / args 文本
+    static bool ParseTAwaitableText(
+        const MString& Text, MString& OutF, MString& OutR, MString& OutArgs)
+    {
+        const MString Prefix = "TAwaitable<";
+        const size_t Start = Text.find(Prefix);
+        if (Start == MString::npos) return false;
+        const size_t Pos = Start + Prefix.size();
+        // 模板参数列表可能含嵌套 <> 和括号（如 TAwaitable<int (*)(int), int, int>）——
+        // 用 <> 深度匹配定位参数列表结束的 '>'，再取其后的 '('（调用括号）。
+        int Depth = 1;
+        size_t End = Pos;
+        while (End < Text.size() && Depth > 0)
+        {
+            if (Text[End] == '<') ++Depth;
+            else if (Text[End] == '>') --Depth;
+            ++End;
+        }
+        if (End >= Text.size() || Text[End] != '(') return false;
+        const size_t ArgsStart = End;
+        MString TemplArgs = Text.substr(Pos, End - Pos - 1);
+        std::vector<MString> Params;
+        {
+            int D = 0;
+            size_t B = 0;
+            for (size_t I = 0; I <= TemplArgs.size(); ++I)
+            {
+                if (I < TemplArgs.size())
+                {
+                    if (TemplArgs[I] == '<') ++D;
+                    else if (TemplArgs[I] == '>') --D;
+                }
+                if (I == TemplArgs.size() || (D == 0 && TemplArgs[I] == ','))
+                {
+                    Params.push_back(MString(TemplArgs.substr(B, I - B)));
+                    B = I + 1;
+                }
+            }
+        }
+        if (Params.size() < 2) return false;
+        auto TrimP = [](MString In)
+        {
+            const size_t B = In.find_first_not_of(" \t\r\n");
+            if (B == MString::npos) return MString();
+            const size_t E = In.find_last_not_of(" \t\r\n");
+            return In.substr(B, E - B + 1);
+        };
+        OutF = TrimP(Params[0]);
+        OutR = TrimP(Params[1]);
+        // 业务写 TAwaitable<decltype(&Func), R, Args...>（F 是函数指针类型）——
+        // 生成器需要真实函数名才能生成 `Func(args)` 调用。提取 decltype(&X) 的 X。
+        {
+            const MString DTPrefix = "decltype(&";
+            if (OutF.rfind(DTPrefix, 0) == 0 && OutF.back() == ')')
+            {
+                OutF = OutF.substr(DTPrefix.size(), OutF.size() - DTPrefix.size() - 1);
+            }
+        }
+        size_t Close = ArgsStart + 1;
+        int D2 = 1;
+        while (Close < Text.size() && D2 > 0)
+        {
+            if (Text[Close] == '(') ++D2;
+            else if (Text[Close] == ')') --D2;
+            ++Close;
+        }
+        if (D2 != 0) return false;
+        MString ArgsRaw = Text.substr(ArgsStart + 1, Close - ArgsStart - 2);
+        {
+            const size_t B = ArgsRaw.find_first_not_of(" \t\r\n");
+            const size_t E = ArgsRaw.find_last_not_of(" \t\r\n");
+            if (B != MString::npos) ArgsRaw = ArgsRaw.substr(B, E - B + 1);
+        }
+        OutArgs = ArgsRaw;
+        return true;
+    }
+
+    // 生成单个函数的 P5 Frame（单 await）。消费 IR 原生类型——AwaitSites /
+    // LiveAcrossAwait 只在 IR 的 SParsedFunction 上（legacy shim 不携带）。
+    MString EmitP5AsyncFrame(
+        const mession::headercodegen::SParsedRecord& Record,
+        const mession::headercodegen::SParsedFunction& Func) const
+    {
+        const mession::headercodegen::SAwaitSite* Site = nullptr;
+        for (const auto& S : Func.AwaitSites)
+        {
+            if (S.Kind == mession::headercodegen::EAwaitSiteKind::TAwaitableCall)
+            {
+                Site = &S;
+                break;
+            }
+        }
+        if (!Site) return {};
+
+        MString F, R, Args;
+        if (!ParseTAwaitableText(Site->AwaitExprText, F, R, Args)) return {};
+
+        const MString FrameName =
+            "MHeaderTool_P5Frame_" + SanitizeIdentifier(Record.Name) +
+            "_" + SanitizeIdentifier(Func.Name);
+
+        std::ostringstream Out;
+        Out << "// " << FrameName
+            << ": P5 单 await 状态机 Frame（TAwaitable 驱动, KD-12 最小形态）\n";
+        Out << "struct " << FrameName << "\n";
+        Out << "{\n";
+        for (const auto& L : Func.LiveAcrossAwait)
+        {
+            Out << "    " << L.Type.CanonicalName << " " << L.Name << "{};\n";
+        }
+        Out << "    " << R << " AwaitResult{};\n";
+        Out << "    MPromise<TResult<" << R << ", FAppError>> Promise;\n";
+        Out << "    TOptional<SFutureResult<" << R << ">::SAwaiter> Awaiter;\n";
+        Out << "    bool bStarted = false;\n";
+        Out << "    bool bDone = false;\n";
+        Out << "\n";
+        Out << "    void Start()\n";
+        Out << "    {\n";
+        Out << "        bStarted = true;\n";
+        Out << "        Awaiter = " << F << "(" << Args << ").AsAwaiter();\n";
+        Out << "        if (Awaiter->AwaitReady()) Finish();\n";
+        Out << "        else Awaiter->AwaitSuspend(this);\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    void Resume()\n";
+        Out << "    {\n";
+        Out << "        if (!bStarted) Start();\n";
+        Out << "        else Finish();\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    void Finish()\n";
+        Out << "    {\n";
+        Out << "        if (bDone) return;\n";
+        Out << "        bDone = true;\n";
+        Out << "        AwaitResult = Awaiter->AwaitResume();\n";
+        Out << "        Promise.SetValue(TResult<" << R << ", FAppError>::Ok(std::move(AwaitResult)));\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    SFutureResult<" << R << "> GetFuture()\n";
+        Out << "    {\n";
+        Out << "        return SFutureResult<" << R << ">(Promise.GetFuture());\n";
+        Out << "    }\n";
+        Out << "};\n";
+        return Out.str();
+    }
+
+    // 生成 `<Class>_P5AsyncFrames.h`（含该 Record 所有 async 函数的 P5 Frame）
+    MString EmitP5AsyncFramesHeader(
+        const mession::headercodegen::SParsedRecord& Record) const
+    {
+        std::ostringstream Out;
+        bool bAny = false;
+        for (const auto& F : Record.Functions)
+        {
+            if (!F.bIsAsync) continue;
+            const MString Frame = EmitP5AsyncFrame(Record, F);
+            if (!Frame.empty())
+            {
+                if (!bAny)
+                {
+                    Out << "#pragma once\n";
+                    Out << "// Generated by MHeaderTool (P5 状态机, 单 await 形态)\n";
+                    Out << "// Source: " << Record.HeaderPath.string() << "\n\n";
+                    Out << "#include \"Common/Runtime/Async/MAsync.h\"\n";
+                    Out << "#include \"Common/Runtime/Async/Awaitable.h\"\n";
+                    Out << "#include \"Common/Runtime/Concurrency/Promise.h\"\n";
+                    Out << "\n";
+                    bAny = true;
+                }
+                Out << Frame << "\n";
+            }
+        }
+        return bAny ? Out.str() : MString();
     }
 
     SOptions Options_;

@@ -403,8 +403,15 @@ void MASTReflectionVisitor::CollectAwaitSites(
         {
             const MString Text = GetSourceTextImpl(E->getSourceRange(), SM);
             if (Text.find("TAwaitable<") == MString::npos) return true;
+            const uint32 Line = SM.getSpellingLineNumber(E->getBeginLoc());
+            // 去重：CXXFunctionalCastExpr 内层可能含 CXXTemporaryObjectExpr，
+            // 同一表达式被两个 visit 收集——按 (行, 文本) 去重。
+            for (const auto& S : Sites)
+            {
+                if (S.SourceLine == Line && S.AwaitExprText == Text) return true;
+            }
             SAwaitSite Site;
-            Site.SourceLine    = SM.getSpellingLineNumber(E->getBeginLoc());
+            Site.SourceLine    = Line;
             Site.AwaitExprText = Text;
             Site.Kind          = EAwaitSiteKind::TAwaitableCall;
             Sites.push_back(std::move(Site));
