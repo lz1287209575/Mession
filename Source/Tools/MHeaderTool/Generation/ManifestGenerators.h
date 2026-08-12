@@ -63,6 +63,15 @@ public:
                 continue;
             }
 
+            // 无任何基类的 MCLASS（如独立 demo 类）：非完整反射类——不产出
+            // mgenerated.cpp（RegisterAllProperties 等假设类有 MObject 反射基类，
+            // ToLegacyClass 会把空 ParentClass 默认成 MObject，故用 AllParentClasses）。
+            // 类成员 async（AwaitStateMachine/Impl）不依赖完整反射，仍正常生成。
+            if (parsed.AllParentClasses.empty())
+            {
+                continue;
+            }
+
             fs::path genPath = Options_.OutputDir / (SanitizeIdentifier(parsed.Name) + ".mgenerated.cpp");
             fs::path relativePath = genPath.lexically_relative(Options_.OutputDir);
             MString source = "${CMAKE_SOURCE_DIR}/Build/Generated/" + relativePath.generic_string();

@@ -4,8 +4,10 @@
 add_executable(AwaitDemo
     AwaitDemo.cpp
     ComplexDemo.cpp
+    MemberDemo.cpp
     ${MESSION_GENERATED_DIR}/AwaitDemo_FreeAwaitImpl.mgenerated.cpp
     ${MESSION_GENERATED_DIR}/ComplexDemo_FreeAwaitImpl.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/MemberService_AwaitImpl.mgenerated.cpp
 )
 target_include_directories(AwaitDemo
     PRIVATE

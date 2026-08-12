@@ -5,6 +5,7 @@
 
 #include "AwaitDemo.h"
 #include "ComplexDemo.h"
+#include "MemberDemo.h"
 
 #include <chrono>
 #include <cstdio>
@@ -67,5 +68,10 @@ int main()
             A1, A2, Ms);
     }
 
-    return (R == 31 && C == 44 && L == 4) ? 0 : 1;
+    // MCLASS 类成员 async：MemberService::MemberAsync(5) → await RemoteFetch(5)=10 → 11
+    MemberService Service;
+    const int M = Service.MemberAsync(5).GetResult().GetValue();
+    std::printf("MemberAsync(5):  %d\n", M);
+
+    return (R == 31 && C == 44 && L == 4 && M == 11) ? 0 : 1;
 }
