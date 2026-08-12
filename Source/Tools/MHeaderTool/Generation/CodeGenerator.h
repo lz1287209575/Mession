@@ -1539,7 +1539,7 @@ public:
         std::ostringstream Out;
         Out << "// " << FrameName
             << ": 循环 await 状态机 Frame（KD-13 最小形态: 单 for + 单 await）\n";
-        Out << "struct " << FrameName << " : std::enable_shared_from_this<" << FrameName << ">\n";
+        Out << "struct " << FrameName << " : TEnableSharedFromThis<" << FrameName << ">\n";
         Out << "{\n";
         for (const auto& P : Func.Params)
         {
@@ -1567,7 +1567,7 @@ public:
             }
         }
         Out << "    TOptional<SFutureResult<" << R << ">::SAwaiter> Awaiter;\n";
-        Out << "    std::shared_ptr<" << FrameName << "> SelfGuard;  // 挂起期间持有自己（完成时释放）\n";
+        Out << "    TSharedPtr<" << FrameName << "> SelfGuard;  // 挂起期间持有自己（完成时释放）\n";
         Out << "    MPromise<TResult<" << R << ", FAppError>> Promise;\n";
         Out << "    int State = 0;\n";
         Out << "\n";
@@ -1953,7 +1953,7 @@ public:
 
         std::ostringstream Out;
         Out << "// " << FrameName << ": await 状态机 Frame（串行, KD-9/KD-12）\n";
-        Out << "struct " << FrameName << " : std::enable_shared_from_this<" << FrameName << ">\n";
+        Out << "struct " << FrameName << " : TEnableSharedFromThis<" << FrameName << ">\n";
         Out << "{\n";
         Out << "    // 函数参数\n";
         for (const auto& P : Func.Params)
@@ -1987,7 +1987,7 @@ public:
             // 裸 await（无赋值变量）时结果暂存槽；有赋值变量时冗余但保持（简化生成）
             Out << "    " << R[K] << " AwaitResult" << (K + 1) << "{};\n";
         }
-        Out << "    std::shared_ptr<" << FrameName << "> SelfGuard;  // 挂起期间持有自己（完成时释放）\n";
+        Out << "    TSharedPtr<" << FrameName << "> SelfGuard;  // 挂起期间持有自己（完成时释放）\n";
         Out << "    MPromise<TResult<" << R[0] << ", FAppError>> Promise;\n";
         Out << "    int State = 0;  // 0=初始, K=等待第 K 个 await 完成\n";
         Out << "\n";

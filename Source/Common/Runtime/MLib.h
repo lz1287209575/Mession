@@ -115,6 +115,10 @@ TSharedPtr<T> MakeShared(TArgs&&... Args)
 template<typename T>
 using TWeakPtr = std::weak_ptr<T>;
 
+// 基类模板别名：异步状态机 Frame 挂起期间自持有（enable_shared_from_this）
+template <typename T>
+using TEnableSharedFromThis = std::enable_shared_from_this<T>;
+
 template<typename T>
 using TUniquePtr = std::unique_ptr<T>;
 
