@@ -26,3 +26,7 @@ SFutureResult<int> ComplexLoop(int N);
 // await 真正异步的目标（挂起 → 完成回调 → 恢复）
 MFUNCTION(Async)
 SFutureResult<int> ComplexAsync(int Base);
+
+// 两个异步 await 串行（函数内多次挂起/恢复切换）
+MFUNCTION(Async)
+SFutureResult<int> ComplexDualAsync(int Base);

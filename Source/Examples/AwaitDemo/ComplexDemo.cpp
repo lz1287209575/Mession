@@ -47,6 +47,16 @@ SFutureResult<int> ComplexAsync(int Base)
 
 #ifdef MESSION_AWAIT_CODEGEN_SOURCE
 MFUNCTION(Async)
+SFutureResult<int> ComplexDualAsync(int Base)
+{
+    int A = TAwaitable<AsyncDelayed>(Base);   // 挂起 → 50ms → 恢复（A = Base*2）
+    int B = TAwaitable<AsyncDelayed>(A);      // 再挂起 → 50ms → 恢复（B = A*2）
+    return SFutureResult<int>(TResult<int, FAppError>::Ok(A + B));
+}
+#endif
+
+#ifdef MESSION_AWAIT_CODEGEN_SOURCE
+MFUNCTION(Async)
 SFutureResult<int> ComplexLoop(int N)
 {
     int Sum = 0;

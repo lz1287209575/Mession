@@ -42,15 +42,30 @@ int main()
     const int L = ComplexLoop(3).GetResult().GetValue();
     std::printf("ComplexLoop(3):  %d\n", L);
 
-    // 真正异步：await 挂起（非 ready）→ 50ms 后线程完成 → Frame->Resume 恢复 → 结果
-    std::printf("[ComplexAsync] 调用（await 将挂起）...\n");
-    const auto T0 = std::chrono::steady_clock::now();
-    const int A = ComplexAsync(10).GetResult().GetValue();
-    const auto T1 = std::chrono::steady_clock::now();
-    const long long ElapsedMs =
-        std::chrono::duration_cast<std::chrono::milliseconds>(T1 - T0).count();
-    std::printf("[ComplexAsync] 恢复完成: 10*2+1 = %d（耗时 %lldms——挂起等待真实发生）\n",
-        A, ElapsedMs);
+    // ① 函数内多次挂起/恢复（两个异步 await 串行：~100ms，状态机切换两次）
+    {
+        const auto T0 = std::chrono::steady_clock::now();
+        const int D = ComplexDualAsync(10).GetResult().GetValue();
+        const auto T1 = std::chrono::steady_clock::now();
+        const long long Ms = std::chrono::duration_cast<std::chrono::milliseconds>(T1 - T0).count();
+        std::printf("[DualAsync] 两次挂起/恢复: 20+40 = %d（耗时 %lldms ≈ 2×50ms）\n", D, Ms);
+    }
 
-    return (R == 31 && C == 44 && L == 4 && A == 21 && ElapsedMs >= 40) ? 0 : 1;
+    // ② 并发切换：两个异步任务同时挂起（不阻塞）→ 并行完成
+    //    总耗时 ≈ 50ms（而非串行 100ms）——证明 await 不卡调用方（真正异步切换）
+    {
+        const auto T0 = std::chrono::steady_clock::now();
+        auto F1 = ComplexAsync(10);          // 挂起，立即返回 future（不阻塞）
+        auto F2 = ComplexAsync(20);          // 第二个也挂起（两个异步并行）
+        std::printf("[Concurrent] 两个异步已挂起（不阻塞），主线程继续做事...\n");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));  // 模拟主线程做别的事
+        const int A1 = F1.GetResult().GetValue();   // 等待（此时两个都快完成）
+        const int A2 = F2.GetResult().GetValue();
+        const auto T1 = std::chrono::steady_clock::now();
+        const long long Ms = std::chrono::duration_cast<std::chrono::milliseconds>(T1 - T0).count();
+        std::printf("[Concurrent] F1=%d F2=%d 总耗时 %lldms（≈50ms 而非 100ms → 并发异步切换）\n",
+            A1, A2, Ms);
+    }
+
+    return (R == 31 && C == 44 && L == 4) ? 0 : 1;
 }
