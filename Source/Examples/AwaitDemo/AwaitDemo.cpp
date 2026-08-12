@@ -1,8 +1,8 @@
-// AwaitDemo — await 状态机框架端到端验证
-// MFUNCTION(Async) 函数实现由业务写（用 codegen 生成的状态机 Frame 驱动）。
+// AwaitDemo — await 状态机框架端到端验证（C# async 模型）
+// AwaitDemoCompute 的实现由 codegen 生成（含业务逻辑段），本文件只提供
+// await 目标实现 + main 调用（真实场景由 ServerCall/RPC 自动分发）。
 
 #include "AwaitDemo.h"
-#include "AwaitDemo_FreeAwaitStateMachine.h"  // codegen 生成的 Frame（.h 辅助物）
 
 #include <cstdio>
 
@@ -14,19 +14,10 @@ SFutureResult<int> AwaitDemoHelper(int V)
     return SFutureResult<int>(P.GetFuture());
 }
 
-// MFUNCTION(Async) 业务实现——业务自己写，用生成的状态机 Frame 驱动
-SFutureResult<int> AwaitDemoCompute(int Seed)
-{
-    auto Frame = MakeShared<MHeaderTool_AwaitFrame_Free_AwaitDemoCompute>();
-    Frame->Seed = Seed;
-    Frame->Start();
-    return Frame->GetFuture();
-}
-
 int main()
 {
-    // 单 await：AwaitDemoHelper(5) = 10
+    // 业务逻辑：Mid = 5*3 = 15 → await Helper(15) = 30 → 返回 30+1 = 31
     const int R = AwaitDemoCompute(5).GetResult().GetValue();
     std::printf("AwaitDemo: compute=%d\n", R);
-    return R == 10 ? 0 : 1;
+    return R == 31 ? 0 : 1;
 }

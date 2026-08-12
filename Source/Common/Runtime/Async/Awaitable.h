@@ -48,9 +48,15 @@ public:
             "TAwaitable::AsAwaiter() 由 await 状态机 codegen 注入；类型层只提供构造与存储");
     }
 
-    // A 形态占位：业务头 `return TAwaitable<F,R>(args);`（#ifdef 保护体，codegen
-    // 解析时可见）需要能编译——本转换保证类型匹配。运行时由 codegen 生成的
-    // 驱动实现覆盖函数定义（业务编译时 #ifdef 体不可见，此转换不参与运行）。
+    // A 形态占位：业务函数体（#ifdef 保护，codegen 解析时可见）里 `int R =
+    // TAwaitable<F,R>(args)`（await 结果赋值）与 `return TAwaitable<...>(...)`
+    // 需要能编译——以下两个转换保证类型匹配。运行时由 codegen 生成的含业务
+    // 逻辑的状态机实现覆盖函数定义（业务编译时 #ifdef 体不可见，转换不参与运行）。
+    operator R() const
+    {
+        return R{};  // 占位：await 结果（运行时由生成实现取值）
+    }
+
     operator SFutureResult<R>() const
     {
         MPromise<TResult<R, FAppError>> P;

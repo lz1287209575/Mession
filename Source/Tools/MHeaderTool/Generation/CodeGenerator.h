@@ -1701,6 +1701,47 @@ public:
         return true;
     }
 
+    // 业务函数体 return 写完整表达式（`SFutureResult<T>(TResult<T,E>::Ok(x))`）
+    // 以保证 #ifdef 体在 C++ 下可编译；生成器剥到裸值再包 Ok（与裸值 return
+    // 契约一致，兼容两种写法）。只剥构造包裹（SFutureResult/Ok/TResult），
+    // 普通表达式（`R + 1`、`(A+B)*2`）原样返回。
+    static MString StripValueWrapper(const MString& Expr)
+    {
+        MString V = Expr;
+        bool bStripped = true;
+        while (bStripped)
+        {
+            bStripped = false;
+            const size_t Open = V.find('(');
+            if (Open == MString::npos || Open == 0) break;
+            const MString Prefix = V.substr(0, Open);
+            if (Prefix.find("SFutureResult") == MString::npos
+                && Prefix.find("Ok") == MString::npos
+                && Prefix.find("TResult") == MString::npos)
+            {
+                break;
+            }
+            int Depth = 1;
+            size_t I = Open + 1;
+            for (; I < V.size(); ++I)
+            {
+                if (V[I] == '(') ++Depth;
+                else if (V[I] == ')')
+                {
+                    --Depth;
+                    if (Depth == 0) break;
+                }
+            }
+            if (I >= V.size()) break;
+            const size_t B = V.find_first_not_of(" \t\r\n", Open + 1);
+            const size_t E = V.find_last_not_of(" \t\r\n", I - 1);
+            if (B == MString::npos || E == MString::npos || E < B) break;
+            V = V.substr(B, E - B + 1);
+            bStripped = true;
+        }
+        return V;
+    }
+
     // 生成单个函数的 await Frame（单 await）。消费 IR 原生类型——AwaitSites /
     // LiveAcrossAwait 只在 IR 的 SParsedFunction 上（legacy shim 不携带）。
     // 生成单个函数的 await Frame（多 await 串行，KD-9/KD-12）。
@@ -1948,7 +1989,7 @@ public:
             && PostReturnExpr.find("TAwaitable<") == MString::npos)
         {
             Out << "        Promise.SetValue(TResult<" << R[0]
-                << ", FAppError>::Ok(" << PostReturnExpr << "));\n";
+                << ", FAppError>::Ok(" << StripValueWrapper(PostReturnExpr) << "));\n";
         }
         else
         {
@@ -2029,6 +2070,56 @@ public:
     // 生成 await 状态机驱动 函数实现（对接 await Frame）：创建 Frame → 填参数槽 → Start → GetFuture。
     // 业务头声明 + #ifdef MESSION_AWAIT_CODEGEN_SOURCE 内联体（codegen 解析用），
     // 实现生成到 .AwaitImpl.mgenerated.cpp，链接时覆盖。
+    // 生成 await 状态机驱动函数实现（C# async 模型：业务逻辑体是 codegen 输入，
+    // 编译版实现由此生成，含业务逻辑段——await 前代码进 Start、await 后进 Resume）。
+    // 生成物自包含：include 用户头（Helper/类型声明）+ 状态机 Frame 头。
+    MString EmitAwaitFuncImpl(
+        const MString& NamePrefix,
+        const fs::path& HeaderPath,
+        const mession::headercodegen::SParsedFunction& Func) const
+    {
+        bool bHasAwait = false;
+        for (const auto& S : Func.AwaitSites)
+        {
+            if (S.Kind == mession::headercodegen::EAwaitSiteKind::TAwaitableCall)
+            {
+                bHasAwait = true;
+                break;
+            }
+        }
+        if (!bHasAwait) return {};
+
+        const MString FrameName =
+            "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(NamePrefix) +
+            "_" + SanitizeIdentifier(Func.Name);
+        const MString ReturnType = Func.ReturnType.CanonicalName;
+
+        std::ostringstream Out;
+        Out << "// await 状态机驱动函数实现（codegen 生成，含业务逻辑段）\n";
+        Out << ReturnType << " ";
+        if (NamePrefix != "Free")
+        {
+            Out << NamePrefix << "::";
+        }
+        Out << Func.Name << "(";
+        for (size_t I = 0; I < Func.Params.size(); ++I)
+        {
+            if (I) Out << ", ";
+            Out << Func.Params[I].Type.CanonicalName << " " << Func.Params[I].Name;
+        }
+        Out << ")\n";
+        Out << "{\n";
+        Out << "    auto Frame = MakeShared<" << FrameName << ">();\n";
+        for (const auto& P : Func.Params)
+        {
+            Out << "    Frame->" << P.Name << " = " << P.Name << ";\n";
+        }
+        Out << "    Frame->Start();\n";
+        Out << "    return Frame->GetFuture();\n";
+        Out << "}\n";
+        return Out.str();
+    }
+
     SOptions Options_;
 };
 
