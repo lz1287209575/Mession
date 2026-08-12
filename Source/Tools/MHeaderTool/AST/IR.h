@@ -68,13 +68,22 @@ struct SParsedParameter
 };
 
 // spec §2.3: MProperty 反射字段
+// 单条 MPROPERTY Meta=(K=V,...) 元数据（字段与 Core/Types.h 的
+// SMetadataEntry 对齐；ToLegacyProperty 逐字段拷贝）。
+struct SMetadataEntry
+{
+    MString Key;
+    MString Value;
+};
+
 struct SParsedProperty
 {
-    MString     Name;
-    SParsedType Type;
-    MString     Owner;
-    MString     FlagsExpr;
-    bool        bInjection = false;
+    MString                  Name;
+    SParsedType              Type;
+    MString                  Owner;
+    MString                  FlagsExpr;
+    bool                     bInjection = false;
+    TVector<SMetadataEntry>  Metadata;
 };
 
 // spec §2.3: enum 单值（名字 + 显式取值）

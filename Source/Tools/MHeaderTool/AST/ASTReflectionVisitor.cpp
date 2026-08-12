@@ -120,6 +120,70 @@ bool MASTReflectionVisitor::VisitFieldDecl(clang::FieldDecl* FD)
         Out.Owner = *Owner;
     }
 
+    // 解析 MPROPERTY(Meta=(K=V,...)) — legacy 生成 SetMetadata("K", "V")
+    // （服务 CLI 参数注册依赖，如 Meta=(Cli="--listen")）。
+    {
+        const MString& Args = MacroArgs->Args;
+        const MString Needle = "Meta=(";
+        const size_t MetaPos = Args.find(Needle);
+        if (MetaPos != MString::npos)
+        {
+            size_t Open = MetaPos + Needle.size();
+            int Depth = 1;
+            size_t Close = Open;
+            while (Close < Args.size() && Depth > 0)
+            {
+                if (Args[Close] == '(') ++Depth;
+                else if (Args[Close] == ')') --Depth;
+                ++Close;
+            }
+            if (Depth == 0)
+            {
+                const MString Body = Args.substr(Open, Close - Open - 1);
+                auto TrimMeta = [](MString In)
+                {
+                    const size_t B = In.find_first_not_of(" \t\r\n");
+                    if (B == MString::npos) return MString();
+                    const size_t E = In.find_last_not_of(" \t\r\n");
+                    return In.substr(B, E - B + 1);
+                };
+                size_t Start = 0;
+                for (size_t I = 0; I <= Body.size(); ++I)
+                {
+                    if (I == Body.size() || Body[I] == ',')
+                    {
+                        const MString Item = TrimMeta(Body.substr(Start, I - Start));
+                        Start = I + 1;
+                        const size_t Eq = Item.find('=');
+                        if (Eq == MString::npos)
+                        {
+                            // 裸标记（如 Meta=(NonZero, ...)）→ 值默认 "true"（对齐 legacy）
+                            if (!Item.empty())
+                            {
+                                Out.Metadata.push_back({Item, "true"});
+                            }
+                        }
+                        else
+                        {
+                            MString Key = TrimMeta(Item.substr(0, Eq));
+                            MString Val = TrimMeta(Item.substr(Eq + 1));
+                            if (Val.size() >= 2
+                                && (Val.front() == '"' || Val.front() == '\'')
+                                && Val.back() == Val.front())
+                            {
+                                Val = Val.substr(1, Val.size() - 2);
+                            }
+                            if (!Key.empty())
+                            {
+                                Out.Metadata.push_back({std::move(Key), std::move(Val)});
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // 多个 TU 会访问同一类型——同名字段去重
     for (const auto& P : Record->Properties)
     {
@@ -513,8 +577,14 @@ SParsedType MASTReflectionVisitor::QualTypeToSParsedType(
 {
     SParsedType T;
     T.bReference = QT->isReferenceType();
-    T.bConst     = QT.isConstQualified();
     T.bPointer   = QT->isPointerType();
+    // const 检测：`const T&` 的 const 在被引用类型上（isConstQualified 对
+    // 引用返回 false）；指针类似。先剥引用再看。
+    T.bConst = QT.getNonReferenceType().isConstQualified();
+    if (T.bPointer)
+    {
+        T.bConst = QT->getPointeeType().isConstQualified();
+    }
 
     // 类型名优先用源码拼写（类型 token 文本）：`uint64` / `TVector<uint32>`
     // / `const FSampleEchoRequest &`。getAsString() 会 canonical 化
@@ -527,7 +597,17 @@ SParsedType MASTReflectionVisitor::QualTypeToSParsedType(
         const MString Spelling = clang::Lexer::getSourceText(CR, SM, clang::LangOptions()).str();
         if (!Spelling.empty())
         {
-            T.CanonicalName = Spelling;
+            // TypeLoc 的源码范围不含外层 const qualifier（const 在 QualType
+            // 上）——按 bConst 补回，保持与字符串解析版一致
+            // （legacy 生成 `const FSampleEchoRequest & Request`）。
+            if (T.bConst && Spelling.rfind("const ", 0) != 0)
+            {
+                T.CanonicalName = "const " + Spelling;
+            }
+            else
+            {
+                T.CanonicalName = Spelling;
+            }
         }
     }
     if (T.CanonicalName.empty())

@@ -997,18 +997,18 @@ public:
 
     std::string MakeIncludePathFromHeader(const fs::path& headerPath) const
     {
-        fs::path includePath = headerPath;
-        if (includePath.is_absolute())
+        // 基于绝对路径中的 "/Source/" 段推导 include 路径，不依赖进程 cwd：
+        // ClangTool 并行解析多个 TU 时会 chdir 到各 compile_commands 的
+        // directory（Build/ 下，且线程间互相干扰），fs::current_path() 不可用。
+        // /root/Mession/Source/Servers/... → Servers/...
+        const MString P = headerPath.generic_string();
+        const MString Needle = "/Source/";
+        const size_t Pos = P.find(Needle);
+        if (Pos != MString::npos)
         {
-            std::error_code ec;
-            includePath = fs::relative(includePath, fs::current_path(), ec);
-            if (ec) includePath = headerPath.filename();
+            return P.substr(Pos + Needle.size());
         }
-        if (!includePath.empty() && includePath.begin()->string() == "Source")
-        {
-            includePath = fs::relative(includePath, "Source");
-        }
-        return includePath.generic_string();
+        return headerPath.filename().generic_string();
     }
 
     const char* GetTypeKindName(EParsedTypeKind kind) const

@@ -138,6 +138,10 @@ SParsedProperty ToLegacyProperty(const mession::headercodegen::SParsedProperty& 
     // EPropertyFlags::None in the registered property.
     Out.MacroArgs    = In.FlagsExpr;
     Out.Owner        = In.Owner;
+    for (const auto& M : In.Metadata)
+    {
+        Out.Metadata.push_back({M.Key, M.Value});
+    }
     return Out;
 }
 
@@ -270,7 +274,7 @@ MString CodeGenerator::GenerateHeaderFromIR(
     Out << "#include \"Common/Runtime/Reflect/Reflection.h\"\n";
     Out << "#include \"Common/Runtime/Async/MAsync.h\"\n";
     Out << "#include \"Common/Net/Rpc/RpcClientCall.h\"\n";
-    Out << "\n";
+    // 与 legacy GenerateHeader 一致：include 用户头前不额外空行
     Out << "#include \"" << MakeIncludePathFromHeader(Record.HeaderPath) << "\"\n";
     Out << "\n";
 
@@ -382,15 +386,17 @@ SParsedClass ToLegacyEnum(const mession::headercodegen::SParsedEnum& In);  // �
 std::vector<SParsedClass> CodeGenerator::ToLegacyClasses(
     const mession::headercodegen::SParseIR& IR) const
 {
+    // 只含 Records（类/结构）。enum 不进 manifest/构建组：
+    //  - legacy 的 enum 生成本就是 no-op 注册 stub（namespace 级 scoped enum
+    //    无法在全局作用域引用），编译与否无功能差异；
+    //  - AST 版会扫描到所有 Source/ 内 scoped enum（含用户内部实现 enum，
+    //    如 MLuaVector.h 的 MScalarType）——若进 shared 组编译，其 .mgenerated.cpp
+    //    include 用户头（可能带 <lua.h> 等外部依赖）会破坏构建。
     std::vector<SParsedClass> Out;
-    Out.reserve(IR.Records.size() + IR.Enums.size());
+    Out.reserve(IR.Records.size());
     for (const auto& Record : IR.Records)
     {
         Out.push_back(ToLegacyClass(Record));
-    }
-    for (const auto& Enum : IR.Enums)
-    {
-        Out.push_back(ToLegacyEnum(Enum));
     }
     return Out;
 }
