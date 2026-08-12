@@ -1805,6 +1805,220 @@ public:
         return Out;
     }
 
+    // 解析 if/else 分支 await 体（第一步最小形态）：
+    //   if (cond) { [PreCode] <await> [PostCode] return EXPR_TRUE; } [else { return EXPR_ELSE; }]
+    //   [return EXPR_TAIL;]
+    // 输出：cond、await 前代码、await 后代码、分支内 return 表达式、early return 表达式。
+    static MString TrimText(const MString& In)
+    {
+        const size_t B = In.find_first_not_of(" \t\r\n");
+        if (B == MString::npos) return MString();
+        const size_t E = In.find_last_not_of(" \t\r\n");
+        return In.substr(B, E - B + 1);
+    }
+
+    static bool ParseBranchAsyncBody(
+        const MString& Body, const MString& AwaitText,
+        MString& OutCond, MString& OutPreCode, MString& OutPostCode,
+        MString& OutBranchReturn, MString& OutEarlyReturn)
+    {
+        OutCond = OutPreCode = OutPostCode = OutBranchReturn = OutEarlyReturn = MString();
+        const size_t IfPos = Body.find("if (");
+        if (IfPos == MString::npos) return false;
+        const size_t CondOpen = IfPos + 3;
+        int Depth = 1;
+        size_t CondEnd = CondOpen + 1;
+        while (CondEnd < Body.size() && Depth > 0)
+        {
+            if (Body[CondEnd] == '(') ++Depth;
+            else if (Body[CondEnd] == ')') --Depth;
+            ++CondEnd;
+        }
+        if (Depth != 0) return false;
+        OutCond = TrimText(Body.substr(CondOpen + 1, CondEnd - CondOpen - 2));
+        const size_t BraceOpen = Body.find('{', CondEnd);
+        if (BraceOpen == MString::npos) return false;
+        int BDepth = 1;
+        size_t BraceEnd = BraceOpen + 1;
+        while (BraceEnd < Body.size() && BDepth > 0)
+        {
+            if (Body[BraceEnd] == '{') ++BDepth;
+            else if (Body[BraceEnd] == '}') --BDepth;
+            ++BraceEnd;
+        }
+        if (BDepth != 0) return false;
+        const MString BranchBody = Body.substr(BraceOpen + 1, BraceEnd - BraceOpen - 2);
+        if (BranchBody.find(AwaitText) == MString::npos) return false;  // 分支体内必须有 await
+
+        const size_t RetPos = BranchBody.find("return");
+        if (RetPos == MString::npos) return false;
+        const size_t Semi = BranchBody.find(';', RetPos);
+        if (Semi == MString::npos) return false;
+        OutBranchReturn = TrimText(BranchBody.substr(RetPos + 6, Semi - RetPos - 6));
+
+        const size_t AwaitPos = BranchBody.find(AwaitText);
+        const size_t AwaitLineStart = BranchBody.rfind('\n', AwaitPos) == MString::npos
+            ? 0 : BranchBody.rfind('\n', AwaitPos) + 1;
+        OutPreCode = TrimText(BranchBody.substr(0, AwaitLineStart));
+        const size_t AwaitLineEnd = BranchBody.find('\n', AwaitPos);
+        const size_t PostStart = (AwaitLineEnd == MString::npos) ? AwaitPos + AwaitText.size() : AwaitLineEnd + 1;
+        if (PostStart < RetPos)
+        {
+            OutPostCode = TrimText(BranchBody.substr(PostStart, RetPos - PostStart));
+        }
+
+        // early return：else 块 或 函数尾 return
+        const MString AfterIf = Body.substr(BraceEnd);
+        const size_t ElsePos = AfterIf.find("else");
+        const size_t ERet = AfterIf.find("return");
+        if (ERet != MString::npos)
+        {
+            const size_t ESemi = AfterIf.find(';', ERet);
+            if (ESemi != MString::npos)
+            {
+                OutEarlyReturn = TrimText(AfterIf.substr(ERet + 6, ESemi - ERet - 6));
+            }
+        }
+        (void)ElsePos;
+        return true;
+    }
+
+    // 生成分支 await 状态机 Frame（第一步最小形态：if 体内单 await + early return）。
+    // if (cond) 真 → 分支内 await（挂起/恢复）；假 → early return（ReturnValue 直接 Finish）。
+    MString EmitAwaitBranchStateMachine(
+        const MString& NamePrefix,
+        const fs::path& HeaderPath,
+        const mession::headercodegen::SParsedFunction& Func,
+        const mession::headercodegen::SAwaitSite* Site) const
+    {
+        (void)HeaderPath;
+        MString F, R, Args, Cond, PreCode, PostCode, BranchReturn, EarlyReturn;
+        if (!ParseBranchAsyncBody(Func.AsyncBody, Site->AwaitExprText,
+                Cond, PreCode, PostCode, BranchReturn, EarlyReturn)) return {};
+        if (Cond.empty() || BranchReturn.empty()) return {};
+        if (!ParseTAwaitableText(Site->AwaitExprText, F, R, Args)) return {};
+        if (R.empty()) R = RFromReturnType(Func.ReturnType.CanonicalName);
+
+        // await 结果变量（`int R = TAwaitable...`——'=' 前的变量名）；无则回退（第一步只支持赋值形态）
+        MString AssignVar;
+        {
+            const size_t AwaitPos = Func.AsyncBody.find(Site->AwaitExprText);
+            const size_t LineStart = Func.AsyncBody.rfind('\n', AwaitPos) == MString::npos
+                ? 0 : Func.AsyncBody.rfind('\n', AwaitPos) + 1;
+            const MString Line = Func.AsyncBody.substr(LineStart, AwaitPos - LineStart);
+            const size_t Eq = Line.rfind('=');
+            if (Eq == MString::npos) return {};
+            const size_t EndV = Line.find_last_not_of(" \t", Eq - 1);
+            if (EndV == MString::npos) return {};
+            const size_t StartV = Line.find_last_of(" \t", EndV);
+            AssignVar = Line.substr(StartV == MString::npos ? 0 : StartV + 1,
+                EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1);
+        }
+        if (AssignVar.empty()) return {};
+
+        const MString FrameName = "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(NamePrefix) +
+            "_" + SanitizeIdentifier(Func.Name);
+        const MString BranchVal = StripValueWrapper(BranchReturn);
+        const MString EarlyVal = StripValueWrapper(EarlyReturn);
+
+        std::ostringstream Out;
+        Out << "// " << FrameName << ": 分支 await 状态机 Frame（if 体内单 await + early return）\n";
+        Out << "struct " << FrameName << " : TEnableSharedFromThis<" << FrameName << ">\n";
+        Out << "{\n";
+        for (const auto& P : Func.Params)
+        {
+            Out << "    " << P.Type.CanonicalName << " " << P.Name << "{};\n";
+        }
+        bool bHasLive = false;
+        for (const auto& L : Func.LiveAcrossAwait)
+        {
+            if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
+            Out << "    " << L.Type.CanonicalName << " " << L.Name << "{};\n";
+        }
+        bool bAssignInLive = false;
+        for (const auto& L : Func.LiveAcrossAwait)
+        {
+            if (L.Name == AssignVar) { bAssignInLive = true; break; }
+        }
+        if (!bAssignInLive)
+        {
+            if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
+            Out << "    " << R << " " << AssignVar << "{};\n";
+        }
+        Out << "    " << R << " ReturnValue{};  // 分支结果（early 或 await 后）\n";
+        Out << "    TOptional<SFutureResult<" << R << ">::SAwaiter> Awaiter1;\n";
+        Out << "    TSharedPtr<" << FrameName << "> SelfGuard;  // 挂起期间持有自己（完成时释放）\n";
+        Out << "    MPromise<TResult<" << R << ", FAppError>> Promise;\n";
+        Out << "    int State = 0;  // 0=初始, 1=等待 await 完成\n";
+        Out << "\n";
+        Out << "    void Start()\n";
+        Out << "    {\n";
+        Out << "        if (" << Cond << ")\n";
+        Out << "        {\n";
+        if (!PreCode.empty())
+        {
+            Out << "            " << StripLiveDeclTypes(PreCode, Func.LiveAcrossAwait) << "\n";
+        }
+        Out << "            Awaiter1 = " << F << "(" << Args << ").AsAwaiter();\n";
+        Out << "            if (Awaiter1->AwaitReady())\n";
+        Out << "            {\n";
+        Out << "                " << AssignVar << " = Awaiter1->AwaitResume();\n";
+        if (!PostCode.empty())
+        {
+            Out << "                " << StripLiveDeclTypes(PostCode, Func.LiveAcrossAwait) << "\n";
+        }
+        Out << "                ReturnValue = " << BranchVal << ";\n";
+        Out << "                Finish();\n";
+        Out << "            }\n";
+        Out << "            else\n";
+        Out << "            {\n";
+        Out << "                State = 1;\n";
+        Out << "                SelfGuard = shared_from_this();\n";
+        Out << "                Awaiter1->AwaitSuspend(this);\n";
+        Out << "            }\n";
+        Out << "        }\n";
+        Out << "        else\n";
+        Out << "        {\n";
+        if (EarlyReturn.empty())
+        {
+            Out << "            ReturnValue = " << R << "{};\n";
+        }
+        else
+        {
+            Out << "            ReturnValue = " << EarlyVal << ";\n";
+        }
+        Out << "            Finish();\n";
+        Out << "        }\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    void Resume()\n";
+        Out << "    {\n";
+        Out << "        if (State == 1)\n";
+        Out << "        {\n";
+        Out << "            " << AssignVar << " = Awaiter1->AwaitResume();\n";
+        if (!PostCode.empty())
+        {
+            Out << "            " << StripLiveDeclTypes(PostCode, Func.LiveAcrossAwait) << "\n";
+        }
+        Out << "            ReturnValue = " << BranchVal << ";\n";
+        Out << "            Finish();\n";
+        Out << "        }\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    void Finish()\n";
+        Out << "    {\n";
+        Out << "        Promise.SetValue(TResult<" << R << ", FAppError>::Ok(ReturnValue));\n";
+        Out << "        SelfGuard.reset();\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    SFutureResult<" << R << "> GetFuture()\n";
+        Out << "    {\n";
+        Out << "        return SFutureResult<" << R << ">(Promise.GetFuture());\n";
+        Out << "    }\n";
+        Out << "};\n";
+        return Out.str();
+    }
+
     // 生成单个函数的 await Frame（单 await）。消费 IR 原生类型——AwaitSites /
     // LiveAcrossAwait 只在 IR 的 SParsedFunction 上（legacy shim 不携带）。
     // 生成单个函数的 await Frame（多 await 串行，KD-9/KD-12）。
@@ -1831,6 +2045,13 @@ public:
             const MString LoopFrame = EmitAwaitLoopStateMachine(NamePrefix, HeaderPath, Func, Sites[0]);
             if (!LoopFrame.empty()) return LoopFrame;
             // 解析失败则回退串行路径
+        }
+        // 分支 await（第一步：if 体内单 await + early return）→ 分支生成器
+        if (Sites.size() == 1 && Func.AsyncBody.find("if (") != MString::npos)
+        {
+            const MString BranchFrame = EmitAwaitBranchStateMachine(NamePrefix, HeaderPath, Func, Sites[0]);
+            if (!BranchFrame.empty()) return BranchFrame;
+            // 解析失败（如多分支/嵌套）则回退串行路径
         }
         std::sort(Sites.begin(), Sites.end(),
             [](const mession::headercodegen::SAwaitSite* A,

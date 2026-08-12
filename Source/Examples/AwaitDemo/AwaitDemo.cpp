@@ -6,6 +6,7 @@
 #include "AwaitDemo.h"
 #include "ComplexDemo.h"
 #include "MemberDemo.h"
+#include "BranchDemo.h"
 
 #include <chrono>
 #include <cstdio>
@@ -73,5 +74,11 @@ int main()
     const int M = Service.MemberAsync(5).GetResult().GetValue();
     std::printf("MemberAsync(5):  %d\n", M);
 
-    return (R == 31 && C == 44 && L == 4 && M == 11) ? 0 : 1;
+    // 分支控制流：N>0 → if 内 await（5+1=6 → *2=12）；N<=0 → early return 0
+    const int B1 = BranchAsync(5).GetResult().GetValue();
+    const int B2 = BranchAsync(-3).GetResult().GetValue();
+    std::printf("BranchAsync(5):  %d（if 分支 await）\n", B1);
+    std::printf("BranchAsync(-3): %d（early return）\n", B2);
+
+    return (R == 31 && C == 44 && L == 4 && M == 11 && B1 == 12 && B2 == 0) ? 0 : 1;
 }
