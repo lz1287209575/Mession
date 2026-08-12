@@ -14,8 +14,10 @@
 namespace mession::headercodegen
 {
 
-MASTReflectionVisitor::MASTReflectionVisitor(clang::ASTContext& Ctx, SParseIR& IR)
-    : Ctx(Ctx), IR(IR), SM(Ctx.getSourceManager()) {}
+MASTReflectionVisitor::MASTReflectionVisitor(
+    clang::ASTContext& Ctx, SParseIR& IR,
+    const TVector<SMacroExpand>& MacroExpands)
+    : Ctx(Ctx), IR(IR), SM(Ctx.getSourceManager()), MacroExpandsRef(MacroExpands) {}
 
 bool MASTReflectionVisitor::TraverseDecl(clang::Decl* D)
 {
@@ -32,11 +34,22 @@ bool MASTReflectionVisitor::VisitCXXRecordDecl(clang::CXXRecordDecl* RD)
     // raw-lexer token 扫描判定反射宏（MCLASS / MSTRUCT / MGENERATED_BODY）。
     // 注释是 tok::comment、字符串字面量是 tok::string_literal 单 token，
     // 其中的宏名文本不会产生 identifier token——无需字节级注释剥离。
-    const auto MClassArgs     = ExtractMacroCallArgs(RD->getBeginLoc(), 512, "MCLASS");
-    const auto MStructArgs    = ExtractMacroCallArgs(RD->getBeginLoc(), 512, "MSTRUCT");
-    const auto MGeneratedArgs = ExtractMacroCallArgs(RD->getBeginLoc(), 512, "MGENERATED_BODY");
+    const auto MClassArgs     = ExtractMacroCallArgs(RD->getBeginLoc(), "MCLASS");
+    const auto MStructArgs    = ExtractMacroCallArgs(RD->getBeginLoc(), "MSTRUCT");
+    const auto MGeneratedArgs = ExtractMacroCallArgs(RD->getBeginLoc(), "MGENERATED_BODY");
 
-    if (!MClassArgs.has_value() && !MStructArgs.has_value() && !MGeneratedArgs.has_value()) return true;
+    // 宏必须紧邻类声明（≤2 行）：PPCallbacks 无字节窗口后，同文件里任意早
+    // 的宏都可能 isBefore 匹配——没有行距约束会把 `class X { MPROPERTY...; }`
+    // 里前一个成员的宏误配给后面的普通字段/类（如 EchoService.h 137 行
+    // 无宏的 Config 字段匹配到 79 行的 MPROPERTY）。长 Meta 宏的 ')' 仍在
+    // 声明前一行，行距检查不影响超长参数。
+    const uint32 ClassLine = SM.getSpellingLineNumber(RD->getBeginLoc());
+    auto Near = [&](const TOptional<SMacroCallHit>& Hit)
+    {
+        return Hit.has_value() && (ClassLine - Hit->CloseLine) <= 2;
+    };
+
+    if (!Near(MClassArgs) && !Near(MStructArgs) && !Near(MGeneratedArgs)) return true;
 
     SParsedRecord Record;
     Record.Name          = RD->getNameAsString();
@@ -44,7 +57,7 @@ bool MASTReflectionVisitor::VisitCXXRecordDecl(clang::CXXRecordDecl* RD)
     Record.HeaderPath    = GetFilePath(RD->getBeginLoc());
     Record.SourceLine    = SM.getSpellingLineNumber(RD->getBeginLoc());
 
-    if (MClassArgs.has_value())
+    if (Near(MClassArgs))
     {
         Record.Kind              = ERecordKind::Class;
         Record.bHasMClassMarker  = true;
@@ -52,14 +65,14 @@ bool MASTReflectionVisitor::VisitCXXRecordDecl(clang::CXXRecordDecl* RD)
         Record.Owner             = ExtractMacroValue(MClassArgs->Args, "Owner").value_or("");
         Record.InjectionClass    = ExtractMacroValue(MClassArgs->Args, "InjectionClass").value_or("");
     }
-    else if (MStructArgs.has_value())
+    else if (Near(MStructArgs))
     {
         Record.Kind              = ERecordKind::Struct;
         Record.bHasMStructMarker = true;
         Record.ReflectionType    = "Struct";
     }
 
-    if (MGeneratedArgs.has_value())
+    if (Near(MGeneratedArgs))
     {
         Record.bHasMGeneratedBody = true;
         TVector<MString> Parts = SplitMacroArgs(MGeneratedArgs->Args);
@@ -95,8 +108,11 @@ bool MASTReflectionVisitor::VisitFieldDecl(clang::FieldDecl* FD)
 
     // 仅在源文本中带 MPROPERTY(...) 的字段算反射属性
     // （raw-lexer token 扫描：注释/字符串里的 MPROPERTY 不会命中）
-    const auto MacroArgs = ExtractMacroCallArgs(FD->getBeginLoc(), 256, "MPROPERTY");
+    const auto MacroArgs = ExtractMacroCallArgs(FD->getBeginLoc(), "MPROPERTY");
     if (!MacroArgs.has_value()) return true;
+    // MPROPERTY 必须紧邻字段（≤2 行），防止匹配到同文件里更早的 MPROPERTY
+    //（无宏的字段如 EchoService.h 的 Config 会误配到 SEchoServiceConfig 的宏）。
+    if ((SM.getSpellingLineNumber(FD->getBeginLoc()) - MacroArgs->CloseLine) > 2) return true;
 
     // 找父类对应的 IR.Records 条目
     const auto* Parent = llvm::dyn_cast<clang::CXXRecordDecl>(FD->getParent());
@@ -231,7 +247,7 @@ bool MASTReflectionVisitor::VisitFunctionDecl(clang::FunctionDecl* FD)
     bool bIsReflectionFunc = false;
     for (const auto& Macro : ReflectionFuncMacros)
     {
-        const auto Hit = ExtractMacroCallArgs(FD->getBeginLoc(), 256, Macro);
+        const auto Hit = ExtractMacroCallArgs(FD->getBeginLoc(), Macro);
         if (Hit.has_value() && (FuncLine - Hit->CloseLine) <= 2)
         {
             bIsReflectionFunc = true;
@@ -268,7 +284,7 @@ bool MASTReflectionVisitor::VisitFunctionDecl(clang::FunctionDecl* FD)
     }
 
     // MFUNCTION(...) arg extraction — Transport / RpcKind / Endpoint / MessageName / Route / Target / Auth / Wrap / ClientApi
-    if (auto MacroArgs = ExtractMacroCallArgs(FD->getBeginLoc(), 256, "MFUNCTION"))
+    if (auto MacroArgs = ExtractMacroCallArgs(FD->getBeginLoc(), "MFUNCTION"))
     {
         ApplyMFUNCTIONMacroArgs(MacroArgs->Args, Func);
     }
@@ -431,71 +447,25 @@ fs::path MASTReflectionVisitor::GetFilePath(clang::SourceLocation Loc) const
 }
 
 TOptional<MASTReflectionVisitor::SMacroCallHit> MASTReflectionVisitor::ExtractMacroCallArgs(
-    clang::SourceLocation Loc, uint32 LookbackBytes, llvm::StringRef MacroName) const
+    clang::SourceLocation Loc, llvm::StringRef MacroName) const
 {
     if (!Loc.isValid()) return {};
-    const clang::FileID FID = SM.getFileID(Loc);
-    if (FID.isInvalid()) return {};
-    const unsigned Offset = SM.getFileOffset(Loc);
-    const unsigned StartOffset = (Offset > LookbackBytes) ? Offset - LookbackBytes : 0;
-
-    const llvm::StringRef Data = SM.getBufferData(FID);
-    if (Data.size() < Offset) return {};
-
-    // Raw lexer 只在 [StartOffset, Offset) 的 token 流里扫描：
-    //  - 注释是 tok::comment 单 token，其文本不会产生 identifier token；
-    //  - 字符串/字符字面量是 tok::string_literal / tok::char_constant 单 token，同样不会。
-    // 因此注释或字符串里出现 `MFUNCTION(` 之类的文本不会误命中。
-    // Buffer 以 '\0' 结尾（llvm::MemoryBuffer 保证），Lexer 不会越界读。
-    clang::LangOptions LangOpts = Ctx.getLangOpts();
-    const clang::SourceLocation StartLoc =
-        SM.getLocForStartOfFile(FID).getLocWithOffset(StartOffset);
-    const char* BufStart = Data.data() + StartOffset;
-    const char* BufEnd   = Data.data() + Data.size();
-    clang::Lexer RawLex(StartLoc, LangOpts, BufStart, BufStart, BufEnd);
-
-    TOptional<SMacroCallHit> LastHit;
-    clang::Token Tok;
-    while (!RawLex.LexFromRawLexer(Tok))  // 返回 true = 到达 buffer 末尾
+    const clang::FileID DeclFID = SM.getFileID(Loc);
+    // MacroExpands 记录按 TU 解析顺序追加；倒序找最近一次匹配且满足：
+    //  1) 宏与声明同文件（FileID）——include 链里其它头的宏不能修饰本文件的类
+    //     （否则 IDisposable 等无宏类型会误配到别的头的 MCLASS）；
+    //  2) 宏在声明之前（isBeforeInTranslationUnit，跨文件位置正确）。
+    for (auto It = MacroExpandsRef.rbegin(); It != MacroExpandsRef.rend(); ++It)
     {
-        const unsigned TokOffset = SM.getFileOffset(Tok.getLocation());
-        if (TokOffset >= Offset) break;          // 已越过目标声明位置
-        // raw lexer 不填充 IdentifierInfo，标识符 token 的 kind 是
-        // tok::raw_identifier——用 token 文本与宏名比较。
-        if (!Tok.is(clang::tok::raw_identifier)) continue;
-        const unsigned IdentOffset = SM.getFileOffset(Tok.getLocation());
-        if (Data.substr(IdentOffset, Tok.getLength()) != MacroName) continue;
-
-        clang::Token Next;
-        if (RawLex.LexFromRawLexer(Next)) break;  // EOF
-        if (!Next.is(clang::tok::l_paren)) continue;  // 宏名后必须紧跟 '(' 才算调用
-
-        const unsigned OpenOffset = SM.getFileOffset(Next.getLocation());
-        int Depth = 1;
-        unsigned CloseOffset = 0;
-        clang::Token T;
-        while (!RawLex.LexFromRawLexer(T))
-        {
-            if (T.is(clang::tok::l_paren)) ++Depth;
-            else if (T.is(clang::tok::r_paren))
-            {
-                --Depth;
-                if (Depth == 0)
-                {
-                    CloseOffset = SM.getFileOffset(T.getLocation());
-                    break;
-                }
-            }
-        }
-        if (CloseOffset == 0 || CloseOffset < OpenOffset) continue;  // 未配对，忽略
+        if (It->Name != MacroName) continue;
+        if (SM.getFileID(It->EndLoc) != DeclFID) continue;   // 必须同文件
+        if (!SM.isBeforeInTranslationUnit(It->EndLoc, Loc)) continue;
         SMacroCallHit Hit;
-        Hit.Args = MString(Data.substr(OpenOffset + 1, CloseOffset - OpenOffset - 1));
-        Hit.CloseLine = SM.getSpellingLineNumber(
-            SM.getLocForStartOfFile(FID).getLocWithOffset(CloseOffset));
-        LastHit = std::move(Hit);
+        Hit.Args      = It->Args;
+        Hit.CloseLine = It->EndLine;
+        return Hit;
     }
-
-    return LastHit;
+    return {};
 }
 
 MString MASTReflectionVisitor::GetSourceText(clang::SourceRange Range) const

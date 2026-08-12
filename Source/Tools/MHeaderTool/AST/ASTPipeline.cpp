@@ -5,6 +5,7 @@
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
+#include "clang/Lex/MacroArgs.h"
 
 #include <filesystem>
 #include <thread>
@@ -42,11 +43,76 @@ void CollectHeaders(const fs::path& InRoot, TVector<MString>& OutFiles)
 
 }  // namespace
 
+// 记录反射宏（MCLASS/MPROPERTY/MFUNCTION/MSTRUCT/MGENERATED_BODY）的展开：
+// 预处理器在宏展开时回调，位置/参数来自源码事实——注释与字符串不会产生
+// 宏展开事件，且没有字节窗口限制（超长 Meta 列表完整可取）。
+class MReflectionMacroRecorder : public clang::PPCallbacks
+{
+public:
+    MReflectionMacroRecorder(
+        clang::SourceManager& SM, TVector<SMacroExpand>& Out)
+        : SMRef(SM), OutRef(Out)
+    {
+    }
+
+    void MacroExpands(const clang::Token& MacroNameTok,
+                      const clang::MacroDefinition& /*MD*/,
+                      clang::SourceRange Range,
+                      const clang::MacroArgs* Args) override
+    {
+        const clang::IdentifierInfo* II = MacroNameTok.getIdentifierInfo();
+        if (!II) return;
+        const MString Name = II->getName().str();
+        if (Name != "MFUNCTION" && Name != "MPROPERTY" && Name != "MCLASS"
+            && Name != "MSTRUCT" && Name != "MGENERATED_BODY")
+        {
+            return;
+        }
+        // 注意：MacroExpands 的 Range 只覆盖宏名 token（不含参数）——参数
+        // 文本必须从 MacroArgs 取（未展开 token 的源码拼写，保留原始格式）。
+        // 无字节窗口：Meta=(...) 超长列表完整保留。
+        MString ArgsText;
+        clang::SourceLocation EndLoc = Range.getEnd();
+        if (Args)
+        {
+            const unsigned NumArgs = Args->getNumMacroArguments();
+            for (unsigned I = 0; I < NumArgs; ++I)
+            {
+                if (I > 0) ArgsText += ", ";
+                const clang::Token* Toks = Args->getUnexpArgument(I);
+                const unsigned Len = clang::MacroArgs::getArgLength(Toks);
+                if (Len > 0)
+                {
+                    const clang::SourceLocation LastEnd = Toks[Len - 1].getEndLoc();
+                    ArgsText += clang::Lexer::getSourceText(
+                        clang::CharSourceRange::getCharRange(
+                            Toks[0].getLocation(), LastEnd),
+                        SMRef, clang::LangOptions()).str();
+                    EndLoc = LastEnd;
+                }
+            }
+        }
+
+        SMacroExpand E;
+        E.Name    = Name;
+        E.Args    = std::move(ArgsText);
+        E.EndLoc  = EndLoc;
+        E.EndLine = SMRef.getSpellingLineNumber(EndLoc);
+        OutRef.push_back(std::move(E));
+    }
+
+private:
+    clang::SourceManager& SMRef;
+    TVector<SMacroExpand>& OutRef;
+};
+
 class MASTReflectionConsumer : public clang::ASTConsumer
 {
 public:
-    MASTReflectionConsumer(clang::ASTContext& Ctx, SParseIR& IR)
-        : Visitor(Ctx, IR) {}
+    MASTReflectionConsumer(
+        clang::ASTContext& Ctx, SParseIR& IR,
+        const TVector<SMacroExpand>& MacroExpands)
+        : Visitor(Ctx, IR, MacroExpands) {}
 
     void HandleTranslationUnit(clang::ASTContext& Ctx) override
     {
@@ -66,11 +132,16 @@ public:
         clang::CompilerInstance& CI, llvm::StringRef /*File*/) override
     {
         CI.getDiagnostics().setClient(new clang::IgnoringDiagConsumer());
-        return std::make_unique<MASTReflectionConsumer>(CI.getASTContext(), IRRef);
+        // 每 TU 一份宏展开记录：注册 recorder 后再建 consumer（visitor 查记录）
+        CI.getPreprocessor().addPPCallbacks(
+            std::make_unique<MReflectionMacroRecorder>(CI.getSourceManager(), MacroExpands));
+        return std::make_unique<MASTReflectionConsumer>(
+            CI.getASTContext(), IRRef, MacroExpands);
     }
 
 private:
     SParseIR& IRRef;
+    TVector<SMacroExpand> MacroExpands;  // 每 TU（同一分片内 TU 串行解析）
 };
 
 // GCC 生成的 CMake PCH（cmake_pch.hxx.gch）clang libtooling 无法加载。
@@ -220,9 +291,11 @@ SParseIR MASTPipeline::Run(const SOptions& InOptions)
         // compiler job"。补 -I<SourceRoot> 让相对 include 可解析,再递归
         // 收集 .h/.cpp 文件喂给 ClangTool,与 MClangToolRunner 行为对齐。
         const MString IncludeArg = MString("-I") + SourceRootAbs.generic_string();
+        // fallback 直接解析 .h 文件：clang 对 .h 默认按 C 语言（struct 成员
+        // 初始化在 C 里非法，如 `int X = 0;`）——必须显式 -x c++。
         CDB = std::make_unique<clang::tooling::FixedCompilationDatabase>(
             SourceRootAbs.generic_string(),
-            TVector<MString>{ "-fsyntax-only", IncludeArg });
+            TVector<MString>{ "-fsyntax-only", "-x", "c++", IncludeArg });
         CollectHeaders(SourceRootAbs, SourceFiles);
     }
 
