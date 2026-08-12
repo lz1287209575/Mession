@@ -294,6 +294,7 @@ bool MASTReflectionVisitor::VisitFunctionDecl(clang::FunctionDecl* FD)
     if (Func.bIsAsync)
     {
         CollectAwaitSites(FD, Func);
+        CollectLiveAcrossAwait(FD, Func);
     }
 
     if (const auto* Method = llvm::dyn_cast<clang::CXXMethodDecl>(FD))
@@ -395,18 +396,36 @@ void MASTReflectionVisitor::CollectAwaitSites(
             return true;
         }
 
-        // P5：TAwaitable<F, R, Args...>(...) 是类构造（CXXConstructExpr，临时
-        // 对象），不是 CallExpr——VisitCallExpr 收集不到。这里补收集。
-        bool VisitCXXConstructExpr(clang::CXXConstructExpr* CE)
+        // P5：TAwaitable<F, R, Args...>(...) 是类构造。表达式形态是临时对象
+        //（CXXTemporaryObjectExpr，独立回调）；变量声明形态是 CXXConstructExpr。
+        // 都不是 CallExpr——VisitCallExpr 收集不到，这里补两处。
+        bool CollectTAwaitable(clang::Expr* E)
         {
-            const MString Text = GetSourceTextImpl(CE->getSourceRange(), SM);
+            const MString Text = GetSourceTextImpl(E->getSourceRange(), SM);
             if (Text.find("TAwaitable<") == MString::npos) return true;
             SAwaitSite Site;
-            Site.SourceLine    = SM.getSpellingLineNumber(CE->getBeginLoc());
+            Site.SourceLine    = SM.getSpellingLineNumber(E->getBeginLoc());
             Site.AwaitExprText = Text;
             Site.Kind          = EAwaitSiteKind::TAwaitableCall;
             Sites.push_back(std::move(Site));
             return true;
+        }
+
+        bool VisitCXXTemporaryObjectExpr(clang::CXXTemporaryObjectExpr* CE)
+        {
+            return CollectTAwaitable(CE);
+        }
+
+        bool VisitCXXConstructExpr(clang::CXXConstructExpr* CE)
+        {
+            return CollectTAwaitable(CE);
+        }
+
+        // P5 业务形态：`TAwaitable<F, R, Args...>(args...)` 作为表达式是
+        // 函数式转换（CXXFunctionalCastExpr），不是构造/临时对象。
+        bool VisitCXXFunctionalCastExpr(clang::CXXFunctionalCastExpr* CE)
+        {
+            return CollectTAwaitable(CE);
         }
 
     private:
