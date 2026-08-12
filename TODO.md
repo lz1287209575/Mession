@@ -2,7 +2,7 @@
 
 当前 PoC 待办。与 `CLAUDE.md`、本仓库实现对齐。
 
-**更新时间基线：2026-07-26**（main @ log 模块 + coding-style C1 + client-protocol step-1/2 + MClientTargetResolver 已合入之后 + P0 async cleanup 已合入）
+**更新时间基线：2026-08-12**（main @ MHeaderTool AST 重构合入 + 字节对齐 + PPCallbacks 宏检测之后）
 
 ---
 
@@ -12,6 +12,7 @@
 - **服务发现**：`MEndpointCache` + Registry 注册/心跳/EndpointChange；静态 `--peers` 不再是主模型
 - **日志**：`Source/Common/Runtime/Log` 新 **MLog** 管道（ring / dispatcher / sinks）；`LogTest` 目标可用；旧 `Logger.h` 已删
 - **反射**：`MCLASS` / `MSTRUCT` / `MPROPERTY` / `MFUNCTION` → `Build/Generated/`
+- **MHeaderTool AST 重构（2026-08-12 合入 main）**：clang libtooling 取代字符串解析（`Parsing/*` 已删，净删 2241 行）；`ASTPipeline` + `IR.h` + `ASTReflectionVisitor`；宏检测走 `PPCallbacks::MacroExpands`（无字节窗口，超长 `Meta=(...)` 完整解析）；产物与旧版 byte-equal（`A2DiffTest` 12/12）；96 核分片并行，生成 12s；`A2DiffTest` / `ASTDumpTest` / `FreeAsyncFuncGenTest` 目标可用
 - **RPC**：`MRpcChannel` + 稳定 FunctionId；client-protocol step-1/2（去掉 `EClientMessageType` / `ForwardedClientCall`，单 FunctionId 路径）
 - **对象**：`MObject` + `TSharedPtr` + `IDisposable`；Actor 平面寻址 `MActorRouter`
 - **风格 C1**：`Docs/CodingStyle.md` + `.clang-format` + `Scripts/check-style.sh`（ABI 黑名单）已合 main
@@ -44,7 +45,7 @@
 
 ### 3. 落实 MClientManifest 真生成
 
-现状：`MClientManifest` 生成侧仍偏 stub；Gateway 查表路径已有，表可能为空。
+现状：`MHeaderTool` AST 路径已 emit `Build/Generated/MClientManifest.mgenerated.cpp`（main 驱动补回）；`GenerateClientManifest` 扫描 `MFUNCTION(Client/ClientCall)`——但当前业务面没有这些标记，**路由表仍可能为空**；Gateway 查表路径已有。
 
 目标：
 
@@ -79,13 +80,15 @@
 ### 7. 运行时基础 / C++17 异步（设计已定）
 
 - **规范**：`Docs/superpowers/specs/2026-07-24-cpp17-async-await.md`（`SFutureResult` + `MFUNCTION(Async)` + `AWAIT` 状态机 + 薄 `MAsyncContext`；废弃 `MFUTURE` 包装；Fiber/`MAwait` 非主路径）
-- 实施分期见该 spec §14（P0 口径/CMake17 → P1 dispatch pending → P2 垂直切片 → P3 MHeaderTool）
+- P0–P4 已落地：C++17 / `SFutureResult` / `MAsyncContext` / `AWAIT_OK` Frame（类成员 + 自由函数 codegen）/ `MAwait` 删除 / AsyncDemo
+- **P5（`TAwaitable` + await 宏消失）未实现**：spec 已从仓库移除（`Docs/superpowers/specs/` 无 p5 文件）；决策散落在 `.superpowers/sdd/2026-07-30-async-p5/reports/`（19 个 KD）。AST 重构（libtooling）是 P5 codegen 的地基，已合入；剩余工作包：类型层（`TAwaitable`/`AsAwaiter`）+ 状态机 codegen（`CollectLiveAcrossAwait` 仍是 stub）
 - 拆分超大 `ReflectionPropertyTemplates.inl`（JSON / Binary / CLI）
 
 ### 8. 文档与仓库卫生
 
 - 过期 worktree / 已合分支清理（名实不符的 `improve-service-discovery` 挂载等）
-  - 2026-08-11:删除 W1/W2/W3/W4(clientmanifest-emit / debug-baseline-timeout / improve-service-discovery / clienttarget-resolver);详见 `Docs/superpowers/specs/2026-08-11-repo-step1-worktree-cleanup-design.md`。后续候选:`mheadercodegen-ast` 独立重构、`refactor/base-project-structure`、`worktree-mheadertool-refactor`、远端 `origin/worktree-improve-service-discovery` 删除。
+  - 2026-08-11 删除 W1/W2/W3/W4(clientmanifest-emit / debug-baseline-timeout / improve-service-discovery / clienttarget-resolver);详见 `Docs/superpowers/specs/2026-08-11-repo-step1-worktree-cleanup-design.md`。后续候选:`mheadercodegen-ast` 独立重构、`refactor/base-project-structure`、`worktree-mheadertool-refactor`、远端 `origin/worktree-improve-service-discovery` 删除。
+  - 2026-08-12：`mheadercodegen-ast` **已合入 main 并清理**——merge commit `1476b5d`，worktree `.worktrees/mheadercodegen-ast` 与本地分支已删（分支时代未提交改动备份 `/tmp/worktree_branch_diff.patch`）；已推送 `origin/main`（`171301c`）
   - 2026-08-11 补刀:Step 1 漏删本地分支 `worktree-improve-service-discovery`(与远端同名,1 commit `2f6adb9` 不在 main);Step 2 已 `git branch -D` 删除;远端 `origin/worktree-improve-service-discovery` 仍存在、commit 可从 origin 重新拉回,7 天内 reflog 也可恢复。
   - 2026-08-11:`scripts/` 2 个 shell(`check-style.sh` + `install-hooks.sh`)合入 `Scripts/`;改 5 处外部引用(CLAUDE.md、TODO.md、CodingStyle.md、.pre-commit-config.yaml、2026-07-14-coding-style/design.md)与脚本自引用。`build/`(旧 Ninja 产物)已删,`Build/`(CLAUDE.md 钦定)保留。
   - 2026-08-11:`git rm` 真删 9 个 `K8s/*.yaml` + `EditorAssets/Combat/Monsters/Slime.masset.json`(共 10 个,PoC 化前的旧 K8s 部署清单与 Scene 服务怪物配置;CLAUDE.md 明确 K8s / Scene 不在本周期)。
@@ -120,19 +123,13 @@
 
 ## 已知 bug 记录
 
-### MHeaderTool namespace-level enum 被误判为 nested
+### MHeaderTool namespace 级 enum 反射仍为 no-op 注册
 
-**现象**:`Source/Tools/MHeaderTool/Parsing/EnumParser.h:257` 的 `IsNestedEnum` 只向后找 `class / struct / public: / private:` 关键字,不识别 `namespace` 作为 enclosing scope。所以 namespace 级 enum(如 `mession::script::EScriptLanguage`、现有的 `EServiceRegistryResult` 等)被误判为 nested,emit 出返回 `nullptr` 的 no-op 注册函数,**反射系统查不到这些 enum 的 value 列表**。
+**现状（AST 版）**：`GenerateEnumHeader` 对 `bScopedEnum && Owner 空`（即 namespace 级 scoped enum，如 `mession::script::EScriptLanguage`、`EServiceRegistryResult`）生成返回 `nullptr` 的 no-op 注册函数——**反射系统仍查不到这些 enum 的 value 列表**。旧字符串解析的 `Parsing/EnumParser.h` 已删（AST 取代），该行为是 AST 版**有意对齐** legacy 的结果。
 
-**影响**:`MObject::FindEnum("EScriptLanguage")` 返回 `nullptr`,反射侧序列化 enum 时拿不到 value 表。代码侧用 enum 类型作为 `MFUNCTION` 参数仍然可以编译,但运行时反射查不到 enum value。
+**影响**：`MObject::FindEnum("EScriptLanguage")` 返回 `nullptr`，反射侧序列化 enum 拿不到 value 表。业务侧用 enum 作 `MFUNCTION` 参数仍可编译，运行时反射查不到 value。
 
-**触发条件**:`enum class Foo : uint8 { ... }` 出现在 namespace 内(不是 class 内、不是顶层全局)。
-
-**修法**:改 `EnumParser.h:257` 的 `IsNestedEnum`,让它也识别 namespace scope(向上扫描 `namespace X {` 时增加 bracket 计数,确认 enum 是否在 namespace 内)。修完后 namespace 级 enum 正常反射。
-
-**绕过**:在 MHeaderTool 修好之前,这些 enum 在反射侧查不到,但**不阻断业务**:业务侧用 enum 类型声明 `MFUNCTION` 参数仍然编译通过,只是反射查表得 fallback 到硬编码。
-
-**下次触及**:MMO 业务动态枚举(表情包状态、动画状态、装备稀有度等)接入时,会需要这些 enum 的反射序列化,届时一并修 MHeaderTool。
+**修法（A3 候选）**：AST 版让 `VisitEnumDecl` 记录 enum 的 namespace 全名（`QualifiedName`），`GenerateEnumHeader` 用 `mession::script::EScriptLanguage::Value` 形式生成注册。当前 26 个 enum 的 `.mgenerated.cpp` 不进 CMake 构建组（`ToLegacyClasses` 只含 Records），生成但不编译，无副作用。
 
 ---
 
