@@ -6,6 +6,7 @@
 #include "AwaitDemo.h"
 #include "ComplexDemo.h"
 
+#include <chrono>
 #include <cstdio>
 
 // await 目标实现（模拟异步 I/O：ready future，V*2）
@@ -41,5 +42,15 @@ int main()
     const int L = ComplexLoop(3).GetResult().GetValue();
     std::printf("ComplexLoop(3):  %d\n", L);
 
-    return (R == 31 && C == 44 && L == 4) ? 0 : 1;
+    // 真正异步：await 挂起（非 ready）→ 50ms 后线程完成 → Frame->Resume 恢复 → 结果
+    std::printf("[ComplexAsync] 调用（await 将挂起）...\n");
+    const auto T0 = std::chrono::steady_clock::now();
+    const int A = ComplexAsync(10).GetResult().GetValue();
+    const auto T1 = std::chrono::steady_clock::now();
+    const long long ElapsedMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(T1 - T0).count();
+    std::printf("[ComplexAsync] 恢复完成: 10*2+1 = %d（耗时 %lldms——挂起等待真实发生）\n",
+        A, ElapsedMs);
+
+    return (R == 31 && C == 44 && L == 4 && A == 21 && ElapsedMs >= 40) ? 0 : 1;
 }
