@@ -1386,6 +1386,241 @@ public:
         return true;
     }
 
+    // 解析循环 await 业务体（KD-13 最小形态：单 for + 体内单 await）：
+    //   [循环前代码] for (init; cond; incr) { AccumVar += TAwaitable<...>(...); } [return <expr>;]
+    // 提取：init/cond/incr、循环变量、累加语句前缀（AccumVar += ）、循环前代码、return 表达式。
+    static bool ParseLoopAsyncBody(
+        const MString& Body, const MString& AwaitText,
+        MString& OutInit, MString& OutCond, MString& OutIncr, MString& OutLoopVar,
+        MString& OutAccumPrefix, MString& OutPreCode, MString& OutPostReturnExpr,
+        MString& OutInitValue)
+    {
+        const size_t ForPos = Body.find("for (");
+        if (ForPos == MString::npos) return false;
+        // 循环参数：init; cond; incr（括号内）
+        const size_t OpenP = ForPos + 5;
+        size_t CloseP = Body.find(')', OpenP);
+        if (CloseP == MString::npos) return false;
+        MString Head = Body.substr(OpenP, CloseP - OpenP);
+        // 按顶层 ';' 分割（cond 里可能有 < 等，无 ; 干扰）
+        size_t S1 = Head.find(';');
+        size_t S2 = Head.find(';', S1 + 1);
+        if (S1 == MString::npos || S2 == MString::npos) return false;
+        OutInit = Head.substr(0, S1);
+        OutCond = Head.substr(S1 + 1, S2 - S1 - 1);
+        OutIncr = Head.substr(S2 + 1);
+        // 循环变量（init 里 '=' 前最后一个标识符：int I = 0 → I）+ 初始值
+        {
+            const size_t Eq = OutInit.rfind('=');
+            if (Eq != MString::npos)
+            {
+                // 变量名 = '=' 前最后一个 token
+                const size_t EndV = OutInit.find_last_not_of(" \t", Eq - 1);
+                const size_t StartV = OutInit.find_last_of(" \t", EndV);
+                OutLoopVar = OutInit.substr(StartV == MString::npos ? 0 : StartV + 1,
+                    EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1);
+                OutInitValue = OutInit.substr(Eq + 1);  // "0"
+                // 保留类型+变量名（int I），去掉 '= 0'
+                MString InitHead = OutInit.substr(0, Eq);
+                const size_t E2 = InitHead.find_last_not_of(" \t");
+                OutInit = InitHead.substr(0, E2 + 1);
+            }
+        }
+        // 循环体：{ ... }
+        const size_t BodyOpen = Body.find('{', CloseP);
+        const size_t BodyClose = Body.find('}', BodyOpen);
+        if (BodyOpen == MString::npos || BodyClose == MString::npos) return false;
+        // 累加语句：await 表达式前的部分（如 "Sum += "）
+        const size_t AwaitPos = Body.find(AwaitText, BodyOpen);
+        if (AwaitPos == MString::npos || AwaitPos > BodyClose) return false;
+        {
+            // 行首到 await 表达式（含 "Sum += "）
+            const size_t LineStart = Body.rfind('\n', AwaitPos) == MString::npos
+                ? BodyOpen : Body.rfind('\n', AwaitPos) + 1;
+            OutAccumPrefix = Body.substr(LineStart, AwaitPos - LineStart);
+        }
+        // 循环前代码（for 前，去 {）
+        {
+            MString Pre = Body.substr(0, ForPos);
+            const size_t B = Pre.find_first_not_of(" \t\r\n{");
+            const size_t E = Pre.find_last_not_of(" \t\r\n}");
+            OutPreCode = (B == MString::npos) ? MString() : Pre.substr(B, E - B + 1);
+        }
+        // 循环后 return
+        {
+            const size_t RetPos = Body.find("return", BodyClose);
+            if (RetPos != MString::npos)
+            {
+                const size_t Semi = Body.find(';', RetPos);
+                if (Semi != MString::npos)
+                {
+                    MString Expr = Body.substr(RetPos + 6, Semi - RetPos - 6);
+                    const size_t B = Expr.find_first_not_of(" \t\r\n");
+                    const size_t E = Expr.find_last_not_of(" \t\r\n");
+                    if (B != MString::npos) OutPostReturnExpr = Expr.substr(B, E - B + 1);
+                }
+            }
+        }
+        return true;
+    }
+
+    // 生成循环 await 状态机 Frame（KD-13 最小形态：单 for + 体内单 await）。
+    // LoopEntry: cond 判断 → LoopBody(await) / LoopExit(return)
+    // LoopBody 完成: 累加 → incr → LoopEntry
+    MString EmitP5LoopAsyncFrame(
+        const MString& NamePrefix,
+        const fs::path& HeaderPath,
+        const mession::headercodegen::SParsedFunction& Func,
+        const mession::headercodegen::SAwaitSite* Site) const
+    {
+        (void)HeaderPath;
+        MString F, R, Args;
+        if (!ParseTAwaitableText(Site->AwaitExprText, F, R, Args)) return {};
+
+        MString Init, InitValue, Cond, Incr, LoopVar, AccumPrefix, PreCode, PostReturnExpr;
+        if (!ParseLoopAsyncBody(Func.AsyncBody, Site->AwaitExprText,
+                Init, Cond, Incr, LoopVar, AccumPrefix, PreCode, PostReturnExpr, InitValue))
+        {
+            return {};
+        }
+
+        const MString FrameName =
+            "MHeaderTool_P5Frame_" + SanitizeIdentifier(NamePrefix) +
+            "_" + SanitizeIdentifier(Func.Name);
+
+        std::ostringstream Out;
+        Out << "// " << FrameName
+            << ": P5 循环 await 状态机 Frame（KD-13 最小形态: 单 for + 单 await）\n";
+        Out << "struct " << FrameName << "\n";
+        Out << "{\n";
+        for (const auto& P : Func.Params)
+        {
+            Out << "    " << P.Type.CanonicalName << " " << P.Name << "{};\n";
+        }
+        // 槽：LiveAcrossAwait + 循环变量
+        for (const auto& L : Func.LiveAcrossAwait)
+        {
+            Out << "    " << L.Type.CanonicalName << " " << L.Name << "{};\n";
+        }
+        if (!LoopVar.empty())
+        {
+            bool bExist = false;
+            for (const auto& L : Func.LiveAcrossAwait)
+            {
+                if (L.Name == LoopVar) { bExist = true; break; }
+            }
+            if (!bExist)
+            {
+                // 循环变量类型：从 init（"int I"）取类型部分
+                MString VarType = Init;
+                const size_t VS = VarType.find_last_of(" \t");
+                if (VS != MString::npos) VarType = VarType.substr(0, VS);
+                Out << "    " << VarType << " " << LoopVar << "{};\n";
+            }
+        }
+        Out << "    TOptional<SFutureResult<" << R << ">::SAwaiter> Awaiter;\n";
+        Out << "    MPromise<TResult<" << R << ", FAppError>> Promise;\n";
+        Out << "    int State = 0;\n";
+        Out << "\n";
+        Out << "    void Start()\n";
+        Out << "    {\n";
+        if (!PreCode.empty())
+        {
+            Out << "        // 循环前业务代码（变量声明 → 槽赋值，去类型前缀）\n";
+            MString Pre = PreCode;
+            {
+                // `int Sum = 0;` → `Sum = 0;`（变量 = 值，去类型声明——槽已建）
+                const size_t Eq = Pre.find('=');
+                if (Eq != MString::npos)
+                {
+                    const size_t EndV = Pre.find_last_not_of(" \t", Eq - 1);
+                    if (EndV != MString::npos)
+                    {
+                        const size_t StartV = Pre.find_last_of(" \t", EndV);
+                        MString Var = Pre.substr(StartV == MString::npos ? 0 : StartV + 1,
+                            EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1);
+                        MString Val = Pre.substr(Eq + 1);
+                        const size_t Semi = Val.find(';');
+                        if (Semi != MString::npos) Val = Val.substr(0, Semi);
+                        Pre = Var + " = " + Val + ";";
+                    }
+                }
+            }
+            Out << "        " << Pre << "\n";
+        }
+        if (!LoopVar.empty())
+        {
+            Out << "        " << LoopVar << " = " << InitValue << ";\n";
+        }
+        Out << "        LoopEntry();\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    void LoopEntry()\n";
+        Out << "    {\n";
+        Out << "        if (" << Cond << ")\n";
+        Out << "        {\n";
+        Out << "            // LoopBody: await\n";
+        Out << "            Awaiter = " << F << "(" << Args << ").AsAwaiter();\n";
+        Out << "            if (Awaiter->AwaitReady())\n";
+        Out << "            {\n";
+        if (!AccumPrefix.empty())
+        {
+            Out << "                " << AccumPrefix << "Awaiter->AwaitResume();\n";
+        }
+        Out << "                LoopAdvance();\n";
+        Out << "            }\n";
+        Out << "            else\n";
+        Out << "            {\n";
+        Out << "                State = 1; Awaiter->AwaitSuspend(this);\n";
+        Out << "            }\n";
+        Out << "        }\n";
+        Out << "        else\n";
+        Out << "        {\n";
+        Out << "            // LoopExit\n";
+        Out << "            Finish();\n";
+        Out << "        }\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    void LoopAdvance()\n";
+        Out << "    {\n";
+        Out << "        " << Incr << ";\n";
+        Out << "        LoopEntry();\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    void Resume()\n";
+        Out << "    {\n";
+        Out << "        if (State == 1)\n";
+        Out << "        {\n";
+        if (!AccumPrefix.empty())
+        {
+            Out << "            " << AccumPrefix << "Awaiter->AwaitResume();\n";
+        }
+        Out << "            LoopAdvance();\n";
+        Out << "        }\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    void Finish()\n";
+        Out << "    {\n";
+        if (!PostReturnExpr.empty())
+        {
+            Out << "        Promise.SetValue(TResult<" << R
+                << ", FAppError>::Ok(" << PostReturnExpr << "));\n";
+        }
+        else
+        {
+            Out << "        Promise.SetValue(TResult<" << R
+                << ", FAppError>::Ok());\n";
+        }
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    SFutureResult<" << R << "> GetFuture()\n";
+        Out << "    {\n";
+        Out << "        return SFutureResult<" << R << ">(Promise.GetFuture());\n";
+        Out << "    }\n";
+        Out << "};\n";
+        return Out.str();
+    }
+
     // 解析单 await 业务体（最小形态）：
     //   [await 前代码]  R = TAwaitable<F, R, Args...>(args);  [return <expr>;]
     // 提取：赋值变量名 R（空 = 无赋值）、await 前代码文本、await 后 return 表达式。
@@ -1465,6 +1700,13 @@ public:
             }
         }
         if (Sites.empty()) return {};
+        // 循环 await（KD-13）：AsyncBody 含 for 且首个 await 在循环体内 → 循环生成器
+        if (Func.AsyncBody.find("for (") != MString::npos)
+        {
+            const MString LoopFrame = EmitP5LoopAsyncFrame(NamePrefix, HeaderPath, Func, Sites[0]);
+            if (!LoopFrame.empty()) return LoopFrame;
+            // 解析失败则回退串行路径
+        }
         std::sort(Sites.begin(), Sites.end(),
             [](const mession::headercodegen::SAwaitSite* A,
                const mession::headercodegen::SAwaitSite* B)
