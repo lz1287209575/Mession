@@ -1447,116 +1447,241 @@ public:
 
     // 生成单个函数的 P5 Frame（单 await）。消费 IR 原生类型——AwaitSites /
     // LiveAcrossAwait 只在 IR 的 SParsedFunction 上（legacy shim 不携带）。
+    // 生成单个函数的 P5 Frame（多 await 串行，KD-9/KD-12）。
+    // 消费 IR 原生类型——AwaitSites/LiveAcrossAwait 只在 IR SParsedFunction 上。
     MString EmitP5AsyncFrame(
         const MString& NamePrefix,
         const fs::path& HeaderPath,
         const mession::headercodegen::SParsedFunction& Func) const
     {
-        const mession::headercodegen::SAwaitSite* Site = nullptr;
+        (void)HeaderPath;
+        // 收集全部 TAwaitable 站点（按行排序 = 源码顺序）
+        TVector<const mession::headercodegen::SAwaitSite*> Sites;
         for (const auto& S : Func.AwaitSites)
         {
             if (S.Kind == mession::headercodegen::EAwaitSiteKind::TAwaitableCall)
             {
-                Site = &S;
-                break;
+                Sites.push_back(&S);
             }
         }
-        if (!Site) return {};
+        if (Sites.empty()) return {};
+        std::sort(Sites.begin(), Sites.end(),
+            [](const mession::headercodegen::SAwaitSite* A,
+               const mession::headercodegen::SAwaitSite* B)
+            { return A->SourceLine < B->SourceLine; });
 
-        MString F, R, Args;
-        if (!ParseTAwaitableText(Site->AwaitExprText, F, R, Args)) return {};
+        const size_t N = Sites.size();
+        TVector<MString> F(N), R(N), Args(N), AssignVar(N), SegCode(N);
+        MString PostReturnExpr;
 
-        // 业务迁移 v1：解析 await 前代码 / 赋值变量 / await 后 return 表达式
-        MString AssignVar, PreCode, PostReturnExpr;
-        ParseSingleAwaitBody(Func.AsyncBody, Site->AwaitExprText,
-            AssignVar, PreCode, PostReturnExpr);
-        // PreCode 清理：剥掉 CompoundStmt 的 '{' 与首尾空白（空 = 无 await 前代码）
-        if (!PreCode.empty())
+        for (size_t K = 0; K < N; ++K)
         {
-            size_t B = PreCode.find_first_not_of(" \t\r\n{");
-            size_t E = PreCode.find_last_not_of(" \t\r\n}");
-            PreCode = (B == MString::npos) ? MString() : PreCode.substr(B, E - B + 1);
+            if (!ParseTAwaitableText(Sites[K]->AwaitExprText, F[K], R[K], Args[K]))
+            {
+                return {};
+            }
+            // 赋值变量：本 await 语句行首到 await 表达式（`int A = `）
+            const size_t AwaitPos = Func.AsyncBody.find(Sites[K]->AwaitExprText);
+            if (AwaitPos == MString::npos) return {};
+            const size_t LineStart = Func.AsyncBody.rfind('\n', AwaitPos) == MString::npos
+                ? 0 : Func.AsyncBody.rfind('\n', AwaitPos) + 1;
+            MString Prefix = Func.AsyncBody.substr(LineStart, AwaitPos - LineStart);
+            {
+                const size_t Eq = Prefix.rfind('=');
+                if (Eq != MString::npos && Eq > 0)
+                {
+                    const size_t EndV = Prefix.find_last_not_of(" \t", Eq - 1);
+                    if (EndV != MString::npos)
+                    {
+                        const size_t StartV = Prefix.find_last_of(" \t", EndV);
+                        AssignVar[K] = Prefix.substr(
+                            StartV == MString::npos ? 0 : StartV + 1,
+                            EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1);
+                    }
+                }
+            }
+            // 本 await 语句结束 ';'
+            const size_t StmtEnd = Func.AsyncBody.find(';', AwaitPos + Sites[K]->AwaitExprText.size());
+            if (StmtEnd == MString::npos) return {};
+            // 段 K（await K 语句后到 await K+1 行首）——await K+1 前业务代码
+            if (K + 1 < N)
+            {
+                const size_t NextPos = Func.AsyncBody.find(Sites[K + 1]->AwaitExprText);
+                if (NextPos != MString::npos)
+                {
+                    const size_t NextLine = Func.AsyncBody.rfind('\n', NextPos) == MString::npos
+                        ? 0 : Func.AsyncBody.rfind('\n', NextPos) + 1;
+                    MString Seg = Func.AsyncBody.substr(StmtEnd + 1, NextLine - StmtEnd - 1);
+                    const size_t B = Seg.find_first_not_of(" \t\r\n");
+                    const size_t E = Seg.find_last_not_of(" \t\r\n");
+                    SegCode[K] = (B == MString::npos) ? MString() : Seg.substr(B, E - B + 1);
+                }
+            }
+            else
+            {
+                // 最后一段：'return <expr>;'
+                const size_t RetPos = Func.AsyncBody.find("return", StmtEnd);
+                if (RetPos != MString::npos)
+                {
+                    const size_t Semi = Func.AsyncBody.find(';', RetPos);
+                    if (Semi != MString::npos)
+                    {
+                        MString Expr = Func.AsyncBody.substr(RetPos + 6, Semi - RetPos - 6);
+                        const size_t B = Expr.find_first_not_of(" \t\r\n");
+                        const size_t E = Expr.find_last_not_of(" \t\r\n");
+                        if (B != MString::npos) PostReturnExpr = Expr.substr(B, E - B + 1);
+                    }
+                }
+            }
         }
 
-        (void)HeaderPath;
         const MString FrameName =
             "MHeaderTool_P5Frame_" + SanitizeIdentifier(NamePrefix) +
             "_" + SanitizeIdentifier(Func.Name);
 
+        // 生成"从 await K 开始的触发链"（ready 路径内联展开后续 await）
+        std::function<MString(size_t)> GenAwaitChain = [&](size_t K) -> MString
+        {
+            if (K >= N)
+            {
+                return "            Finish();\n";
+            }
+            MString Out;
+            Out += "            Awaiter" + std::to_string(K + 1) +
+                " = " + F[K] + "(" + Args[K] + ").AsAwaiter();\n";
+            Out += "            if (Awaiter" + std::to_string(K + 1) + "->AwaitReady())\n";
+            Out += "            {\n";
+            if (!AssignVar[K].empty())
+            {
+                Out += "                " + AssignVar[K] + " = Awaiter" +
+                    std::to_string(K + 1) + "->AwaitResume();\n";
+            }
+            if (!SegCode[K].empty())
+            {
+                Out += "                // await " + std::to_string(K + 1) + " 后业务代码\n";
+                Out += "                " + SegCode[K] + "\n";
+            }
+            Out += GenAwaitChain(K + 1);
+            Out += "            }\n";
+            Out += "            else\n";
+            Out += "            {\n";
+            Out += "                State = " + std::to_string(K + 1) +
+                "; Awaiter" + std::to_string(K + 1) + "->AwaitSuspend(this);\n";
+            Out += "            }\n";
+            return Out;
+        };
+
         std::ostringstream Out;
         Out << "// " << FrameName
-            << ": P5 单 await 状态机 Frame（TAwaitable 驱动, KD-12 最小形态）\n";
+            << ": P5 多 await 串行状态机 Frame（TAwaitable 驱动, KD-9/KD-12）\n";
         Out << "struct " << FrameName << "\n";
         Out << "{\n";
-        // 函数参数槽（Start 的 await 表达式引用参数，如 Helper(Seed)）
         for (const auto& P : Func.Params)
         {
             Out << "    " << P.Type.CanonicalName << " " << P.Name << "{};\n";
         }
-        bool bHasAssignSlot = false;
+        // 槽：LiveAcrossAwait + 各 await 赋值变量（声明与 await 同行不触发 live）
         for (const auto& L : Func.LiveAcrossAwait)
         {
             Out << "    " << L.Type.CanonicalName << " " << L.Name << "{};\n";
-            if (!AssignVar.empty() && L.Name == AssignVar) bHasAssignSlot = true;
         }
-        if (!AssignVar.empty() && !bHasAssignSlot)
+        for (size_t K = 0; K < N; ++K)
         {
-            // await 表达式赋值的变量（声明与 await 同行，行比较不触发 live）——
-            // 强制补槽，类型用 await 结果类型（业务声明通常一致）
-            Out << "    " << R << " " << AssignVar << "{};\n";
+            if (AssignVar[K].empty()) continue;
+            bool bExist = false;
+            for (const auto& L : Func.LiveAcrossAwait)
+            {
+                if (L.Name == AssignVar[K]) { bExist = true; break; }
+            }
+            if (!bExist)
+            {
+                Out << "    " << R[K] << " " << AssignVar[K] << "{};\n";
+            }
         }
-        Out << "    " << R << " AwaitResult{};\n";
-        Out << "    MPromise<TResult<" << R << ", FAppError>> Promise;\n";
-        Out << "    TOptional<SFutureResult<" << R << ">::SAwaiter> Awaiter;\n";
-        Out << "    bool bStarted = false;\n";
-        Out << "    bool bDone = false;\n";
+        // 每 await 的 awaiter + 结果槽
+        for (size_t K = 0; K < N; ++K)
+        {
+            Out << "    TOptional<SFutureResult<" << R[K] << ">::SAwaiter> Awaiter"
+                << (K + 1) << ";\n";
+            Out << "    " << R[K] << " AwaitResult" << (K + 1) << "{};\n";
+        }
+        Out << "    MPromise<TResult<" << R[0] << ", FAppError>> Promise;\n";
+        Out << "    int State = 0;\n";
         Out << "\n";
+        // Start：段0（首个 await 前） + await 链
         Out << "    void Start()\n";
         Out << "    {\n";
-        Out << "        bStarted = true;\n";
-        if (!PreCode.empty())
+        if (!SegCode.empty())
         {
-            Out << "        // await 前业务代码\n";
-            Out << PreCode << "\n";
+            // 段 0 = 首个 await 前（这里 SegCode[0] 是 await1 后——首个 await 前是 AsyncBody 开头）
         }
-        Out << "        Awaiter = " << F << "(" << Args << ").AsAwaiter();\n";
-        Out << "        if (Awaiter->AwaitReady()) Finish();\n";
-        Out << "        else Awaiter->AwaitSuspend(this);\n";
+        {
+            // 首个 await 前的业务代码 = AsyncBody 开头到 await1 行首（去 {）
+            const size_t FirstPos = Func.AsyncBody.find(Sites[0]->AwaitExprText);
+            const size_t FirstLine = Func.AsyncBody.rfind('\n', FirstPos) == MString::npos
+                ? 0 : Func.AsyncBody.rfind('\n', FirstPos) + 1;
+            MString Pre = Func.AsyncBody.substr(0, FirstLine);
+            const size_t B = Pre.find_first_not_of(" \t\r\n{");
+            const size_t E = Pre.find_last_not_of(" \t\r\n}");
+            MString PreTrim = (B == MString::npos) ? MString() : Pre.substr(B, E - B + 1);
+            if (!PreTrim.empty())
+            {
+                Out << "        // await 前业务代码\n";
+                Out << "        " << PreTrim << "\n";
+            }
+        }
+        Out << GenAwaitChain(0);
         Out << "    }\n";
         Out << "\n";
+        // Resume：switch(State)——State K 完成 await K 后继续
         Out << "    void Resume()\n";
         Out << "    {\n";
-        Out << "        if (!bStarted) Start();\n";
-        Out << "        else Finish();\n";
+        Out << "        switch (State)\n";
+        Out << "        {\n";
+        for (size_t K = 1; K <= N; ++K)
+        {
+            Out << "        case " << K << ":\n";
+            if (!AssignVar[K - 1].empty())
+            {
+                Out << "            " << AssignVar[K - 1] << " = Awaiter" << K
+                    << "->AwaitResume();\n";
+            }
+            if (!SegCode[K - 1].empty() && K - 1 + 1 < N)
+            {
+                Out << "            // await " << K << " 后业务代码\n";
+                Out << "            " << SegCode[K - 1] << "\n";
+            }
+            if (K < N)
+            {
+                Out << GenAwaitChain(K);  // 继续 await K+1
+            }
+            else
+            {
+                Out << "            Finish();\n";
+            }
+            Out << "            break;\n";
+        }
+        Out << "        default: break;\n";
+        Out << "        }\n";
         Out << "    }\n";
         Out << "\n";
         Out << "    void Finish()\n";
         Out << "    {\n";
-        Out << "        if (bDone) return;\n";
-        Out << "        bDone = true;\n";
-        Out << "        AwaitResult = Awaiter->AwaitResume();\n";
-        if (!AssignVar.empty())
-        {
-            // await 表达式赋给业务变量（跨 await 存活槽，如 `int R = TAwaitable...`）
-            Out << "        " << AssignVar << " = AwaitResult;\n";
-        }
         if (!PostReturnExpr.empty())
         {
-            // await 后业务代码：return <expr> → Promise 完成
-            Out << "        // await 后业务代码（return 表达式）\n";
-            Out << "        Promise.SetValue(TResult<" << R
+            Out << "        Promise.SetValue(TResult<" << R[0]
                 << ", FAppError>::Ok(" << PostReturnExpr << "));\n";
         }
         else
         {
-            Out << "        Promise.SetValue(TResult<" << R
-                << ", FAppError>::Ok(std::move(AwaitResult)));\n";
+            Out << "        Promise.SetValue(TResult<" << R[0]
+                << ", FAppError>::Ok(std::move(AwaitResult" << N << ")));\n";
         }
         Out << "    }\n";
         Out << "\n";
-        Out << "    SFutureResult<" << R << "> GetFuture()\n";
+        Out << "    SFutureResult<" << R[0] << "> GetFuture()\n";
         Out << "    {\n";
-        Out << "        return SFutureResult<" << R << ">(Promise.GetFuture());\n";
+        Out << "        return SFutureResult<" << R[0] << ">(Promise.GetFuture());\n";
         Out << "    }\n";
         Out << "};\n";
         return Out.str();
