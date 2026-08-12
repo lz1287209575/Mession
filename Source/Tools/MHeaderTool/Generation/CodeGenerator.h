@@ -1343,6 +1343,18 @@ public:
     }
 
     // 从 `TAwaitable<F, R, Args...>(args...)` 提取 F / R / args 文本
+    // 最简签名：R 从函数返回类型（SFutureResult<R>）剥出
+    static MString RFromReturnType(const MString& CanonicalReturnType)
+    {
+        MString R = CanonicalReturnType;
+        const MString P = "SFutureResult<";
+        if (R.rfind(P, 0) == 0 && R.size() > P.size() && R.back() == '>')
+        {
+            R = R.substr(P.size(), R.size() - P.size() - 1);
+        }
+        return R;
+    }
+
     static bool ParseTAwaitableText(
         const MString& Text, MString& OutF, MString& OutR, MString& OutArgs)
     {
@@ -1381,7 +1393,7 @@ public:
                 }
             }
         }
-        if (Params.size() < 2) return false;
+        if (Params.empty()) return false;
         auto TrimP = [](MString In)
         {
             const size_t B = In.find_first_not_of(" \t\r\n");
@@ -1390,7 +1402,9 @@ public:
             return In.substr(B, E - B + 1);
         };
         OutF = TrimP(Params[0]);
-        OutR = TrimP(Params[1]);
+        // 最简签名 TAwaitable<F>(args)：R 不写，由调用处从函数返回类型补；
+        // 兼容旧写法 TAwaitable<F, R, Args...>(args)（R = Params[1]）。
+        OutR = (Params.size() >= 2) ? TrimP(Params[1]) : MString();
         // 业务写 TAwaitable<decltype(&Func), R, Args...>（F 是函数指针类型）——
         // 生成器需要真实函数名才能生成 `Func(args)` 调用。提取 decltype(&X) 的 X。
         {
@@ -1509,6 +1523,7 @@ public:
         (void)HeaderPath;
         MString F, R, Args;
         if (!ParseTAwaitableText(Site->AwaitExprText, F, R, Args)) return {};
+        if (R.empty()) R = RFromReturnType(Func.ReturnType.CanonicalName);
 
         MString Init, InitValue, Cond, Incr, LoopVar, AccumPrefix, PreCode, PostReturnExpr;
         if (!ParseLoopAsyncBody(Func.AsyncBody, Site->AwaitExprText,
@@ -1825,10 +1840,8 @@ public:
 
         for (size_t K = 0; K < N; ++K)
         {
-            if (!ParseTAwaitableText(Sites[K]->AwaitExprText, F[K], R[K], Args[K]))
-            {
-                return {};
-            }
+            if (!ParseTAwaitableText(Sites[K]->AwaitExprText, F[K], R[K], Args[K])) return {};
+            if (R[K].empty()) R[K] = RFromReturnType(Func.ReturnType.CanonicalName);
             // 赋值变量：本 await 语句行首到 await 表达式（`int A = `）
             const size_t AwaitPos = Func.AsyncBody.find(Sites[K]->AwaitExprText);
             if (AwaitPos == MString::npos) return {};

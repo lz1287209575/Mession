@@ -2,70 +2,62 @@
 
 #include "Common/Runtime/Async/MAsync.h"
 
-#include <tuple>
 #include <type_traits>
 
+// 从函数指针类型提取返回类型（F 是 auto 非类型模板参数——await 目标函数）
+template <typename T>
+struct TAwaitableFnTraits;
+template <typename R, typename... Args>
+struct TAwaitableFnTraits<R (*)(Args...)>
+{
+    using Ret = R;
+};
+
 /**
- * TAwaitable — P5 awaitable 类型层（KD-2 / KD-3, spec 2026-07-30-async-p5）
+ * TAwaitable — P5 awaitable 类型层（最简签名）
  *
- * 业务侧唯一允许的两种 await 表达式形态（KD-7）：
- *   形式 A：TAwaitable<F, R>(args...)   — F 是返回 SFutureResult<R> 的函数，
- *           args... 是调用参数（本类型存储，§4.5 业务不可见）
- *   形式 B：TAwaitable<SFutureResult<R>, R>() — await 一个已存在的 future 变量；
- *           无参构造，AsAwaiter() 由 P5 codegen 注入（KD-6：业务侧不持有
- *           变量引用，codegen 通过 AST 作用域分析绑定实际 future）
+ * 业务侧唯一写法：TAwaitable<F>(args...)
+ *   F    — await 目标函数名（auto 非类型模板参数，如 TAwaitable<AsyncAdd>(a,b)）
+ *   args — 调用参数（构造函数推导，不存储）
+ *   R    — await 返回类型，从 F 的函数指针返回类型（SFutureResult<R>）提取——
+ *          业务侧不需要写 R / Args。
  *
- * R 推导（KD-3）：业务侧永远写完整三参 / 两参，不让 CTAD 推中间形参
- * （CTAD 不能从函数指针返回类型推中间模板参数）。
+ * 占位转换（operator ResultType / operator SFutureResult<ResultType>）：
+ * 业务函数体（#ifdef 保护，codegen 解析时可见）里的 `int R =
+ * TAwaitable<F>(args)` 与 `return TAwaitable<F>(args)` 需要能编译——这两个
+ * 转换保证类型匹配。运行时由 codegen 生成的含业务逻辑的状态机实现覆盖函数
+ * 定义（业务编译时 #ifdef 体不可见，占位转换不参与运行）。
  */
-template <typename F, typename R, typename... Args>
+template <auto F>
 class TAwaitable
 {
 public:
-    // 形式 A — 函数调用：存储调用参数（§4.5 业务不可见元素）。
-    // C++17（无 requires 子句）：enable_if 与形式 B 无参构造互斥
-    // （F 非 SFutureResult<R> 或有参数 → 形式 A）。
-    template <typename F2 = F,
-              std::enable_if_t<(!std::is_same_v<F2, SFutureResult<R>> || sizeof...(Args) > 0), int> = 0>
-    explicit TAwaitable(Args... InArgs)
-        : StoredArgs(std::move(InArgs)...)
+    template <typename... Args>
+    explicit TAwaitable(Args&&...) {}
+
+    using RetType = typename TAwaitableFnTraits<decltype(F)>::Ret;  // SFutureResult<R>
+    using ResultType = typename RetType::InnerType;                 // R
+
+    // 占位：await 结果赋值（`int R = TAwaitable<F>(args);`）
+    operator ResultType() const
     {
+        return ResultType{};
     }
 
-    // 形式 B — future 变量：无参构造；仅当 F 是 SFutureResult<R> 时可用
-    template <typename F2 = F,
-              std::enable_if_t<std::is_same_v<F2, SFutureResult<R>>, int> = 0>
-    explicit TAwaitable()
+    // 占位：直接返回（`return TAwaitable<F>(args);`）
+    operator RetType() const
     {
-    }
-
-    // AsAwaiter() 由 await 状态机 codegen 注入（KD-2 §4.1 / KD-6）：类型层只提供
-    // 构造与存储——TAwaitable 不持有 F 的运行时实例（F 是模板类型参数），codegen
-    // 在生成的状态机里直接调用真实函数名。此处占位，防止误用。
-    auto AsAwaiter()
-    {
-        static_assert(std::is_void_v<F>,
-            "TAwaitable::AsAwaiter() 由 await 状态机 codegen 注入；类型层只提供构造与存储");
-    }
-
-    // A 形态占位：业务函数体（#ifdef 保护，codegen 解析时可见）里 `int R =
-    // TAwaitable<F,R>(args)`（await 结果赋值）与 `return TAwaitable<...>(...)`
-    // 需要能编译——以下两个转换保证类型匹配。运行时由 codegen 生成的含业务
-    // 逻辑的状态机实现覆盖函数定义（业务编译时 #ifdef 体不可见，转换不参与运行）。
-    operator R() const
-    {
-        return R{};  // 占位：await 结果（运行时由生成实现取值）
-    }
-
-    operator SFutureResult<R>() const
-    {
-        MPromise<TResult<R, FAppError>> P;
-        P.SetValue(TResult<R, FAppError>::Err(FAppError{
+        MPromise<TResult<ResultType, FAppError>> P;
+        P.SetValue(TResult<ResultType, FAppError>::Err(FAppError{
             "await_not_wired",
             "TAwaitable 运行时需经 codegen 生成的状态机驱动实现"}));
-        return SFutureResult<R>(P.GetFuture());
+        return RetType(P.GetFuture());
     }
 
-private:
-    std::tuple<Args...> StoredArgs;
+    // AsAwaiter() 由 await 状态机 codegen 注入——类型层只提供构造与占位转换
+    auto AsAwaiter()
+    {
+        static_assert(std::is_void_v<decltype(F)>,
+            "TAwaitable::AsAwaiter() 由 await 状态机 codegen 注入");
+    }
 };

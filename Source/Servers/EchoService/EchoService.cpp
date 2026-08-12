@@ -230,7 +230,6 @@ SFutureResult<FSampleEchoResponse> CallEchoRemote(const FSampleEchoRequest& Requ
 MFUNCTION(ServerCall, Async)
 SFutureResult<FSampleEchoResponse> MEchoService::EchoAwait(const FSampleEchoRequest& Request)
 {
-    return TAwaitable<decltype(&CallEchoRemote), FSampleEchoResponse,
-        const FSampleEchoRequest&>(Request);
+    return TAwaitable<CallEchoRemote>(Request);
 }
 #endif

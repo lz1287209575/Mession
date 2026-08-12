@@ -16,14 +16,11 @@ int main()
     std::printf("[ SAwaiter_Suspend_ThenResumesFrameOnCompletion ]\n");
     Test_SAwaiter_Suspend_ThenResumesFrameOnCompletion();
 
-    std::printf("[ TAwaitable_FormA_StoresArgs ]\n");
-    Test_TAwaitable_FormA_StoresArgs();
+    std::printf("[ TAwaitable_FormA_MinimalSignature ]\n");
+    Test_TAwaitable_FormA_MinimalSignature();
 
-    std::printf("[ TAwaitable_FormA_DirectFunctionPointerType ]\n");
-    Test_TAwaitable_FormA_DirectFunctionPointerType();
-
-    std::printf("[ TAwaitable_FormB_ConstructsWithRequiresConstraint ]\n");
-    Test_TAwaitable_FormB_ConstructsWithRequiresConstraint();
+    std::printf("[ TAwaitable_FormA_ReturnConversion ]\n");
+    Test_TAwaitable_FormA_ReturnConversion();
 
     std::printf("[ InnerType_MatchesTemplateParameter ]\n");
     Test_InnerType_MatchesTemplateParameter();

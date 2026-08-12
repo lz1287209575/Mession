@@ -14,9 +14,9 @@ MFUNCTION(Async)
 SFutureResult<int> ComplexChain(int Base)
 {
     int Total = Base * 2;                                               // 业务逻辑 1
-    int A = TAwaitable<decltype(&AsyncAdd), int, int, int>(Total, 1);   // await 1
+    int A = TAwaitable<AsyncAdd>(Total, 1);   // await 1
     Total = Total + A;                                                  // 业务逻辑 2（中间，Total/A 跨 await 存活）
-    int B = TAwaitable<decltype(&AsyncAdd), int, int, int>(Total, 2);   // await 2
+    int B = TAwaitable<AsyncAdd>(Total, 2);   // await 2
     return SFutureResult<int>(TResult<int, FAppError>::Ok(Total + B));  // 业务逻辑 3
 }
 #endif
@@ -28,7 +28,7 @@ SFutureResult<int> ComplexLoop(int N)
     int Sum = 0;
     for (int i = 0; i < N; ++i)
     {
-        Sum += TAwaitable<decltype(&AsyncAdd), int, int, int>(i, Sum);  // 循环内 await（累加）
+        Sum += TAwaitable<AsyncAdd>(i, Sum);  // 循环内 await（累加）
     }
     return SFutureResult<int>(TResult<int, FAppError>::Ok(Sum));
 }

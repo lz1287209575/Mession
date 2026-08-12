@@ -82,25 +82,20 @@ TEST_CASE(SAwaiter_Suspend_ThenResumesFrameOnCompletion)
     EXPECT_TRUE(Frame.ResumeCount == 1);
 }
 
-TEST_CASE(TAwaitable_FormA_StoresArgs)
+TEST_CASE(TAwaitable_FormA_MinimalSignature)
 {
-    // 三参形态：F/R/Args 全写（KD-3：Args 是类模板参数，不能从构造推断）。
-    // AsAwaiter 由 codegen 注入（KD-6），类型层只验证构造/存储可编译。
-    TAwaitable<decltype(&ComputeAsync), int, int> Awaitable(5);
-    EXPECT_TRUE(true);
+    // 最简签名：TAwaitable<F>(args)——F 是 auto 非类型参数（函数名），
+    // R 从函数指针返回类型（SFutureResult<R>::InnerType）推导。
+    // AsAwaiter 由 codegen 注入（KD-6），类型层只验证构造/占位转换可编译。
+    TAwaitable<ComputeAsync> Awaitable(5);
+    const int Placeholder = Awaitable.operator int();
+    EXPECT_TRUE(Placeholder == 0);
 }
 
-TEST_CASE(TAwaitable_FormA_DirectFunctionPointerType)
+TEST_CASE(TAwaitable_FormA_ReturnConversion)
 {
-    TAwaitable<SFutureResult<int> (*)(int), int, int> Awaitable(3);
-    EXPECT_TRUE(true);
-}
-
-TEST_CASE(TAwaitable_FormB_ConstructsWithRequiresConstraint)
-{
-    // 形式 B：F = SFutureResult<R>，无参构造（AsAwaiter 由 P5 codegen 注入，
-    // 类型层只验证构造约束可编译）
-    TAwaitable<SFutureResult<int>, int> Awaitable;
+    // return TAwaitable<F>(args) 的占位转换（operator SFutureResult<R>）
+    const auto F = static_cast<SFutureResult<int>>(TAwaitable<ComputeAsync>(3));
     EXPECT_TRUE(true);
 }
 
