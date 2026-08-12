@@ -1386,6 +1386,65 @@ public:
         return true;
     }
 
+    // 解析单 await 业务体（最小形态）：
+    //   [await 前代码]  R = TAwaitable<F, R, Args...>(args);  [return <expr>;]
+    // 提取：赋值变量名 R（空 = 无赋值）、await 前代码文本、await 后 return 表达式。
+    static bool ParseSingleAwaitBody(
+        const MString& Body, const MString& AwaitText,
+        MString& OutAssignVar, MString& OutPreCode, MString& OutPostReturnExpr)
+    {
+        const size_t AwaitPos = Body.find(AwaitText);
+        if (AwaitPos == MString::npos) return false;
+
+        // 行首 → 赋值前缀（如 "        int R = "）
+        const size_t LineStart = Body.rfind('\n', AwaitPos) == MString::npos
+            ? 0 : Body.rfind('\n', AwaitPos) + 1;
+        MString Prefix = Body.substr(LineStart, AwaitPos - LineStart);
+        {
+            // 赋值形态 `int R = TAwaitable<...>`——变量名在 '=' 前最后一个标识符。
+            const size_t Eq = Prefix.rfind('=');
+            if (Eq != MString::npos && Eq > 0)
+            {
+                const size_t End = Prefix.find_last_not_of(" \t", Eq - 1);
+                if (End != MString::npos)
+                {
+                    const size_t Start = Prefix.find_last_of(" \t", End);
+                    OutAssignVar = Prefix.substr(Start == MString::npos ? 0 : Start + 1,
+                        End - (Start == MString::npos ? 0 : Start + 1) + 1);
+                }
+            }
+            else
+            {
+                // 无赋值（裸 TAwaitable<...>(...) 语句）——变量名空
+                OutAssignVar.clear();
+            }
+        }
+        // await 前代码 = 之前的所有语句（LineStart 之前部分，去 {} 和首尾空白）
+        OutPreCode = Body.substr(0, LineStart);
+
+        // 语句结束 ';'
+        const size_t StmtEnd = Body.find(';', AwaitPos + AwaitText.size());
+        if (StmtEnd == MString::npos) return false;
+
+        // await 后：'return <expr>;'（到 '}' 前）
+        const size_t RetPos = Body.find("return", StmtEnd);
+        if (RetPos != MString::npos)
+        {
+            const size_t Semi = Body.find(';', RetPos);
+            if (Semi != MString::npos)
+            {
+                MString Expr = Body.substr(RetPos + 6, Semi - RetPos - 6);
+                const size_t B = Expr.find_first_not_of(" \t\r\n");
+                const size_t E = Expr.find_last_not_of(" \t\r\n");
+                if (B != MString::npos)
+                {
+                    OutPostReturnExpr = Expr.substr(B, E - B + 1);
+                }
+            }
+        }
+        return true;
+    }
+
     // 生成单个函数的 P5 Frame（单 await）。消费 IR 原生类型——AwaitSites /
     // LiveAcrossAwait 只在 IR 的 SParsedFunction 上（legacy shim 不携带）。
     MString EmitP5AsyncFrame(
@@ -1406,6 +1465,18 @@ public:
         MString F, R, Args;
         if (!ParseTAwaitableText(Site->AwaitExprText, F, R, Args)) return {};
 
+        // 业务迁移 v1：解析 await 前代码 / 赋值变量 / await 后 return 表达式
+        MString AssignVar, PreCode, PostReturnExpr;
+        ParseSingleAwaitBody(Func.AsyncBody, Site->AwaitExprText,
+            AssignVar, PreCode, PostReturnExpr);
+        // PreCode 清理：剥掉 CompoundStmt 的 '{' 与首尾空白（空 = 无 await 前代码）
+        if (!PreCode.empty())
+        {
+            size_t B = PreCode.find_first_not_of(" \t\r\n{");
+            size_t E = PreCode.find_last_not_of(" \t\r\n}");
+            PreCode = (B == MString::npos) ? MString() : PreCode.substr(B, E - B + 1);
+        }
+
         const MString FrameName =
             "MHeaderTool_P5Frame_" + SanitizeIdentifier(Record.Name) +
             "_" + SanitizeIdentifier(Func.Name);
@@ -1415,9 +1486,22 @@ public:
             << ": P5 单 await 状态机 Frame（TAwaitable 驱动, KD-12 最小形态）\n";
         Out << "struct " << FrameName << "\n";
         Out << "{\n";
+        // 函数参数槽（Start 的 await 表达式引用参数，如 Helper(Seed)）
+        for (const auto& P : Func.Params)
+        {
+            Out << "    " << P.Type.CanonicalName << " " << P.Name << "{};\n";
+        }
+        bool bHasAssignSlot = false;
         for (const auto& L : Func.LiveAcrossAwait)
         {
             Out << "    " << L.Type.CanonicalName << " " << L.Name << "{};\n";
+            if (!AssignVar.empty() && L.Name == AssignVar) bHasAssignSlot = true;
+        }
+        if (!AssignVar.empty() && !bHasAssignSlot)
+        {
+            // await 表达式赋值的变量（声明与 await 同行，行比较不触发 live）——
+            // 强制补槽，类型用 await 结果类型（业务声明通常一致）
+            Out << "    " << R << " " << AssignVar << "{};\n";
         }
         Out << "    " << R << " AwaitResult{};\n";
         Out << "    MPromise<TResult<" << R << ", FAppError>> Promise;\n";
@@ -1428,6 +1512,11 @@ public:
         Out << "    void Start()\n";
         Out << "    {\n";
         Out << "        bStarted = true;\n";
+        if (!PreCode.empty())
+        {
+            Out << "        // await 前业务代码\n";
+            Out << PreCode << "\n";
+        }
         Out << "        Awaiter = " << F << "(" << Args << ").AsAwaiter();\n";
         Out << "        if (Awaiter->AwaitReady()) Finish();\n";
         Out << "        else Awaiter->AwaitSuspend(this);\n";
@@ -1444,7 +1533,23 @@ public:
         Out << "        if (bDone) return;\n";
         Out << "        bDone = true;\n";
         Out << "        AwaitResult = Awaiter->AwaitResume();\n";
-        Out << "        Promise.SetValue(TResult<" << R << ", FAppError>::Ok(std::move(AwaitResult)));\n";
+        if (!AssignVar.empty())
+        {
+            // await 表达式赋给业务变量（跨 await 存活槽，如 `int R = TAwaitable...`）
+            Out << "        " << AssignVar << " = AwaitResult;\n";
+        }
+        if (!PostReturnExpr.empty())
+        {
+            // await 后业务代码：return <expr> → Promise 完成
+            Out << "        // await 后业务代码（return 表达式）\n";
+            Out << "        Promise.SetValue(TResult<" << R
+                << ", FAppError>::Ok(" << PostReturnExpr << "));\n";
+        }
+        else
+        {
+            Out << "        Promise.SetValue(TResult<" << R
+                << ", FAppError>::Ok(std::move(AwaitResult)));\n";
+        }
         Out << "    }\n";
         Out << "\n";
         Out << "    SFutureResult<" << R << "> GetFuture()\n";
