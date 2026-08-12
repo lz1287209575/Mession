@@ -521,7 +521,6 @@ mession_add_service(EchoService MEchoService SEchoServiceConfig Source/Servers/E
     GENERATED_SOURCES
         ${MESSION_GENERATED_DIR}/FSampleEchoRequest.mgenerated.cpp
         ${MESSION_GENERATED_DIR}/FSampleEchoResponse.mgenerated.cpp
-        ${MESSION_GENERATED_DIR}/MEchoService_AwaitImpl.mgenerated.cpp
     EXTRA_GROUPS echoservice
 )
 

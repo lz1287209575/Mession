@@ -1,4 +1,5 @@
 #include "Servers/EchoService/EchoService.h"
+#include "MEchoService_AwaitStateMachine.h"
 #include "Common/Net/Rpc/MRpcChannel.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Net/Rpc/RpcTransport.h"
@@ -222,4 +223,14 @@ SFutureResult<FSampleEchoResponse> CallEchoRemote(const FSampleEchoRequest& Requ
 {
     return MRpcChannel::Get().CallToActor<FSampleEchoResponse>(
         Request.TargetActorId, "MEchoService", "Echo", Request);
+}
+
+
+// MEchoService::EchoAwait — MFUNCTION(Async) 业务实现（用生成的状态机 Frame 驱动）
+SFutureResult<FSampleEchoResponse> MEchoService::EchoAwait(const FSampleEchoRequest& Request)
+{
+    auto Frame = MakeShared<MHeaderTool_AwaitFrame_MEchoService_EchoAwait>();
+    Frame->Request = Request;
+    Frame->Start();
+    return Frame->GetFuture();
 }

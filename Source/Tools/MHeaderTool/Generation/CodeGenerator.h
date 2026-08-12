@@ -2029,54 +2029,6 @@ public:
     // 生成 await 状态机驱动 函数实现（对接 await Frame）：创建 Frame → 填参数槽 → Start → GetFuture。
     // 业务头声明 + #ifdef MESSION_AWAIT_CODEGEN_SOURCE 内联体（codegen 解析用），
     // 实现生成到 .AwaitImpl.mgenerated.cpp，链接时覆盖。
-    // 生成 await 状态机驱动函数实现（类成员或自由函数）。
-    // NamePrefix: 类名（成员，输出 Class::Func）或 "Free"（自由，输出 Func）。
-    MString EmitAwaitFuncImpl(
-        const MString& NamePrefix,
-        const mession::headercodegen::SParsedFunction& Func) const
-    {
-        bool bHasAwait = false;
-        for (const auto& S : Func.AwaitSites)
-        {
-            if (S.Kind == mession::headercodegen::EAwaitSiteKind::TAwaitableCall)
-            {
-                bHasAwait = true;
-                break;
-            }
-        }
-        if (!bHasAwait) return {};
-
-        const MString FrameName =
-            "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(NamePrefix) +
-            "_" + SanitizeIdentifier(Func.Name);
-        const MString ReturnType = Func.ReturnType.CanonicalName;
-
-        std::ostringstream Out;
-        Out << "// await 状态机驱动函数实现（codegen 生成，驱动状态机 Frame）\n";
-        Out << ReturnType << " ";
-        if (NamePrefix != "Free")
-        {
-            Out << NamePrefix << "::";
-        }
-        Out << Func.Name << "(";
-        for (size_t I = 0; I < Func.Params.size(); ++I)
-        {
-            if (I) Out << ", ";
-            Out << Func.Params[I].Type.CanonicalName << " " << Func.Params[I].Name;
-        }
-        Out << ")\n";
-        Out << "{\n";
-        Out << "    auto Frame = MakeShared<" << FrameName << ">();\n";
-        for (const auto& P : Func.Params)
-        {
-            Out << "    Frame->" << P.Name << " = " << P.Name << ";\n";
-        }
-        Out << "    Frame->Start();\n";
-        Out << "    return Frame->GetFuture();\n";
-        Out << "}\n";
-        return Out.str();
-    }
-
     SOptions Options_;
 };
 
