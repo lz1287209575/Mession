@@ -1753,7 +1753,11 @@ public:
                 {
                     const size_t NextLine = Func.AsyncBody.rfind('\n', NextPos) == MString::npos
                         ? 0 : Func.AsyncBody.rfind('\n', NextPos) + 1;
-                    MString Seg = Func.AsyncBody.substr(StmtEnd + 1, NextLine - StmtEnd - 1);
+                    // 段代码从下一行行首开始（跳过本行尾注释，如 `;  // await 1`）
+                    const size_t SegStart = Func.AsyncBody.find('\n', StmtEnd);
+                    MString Seg = (SegStart == MString::npos)
+                        ? MString()
+                        : Func.AsyncBody.substr(SegStart + 1, NextLine - SegStart - 1);
                     const size_t B = Seg.find_first_not_of(" \t\r\n");
                     const size_t E = Seg.find_last_not_of(" \t\r\n");
                     SegCode[K] = (B == MString::npos) ? MString() : Seg.substr(B, E - B + 1);
@@ -1781,50 +1785,56 @@ public:
             "MHeaderTool_P5Frame_" + SanitizeIdentifier(NamePrefix) +
             "_" + SanitizeIdentifier(Func.Name);
 
-        // 生成"从 await K 开始的触发链"（ready 路径内联展开后续 await）
-        std::function<MString(size_t)> GenAwaitChain = [&](size_t K) -> MString
+        // 生成"触发 await K"块（ready 路径内联展开后续 await；缩进统一 8 空格）。
+        std::function<MString(size_t, const MString&)> GenAwait = [&](size_t K, const MString& Indent) -> MString
         {
-            if (K >= N)
-            {
-                return "            Finish();\n";
-            }
+            const MString AN = "Awaiter" + std::to_string(K + 1);
             MString Out;
-            Out += "            Awaiter" + std::to_string(K + 1) +
-                " = " + F[K] + "(" + Args[K] + ").AsAwaiter();\n";
-            Out += "            if (Awaiter" + std::to_string(K + 1) + "->AwaitReady())\n";
-            Out += "            {\n";
+            Out += Indent + AN + " = " + F[K] + "(" + Args[K] + ").AsAwaiter();  // 源码行 " +
+                std::to_string(Sites[K]->SourceLine) + "\n";
+            Out += Indent + "if (" + AN + "->AwaitReady())\n";
+            Out += Indent + "{\n";
             if (!AssignVar[K].empty())
             {
-                Out += "                " + AssignVar[K] + " = Awaiter" +
-                    std::to_string(K + 1) + "->AwaitResume();\n";
+                Out += Indent + "    " + AssignVar[K] + " = " + AN + "->AwaitResume();\n";
             }
             if (!SegCode[K].empty())
             {
-                Out += "                // await " + std::to_string(K + 1) + " 后业务代码\n";
-                Out += "                " + SegCode[K] + "\n";
+                Out += Indent + "    // await " + std::to_string(K + 1) + " 完成后续业务代码\n";
+                Out += Indent + "    " + SegCode[K] + "\n";
             }
-            Out += GenAwaitChain(K + 1);
-            Out += "            }\n";
-            Out += "            else\n";
-            Out += "            {\n";
-            Out += "                State = " + std::to_string(K + 1) +
-                "; Awaiter" + std::to_string(K + 1) + "->AwaitSuspend(this);\n";
-            Out += "            }\n";
+            if (K + 1 < N)
+            {
+                Out += GenAwait(K + 1, Indent + "    ");
+            }
+            else
+            {
+                Out += Indent + "    Finish();\n";
+            }
+            Out += Indent + "}\n";
+            Out += Indent + "else\n";
+            Out += Indent + "{\n";
+            Out += Indent + "    State = " + std::to_string(K + 1) +
+                ";  // 等待 await " + std::to_string(K + 1) + " 完成（源码行 " +
+                std::to_string(Sites[K]->SourceLine) + "）\n";
+            Out += Indent + "    " + AN + "->AwaitSuspend(this);\n";
+            Out += Indent + "}\n";
             return Out;
         };
 
         std::ostringstream Out;
-        Out << "// " << FrameName
-            << ": P5 多 await 串行状态机 Frame（TAwaitable 驱动, KD-9/KD-12）\n";
+        Out << "// " << FrameName << ": P5 状态机 Frame（await 串行, KD-9/KD-12）\n";
         Out << "struct " << FrameName << "\n";
         Out << "{\n";
+        Out << "    // 函数参数\n";
         for (const auto& P : Func.Params)
         {
             Out << "    " << P.Type.CanonicalName << " " << P.Name << "{};\n";
         }
-        // 槽：LiveAcrossAwait + 各 await 赋值变量（声明与 await 同行不触发 live）
+        bool bHasLive = false;
         for (const auto& L : Func.LiveAcrossAwait)
         {
+            if (!bHasLive) { Out << "    // 跨 await 存活变量（Frame 持久化）\n"; bHasLive = true; }
             Out << "    " << L.Type.CanonicalName << " " << L.Name << "{};\n";
         }
         for (size_t K = 0; K < N; ++K)
@@ -1837,28 +1847,22 @@ public:
             }
             if (!bExist)
             {
+                if (!bHasLive) { Out << "    // 跨 await 存活变量（Frame 持久化）\n"; bHasLive = true; }
                 Out << "    " << R[K] << " " << AssignVar[K] << "{};\n";
             }
         }
-        // 每 await 的 awaiter + 结果槽
+        Out << "    // await 驱动\n";
         for (size_t K = 0; K < N; ++K)
         {
-            Out << "    TOptional<SFutureResult<" << R[K] << ">::SAwaiter> Awaiter"
-                << (K + 1) << ";\n";
-            Out << "    " << R[K] << " AwaitResult" << (K + 1) << "{};\n";
+            Out << "    TOptional<SFutureResult<" << R[K] << ">::SAwaiter> Awaiter" << (K + 1) << ";\n";
         }
         Out << "    MPromise<TResult<" << R[0] << ", FAppError>> Promise;\n";
-        Out << "    int State = 0;\n";
+        Out << "    int State = 0;  // 0=初始, K=等待第 K 个 await 完成\n";
         Out << "\n";
-        // Start：段0（首个 await 前） + await 链
         Out << "    void Start()\n";
         Out << "    {\n";
-        if (!SegCode.empty())
         {
-            // 段 0 = 首个 await 前（这里 SegCode[0] 是 await1 后——首个 await 前是 AsyncBody 开头）
-        }
-        {
-            // 首个 await 前的业务代码 = AsyncBody 开头到 await1 行首（去 {）
+            // 首个 await 前代码
             const size_t FirstPos = Func.AsyncBody.find(Sites[0]->AwaitExprText);
             const size_t FirstLine = Func.AsyncBody.rfind('\n', FirstPos) == MString::npos
                 ? 0 : Func.AsyncBody.rfind('\n', FirstPos) + 1;
@@ -1872,30 +1876,29 @@ public:
                 Out << "        " << PreTrim << "\n";
             }
         }
-        Out << GenAwaitChain(0);
+        Out << GenAwait(0, "        ");
         Out << "    }\n";
         Out << "\n";
-        // Resume：switch(State)——State K 完成 await K 后继续
         Out << "    void Resume()\n";
         Out << "    {\n";
         Out << "        switch (State)\n";
         Out << "        {\n";
         for (size_t K = 1; K <= N; ++K)
         {
-            Out << "        case " << K << ":\n";
+            Out << "        case " << K << ":  // await " << K << " 完成（源码行 "
+                << Sites[K - 1]->SourceLine << "）\n";
             if (!AssignVar[K - 1].empty())
             {
-                Out << "            " << AssignVar[K - 1] << " = Awaiter" << K
-                    << "->AwaitResume();\n";
+                Out << "            " << AssignVar[K - 1] << " = Awaiter" << K << "->AwaitResume();\n";
             }
-            if (!SegCode[K - 1].empty() && K - 1 + 1 < N)
+            if (!SegCode[K - 1].empty() && K < N)
             {
-                Out << "            // await " << K << " 后业务代码\n";
+                Out << "            // await " << K << " 后续业务代码\n";
                 Out << "            " << SegCode[K - 1] << "\n";
             }
             if (K < N)
             {
-                Out << GenAwaitChain(K);  // 继续 await K+1
+                Out << GenAwait(K, "            ");
             }
             else
             {
@@ -1917,7 +1920,7 @@ public:
         else
         {
             Out << "        Promise.SetValue(TResult<" << R[0]
-                << ", FAppError>::Ok(std::move(AwaitResult" << N << ")));\n";
+                << ", FAppError>::Ok());\n";
         }
         Out << "    }\n";
         Out << "\n";
