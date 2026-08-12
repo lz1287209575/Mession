@@ -387,18 +387,24 @@ void MASTReflectionVisitor::CollectAwaitSites(
             SAwaitSite Site;
             Site.SourceLine    = SM.getSpellingLineNumber(CE->getBeginLoc());
             Site.AwaitExprText = Text;
-            if (Text.find("TAwaitable<") != MString::npos)
-            {
-                Site.Kind = EAwaitSiteKind::TAwaitableCall;
-            }
-            else if (Text.find("AWAIT_OK(") != MString::npos)
+            if (Text.find("AWAIT_OK(") != MString::npos)
             {
                 Site.Kind = EAwaitSiteKind::AwaitOkMacro;
+                Sites.push_back(std::move(Site));
             }
-            else
-            {
-                return true;
-            }
+            return true;
+        }
+
+        // P5：TAwaitable<F, R, Args...>(...) 是类构造（CXXConstructExpr，临时
+        // 对象），不是 CallExpr——VisitCallExpr 收集不到。这里补收集。
+        bool VisitCXXConstructExpr(clang::CXXConstructExpr* CE)
+        {
+            const MString Text = GetSourceTextImpl(CE->getSourceRange(), SM);
+            if (Text.find("TAwaitable<") == MString::npos) return true;
+            SAwaitSite Site;
+            Site.SourceLine    = SM.getSpellingLineNumber(CE->getBeginLoc());
+            Site.AwaitExprText = Text;
+            Site.Kind          = EAwaitSiteKind::TAwaitableCall;
             Sites.push_back(std::move(Site));
             return true;
         }
@@ -418,9 +424,89 @@ void MASTReflectionVisitor::CollectAwaitSites(
 }
 
 void MASTReflectionVisitor::CollectLiveAcrossAwait(
-    clang::FunctionDecl* /*FD*/, SParsedFunction& /*OutFunc*/)
+    clang::FunctionDecl* FD, SParsedFunction& OutFunc)
 {
-    // A2 stub — 完整算法留 P5 工作包 4a 落地
+    // P5（KD-12 状态机 IR 前置）：跨 await 点仍存活的局部变量分析。
+    // 定义：局部变量在「声明位置」与「最后使用位置」之间存在至少一个
+    // await 站点 → 该变量需在状态机 Frame 中持久化（bLiveAcrossAwait）。
+    // 参数（ParmVarDecl）由调用侧/Frame 显式槽位持有，不计入。
+    if (!FD->hasBody()) return;
+    if (OutFunc.AwaitSites.empty()) return;
+    clang::Stmt* Body = FD->getBody();
+
+    struct FLocalVarInfo
+    {
+        const clang::VarDecl* Decl = nullptr;
+        clang::SourceLocation LastUseLoc;  // 无效 = 未使用
+    };
+
+    class FLiveCollector : public clang::RecursiveASTVisitor<FLiveCollector>
+    {
+    public:
+        FLiveCollector(TVector<FLocalVarInfo>& InVars) : Vars(InVars) {}
+
+        bool VisitVarDecl(clang::VarDecl* VD)
+        {
+            if (!VD->isLocalVarDecl()) return true;  // 排除参数/全局/static
+            if (!VD->hasLocalStorage()) return true;
+            if (VD->isImplicit()) return true;
+            Vars.push_back({VD, clang::SourceLocation()});
+            return true;
+        }
+
+        bool VisitDeclRefExpr(clang::DeclRefExpr* DRE)
+        {
+            const clang::VarDecl* VD = llvm::dyn_cast<clang::VarDecl>(DRE->getDecl());
+            if (!VD) return true;
+            for (auto& V : Vars)
+            {
+                if (V.Decl == VD)
+                {
+                    V.LastUseLoc = DRE->getLocation();  // 遍历顺序保证为最后使用
+                    break;
+                }
+            }
+            return true;
+        }
+
+    private:
+        TVector<FLocalVarInfo>& Vars;
+    };
+
+    TVector<FLocalVarInfo> Vars;
+    FLiveCollector(Vars).TraverseStmt(Body);
+
+    // await 站点按源码行排序（函数体单文件，行号可比）
+    TVector<SAwaitSite> SortedSites = OutFunc.AwaitSites;
+    std::sort(SortedSites.begin(), SortedSites.end(),
+        [](const SAwaitSite& A, const SAwaitSite& B) { return A.SourceLine < B.SourceLine; });
+
+    for (const auto& V : Vars)
+    {
+        if (!V.LastUseLoc.isValid()) continue;  // 声明后未使用，不存活
+        const uint32 DeclLine = SM.getSpellingLineNumber(V.Decl->getLocation());
+        const uint32 LastUseLine = SM.getSpellingLineNumber(V.LastUseLoc);
+
+        SLiveVarDecl Live;
+        Live.Name = V.Decl->getNameAsString();
+        Live.Type.CanonicalName = V.Decl->getType().getAsString();
+        Live.DeclLine = DeclLine;
+        Live.bLiveAcrossAwait = false;
+
+        for (const auto& Site : SortedSites)
+        {
+            // 声明位置 < await 位置 <= 最后使用位置 → 跨该 await 存活
+            if (Site.SourceLine > DeclLine && Site.SourceLine <= LastUseLine)
+            {
+                Live.bLiveAcrossAwait = true;
+                break;
+            }
+        }
+        if (Live.bLiveAcrossAwait)
+        {
+            OutFunc.LiveAcrossAwait.push_back(std::move(Live));
+        }
+    }
 }
 
 SParsedRecord* MASTReflectionVisitor::FindRecordByDecl(const clang::CXXRecordDecl* RD)
