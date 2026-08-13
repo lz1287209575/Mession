@@ -1829,12 +1829,18 @@ public:
         MString& OutCond, MString& OutPreCode, MString& OutPostCode,
         MString& OutBranchReturn, MString& OutEarlyReturn,
         TVector<SBranchChainEntry>& OutChain, MString& OutFinalElseBody,
-        MString& OutBranchBody)
+        MString& OutBranchBody,
+        bool& OutNested, MString& OutNestedCond, MString& OutNestedPreCode,
+        MString& OutNestedPostCode, MString& OutNestedBranchReturn,
+        MString& OutNestedEarlyReturn)
     {
         OutCond = OutPreCode = OutPostCode = OutBranchReturn = OutEarlyReturn = MString();
         OutChain.clear();
         OutFinalElseBody = MString();
         OutBranchBody = MString();
+        OutNested = false;
+        OutNestedCond = OutNestedPreCode = OutNestedPostCode = MString();
+        OutNestedBranchReturn = OutNestedEarlyReturn = MString();
         const size_t IfPos = Body.find("if (");
         if (IfPos == MString::npos) return false;
         const size_t CondOpen = IfPos + 3;
@@ -1861,6 +1867,42 @@ public:
         if (BDepth != 0) return false;
         const MString BranchBody = Body.substr(BraceOpen + 1, BraceEnd - BraceOpen - 2);
         OutBranchBody = BranchBody;
+
+        // 嵌套 if：分支体本身是 `if (c2) { ... } [return ...]`（内层）——递归解析
+        const MString BranchTrim = TrimText(BranchBody);
+        if (BranchTrim.rfind("if (", 0) == 0)
+        {
+            TVector<SBranchChainEntry> NestedChain;
+            MString NestedFinalElse, NestedBody2;
+            if (!ParseBranchAsyncBody(BranchBody, AwaitText,
+                    OutNestedCond, OutNestedPreCode, OutNestedPostCode,
+                    OutNestedBranchReturn, OutNestedEarlyReturn,
+                    NestedChain, NestedFinalElse, NestedBody2,
+                    OutNested, OutNestedCond, OutNestedPreCode, OutNestedPostCode,
+                    OutNestedBranchReturn, OutNestedEarlyReturn))
+            {
+                return false;
+            }
+            if (!NestedChain.empty() || !NestedFinalElse.empty())
+            {
+                return false;  // 嵌套内层再带 else-if 链——后续扩展
+            }
+            OutNested = true;
+            fprintf(stderr, "[nested-dbg] parsed nested: ncond='%s'\\n", OutNestedCond.c_str());
+            // 外层 early（BranchBody 之后的尾 return）
+            const MString AfterIf2 = Body.substr(BraceEnd);
+            const size_t TRet = AfterIf2.find("return");
+            if (TRet != MString::npos)
+            {
+                const size_t TSemi = AfterIf2.find(';', TRet);
+                if (TSemi != MString::npos)
+                {
+                    OutEarlyReturn = TrimText(AfterIf2.substr(TRet + 6, TSemi - TRet - 6));
+                }
+            }
+            return true;
+        }
+
         if (BranchBody.find(AwaitText) == MString::npos) return false;  // 分支体内必须有 await
 
         const size_t RetPos = BranchBody.find("return");
@@ -1958,10 +2000,15 @@ public:
         MString F, R, Args, Cond, PreCode, PostCode, BranchReturn, EarlyReturn, BranchBody;
         TVector<SBranchChainEntry> ChainBranches;
         MString FinalElseBody;
+        bool bNested = false;
+        MString NestedCond, NestedPreCode, NestedPostCode, NestedBranchReturn, NestedEarlyReturn;
         if (!ParseBranchAsyncBody(Func.AsyncBody, Site->AwaitExprText,
                 Cond, PreCode, PostCode, BranchReturn, EarlyReturn,
-                ChainBranches, FinalElseBody, BranchBody)) return {};
-        if (Cond.empty() || BranchReturn.empty()) return {};
+                ChainBranches, FinalElseBody, BranchBody,
+                bNested, NestedCond, NestedPreCode, NestedPostCode,
+                NestedBranchReturn, NestedEarlyReturn)) return {};
+        if (Cond.empty()) return {};
+        if (!bNested && BranchReturn.empty()) return {};  // 嵌套时外层无 return（用内层）
         if (!ParseTAwaitableText(Site->AwaitExprText, F, R, Args)) return {};
         if (R.empty()) R = RFromReturnType(Func.ReturnType.CanonicalName);
 
@@ -2229,10 +2276,48 @@ public:
         Out << "    {\n";
         Out << "        if (" << Cond << ")\n";
         Out << "        {\n";
-        if (!PreCode.empty())
+        fprintf(stderr, "[nested-dbg] %s bNested=%d cond='%s' ncond='%s'\\n",
+            Func.Name.c_str(), (int)bNested, Cond.c_str(), NestedCond.c_str());
+        if (bNested)
+        {
+            const MString NestedBranchVal = StripValueWrapper(NestedBranchReturn);
+            const MString NestedEarlyVal = StripValueWrapper(NestedEarlyReturn);
+            Out << "            if (" << NestedCond << ")\n";
+            Out << "            {\n";
+            if (!NestedPreCode.empty())
+            {
+                Out << "                " << StripLiveDeclTypes(NestedPreCode, Func.LiveAcrossAwait) << "\n";
+            }
+            Out << "                Awaiter1 = " << F << "(" << Args << ").AsAwaiter();\n";
+            Out << "                if (Awaiter1->AwaitReady())\n";
+            Out << "                {\n";
+            Out << "                    " << AssignVar << " = Awaiter1->AwaitResume();\n";
+            if (!NestedPostCode.empty())
+            {
+                Out << "                    " << StripLiveDeclTypes(NestedPostCode, Func.LiveAcrossAwait) << "\n";
+            }
+            Out << "                    ReturnValue = " << NestedBranchVal << ";\n";
+            Out << "                    Finish();\n";
+            Out << "                }\n";
+            Out << "                else\n";
+            Out << "                {\n";
+            Out << "                    State = 1;\n";
+            Out << "                    SelfGuard = shared_from_this();\n";
+            Out << "                    Awaiter1->AwaitSuspend(this);\n";
+            Out << "                }\n";
+            Out << "            }\n";
+            Out << "            else\n";
+            Out << "            {\n";
+            Out << "                ReturnValue = " << NestedEarlyVal << ";\n";
+            Out << "                Finish();\n";
+            Out << "            }\n";
+        }
+        else if (!PreCode.empty())
         {
             Out << "            " << StripLiveDeclTypes(PreCode, Func.LiveAcrossAwait) << "\n";
         }
+        if (!bNested)
+        {
         Out << "            Awaiter1 = " << F << "(" << Args << ").AsAwaiter();\n";
         Out << "            if (Awaiter1->AwaitReady())\n";
         Out << "            {\n";
@@ -2277,6 +2362,7 @@ public:
         Out << "                SelfGuard = shared_from_this();\n";
         Out << "                Awaiter1->AwaitSuspend(this);\n";
         Out << "            }\n";
+        }
         Out << "        }\n";
         for (size_t K = 0; K < ChainGen.size(); ++K)
         {
@@ -2347,74 +2433,91 @@ public:
         Out << "\n";
         Out << "    void Resume()\n";
         Out << "    {\n";
-        Out << "        if (State == 1)\n";
-        Out << "        {\n";
-        Out << "            " << AssignVar << " = Awaiter1->AwaitResume();\n";
-        if (bIfSecondAwait)
+        if (bNested)
         {
-            if (!Seg1.empty())
+            const MString NestedBranchVal2 = StripValueWrapper(NestedBranchReturn);
+            Out << "        if (State == 1)\n";
+            Out << "        {\n";
+            Out << "            " << AssignVar << " = Awaiter1->AwaitResume();\n";
+            if (!NestedPostCode.empty())
             {
-                Out << "            " << StripLiveDeclTypes(Seg1, Func.LiveAcrossAwait) << "\n";
+                Out << "            " << StripLiveDeclTypes(NestedPostCode, Func.LiveAcrossAwait) << "\n";
             }
-            Out << "            Awaiter1 = " << F2 << "(" << Args2 << ").AsAwaiter();\n";
-            Out << "            if (Awaiter1->AwaitReady())\n";
-            Out << "            {\n";
-            Out << "                " << AssignVar2 << " = Awaiter1->AwaitResume();\n";
-            if (!Seg2.empty())
-            {
-                Out << "                " << StripLiveDeclTypes(Seg2, Func.LiveAcrossAwait) << "\n";
-            }
-            Out << "                ReturnValue = " << BranchVal << ";\n";
-            Out << "                Finish();\n";
-            Out << "            }\n";
-            Out << "            else\n";
-            Out << "            {\n";
-            Out << "                State = 2;\n";
-            Out << "                SelfGuard = shared_from_this();\n";
-            Out << "                Awaiter1->AwaitSuspend(this);\n";
-            Out << "            }\n";
+            Out << "            ReturnValue = " << NestedBranchVal2 << ";\n";
+            Out << "            Finish();\n";
+            Out << "        }\n";
         }
         else
         {
-            if (!PostCode.empty())
+            Out << "        if (State == 1)\n";
+            Out << "        {\n";
+            Out << "            " << AssignVar << " = Awaiter1->AwaitResume();\n";
+            if (bIfSecondAwait)
             {
-                Out << "            " << StripLiveDeclTypes(PostCode, Func.LiveAcrossAwait) << "\n";
+                if (!Seg1.empty())
+                {
+                    Out << "            " << StripLiveDeclTypes(Seg1, Func.LiveAcrossAwait) << "\n";
+                }
+                Out << "            Awaiter1 = " << F2 << "(" << Args2 << ").AsAwaiter();\n";
+                Out << "            if (Awaiter1->AwaitReady())\n";
+                Out << "            {\n";
+                Out << "                " << AssignVar2 << " = Awaiter1->AwaitResume();\n";
+                if (!Seg2.empty())
+                {
+                    Out << "                " << StripLiveDeclTypes(Seg2, Func.LiveAcrossAwait) << "\n";
+                }
+                Out << "                ReturnValue = " << BranchVal << ";\n";
+                Out << "                Finish();\n";
+                Out << "            }\n";
+                Out << "            else\n";
+                Out << "            {\n";
+                Out << "                State = 2;\n";
+                Out << "                SelfGuard = shared_from_this();\n";
+                Out << "                Awaiter1->AwaitSuspend(this);\n";
+                Out << "            }\n";
             }
-            Out << "            ReturnValue = " << BranchVal << ";\n";
-            Out << "            Finish();\n";
-        }
-        Out << "        }\n";
-        if (bIfSecondAwait)
-        {
-            Out << "        else if (State == 2)\n";
-            Out << "        {\n";
-            Out << "            " << AssignVar2 << " = Awaiter1->AwaitResume();\n";
-            if (!Seg2.empty())
+            else
             {
-                Out << "            " << StripLiveDeclTypes(Seg2, Func.LiveAcrossAwait) << "\n";
+                if (!PostCode.empty())
+                {
+                    Out << "            " << StripLiveDeclTypes(PostCode, Func.LiveAcrossAwait) << "\n";
+                }
+                Out << "            ReturnValue = " << BranchVal << ";\n";
+                Out << "            Finish();\n";
             }
-            Out << "            ReturnValue = " << BranchVal << ";\n";
-            Out << "            Finish();\n";
             Out << "        }\n";
-        }
-        for (size_t K = 0; K < ChainGen.size(); ++K)
-        {
-            if (!ChainGen[K].bAwait) continue;
-            Out << "        else if (State == " << (2 + K) << ")\n";
-            Out << "        {\n";
-            Out << "            " << ChainGen[K].AssignVar << " = Awaiter1->AwaitResume();\n";
-            Out << "            ReturnValue = " << ChainGen[K].RetVal << ";\n";
-            Out << "            Finish();\n";
-            Out << "        }\n";
-        }
-        if (FinalGen.bAwait)
-        {
-            Out << "        else if (State == " << (2 + ChainGen.size()) << ")\n";
-            Out << "        {\n";
-            Out << "            " << FinalGen.AssignVar << " = Awaiter1->AwaitResume();\n";
-            Out << "            ReturnValue = " << FinalGen.RetVal << ";\n";
-            Out << "            Finish();\n";
-            Out << "        }\n";
+            if (bIfSecondAwait)
+            {
+                Out << "        else if (State == 2)\n";
+                Out << "        {\n";
+                Out << "            " << AssignVar2 << " = Awaiter1->AwaitResume();\n";
+                if (!Seg2.empty())
+                {
+                    Out << "            " << StripLiveDeclTypes(Seg2, Func.LiveAcrossAwait) << "\n";
+                }
+                Out << "            ReturnValue = " << BranchVal << ";\n";
+                Out << "            Finish();\n";
+                Out << "        }\n";
+            }
+            for (size_t K = 0; K < ChainGen.size(); ++K)
+            {
+                if (!ChainGen[K].bAwait) continue;
+                Out << "        else if (State == " << (2 + K) << ")\n";
+                Out << "        {\n";
+                Out << "            " << ChainGen[K].AssignVar << " = Awaiter1->AwaitResume();\n";
+                Out << "            ReturnValue = " << ChainGen[K].RetVal << ";\n";
+                Out << "            Finish();\n";
+                Out << "        }\n";
+            }
+            if (FinalGen.bAwait)
+            {
+                Out << "        else if (State == " << (2 + ChainGen.size()) << ")\n";
+                Out << "        {\n";
+                Out << "            " << FinalGen.AssignVar << " = Awaiter1->AwaitResume();\n";
+                Out << "            ReturnValue = " << FinalGen.RetVal << ";\n";
+                Out << "            Finish();\n";
+                Out << "        }\n";
+            }
         }
         Out << "    }\n";
         Out << "\n";

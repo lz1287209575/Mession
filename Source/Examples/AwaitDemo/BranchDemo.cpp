@@ -62,6 +62,23 @@ SFutureResult<int> BranchChainAsync(int N)
 
 #ifdef MESSION_AWAIT_CODEGEN_SOURCE
 MFUNCTION(Async)
+SFutureResult<int> NestedIfAsync(int N)
+{
+    if (N > 0)                        // 外层 if
+    {
+        if (N > 10)                   // 内层 if
+        {
+            int A = TAwaitable<AsyncAdd2>(N, 1);   // 内层 await
+            return SFutureResult<int>(TResult<int, FAppError>::Ok(A * 2));
+        }
+        return SFutureResult<int>(TResult<int, FAppError>::Ok(5));   // 内层 early
+    }
+    return SFutureResult<int>(TResult<int, FAppError>::Ok(0));       // 外层 early
+}
+#endif
+
+#ifdef MESSION_AWAIT_CODEGEN_SOURCE
+MFUNCTION(Async)
 SFutureResult<int> BranchAsync(int N)
 {
     if (N > 0)

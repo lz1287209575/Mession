@@ -100,7 +100,16 @@ int main()
     std::printf("BranchChainAsync(5):  %d（链分支2）\n", CH2);
     std::printf("BranchChainAsync(-3): %d（最后 else）\n", CH3);
 
+    // 嵌套 if：N>0 → 内层 N>10 → await(N+1)*2；内层 early 5；外层 early 0
+    const int N1 = NestedIfAsync(20).GetResult().GetValue();
+    const int N2 = NestedIfAsync(5).GetResult().GetValue();
+    const int N3 = NestedIfAsync(-3).GetResult().GetValue();
+    std::printf("NestedIfAsync(20): %d（内层 if await）\n", N1);
+    std::printf("NestedIfAsync(5):  %d（内层 early）\n", N2);
+    std::printf("NestedIfAsync(-3): %d（外层 early）\n", N3);
+
     return (R == 31 && C == 44 && L == 4 && M == 11 && B1 == 12 && B2 == 0
         && E1 == 6 && E2 == 7 && M1 == 14 && M2 == 0
-        && CH1 == 21 && CH2 == 7 && CH3 == 0) ? 0 : 1;
+        && CH1 == 21 && CH2 == 7 && CH3 == 0
+        && N1 == 42 && N2 == 5 && N3 == 0) ? 0 : 1;
 }
