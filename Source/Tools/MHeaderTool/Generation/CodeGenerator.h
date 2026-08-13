@@ -1449,6 +1449,7 @@ public:
         size_t AwaitIndex = 0;        // Await 全局编号
         size_t LoopIndex = 0;         // For 循环编号（方法命名 LoopEntry_N）
         bool bHasElse = false;
+        bool bIsReturnAwait = false;  // return TAwaitable<...>：作为最后 await 展开
     };
 
     // 剥离注释（// 行注释、/* */ 块注释）——替换为空格（保留 '\n' 行结构）。
@@ -1652,9 +1653,27 @@ public:
             {
                 const size_t Semi = Code.find(';', B);
                 if (Semi == MString::npos) return false;
+                const MString RetExpr = TrimText(Code.substr(B + 6, Semi - B - 6));
+                // return await：`return TAwaitable<F>(args)` 作为最后 await 展开
+                //（语义 = await 目标结果直接作为函数返回值，与普通 return 区分）。
+                if (RetExpr.find("TAwaitable<") != MString::npos)
+                {
+                    if (InOutSiteIndex >= Sites.size()) return false;
+                    const mession::headercodegen::SAwaitSite* AS = &Sites[InOutSiteIndex];
+                    CFlowNode Aw;
+                    Aw.Kind = CFlowNode::EKind::Await;
+                    Aw.Text = AS->AwaitExprText;
+                    Aw.AwaitIndex = InOutSiteIndex;
+                    if (!ParseTAwaitableText(AS->AwaitExprText, Aw.F, Aw.R, Aw.Args)) return false;
+                    Aw.bIsReturnAwait = true;
+                    ++InOutSiteIndex;
+                    OutNodes.push_back(Aw);
+                    Pos = Semi + 1;
+                    continue;
+                }
                 CFlowNode Ret;
                 Ret.Kind = CFlowNode::EKind::Return;
-                Ret.Text = TrimText(Code.substr(B + 6, Semi - B - 6));
+                Ret.Text = RetExpr;
                 OutNodes.push_back(Ret);
                 Pos = Semi + 1;
                 continue;
@@ -1877,7 +1896,17 @@ public:
                 {
                     Out += Indent + "        AwaitResult = Awaiter1->AwaitResume();\n";
                 }
-                GenCFExec(Nodes, i + 1, Out, Indent + "        ", Func);
+                if (N.bIsReturnAwait)
+                {
+                    // return await：结果直接作为返回值，函数结束
+                    Out += Indent + "        ReturnValue = AwaitResult;\n";
+                    Out += Indent + "        Finish();\n";
+                    Out += Indent + "        return;\n";
+                }
+                else
+                {
+                    GenCFExec(Nodes, i + 1, Out, Indent + "        ", Func);
+                }
                 Out += Indent + "    }\n";
                 Out += Indent + "    catch (const FFutureResultError& E)\n";
                 Out += Indent + "    {\n";
@@ -2199,6 +2228,15 @@ public:
                     const size_t K = N.AwaitIndex;
                     Out << "        case " << (K + 1) << ":  // await " << (K + 1) << " 完成\n";
                     Out << "        {\n";
+                    if (N.bIsReturnAwait)
+                    {
+                        // return await：恢复后直接作为返回值，函数结束
+                        Out << "            ReturnValue = Awaiter1->AwaitResume();\n";
+                        Out << "            Finish();\n";
+                        Out << "            break;\n";
+                        Out << "        }\n";
+                        continue;
+                    }
                     MString Rest;
                     GenCFExec(Ns, i + 1, Rest, "            ", Func);
                     // fall-through：await 后同列表无剩余 → 继续尾随（外层/循环收尾）
