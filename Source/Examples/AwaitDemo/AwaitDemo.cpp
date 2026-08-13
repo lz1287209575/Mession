@@ -92,6 +92,15 @@ int main()
     std::printf("BranchMultiAwait(5):  %d（if 内 2 await 串行）\n", M1);
     std::printf("BranchMultiAwait(-3): %d（early return）\n", M2);
 
+    // else-if 链（三分支都 await）：N>10 → N+1；N>0 → N+2；else → N+3
+    const int CH1 = BranchChainAsync(20).GetResult().GetValue();
+    const int CH2 = BranchChainAsync(5).GetResult().GetValue();
+    const int CH3 = BranchChainAsync(-3).GetResult().GetValue();
+    std::printf("BranchChainAsync(20): %d（链分支1）\n", CH1);
+    std::printf("BranchChainAsync(5):  %d（链分支2）\n", CH2);
+    std::printf("BranchChainAsync(-3): %d（最后 else）\n", CH3);
+
     return (R == 31 && C == 44 && L == 4 && M == 11 && B1 == 12 && B2 == 0
-        && E1 == 6 && E2 == 7 && M1 == 14 && M2 == 0) ? 0 : 1;
+        && E1 == 6 && E2 == 7 && M1 == 14 && M2 == 0
+        && CH1 == 21 && CH2 == 7 && CH3 == 0) ? 0 : 1;
 }

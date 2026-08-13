@@ -40,6 +40,28 @@ SFutureResult<int> BranchMultiAwait(int N)
 
 #ifdef MESSION_AWAIT_CODEGEN_SOURCE
 MFUNCTION(Async)
+SFutureResult<int> BranchChainAsync(int N)
+{
+    if (N > 10)
+    {
+        int A = TAwaitable<AsyncAdd2>(N, 1);                  // else-if 链分支 1 await
+        return SFutureResult<int>(TResult<int, FAppError>::Ok(A));
+    }
+    else if (N > 0)
+    {
+        int B = TAwaitable<AsyncAdd2>(N, 2);                  // else-if 链分支 2 await
+        return SFutureResult<int>(TResult<int, FAppError>::Ok(B));
+    }
+    else
+    {
+        int C = TAwaitable<AsyncAdd2>(N, 3);                  // 最后 else await
+        return SFutureResult<int>(TResult<int, FAppError>::Ok(C));
+    }
+}
+#endif
+
+#ifdef MESSION_AWAIT_CODEGEN_SOURCE
+MFUNCTION(Async)
 SFutureResult<int> BranchAsync(int N)
 {
     if (N > 0)

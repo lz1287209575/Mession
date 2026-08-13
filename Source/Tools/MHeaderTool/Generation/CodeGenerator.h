@@ -1805,10 +1805,17 @@ public:
         return Out;
     }
 
-    // 解析 if/else 分支 await 体（第一步最小形态）：
-    //   if (cond) { [PreCode] <await> [PostCode] return EXPR_TRUE; } [else { return EXPR_ELSE; }]
-    //   [return EXPR_TAIL;]
-    // 输出：cond、await 前代码、await 后代码、分支内 return 表达式、early return 表达式。
+    // else-if 链的一个分支（cond + 分支体文本）
+    struct SBranchChainEntry
+    {
+        MString Cond;
+        MString Body;
+    };
+
+    // 解析 if/else 分支 await 体：
+    //   if (cond0) { ... } [else if (condK) { ... }]... [else { ... }] [return EXPR_TAIL;]
+    // 输出：第一个 if 的 cond / await 前代码 / await 后代码 / 分支 return、else-if 链
+    //      （每分支 cond+body）、最后 else 分支体、尾/else 的 early return 表达式。
     static MString TrimText(const MString& In)
     {
         const size_t B = In.find_first_not_of(" \t\r\n");
@@ -1821,10 +1828,12 @@ public:
         const MString& Body, const MString& AwaitText,
         MString& OutCond, MString& OutPreCode, MString& OutPostCode,
         MString& OutBranchReturn, MString& OutEarlyReturn,
-        MString& OutElseBody, MString& OutBranchBody)
+        TVector<SBranchChainEntry>& OutChain, MString& OutFinalElseBody,
+        MString& OutBranchBody)
     {
         OutCond = OutPreCode = OutPostCode = OutBranchReturn = OutEarlyReturn = MString();
-        OutElseBody = MString();
+        OutChain.clear();
+        OutFinalElseBody = MString();
         OutBranchBody = MString();
         const size_t IfPos = Body.find("if (");
         if (IfPos == MString::npos) return false;
@@ -1871,36 +1880,67 @@ public:
             OutPostCode = TrimText(BranchBody.substr(PostStart, RetPos - PostStart));
         }
 
-        // early return：else 块 或 函数尾 return。else 分支体提取到 OutElseBody
-        //（供生成器判断 else 内是否也有 await——Sites[1] 位于 else 块内）。
+        // else-if 链 + 最后 else/尾 return。每个 else-if 提取 (cond, body) 到 OutChain，
+        // 最后 else 体到 OutFinalElseBody；early return 取链尾（else 内或函数尾）。
         const MString AfterIf = Body.substr(BraceEnd);
-        const size_t ElsePos = AfterIf.find("else");
+        MString Remaining = AfterIf;
+        while (true)
+        {
+            const size_t EI = Remaining.find("else if (");
+            if (EI == MString::npos) break;
+            const size_t CondOpen = EI + 8;
+            int CDepth = 1;
+            size_t CondEnd = CondOpen + 1;
+            while (CondEnd < Remaining.size() && CDepth > 0)
+            {
+                if (Remaining[CondEnd] == '(') ++CDepth;
+                else if (Remaining[CondEnd] == ')') --CDepth;
+                ++CondEnd;
+            }
+            if (CDepth != 0) break;
+            const MString ChainCond = TrimText(Remaining.substr(CondOpen + 1, CondEnd - CondOpen - 2));
+            const size_t ChainBrace = Remaining.find('{', CondEnd);
+            if (ChainBrace == MString::npos) break;
+            int CBDepth = 1;
+            size_t ChainEnd = ChainBrace + 1;
+            while (ChainEnd < Remaining.size() && CBDepth > 0)
+            {
+                if (Remaining[ChainEnd] == '{') ++CBDepth;
+                else if (Remaining[ChainEnd] == '}') --CBDepth;
+                ++ChainEnd;
+            }
+            if (CBDepth != 0) break;
+            OutChain.push_back({ChainCond,
+                TrimText(Remaining.substr(ChainBrace + 1, ChainEnd - ChainBrace - 2))});
+            Remaining = Remaining.substr(ChainEnd);
+        }
+        const size_t ElsePos = Remaining.find("else");
         if (ElsePos != MString::npos)
         {
-            const size_t ElseBrace = AfterIf.find('{', ElsePos);
+            const size_t ElseBrace = Remaining.find('{', ElsePos);
             if (ElseBrace != MString::npos)
             {
                 int EDepth = 1;
                 size_t ElseEnd = ElseBrace + 1;
-                while (ElseEnd < AfterIf.size() && EDepth > 0)
+                while (ElseEnd < Remaining.size() && EDepth > 0)
                 {
-                    if (AfterIf[ElseEnd] == '{') ++EDepth;
-                    else if (AfterIf[ElseEnd] == '}') --EDepth;
+                    if (Remaining[ElseEnd] == '{') ++EDepth;
+                    else if (Remaining[ElseEnd] == '}') --EDepth;
                     ++ElseEnd;
                 }
                 if (EDepth == 0)
                 {
-                    OutElseBody = TrimText(AfterIf.substr(ElseBrace + 1, ElseEnd - ElseBrace - 2));
+                    OutFinalElseBody = TrimText(Remaining.substr(ElseBrace + 1, ElseEnd - ElseBrace - 2));
                 }
             }
         }
-        const size_t ERet = AfterIf.find("return");
+        const size_t ERet = Remaining.find("return");
         if (ERet != MString::npos)
         {
-            const size_t ESemi = AfterIf.find(';', ERet);
+            const size_t ESemi = Remaining.find(';', ERet);
             if (ESemi != MString::npos)
             {
-                OutEarlyReturn = TrimText(AfterIf.substr(ERet + 6, ESemi - ERet - 6));
+                OutEarlyReturn = TrimText(Remaining.substr(ERet + 6, ESemi - ERet - 6));
             }
         }
         return true;
@@ -1915,9 +1955,12 @@ public:
         const mession::headercodegen::SAwaitSite* Site) const
     {
         (void)HeaderPath;
-        MString F, R, Args, Cond, PreCode, PostCode, BranchReturn, EarlyReturn, ElseBody, BranchBody;
+        MString F, R, Args, Cond, PreCode, PostCode, BranchReturn, EarlyReturn, BranchBody;
+        TVector<SBranchChainEntry> ChainBranches;
+        MString FinalElseBody;
         if (!ParseBranchAsyncBody(Func.AsyncBody, Site->AwaitExprText,
-                Cond, PreCode, PostCode, BranchReturn, EarlyReturn, ElseBody, BranchBody)) return {};
+                Cond, PreCode, PostCode, BranchReturn, EarlyReturn,
+                ChainBranches, FinalElseBody, BranchBody)) return {};
         if (Cond.empty() || BranchReturn.empty()) return {};
         if (!ParseTAwaitableText(Site->AwaitExprText, F, R, Args)) return {};
         if (R.empty()) R = RFromReturnType(Func.ReturnType.CanonicalName);
@@ -1939,52 +1982,110 @@ public:
         }
         if (AssignVar.empty()) return {};
 
-        // else 分支 await（Sites[1] 位于 else 块内 → else 也有 await）：
-        // 解析 ElseF/ElseArgs/ElseAssignVar/ElseReturn，生成 State=2 分支。
-        MString ElseF, ElseR, ElseArgs, ElseAssignVar, ElseBranchVal;
-        bool bElseAwait = false;
-        if (!ElseBody.empty() && Func.AwaitSites.size() >= 2)
+        // else-if 链 + 最后 else：每分支解析 await（≤1 个——Site 按文本归属）。
+        struct SBranchGen
         {
-            const mession::headercodegen::SAwaitSite* ElseSite = &Func.AwaitSites[1];
-            if (ElseBody.find(ElseSite->AwaitExprText) != MString::npos)
+            MString F, Args, AssignVar, RetVal;
+            bool bAwait = false;
+        };
+        TVector<SBranchGen> ChainGen;
+        for (const auto& Br : ChainBranches)
+        {
+            SBranchGen G;
+            MString Ret;
+            const size_t RetPos = Br.Body.find("return");
+            if (RetPos != MString::npos)
             {
-                MString ElseRet;
-                const size_t ElseRetPos = ElseBody.find("return");
-                if (ElseRetPos != MString::npos)
+                const size_t Semi = Br.Body.find(';', RetPos);
+                if (Semi != MString::npos)
                 {
-                    const size_t ElseSemi = ElseBody.find(';', ElseRetPos);
-                    if (ElseSemi != MString::npos)
-                    {
-                        ElseRet = TrimText(ElseBody.substr(ElseRetPos + 6, ElseSemi - ElseRetPos - 6));
-                    }
-                }
-                if (!ElseRet.empty()
-                    && ParseTAwaitableText(ElseSite->AwaitExprText, ElseF, ElseR, ElseArgs))
-                {
-                    if (ElseR.empty()) ElseR = RFromReturnType(Func.ReturnType.CanonicalName);
-                    const size_t ElseAwaitPos = ElseBody.find(ElseSite->AwaitExprText);
-                    const size_t ElseLineStart = ElseBody.rfind('\n', ElseAwaitPos) == MString::npos
-                        ? 0 : ElseBody.rfind('\n', ElseAwaitPos) + 1;
-                    const MString ElseLine = ElseBody.substr(ElseLineStart, ElseAwaitPos - ElseLineStart);
-                    const size_t ElseEq = ElseLine.rfind('=');
-                    if (ElseEq != MString::npos)
-                    {
-                        const size_t ElseEndV = ElseLine.find_last_not_of(" \t", ElseEq - 1);
-                        if (ElseEndV != MString::npos)
-                        {
-                            const size_t ElseStartV = ElseLine.find_last_of(" \t", ElseEndV);
-                            ElseAssignVar = ElseLine.substr(
-                                ElseStartV == MString::npos ? 0 : ElseStartV + 1,
-                                ElseEndV - (ElseStartV == MString::npos ? 0 : ElseStartV + 1) + 1);
-                        }
-                    }
-                    if (!ElseAssignVar.empty())
-                    {
-                        bElseAwait = true;
-                        ElseBranchVal = StripValueWrapper(ElseRet);
-                    }
+                    Ret = TrimText(Br.Body.substr(RetPos + 6, Semi - RetPos - 6));
                 }
             }
+            for (const auto& AS : Func.AwaitSites)
+            {
+                if (AS.AwaitExprText.empty()) continue;
+                if (Br.Body.find(AS.AwaitExprText) != MString::npos)
+                {
+                    MString BF, BR, BArgs;
+                    if (ParseTAwaitableText(AS.AwaitExprText, BF, BR, BArgs))
+                    {
+                        if (BR.empty()) BR = RFromReturnType(Func.ReturnType.CanonicalName);
+                        const size_t AwaitPos = Br.Body.find(AS.AwaitExprText);
+                        const size_t LineStart = Br.Body.rfind('\n', AwaitPos) == MString::npos
+                            ? 0 : Br.Body.rfind('\n', AwaitPos) + 1;
+                        const MString Line = Br.Body.substr(LineStart, AwaitPos - LineStart);
+                        const size_t Eq = Line.rfind('=');
+                        if (Eq != MString::npos)
+                        {
+                            const size_t EndV = Line.find_last_not_of(" \t", Eq - 1);
+                            if (EndV != MString::npos)
+                            {
+                                const size_t StartV = Line.find_last_of(" \t", EndV);
+                                G.AssignVar = Line.substr(
+                                    StartV == MString::npos ? 0 : StartV + 1,
+                                    EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1);
+                            }
+                        }
+                        if (!G.AssignVar.empty())
+                        {
+                            G.F = BF; G.Args = BArgs; G.bAwait = true;
+                        }
+                    }
+                    break;  // 每分支 ≤1 await
+                }
+            }
+            G.RetVal = StripValueWrapper(Ret);
+            ChainGen.push_back(G);
+        }
+        // 最后 else 分支（≤1 await）
+        SBranchGen FinalGen;
+        if (!FinalElseBody.empty())
+        {
+            MString Ret;
+            const size_t RetPos = FinalElseBody.find("return");
+            if (RetPos != MString::npos)
+            {
+                const size_t Semi = FinalElseBody.find(';', RetPos);
+                if (Semi != MString::npos)
+                {
+                    Ret = TrimText(FinalElseBody.substr(RetPos + 6, Semi - RetPos - 6));
+                }
+            }
+            for (const auto& AS : Func.AwaitSites)
+            {
+                if (AS.AwaitExprText.empty()) continue;
+                if (FinalElseBody.find(AS.AwaitExprText) != MString::npos)
+                {
+                    MString BF, BR, BArgs;
+                    if (ParseTAwaitableText(AS.AwaitExprText, BF, BR, BArgs))
+                    {
+                        if (BR.empty()) BR = RFromReturnType(Func.ReturnType.CanonicalName);
+                        const size_t AwaitPos = FinalElseBody.find(AS.AwaitExprText);
+                        const size_t LineStart = FinalElseBody.rfind('\n', AwaitPos) == MString::npos
+                            ? 0 : FinalElseBody.rfind('\n', AwaitPos) + 1;
+                        const MString Line = FinalElseBody.substr(LineStart, AwaitPos - LineStart);
+                        const size_t Eq = Line.rfind('=');
+                        if (Eq != MString::npos)
+                        {
+                            const size_t EndV = Line.find_last_not_of(" \t", Eq - 1);
+                            if (EndV != MString::npos)
+                            {
+                                const size_t StartV = Line.find_last_of(" \t", EndV);
+                                FinalGen.AssignVar = Line.substr(
+                                    StartV == MString::npos ? 0 : StartV + 1,
+                                    EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1);
+                            }
+                        }
+                        if (!FinalGen.AssignVar.empty())
+                        {
+                            FinalGen.F = BF; FinalGen.Args = BArgs; FinalGen.bAwait = true;
+                        }
+                    }
+                    break;
+                }
+            }
+            FinalGen.RetVal = StripValueWrapper(Ret);
         }
 
         // if 分支内第二 await（Sites[1] 也在 if 分支体——分支内串行）
@@ -2041,9 +2142,9 @@ public:
                 }
             }
         }
-        if (bIfSecondAwait && bElseAwait)
+        if (bIfSecondAwait && !ChainGen.empty())
         {
-            return {};  // if 内 2 await + else await 组合——后续扩展
+            return {};  // if 内 2 await + else-if 链 组合——后续扩展
         }
 
         const MString FrameName = "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(NamePrefix) +
@@ -2075,17 +2176,34 @@ public:
             if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
             Out << "    " << R << " " << AssignVar << "{};\n";
         }
-        if (bElseAwait)
         {
-            bool bElseInLive = false;
-            for (const auto& L : Func.LiveAcrossAwait)
+            // 链分支 + 最后 else 的 await 结果变量槽
+            for (const auto& G : ChainGen)
             {
-                if (L.Name == ElseAssignVar) { bElseInLive = true; break; }
+                if (!G.bAwait || G.AssignVar.empty()) continue;
+                bool bInLive = false;
+                for (const auto& L : Func.LiveAcrossAwait)
+                {
+                    if (L.Name == G.AssignVar) { bInLive = true; break; }
+                }
+                if (!bInLive)
+                {
+                    if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
+                    Out << "    " << R << " " << G.AssignVar << "{};\n";
+                }
             }
-            if (!bElseInLive)
+            if (FinalGen.bAwait && !FinalGen.AssignVar.empty())
             {
-                if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
-                Out << "    " << R << " " << ElseAssignVar << "{};\n";
+                bool bInLive = false;
+                for (const auto& L : Func.LiveAcrossAwait)
+                {
+                    if (L.Name == FinalGen.AssignVar) { bInLive = true; break; }
+                }
+                if (!bInLive)
+                {
+                    if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
+                    Out << "    " << R << " " << FinalGen.AssignVar << "{};\n";
+                }
             }
         }
         if (bIfSecondAwait)
@@ -2160,20 +2278,54 @@ public:
         Out << "                Awaiter1->AwaitSuspend(this);\n";
         Out << "            }\n";
         Out << "        }\n";
+        for (size_t K = 0; K < ChainGen.size(); ++K)
+        {
+            Out << "        else if (" << ChainBranches[K].Cond << ")\n";
+            Out << "        {\n";
+            if (ChainGen[K].bAwait)
+            {
+                Out << "            Awaiter1 = " << ChainGen[K].F << "(" << ChainGen[K].Args << ").AsAwaiter();\n";
+                Out << "            if (Awaiter1->AwaitReady())\n";
+                Out << "            {\n";
+                Out << "                " << ChainGen[K].AssignVar << " = Awaiter1->AwaitResume();\n";
+                Out << "                ReturnValue = " << ChainGen[K].RetVal << ";\n";
+                Out << "                Finish();\n";
+                Out << "            }\n";
+                Out << "            else\n";
+                Out << "            {\n";
+                Out << "                State = " << (2 + K) << ";\n";
+                Out << "                SelfGuard = shared_from_this();\n";
+                Out << "                Awaiter1->AwaitSuspend(this);\n";
+                Out << "            }\n";
+            }
+            else
+            {
+                if (ChainGen[K].RetVal.empty())
+                {
+                    Out << "            ReturnValue = " << R << "{};\n";
+                }
+                else
+                {
+                    Out << "            ReturnValue = " << ChainGen[K].RetVal << ";\n";
+                }
+                Out << "            Finish();\n";
+            }
+            Out << "        }\n";
+        }
         Out << "        else\n";
         Out << "        {\n";
-        if (bElseAwait)
+        if (FinalGen.bAwait)
         {
-            Out << "            Awaiter1 = " << ElseF << "(" << ElseArgs << ").AsAwaiter();\n";
+            Out << "            Awaiter1 = " << FinalGen.F << "(" << FinalGen.Args << ").AsAwaiter();\n";
             Out << "            if (Awaiter1->AwaitReady())\n";
             Out << "            {\n";
-            Out << "                " << ElseAssignVar << " = Awaiter1->AwaitResume();\n";
-            Out << "                ReturnValue = " << ElseBranchVal << ";\n";
+            Out << "                " << FinalGen.AssignVar << " = Awaiter1->AwaitResume();\n";
+            Out << "                ReturnValue = " << FinalGen.RetVal << ";\n";
             Out << "                Finish();\n";
             Out << "            }\n";
             Out << "            else\n";
             Out << "            {\n";
-            Out << "                State = 2;\n";
+            Out << "                State = " << (2 + ChainGen.size()) << ";\n";
             Out << "                SelfGuard = shared_from_this();\n";
             Out << "                Awaiter1->AwaitSuspend(this);\n";
             Out << "            }\n";
@@ -2245,12 +2397,22 @@ public:
             Out << "            Finish();\n";
             Out << "        }\n";
         }
-        else if (bElseAwait)
+        for (size_t K = 0; K < ChainGen.size(); ++K)
         {
-            Out << "        else if (State == 2)\n";
+            if (!ChainGen[K].bAwait) continue;
+            Out << "        else if (State == " << (2 + K) << ")\n";
             Out << "        {\n";
-            Out << "            " << ElseAssignVar << " = Awaiter1->AwaitResume();\n";
-            Out << "            ReturnValue = " << ElseBranchVal << ";\n";
+            Out << "            " << ChainGen[K].AssignVar << " = Awaiter1->AwaitResume();\n";
+            Out << "            ReturnValue = " << ChainGen[K].RetVal << ";\n";
+            Out << "            Finish();\n";
+            Out << "        }\n";
+        }
+        if (FinalGen.bAwait)
+        {
+            Out << "        else if (State == " << (2 + ChainGen.size()) << ")\n";
+            Out << "        {\n";
+            Out << "            " << FinalGen.AssignVar << " = Awaiter1->AwaitResume();\n";
+            Out << "            ReturnValue = " << FinalGen.RetVal << ";\n";
             Out << "            Finish();\n";
             Out << "        }\n";
         }
@@ -2297,8 +2459,9 @@ public:
             if (!LoopFrame.empty()) return LoopFrame;
             // 解析失败则回退串行路径
         }
-        // 分支 await（if 体内单 await + early return；if/else 各一 await）→ 分支生成器
-        if (Sites.size() <= 2 && Func.AsyncBody.find("if (") != MString::npos)
+        // 分支 await（if 体内 await + early return；if/else 各一；else-if 链）→ 分支生成器。
+        // 有 if 即尝试；内部解析失败（格式不符/await 在分支外）回退串行。
+        if (Func.AsyncBody.find("if (") != MString::npos)
         {
             const MString BranchFrame = EmitAwaitBranchStateMachine(NamePrefix, HeaderPath, Func, Sites[0]);
             if (!BranchFrame.empty()) return BranchFrame;
