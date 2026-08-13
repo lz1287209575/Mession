@@ -31,6 +31,8 @@ int main()
     Test_Await_ConcurrentAsync();
     std::printf("[ Await_ClassMemberAsync ]\n");
     Test_Await_ClassMemberAsync();
+    std::printf("[ Await_FallThrough ]\n");
+    Test_Await_FallThrough();
     std::printf("[ Await_NonIntReturnType ]\n");
     Test_Await_NonIntReturnType();
     RUN_TESTS();

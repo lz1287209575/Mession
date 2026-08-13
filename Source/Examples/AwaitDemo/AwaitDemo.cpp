@@ -133,11 +133,18 @@ int main()
     const MString S1 = StringAsync(7).GetResult().GetValue();
     std::printf("StringAsync(7):  %s（MString 返回类型）\n", S1.c_str());
 
+    // fall-through：if 内 await 后继续外层（N=5 → if Total=6 → +1=7；N=-3 → 0+1=1）
+    const int FT1 = FallThroughAsync(5).GetResult().GetValue();
+    const int FT2 = FallThroughAsync(-3).GetResult().GetValue();
+    std::printf("FallThroughAsync(5):  %d（if 内 await 后继续外层）\n", FT1);
+    std::printf("FallThroughAsync(-3): %d（if 跳过）\n", FT2);
+
     return (R == 31 && C == 44 && L == 4 && M == 11 && B1 == 12 && B2 == 0
         && E1 == 6 && E2 == 7 && M1 == 14 && M2 == 0
         && CH1 == 21 && CH2 == 7 && CH3 == 0
         && N1 == 42 && N2 == 5 && N3 == 0
         && BL1 == 4 && BL2 == 0
         && D1 == 201 && D2 == 52 && D3 == 5 && D4 == 0
-        && LI == 4 && S1 == "v=7!") ? 0 : 1;
+        && LI == 4 && S1 == "v=7!"
+        && FT1 == 7 && FT2 == 1) ? 0 : 1;
 }

@@ -31,3 +31,6 @@ SFutureResult<int> DeepNestAsync(int N);
 
 MFUNCTION(Async)
 SFutureResult<int> LoopIfAsync(int N);
+
+MFUNCTION(Async)
+SFutureResult<int> FallThroughAsync(int N);

@@ -112,6 +112,13 @@ TEST_CASE(Await_ClassMemberAsync)
     EXPECT_EQ(Service.MemberAsync(5).GetResult().GetValue(), 11);  // 5*2+1
 }
 
+TEST_CASE(Await_FallThrough)
+{
+    // if 块内 await 无 return → 恢复后继续外层
+    EXPECT_EQ(FallThroughAsync(5).GetResult().GetValue(), 7);   // if 内 6 → +1
+    EXPECT_EQ(FallThroughAsync(-3).GetResult().GetValue(), 1);  // if 跳过 → 0+1
+}
+
 TEST_CASE(Await_NonIntReturnType)
 {
     // 非 int 返回类型（MString）：泛型 R 验证

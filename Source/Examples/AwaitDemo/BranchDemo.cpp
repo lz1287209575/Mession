@@ -134,6 +134,20 @@ SFutureResult<int> LoopIfAsync(int N)
 
 #ifdef MESSION_AWAIT_CODEGEN_SOURCE
 MFUNCTION(Async)
+SFutureResult<int> FallThroughAsync(int N)
+{
+    int Total = 0;
+    if (N > 0)
+    {
+        Total = TAwaitable<AsyncAdd2>(N, 1);   // if 块内 await——无 return
+    }
+    Total = Total + 1;                         // if 后继续（fall-through）
+    return SFutureResult<int>(TResult<int, FAppError>::Ok(Total));
+}
+#endif
+
+#ifdef MESSION_AWAIT_CODEGEN_SOURCE
+MFUNCTION(Async)
 SFutureResult<int> BranchAsync(int N)
 {
     if (N > 0)

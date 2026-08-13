@@ -1836,6 +1836,19 @@ public:
         size_t i = 0;
         while (i < Out.size())
         {
+            // 字符串/字符字面量：跳过（避免剥掉 "http://..." 等文本里的注释标记）
+            if (Out[i] == '"' || Out[i] == '\'')
+            {
+                const char Quote = Out[i];
+                ++i;
+                while (i < Out.size())
+                {
+                    if (Out[i] == '\\' && i + 1 < Out.size()) i += 2;
+                    else if (Out[i] == Quote) { ++i; break; }
+                    else ++i;
+                }
+                continue;
+            }
             if (Out[i] == '/' && i + 1 < Out.size() && Out[i + 1] == '/')
             {
                 Out[i] = ' '; Out[i + 1] = ' ';
@@ -2632,8 +2645,12 @@ public:
         TVector<CFlowNode> CollectDummy;
         CollectResumes(Top, CollectDummy);
         // 生成 case：遍历树，对每个 Await 生成恢复块（GenCFExec 该 await 后同列表剩余）
-        std::function<void(const TVector<CFlowNode>&, size_t, bool)> GenCases =
-            [&](const TVector<CFlowNode>& Ns, size_t ParentLoop, bool bInLoop)
+        // GenCases：为每个 await 生成 Resume case。Tail = 当前块执行完后的
+        // 继续（fall-through：if 块无 return → 外层；或循环收尾 LoopAdvance）。
+        std::function<void(const TVector<CFlowNode>&, size_t, bool,
+            const TVector<CFlowNode>&, size_t)> GenCases =
+            [&](const TVector<CFlowNode>& Ns, size_t ParentLoop, bool bInLoop,
+                const TVector<CFlowNode>& TailNs, size_t TailStart)
         {
             for (size_t i = 0; i < Ns.size(); ++i)
             {
@@ -2645,8 +2662,13 @@ public:
                     Out << "        {\n";
                     MString Rest;
                     GenCFExec(Ns, i + 1, Rest, "            ", Func);
+                    // fall-through：await 后同列表无剩余 → 继续尾随（外层/循环收尾）
+                    if (i + 1 >= Ns.size())
+                    {
+                        GenCFExec(TailNs, TailStart, Rest, "            ", Func);
+                    }
                     Out << Rest;
-                    // 循环体 await 恢复 → 循环收尾（LoopAdvance）
+                    // 循环体 await 恢复 → 循环收尾（LoopAdvance）——return 已返回则不追加
                     if (bInLoop && Rest.find("return;") == MString::npos
                         && Rest.find("Finish();") == MString::npos)
                     {
@@ -2662,18 +2684,26 @@ public:
                 }
                 if (N.Kind == CFlowNode::EKind::If)
                 {
+                    // 分支块的尾随 = if 后的同列表剩余 + 外层尾随（fall-through）
+                    TVector<CFlowNode> MergedTail;
+                    for (size_t j = i + 1; j < Ns.size(); ++j) MergedTail.push_back(Ns[j]);
+                    for (size_t j = TailStart; j < TailNs.size(); ++j) MergedTail.push_back(TailNs[j]);
                     for (size_t ci = 0; ci < N.Children.size(); ++ci)
                     {
-                        GenCases(N.Children[ci].Children, ParentLoop, bInLoop);
+                        GenCases(N.Children[ci].Children, ParentLoop, bInLoop,
+                            MergedTail, 0);
                     }
                 }
                 else if (N.Kind == CFlowNode::EKind::For && !N.Children.empty())
                 {
-                    GenCases(N.Children[0].Children, N.LoopIndex, true);
+                    // 循环体尾随 = LoopAdvance（循环收尾，不 fall-through 外层）
+                    GenCases(N.Children[0].Children, N.LoopIndex, true,
+                        TVector<CFlowNode>(), 0);
                 }
             }
         };
-        GenCases(Top, 0, false);
+        TVector<CFlowNode> EmptyTail;
+        GenCases(Top, 0, false, EmptyTail, 0);
         Out << "        default: break;\n";
         Out << "        }\n";
         Out << "    }\n";
