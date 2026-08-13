@@ -13,3 +13,6 @@ SFutureResult<int> BranchAsync(int N);
 
 MFUNCTION(Async)
 SFutureResult<int> BranchElseAsync(int N);
+
+MFUNCTION(Async)
+SFutureResult<int> BranchMultiAwait(int N);

@@ -86,6 +86,12 @@ int main()
     std::printf("BranchElseAsync(5):  %d（if 分支 await）\n", E1);
     std::printf("BranchElseAsync(-3): %d（else 分支 await）\n", E2);
 
+    // if 分支内 2 await 串行：A=N+1 → B=A+2 → A+B；N<=0 → 0
+    const int M1 = BranchMultiAwait(5).GetResult().GetValue();
+    const int M2 = BranchMultiAwait(-3).GetResult().GetValue();
+    std::printf("BranchMultiAwait(5):  %d（if 内 2 await 串行）\n", M1);
+    std::printf("BranchMultiAwait(-3): %d（early return）\n", M2);
+
     return (R == 31 && C == 44 && L == 4 && M == 11 && B1 == 12 && B2 == 0
-        && E1 == 6 && E2 == 7) ? 0 : 1;
+        && E1 == 6 && E2 == 7 && M1 == 14 && M2 == 0) ? 0 : 1;
 }

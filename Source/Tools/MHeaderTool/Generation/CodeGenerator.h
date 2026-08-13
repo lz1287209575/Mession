@@ -1821,10 +1821,11 @@ public:
         const MString& Body, const MString& AwaitText,
         MString& OutCond, MString& OutPreCode, MString& OutPostCode,
         MString& OutBranchReturn, MString& OutEarlyReturn,
-        MString& OutElseBody)
+        MString& OutElseBody, MString& OutBranchBody)
     {
         OutCond = OutPreCode = OutPostCode = OutBranchReturn = OutEarlyReturn = MString();
         OutElseBody = MString();
+        OutBranchBody = MString();
         const size_t IfPos = Body.find("if (");
         if (IfPos == MString::npos) return false;
         const size_t CondOpen = IfPos + 3;
@@ -1850,6 +1851,7 @@ public:
         }
         if (BDepth != 0) return false;
         const MString BranchBody = Body.substr(BraceOpen + 1, BraceEnd - BraceOpen - 2);
+        OutBranchBody = BranchBody;
         if (BranchBody.find(AwaitText) == MString::npos) return false;  // 分支体内必须有 await
 
         const size_t RetPos = BranchBody.find("return");
@@ -1913,9 +1915,9 @@ public:
         const mession::headercodegen::SAwaitSite* Site) const
     {
         (void)HeaderPath;
-        MString F, R, Args, Cond, PreCode, PostCode, BranchReturn, EarlyReturn, ElseBody;
+        MString F, R, Args, Cond, PreCode, PostCode, BranchReturn, EarlyReturn, ElseBody, BranchBody;
         if (!ParseBranchAsyncBody(Func.AsyncBody, Site->AwaitExprText,
-                Cond, PreCode, PostCode, BranchReturn, EarlyReturn, ElseBody)) return {};
+                Cond, PreCode, PostCode, BranchReturn, EarlyReturn, ElseBody, BranchBody)) return {};
         if (Cond.empty() || BranchReturn.empty()) return {};
         if (!ParseTAwaitableText(Site->AwaitExprText, F, R, Args)) return {};
         if (R.empty()) R = RFromReturnType(Func.ReturnType.CanonicalName);
@@ -1985,9 +1987,63 @@ public:
             }
         }
 
-        if (Func.AwaitSites.size() >= 2 && !bElseAwait)
+        // if 分支内第二 await（Sites[1] 也在 if 分支体——分支内串行）
+        MString F2, R2, Args2, AssignVar2, Seg1, Seg2;
+        bool bIfSecondAwait = false;
+        if (Func.AwaitSites.size() >= 2)
         {
-            return {};  // 2 个 await 都在 if 分支（if 内多 await）——后续扩展，回退串行
+            const mession::headercodegen::SAwaitSite* Site2 = &Func.AwaitSites[1];
+            if (BranchBody.find(Site2->AwaitExprText) != MString::npos)
+            {
+                if (ParseTAwaitableText(Site2->AwaitExprText, F2, R2, Args2))
+                {
+                    if (R2.empty()) R2 = RFromReturnType(Func.ReturnType.CanonicalName);
+                    const size_t A2Pos = BranchBody.find(Site2->AwaitExprText);
+                    const size_t A2LineStart = BranchBody.rfind('\n', A2Pos) == MString::npos
+                        ? 0 : BranchBody.rfind('\n', A2Pos) + 1;
+                    const MString A2Line = BranchBody.substr(A2LineStart, A2Pos - A2LineStart);
+                    const size_t A2Eq = A2Line.rfind('=');
+                    if (A2Eq != MString::npos)
+                    {
+                        const size_t A2EndV = A2Line.find_last_not_of(" \t", A2Eq - 1);
+                        if (A2EndV != MString::npos)
+                        {
+                            const size_t A2StartV = A2Line.find_last_of(" \t", A2EndV);
+                            AssignVar2 = A2Line.substr(
+                                A2StartV == MString::npos ? 0 : A2StartV + 1,
+                                A2EndV - (A2StartV == MString::npos ? 0 : A2StartV + 1) + 1);
+                        }
+                    }
+                    if (!AssignVar2.empty())
+                    {
+                        // Seg1：await1 行尾 到 await2 行首（不含 await2 行的赋值前缀）
+                        const size_t A1Pos = BranchBody.find(Site->AwaitExprText);
+                        const size_t A1LineEnd = BranchBody.find('\n', A1Pos);
+                        const size_t S1Start = (A1LineEnd == MString::npos)
+                            ? A1Pos + Site->AwaitExprText.size() : A1LineEnd + 1;
+                        const size_t A2LineStart = BranchBody.rfind('\n', A2Pos) == MString::npos
+                            ? 0 : BranchBody.rfind('\n', A2Pos) + 1;
+                        if (A2LineStart > S1Start)
+                        {
+                            Seg1 = TrimText(BranchBody.substr(S1Start, A2LineStart - S1Start));
+                        }
+                        // Seg2：await2 行尾 到 return 前
+                        const size_t RetPos2 = BranchBody.find("return", A2Pos);
+                        if (RetPos2 != MString::npos)
+                        {
+                            const size_t A2LineEnd = BranchBody.find('\n', A2Pos);
+                            const size_t S2Start = (A2LineEnd == MString::npos)
+                                ? A2Pos + Site2->AwaitExprText.size() : A2LineEnd + 1;
+                            Seg2 = TrimText(BranchBody.substr(S2Start, RetPos2 - S2Start));
+                        }
+                        bIfSecondAwait = true;
+                    }
+                }
+            }
+        }
+        if (bIfSecondAwait && bElseAwait)
+        {
+            return {};  // if 内 2 await + else await 组合——后续扩展
         }
 
         const MString FrameName = "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(NamePrefix) +
@@ -2032,6 +2088,19 @@ public:
                 Out << "    " << R << " " << ElseAssignVar << "{};\n";
             }
         }
+        if (bIfSecondAwait)
+        {
+            bool bA2InLive = false;
+            for (const auto& L : Func.LiveAcrossAwait)
+            {
+                if (L.Name == AssignVar2) { bA2InLive = true; break; }
+            }
+            if (!bA2InLive)
+            {
+                if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
+                Out << "    " << R << " " << AssignVar2 << "{};\n";
+            }
+        }
         Out << "    " << R << " ReturnValue{};  // 分支结果（early 或 await 后）\n";
         Out << "    TOptional<SFutureResult<" << R << ">::SAwaiter> Awaiter1;\n";
         Out << "    TSharedPtr<" << FrameName << "> SelfGuard;  // 挂起期间持有自己（完成时释放）\n";
@@ -2050,12 +2119,39 @@ public:
         Out << "            if (Awaiter1->AwaitReady())\n";
         Out << "            {\n";
         Out << "                " << AssignVar << " = Awaiter1->AwaitResume();\n";
-        if (!PostCode.empty())
+        if (bIfSecondAwait)
         {
-            Out << "                " << StripLiveDeclTypes(PostCode, Func.LiveAcrossAwait) << "\n";
+            if (!Seg1.empty())
+            {
+                Out << "                " << StripLiveDeclTypes(Seg1, Func.LiveAcrossAwait) << "\n";
+            }
+            Out << "                Awaiter1 = " << F2 << "(" << Args2 << ").AsAwaiter();\n";
+            Out << "                if (Awaiter1->AwaitReady())\n";
+            Out << "                {\n";
+            Out << "                    " << AssignVar2 << " = Awaiter1->AwaitResume();\n";
+            if (!Seg2.empty())
+            {
+                Out << "                    " << StripLiveDeclTypes(Seg2, Func.LiveAcrossAwait) << "\n";
+            }
+            Out << "                    ReturnValue = " << BranchVal << ";\n";
+            Out << "                    Finish();\n";
+            Out << "                }\n";
+            Out << "                else\n";
+            Out << "                {\n";
+            Out << "                    State = 2;\n";
+            Out << "                    SelfGuard = shared_from_this();\n";
+            Out << "                    Awaiter1->AwaitSuspend(this);\n";
+            Out << "                }\n";
         }
-        Out << "                ReturnValue = " << BranchVal << ";\n";
-        Out << "                Finish();\n";
+        else
+        {
+            if (!PostCode.empty())
+            {
+                Out << "                " << StripLiveDeclTypes(PostCode, Func.LiveAcrossAwait) << "\n";
+            }
+            Out << "                ReturnValue = " << BranchVal << ";\n";
+            Out << "                Finish();\n";
+        }
         Out << "            }\n";
         Out << "            else\n";
         Out << "            {\n";
@@ -2102,14 +2198,54 @@ public:
         Out << "        if (State == 1)\n";
         Out << "        {\n";
         Out << "            " << AssignVar << " = Awaiter1->AwaitResume();\n";
-        if (!PostCode.empty())
+        if (bIfSecondAwait)
         {
-            Out << "            " << StripLiveDeclTypes(PostCode, Func.LiveAcrossAwait) << "\n";
+            if (!Seg1.empty())
+            {
+                Out << "            " << StripLiveDeclTypes(Seg1, Func.LiveAcrossAwait) << "\n";
+            }
+            Out << "            Awaiter1 = " << F2 << "(" << Args2 << ").AsAwaiter();\n";
+            Out << "            if (Awaiter1->AwaitReady())\n";
+            Out << "            {\n";
+            Out << "                " << AssignVar2 << " = Awaiter1->AwaitResume();\n";
+            if (!Seg2.empty())
+            {
+                Out << "                " << StripLiveDeclTypes(Seg2, Func.LiveAcrossAwait) << "\n";
+            }
+            Out << "                ReturnValue = " << BranchVal << ";\n";
+            Out << "                Finish();\n";
+            Out << "            }\n";
+            Out << "            else\n";
+            Out << "            {\n";
+            Out << "                State = 2;\n";
+            Out << "                SelfGuard = shared_from_this();\n";
+            Out << "                Awaiter1->AwaitSuspend(this);\n";
+            Out << "            }\n";
         }
-        Out << "            ReturnValue = " << BranchVal << ";\n";
-        Out << "            Finish();\n";
+        else
+        {
+            if (!PostCode.empty())
+            {
+                Out << "            " << StripLiveDeclTypes(PostCode, Func.LiveAcrossAwait) << "\n";
+            }
+            Out << "            ReturnValue = " << BranchVal << ";\n";
+            Out << "            Finish();\n";
+        }
         Out << "        }\n";
-        if (bElseAwait)
+        if (bIfSecondAwait)
+        {
+            Out << "        else if (State == 2)\n";
+            Out << "        {\n";
+            Out << "            " << AssignVar2 << " = Awaiter1->AwaitResume();\n";
+            if (!Seg2.empty())
+            {
+                Out << "            " << StripLiveDeclTypes(Seg2, Func.LiveAcrossAwait) << "\n";
+            }
+            Out << "            ReturnValue = " << BranchVal << ";\n";
+            Out << "            Finish();\n";
+            Out << "        }\n";
+        }
+        else if (bElseAwait)
         {
             Out << "        else if (State == 2)\n";
             Out << "        {\n";

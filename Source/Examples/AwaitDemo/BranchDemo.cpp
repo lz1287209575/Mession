@@ -26,6 +26,20 @@ SFutureResult<int> BranchElseAsync(int N)
 
 #ifdef MESSION_AWAIT_CODEGEN_SOURCE
 MFUNCTION(Async)
+SFutureResult<int> BranchMultiAwait(int N)
+{
+    if (N > 0)
+    {
+        int A = TAwaitable<AsyncAdd2>(N, 1);                 // if 分支内 await 1
+        int B = TAwaitable<AsyncAdd2>(A, 2);                 // if 分支内 await 2（串行）
+        return SFutureResult<int>(TResult<int, FAppError>::Ok(A + B));
+    }
+    return SFutureResult<int>(TResult<int, FAppError>::Ok(0));
+}
+#endif
+
+#ifdef MESSION_AWAIT_CODEGEN_SOURCE
+MFUNCTION(Async)
 SFutureResult<int> BranchAsync(int N)
 {
     if (N > 0)
