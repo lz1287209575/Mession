@@ -8,6 +8,7 @@
 #include "Examples/AwaitDemo/BranchDemo.h"
 #include "Examples/AwaitDemo/ComplexDemo.h"
 #include "Examples/AwaitDemo/MemberDemo.h"
+#include "Examples/AwaitDemo/StringDemo.h"
 
 #include <chrono>
 
@@ -109,4 +110,10 @@ TEST_CASE(Await_ClassMemberAsync)
 {
     MemberService Service;
     EXPECT_EQ(Service.MemberAsync(5).GetResult().GetValue(), 11);  // 5*2+1
+}
+
+TEST_CASE(Await_NonIntReturnType)
+{
+    // 非 int 返回类型（MString）：泛型 R 验证
+    EXPECT_TRUE(StringAsync(7).GetResult().GetValue() == "v=7!");
 }
