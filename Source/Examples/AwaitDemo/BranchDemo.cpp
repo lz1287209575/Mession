@@ -79,6 +79,23 @@ SFutureResult<int> NestedIfAsync(int N)
 
 #ifdef MESSION_AWAIT_CODEGEN_SOURCE
 MFUNCTION(Async)
+SFutureResult<int> BranchLoopAsync(int N)
+{
+    if (N > 0)                       // 外层 if
+    {
+        int Sum = 0;
+        for (int i = 0; i < N; ++i)  // 分支内循环
+        {
+            Sum += TAwaitable<AsyncAdd2>(i, Sum);   // 循环内 await（累加）
+        }
+        return SFutureResult<int>(TResult<int, FAppError>::Ok(Sum));
+    }
+    return SFutureResult<int>(TResult<int, FAppError>::Ok(0));   // early
+}
+#endif
+
+#ifdef MESSION_AWAIT_CODEGEN_SOURCE
+MFUNCTION(Async)
 SFutureResult<int> BranchAsync(int N)
 {
     if (N > 0)

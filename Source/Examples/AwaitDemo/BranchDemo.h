@@ -22,3 +22,6 @@ SFutureResult<int> BranchChainAsync(int N);
 
 MFUNCTION(Async)
 SFutureResult<int> NestedIfAsync(int N);
+
+MFUNCTION(Async)
+SFutureResult<int> BranchLoopAsync(int N);

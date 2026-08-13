@@ -1888,7 +1888,6 @@ public:
                 return false;  // 嵌套内层再带 else-if 链——后续扩展
             }
             OutNested = true;
-            fprintf(stderr, "[nested-dbg] parsed nested: ncond='%s'\\n", OutNestedCond.c_str());
             // 外层 early（BranchBody 之后的尾 return）
             const MString AfterIf2 = Body.substr(BraceEnd);
             const size_t TRet = AfterIf2.find("return");
@@ -2009,6 +2008,18 @@ public:
                 NestedBranchReturn, NestedEarlyReturn)) return {};
         if (Cond.empty()) return {};
         if (!bNested && BranchReturn.empty()) return {};  // 嵌套时外层无 return（用内层）
+
+        // 分支内循环：if (cond) { <for 循环 await> } —— 复用循环解析（提前检测，
+        // 供 AssignVar 复合赋值/空检查放行）
+        MString LInit, LCond, LIncr, LLoopVar, LAccumPrefix, LPreCode, LPostReturnExpr, LInitValue;
+        bool bBranchLoop = false;
+        if (BranchBody.find("for (") != MString::npos
+            && ParseLoopAsyncBody(BranchBody, Site->AwaitExprText,
+                LInit, LCond, LIncr, LLoopVar, LAccumPrefix, LPreCode,
+                LPostReturnExpr, LInitValue))
+        {
+            bBranchLoop = true;
+        }
         if (!ParseTAwaitableText(Site->AwaitExprText, F, R, Args)) return {};
         if (R.empty()) R = RFromReturnType(Func.ReturnType.CanonicalName);
 
@@ -2021,13 +2032,23 @@ public:
             const MString Line = Func.AsyncBody.substr(LineStart, AwaitPos - LineStart);
             const size_t Eq = Line.rfind('=');
             if (Eq == MString::npos) return {};
-            const size_t EndV = Line.find_last_not_of(" \t", Eq - 1);
-            if (EndV == MString::npos) return {};
-            const size_t StartV = Line.find_last_of(" \t", EndV);
-            AssignVar = Line.substr(StartV == MString::npos ? 0 : StartV + 1,
-                EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1);
+            // 复合赋值（`Sum += ` 等）：await 结果累加——无独立变量（循环/分支循环处理，
+            // 用 AccumPrefix 槽——AssignVar 保持空，由 bBranchLoop 路径接管）
+            if (Eq > 0 && (Line[Eq - 1] == '+' || Line[Eq - 1] == '-'
+                || Line[Eq - 1] == '*' || Line[Eq - 1] == '/'))
+            {
+                AssignVar = MString();
+            }
+            else
+            {
+                const size_t EndV = Line.find_last_not_of(" \t", Eq - 1);
+                if (EndV == MString::npos) return {};
+                const size_t StartV = Line.find_last_of(" \t", EndV);
+                AssignVar = Line.substr(StartV == MString::npos ? 0 : StartV + 1,
+                    EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1);
+            }
         }
-        if (AssignVar.empty()) return {};
+        if (!bBranchLoop && AssignVar.empty()) return {};
 
         // else-if 链 + 最后 else：每分支解析 await（≤1 个——Site 按文本归属）。
         struct SBranchGen
@@ -2194,6 +2215,8 @@ public:
             return {};  // if 内 2 await + else-if 链 组合——后续扩展
         }
 
+
+
         const MString FrameName = "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(NamePrefix) +
             "_" + SanitizeIdentifier(Func.Name);
         const MString BranchVal = StripValueWrapper(BranchReturn);
@@ -2218,7 +2241,7 @@ public:
         {
             if (L.Name == AssignVar) { bAssignInLive = true; break; }
         }
-        if (!bAssignInLive)
+        if (!AssignVar.empty() && !bAssignInLive)
         {
             if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
             Out << "    " << R << " " << AssignVar << "{};\n";
@@ -2253,6 +2276,19 @@ public:
                 }
             }
         }
+        if (bBranchLoop && !LLoopVar.empty())
+        {
+            bool bLInLive = false;
+            for (const auto& L : Func.LiveAcrossAwait)
+            {
+                if (L.Name == LLoopVar) { bLInLive = true; break; }
+            }
+            if (!bLInLive)
+            {
+                if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
+                Out << "    " << R << " " << LLoopVar << "{};\n";
+            }
+        }
         if (bIfSecondAwait)
         {
             bool bA2InLive = false;
@@ -2276,8 +2312,6 @@ public:
         Out << "    {\n";
         Out << "        if (" << Cond << ")\n";
         Out << "        {\n";
-        fprintf(stderr, "[nested-dbg] %s bNested=%d cond='%s' ncond='%s'\\n",
-            Func.Name.c_str(), (int)bNested, Cond.c_str(), NestedCond.c_str());
         if (bNested)
         {
             const MString NestedBranchVal = StripValueWrapper(NestedBranchReturn);
@@ -2312,11 +2346,24 @@ public:
             Out << "                Finish();\n";
             Out << "            }\n";
         }
+        else if (bBranchLoop)
+        {
+            // 循环前代码（去类型——写槽）
+            if (!LPreCode.empty())
+            {
+                Out << "            " << StripLiveDeclTypes(LPreCode, Func.LiveAcrossAwait) << "\n";
+            }
+            if (!LLoopVar.empty())
+            {
+                Out << "            " << LLoopVar << " = " << LInitValue << ";\n";
+            }
+            Out << "            LoopEntry();\n";
+        }
         else if (!PreCode.empty())
         {
             Out << "            " << StripLiveDeclTypes(PreCode, Func.LiveAcrossAwait) << "\n";
         }
-        if (!bNested)
+        if (!bNested && !bBranchLoop)
         {
         Out << "            Awaiter1 = " << F << "(" << Args << ").AsAwaiter();\n";
         Out << "            if (Awaiter1->AwaitReady())\n";
@@ -2430,10 +2477,56 @@ public:
         }
         Out << "        }\n";
         Out << "    }\n";
+        if (bBranchLoop)
+        {
+            Out << "\n";
+            Out << "    void LoopEntry()\n";
+            Out << "    {\n";
+            Out << "        if (" << LCond << ")\n";
+            Out << "        {\n";
+            Out << "            Awaiter1 = " << F << "(" << Args << ").AsAwaiter();\n";
+            Out << "            if (Awaiter1->AwaitReady())\n";
+            Out << "            {\n";
+            if (!LAccumPrefix.empty())
+            {
+                Out << "                " << LAccumPrefix << "Awaiter1->AwaitResume();\n";
+            }
+            Out << "                LoopAdvance();\n";
+            Out << "            }\n";
+            Out << "            else\n";
+            Out << "            {\n";
+            Out << "                SelfGuard = shared_from_this();\n";
+            Out << "                State = 1; Awaiter1->AwaitSuspend(this);\n";
+            Out << "            }\n";
+            Out << "        }\n";
+            Out << "        else\n";
+            Out << "        {\n";
+            Out << "            ReturnValue = " << StripValueWrapper(LPostReturnExpr) << ";\n";
+            Out << "            Finish();\n";
+            Out << "        }\n";
+            Out << "    }\n";
+            Out << "\n";
+            Out << "    void LoopAdvance()\n";
+            Out << "    {\n";
+            Out << "        " << LIncr << ";\n";
+            Out << "        LoopEntry();\n";
+            Out << "    }\n";
+        }
         Out << "\n";
         Out << "    void Resume()\n";
         Out << "    {\n";
-        if (bNested)
+        if (bBranchLoop)
+        {
+            Out << "        if (State == 1)\n";
+            Out << "        {\n";
+            if (!LAccumPrefix.empty())
+            {
+                Out << "            " << LAccumPrefix << "Awaiter1->AwaitResume();\n";
+            }
+            Out << "            LoopAdvance();\n";
+            Out << "        }\n";
+        }
+        else if (bNested)
         {
             const MString NestedBranchVal2 = StripValueWrapper(NestedBranchReturn);
             Out << "        if (State == 1)\n";
@@ -2555,20 +2648,20 @@ public:
             }
         }
         if (Sites.empty()) return {};
+        // 分支 await（if 体内 await + early return；if/else 各一；else-if 链；嵌套；
+        // 分支内循环）→ 分支生成器。有 if 即先尝试（含"分支内循环"）；解析失败回退。
+        if (Func.AsyncBody.find("if (") != MString::npos)
+        {
+            const MString BranchFrame = EmitAwaitBranchStateMachine(NamePrefix, HeaderPath, Func, Sites[0]);
+            if (!BranchFrame.empty()) return BranchFrame;
+            // 解析失败（格式不符/await 在分支外/for 后 if）则回退串行或循环
+        }
         // 循环 await（KD-13）：AsyncBody 含 for 且首个 await 在循环体内 → 循环生成器
         if (Func.AsyncBody.find("for (") != MString::npos)
         {
             const MString LoopFrame = EmitAwaitLoopStateMachine(NamePrefix, HeaderPath, Func, Sites[0]);
             if (!LoopFrame.empty()) return LoopFrame;
             // 解析失败则回退串行路径
-        }
-        // 分支 await（if 体内 await + early return；if/else 各一；else-if 链）→ 分支生成器。
-        // 有 if 即尝试；内部解析失败（格式不符/await 在分支外）回退串行。
-        if (Func.AsyncBody.find("if (") != MString::npos)
-        {
-            const MString BranchFrame = EmitAwaitBranchStateMachine(NamePrefix, HeaderPath, Func, Sites[0]);
-            if (!BranchFrame.empty()) return BranchFrame;
-            // 解析失败（如多分支/嵌套）则回退串行路径
         }
         std::sort(Sites.begin(), Sites.end(),
             [](const mession::headercodegen::SAwaitSite* A,
