@@ -155,7 +155,7 @@ void MConsoleSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<char> 
         char Timestamp[32];
         FormatIsoTimestamp(R.TimestampNs, Timestamp, sizeof(Timestamp));
 
-        char Message[64];
+        char Message[128];
         CopyMessage(R, Message, sizeof(Message));
 
         const char* CatName = ResolveCategoryName(R.CategoryId);

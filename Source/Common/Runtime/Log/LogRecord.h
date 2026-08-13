@@ -13,7 +13,7 @@
 //   Header         — 32B  (TimestampNs, ThreadId, CategoryId, Level, Flags, Reserved)
 //   Source location— 8B   (FileStringId, Line, FuncStringId)
 //   Routing+Context— 8B   (SinkMask, ContextSnapshotId)
-//   Payload        — 16B  (union of Inline[16] / Overflow{Offset,Length,Capacity,Reserved})
+//   Payload        — 128B (union of Inline[128] / Overflow{Offset,Length,Capacity,Reserved})
 struct SLogRecord
 {
     // Header — 32B (timestamps, thread, category, level, flags, 16B reserved for future use)
@@ -33,11 +33,11 @@ struct SLogRecord
     uint32    SinkMask;
     uint32    ContextSnapshotId;
 
-    // Payload — 16B
+    // Payload — 128B
     union
     {
-        struct { char Data[16]; } Inline;
+        struct { char Data[128]; } Inline;
         struct { uint32 Offset; uint32 Length; uint32 Capacity; uint32 Reserved; } Overflow;
     } Payload;
 };
-static_assert(sizeof(SLogRecord) == 64, "SLogRecord must be exactly 64 bytes");
+static_assert(sizeof(SLogRecord) == 176, "SLogRecord must be exactly 176 bytes");

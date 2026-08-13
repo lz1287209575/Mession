@@ -227,7 +227,7 @@ void MRollingFileSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<ch
         // Message: pull the inline bytes (the Overflow path is for the
         // dispatcher's caller; the test path is always Inline because
         // SLogRecord::Flags bit0 is cleared on small payloads).
-        char Message[64];
+        char Message[128];
         size_t MsgLen = 0;
         const size_t MaxInline = sizeof(R.Payload.Inline.Data);
         while (MsgLen < MaxInline && R.Payload.Inline.Data[MsgLen] != '\0')

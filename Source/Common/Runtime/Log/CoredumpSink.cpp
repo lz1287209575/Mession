@@ -121,7 +121,7 @@ namespace
 
     MString RenderRecord(const SLogRecord& R)
     {
-        char Message[64];
+        char Message[128];
         CopyMessage(R, Message, sizeof(Message));
         const ELogLevel Lvl = static_cast<ELogLevel>(R.Level);
         const char* CatName = ResolveCategoryName(R.CategoryId);

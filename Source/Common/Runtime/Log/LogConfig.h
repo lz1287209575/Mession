@@ -23,7 +23,7 @@ struct SLogInitParams
     // File roll path; if empty no file sink is configured.
     MString   FilePath;           // e.g. "Logs/echo.jsonl"
     // Ring buffer capacity (in records). Default 1M = 64MB at 64B/record.
-    size_t    RingCapacity       = 1u << 20;
+    size_t    RingCapacity       = 1u << 16;
 };
 
 struct SLogCategoryConfig
