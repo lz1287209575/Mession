@@ -141,13 +141,9 @@ def pack_string(value: str) -> bytes:
 
 
 def build_client_call_packet(function_id: int, call_id: int, payload: bytes) -> bytes:
-    # step-1 暂态:仍按 [MT:1][FunctionId:2][CallId:8][Size:4][Payload] 编码,
-    # 等 step-2 Gateway 切到 ParseClientEnvelopePacket 后改成
-    #   struct.pack("<HQ", request_id, function_id) + struct.pack("<I", len(payload)) + payload
-    body = struct.pack("<BHQ", MT_FUNCTION_CALL, function_id, call_id)
-    body += struct.pack("<I", len(payload))
-    body += payload
-    return struct.pack("<I", len(body)) + body
+    # step-2 新格式（Gateway ParseClientEnvelopePacket）:
+    #   [RequestId:8][FunctionId:2][PayloadSize:4][Payload]（无 MessageType 字节）
+    return build_client_envelope_packet(function_id, call_id, payload)
 
 
 # step-1 引入:新 envelope builder / parser。先在 validate.py 这边准备好,
@@ -205,19 +201,17 @@ def recv_one_packet(sock: socket.socket, timeout: float) -> Optional[bytes]:
 
 
 def parse_client_response(payload: bytes) -> Optional[dict]:
-    # Server response via PushClientDownlink uses BuildClientFunctionPacket:
-    #   [MT_FunctionCall:1][FunctionId:2][PayloadSize:4][Payload]
-    # where Payload is the FSampleEchoResponse or FAppError struct.
-    if len(payload) < 1 + 2 + 4:
+    # step-2 新格式（Gateway BuildClientEnvelopePacket）:
+    #   [RequestId:8][FunctionId:2][PayloadSize:4][Payload]
+    if len(payload) < 8 + 2 + 4:
         return None
-    msg_type = payload[0]
-    function_id, payload_size = struct.unpack_from("<HI", payload, 1)
-    header_size = 1 + 2 + 4
+    request_id, function_id, payload_size = struct.unpack_from("<QHI", payload, 0)
+    header_size = 8 + 2 + 4
     if len(payload) < header_size + payload_size:
         return None
     response_body = payload[header_size:header_size + payload_size]
     return {
-        "msg_type": msg_type,
+        "request_id": request_id,
         "function_id": function_id,
         "payload": response_body,
     }
@@ -271,7 +265,9 @@ def parse_fapp_error(payload: bytes) -> Optional[dict]:
 
 
 def make_echo_request(target_actor_id: int, message: str) -> bytes:
-    return struct.pack("<Q", target_actor_id) + pack_string(message)
+    # 反射字段注册顺序（FSampleEchoMessages.h）：Message 先、TargetActorId 后——
+    # MReflectArchive 按注册顺序读写，payload 必须同序。
+    return pack_string(message) + struct.pack("<Q", target_actor_id)
 
 
 # ActorId 编码：[ServiceId: high 32][InstId: low 32]；与 ServiceId.h::MServiceId::Make 一致。
@@ -299,9 +295,6 @@ def call_echo(sock: socket.socket, function_id: int, call_id: int, payload: byte
             continue
         if not body:
             continue
-        msg_type = body[0]
-        if msg_type != MT_FUNCTION_CALL:
-            continue
         response = parse_client_response(body)
         if response is None:
             continue
@@ -309,6 +302,10 @@ def call_echo(sock: socket.socket, function_id: int, call_id: int, payload: byte
         # Match only on FunctionId; the downlink frames any echo response.
         if response["function_id"] != function_id:
             continue
+        # b_success：成功响应 = payload 能解出 FSampleEchoResponse；
+        # FAppError 错误响应解不出（parse_fapp_error 对 FSampleEchoResponse 会
+        # 贪心误判——首 4 字节 Message size 会被当成 FAppError code_len）。
+        response["b_success"] = parse_echo_response(response["payload"]) is not None
         return response
     raise TimeoutError(f"timeout waiting for response to function_id={function_id}")
 
@@ -457,6 +454,7 @@ def run_validation(
             ECHO_A_PORT,
             [
                 f"--listen={ECHO_A_PORT}",
+                "--server-id=2",
                 "--inst=1",
                 "--actors=1001,1002",
                 "--service=MEchoService",
@@ -469,6 +467,7 @@ def run_validation(
             ECHO_B_PORT,
             [
                 f"--listen={ECHO_B_PORT}",
+                "--server-id=3",
                 "--inst=2",
                 "--actors=2001,2002",
                 "--service=MEchoService",

@@ -66,8 +66,9 @@ public:
             // 无任何基类的 MCLASS（如独立 demo 类）：非完整反射类——不产出
             // mgenerated.cpp（RegisterAllProperties 等假设类有 MObject 反射基类，
             // ToLegacyClass 会把空 ParentClass 默认成 MObject，故用 AllParentClasses）。
-            // 类成员 async（AwaitStateMachine/Impl）不依赖完整反射，仍正常生成。
-            if (parsed.AllParentClasses.empty())
+            // 只跳过 class（无基类的演示类）；MSTRUCT（struct——配置/消息等）无基类
+            // 但必须保留反射注册（否则 FindStruct 找不到，服务启动失败）。
+            if (parsed.AllParentClasses.empty() && parsed.Kind != EParsedTypeKind::Struct)
             {
                 continue;
             }
@@ -349,9 +350,13 @@ public:
 
             for (const auto& func : parsed.Functions)
             {
+                // 客户端经 Gateway 可调用的函数：Client / ClientCall / ServerCall
+                //（ServerCall 是客户端→服务器方向——客户端发 FunctionId 经 Gateway
+                //  路由到服务端；manifest 提供 FindByFunctionId 查表）。
                 const bool bIsClient =
                     func.Transport == "Client" ||
-                    func.Transport == "ClientCall";
+                    func.Transport == "ClientCall" ||
+                    func.Transport == "ServerCall";
                 if (!bIsClient)
                 {
                     continue;

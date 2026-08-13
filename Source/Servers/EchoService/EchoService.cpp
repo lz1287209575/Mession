@@ -83,7 +83,9 @@ void MEchoService::TickBackends()
 {
     // 后端 tick：MNetServerBase::Run 主循环每帧调一次，把 MEndpointCache
     // 内部的 Registry 心跳发送 + 断线重连维护起来。
-    MEndpointCache::Get().Tick(0.0f);
+    // 注意：DeltaTime 必须传真实帧间隔（与 Gateway 一致用 0.1f）——传 0.0f
+    // 会让 HeartbeatTimer 永远不累积，心跳永不发送，Registry 超时 evict 本服务。
+    MEndpointCache::Get().Tick(0.1f);
 }
 
 uint16 MEchoService::GetListenPort() const
@@ -91,9 +93,33 @@ uint16 MEchoService::GetListenPort() const
     return Config.ListenPort;
 }
 
-void MEchoService::OnAccept(uint64 /*ConnId*/, TSharedPtr<INetConnection> /*Conn*/)
+void MEchoService::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 {
-    // PoC 阶段不接受 peer 连接（EchoService 不监听 client TCP——只有 Gateway 监听）
+    // 服务器间入站（Gateway/Echo 互连）——挂 RPC 分发：
+    // MT_FunctionCall → DispatchBackendServerCallPacketInbound（按 FunctionId 调
+    // Echo/EchoAwait，响应回调用方）；MT_FunctionResponse → HandleServerCallResponse
+    //（CallToActor 出站调用的响应回调）。
+    EventLoop.RegisterConnection(
+        ConnId,
+        Conn,
+        [this, Conn](uint64 /*Cid*/, const TByteArray& Payload)
+        {
+            if (Payload.empty())
+            {
+                return;
+            }
+            const uint8 PacketType = Payload[0];
+            TByteArray Data(Payload.begin() + 1, Payload.end());
+            if (static_cast<EServerMessageType>(PacketType) == EServerMessageType::MT_FunctionCall)
+            {
+                DispatchBackendServerCallPacketInbound(this, Conn, Data);
+            }
+            else if (static_cast<EServerMessageType>(PacketType) == EServerMessageType::MT_FunctionResponse)
+            {
+                HandleServerCallResponse(Data);
+            }
+        },
+        [](uint64 /*Cid*/) {});
 }
 
 void MEchoService::ShutdownConnections()

@@ -58,7 +58,7 @@ struct SEchoServiceConfig
     MPROPERTY()
     EServerType LocalServerType = EServerType::Unknown;
 
-    MPROPERTY()
+    MPROPERTY(Meta=(Cli="--server-id"))
     uint32 LocalServerId = 0;
 
     MPROPERTY(Meta=(Cli="--inst"))

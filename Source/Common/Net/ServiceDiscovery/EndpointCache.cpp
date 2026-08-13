@@ -3,6 +3,7 @@
 #include "Common/Net/Rpc/RpcManifest.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Net/Rpc/RpcTransport.h"
+#include "Common/Net/Routing/ActorRouter.h"
 #include "Common/Runtime/EventLoop/EventLoop.h"
 #include "Common/Runtime/Id.h"
 #include "Common/Runtime/Log/Log.h"
@@ -121,11 +122,20 @@ void MEndpointCache::RegisterLocal(const FServiceEndpoint& Self)
     }
     SendToRegistry(Packet);
     // 主动拉一遍 Registry 已知的全部业务 Service 类型——避免硬编码 {Gateway, Echo}。
-    // 拉一次后由 Registry 的 EndpointChange 推送来更新。
+    // 注意：OnRegistryConnected 在连接建立时跑（此时 PendingListTypes_ 还是空的），
+    // 首次启动的注册（RegisterLocal）在它之后——这里补发 ListEndpoints，否则会错过
+    // 先注册服务（如 Echo）的 EndpointChange 推送（Registry 只推给当时已注册的会话）。
     for (EServerType T : EnumerateBusinessServerTypes())
     {
         PendingListTypes_.insert(T);
     }
+    for (EServerType T : PendingListTypes_)
+    {
+        TByteArray ListPacket;
+        RegistryProtocol::BuildRegistryListEndpointsPacket(T, ListPacket);
+        SendToRegistry(ListPacket);
+    }
+    PendingListTypes_.clear();
 }
 
 TSharedPtr<MServerConnection> MEndpointCache::GetOrConnect(EServerType TargetServerType)
@@ -153,6 +163,9 @@ TSharedPtr<MServerConnection> MEndpointCache::GetOrConnect(EServerType TargetSer
     {
         const FServiceEndpoint& Ep = It->second[(Start + i) % It->second.size()];
         if (!Ep.bHealthy) continue;
+        // 跳过本进程自己的端点——否则 round-robin 可能选中自己造成自连循环
+        //（EchoA 转发 2001 时连回自己的 7001 → 再转发 → 连接不稳定）。
+        if (Ep.ServerId == Registry_.LocalServerId) continue;
         auto PoolIt = ConnectionPool_.find(Ep.ServerId);
         if (PoolIt != ConnectionPool_.end() && PoolIt->second && PoolIt->second->IsConnected())
         {
@@ -203,6 +216,18 @@ void MEndpointCache::OnEndpointChange(EServerType ServerType, uint64 Seq, const 
     Live.reserve(NewEndpoints.size());
     for (const FServiceEndpoint& Ep : NewEndpoints)
     {
+        // 把端点携带的 actor 注册到 MActorRouter——跨实例 actor 路由依赖它：
+        // EchoA 收到 EchoB 的 EndpointChange（ActorIds 含 2001）后，FindActor(2001)
+        // 才能命中（否则 SendToActor 表 miss → DefaultServer=Unknown → actor_route_invalid）。
+        // 只注册"未存在"的 actor：本进程已注册的本地 actor（ServerType=Unknown，
+        // IsActorLocal 判定依据）不能被端点信息覆盖成实际服务类型。
+        for (uint64 ActorId : Ep.ActorIds)
+        {
+            if (MActorRouter::Get().FindActor(ActorId).ActorId == 0)
+            {
+                MActorRouter::Get().RegisterActor(ActorId, Ep.ServerType);
+            }
+        }
         Live.push_back(Ep.ServerId);
     }
     PurgeDisappeared(Live);
@@ -231,6 +256,19 @@ void MEndpointCache::Tick(float DeltaTime)
         TByteArray Packet;
         RegistryProtocol::BuildRegistryHeartbeatPacket(Registry_.LocalServerId, NowMs(), Packet);
         SendToRegistry(Packet);
+    }
+
+    // 出站业务连接（LazyConnect 建的 MServerConnection，如 Gateway→Echo、
+    // Echo→Echo 的服务器间链路）收包驱动：它们没有 EventLoop 收包回调
+    // （只有入站走 OnAccept→RegisterConnection），MServerConnection::Tick
+    // 里的 ProcessRecv（Transport->ReceivePacket → HandlePacket → 服务器间
+    // 响应分发）没有其他调用点——这里每帧驱动，否则对端响应永远收不到。
+    for (auto& KV : ConnectionPool_)
+    {
+        if (KV.second)
+        {
+            KV.second->Tick(DeltaTime);
+        }
     }
 }
 
@@ -427,8 +465,11 @@ TSharedPtr<MServerConnection> MEndpointCache::LazyConnect(const FServiceEndpoint
 
 void MEndpointCache::PurgeDisappeared(const TVector<uint32>& LiveServerIds)
 {
-    // 现有 pool entries 不在 LiveServerIds → 标记 bHealthy=false，
-    // 不立即断开（让其 Tick 自愈），等下次 OnEndpointChange 该 ServerId 又出现 → 复用。
+    // 现有 pool entries 不在 LiveServerIds → 保留连接（不销毁）。
+    // 注意：不能 erase——进行中的 CallServerFunction 的 LivenessProbe 持有
+    // WeakConnection，销毁会让它在等待响应期间失效（server_call_disconnected）。
+    // 连接是否真正断开由 MServerConnection::Tick（ProcessRecv 检测 EOF）自愈。
+    // 仅清理已断开的连接（IsConnected false），避免池无限增长。
     for (auto It = ConnectionPool_.begin(); It != ConnectionPool_.end();)
     {
         bool bAlive = false;
@@ -436,9 +477,8 @@ void MEndpointCache::PurgeDisappeared(const TVector<uint32>& LiveServerIds)
         {
             if (It->first == Id) { bAlive = true; break; }
         }
-        if (!bAlive)
+        if (!bAlive && (!It->second || !It->second->IsConnected()))
         {
-            // erase（lazy 路径不再复用，下次有新 endpoint 时再 LazyConnect）
             It = ConnectionPool_.erase(It);
         }
         else

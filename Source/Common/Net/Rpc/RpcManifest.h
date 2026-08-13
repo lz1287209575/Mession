@@ -161,7 +161,11 @@ inline bool CallRemote(MServerConnection& Connection, const char* ClassName, con
         return false;
     }
 
-    return SendServerRpcMessage(Connection, RpcPayload);
+    if (!SendServerRpcMessage(Connection, RpcPayload))
+    {
+        return false;
+    }
+    return true;
 }
 
 template<typename... TArgs>
@@ -184,7 +188,11 @@ inline bool CallRemote(INetConnection& Connection, const char* ClassName, const 
         return false;
     }
 
-    return SendServerRpcMessage(Connection, RpcPayload);
+    if (!SendServerRpcMessage(Connection, RpcPayload))
+    {
+        return false;
+    }
+    return true;
 }
 
 template<typename... TArgs>

@@ -4,6 +4,7 @@
 #include "Common/Net/Rpc/MRpcChannel.h"
 #include "Common/Net/Rpc/RpcClientCall.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
+#include "Common/Net/Rpc/RpcTransport.h"
 #include "Common/Net/Rpc/RpcPayload.h"
 #include "Common/Net/ServiceDiscovery/Endpoint.h"
 #include "Common/Net/ServiceDiscovery/EndpointCache.h"
@@ -208,31 +209,65 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
         return;
     }
 
-    const char* TargetClassName = Entry->OwnerType;
-    const char* TargetMethodName = Entry->FunctionName;
-    const EServerType TargetServer = GetGlobalClientFunctionTargetServerType(FunctionId);
+    // step-3: 转发到 EchoService（服务器间原始调用——Gateway 无 MEchoService
+    // 反射，直接转发 FunctionId + 原始 Payload；Echo 收到后 DispatchBackendServerCallPacket
+    // 按 FunctionId 分发到 Echo/EchoAwait，响应经 HandleServerCallResponse 回调回来）。
+    auto SendClientError = [&](const char* Code)
+    {
+        TByteArray ErrorPacket;
+        if (BuildClientEnvelopePacket(FunctionId, RequestId, TByteArray{}, ErrorPacket))
+        {
+            const auto It = ClientConnections.find(ConnectionId);
+            if (It != ClientConnections.end() && It->second)
+            {
+                It->second->Send(ErrorPacket.data(), static_cast<uint32>(ErrorPacket.size()));
+            }
+        }
+        LOG_WARN("Gateway: forward failed code=%s function_id=%u", Code, static_cast<unsigned>(FunctionId));
+    };
 
-    // step-2: 业务参数全部走反射 BuildPayload / ParsePayload。
-    // 当前 manifest 还是空,链路 1/2/3 验证 echo 的代码路径暂时跳过
-    // (Echo 仍然走 ServerCall 路径,可以由 UE 单独 stub 直接打 ServerCall
-    // 测试)。这条 ClientCall 入口等 manifest 真生成(task #2 后续引入
-    // MFUNCTION(ClientCall) emit)后再接业务。
-    //
-    // step-2 仅保证 envelope 解码 + 反射查表正确;真正的业务 dispatch
-    // (BuildPayload 反射 → CallServerFunction) 留到 step-3(此时 MFUNCTION
-    // 真声明 + manifest 真 emit)。
-    (void)TargetClassName;
-    (void)TargetMethodName;
-    (void)TargetServer;
-    (void)RequestId;
-    (void)Payload;
-    (void)ConnectionId;
+    TSharedPtr<MServerConnection> EchoConn =
+        MEndpointCache::Get().GetOrConnect(EServerType::Echo);
+    if (!EchoConn || !EchoConn->IsConnected())
+    {
+        SendClientError("echo_connection_unavailable");
+        return;
+    }
 
-    LOG_INFO("Gateway: would dispatch function_id=%u owner=%s method=%s (manifest hit, "
-             "but step-2 has no business dispatch yet)",
-             static_cast<unsigned>(FunctionId),
-             TargetClassName ? TargetClassName : "<null>",
-             TargetMethodName ? TargetMethodName : "<null>");
+    // 注册服务器调用（响应回调：把 Echo 的响应 Payload 原样回客户端 envelope）
+    const uint64 CallId = RegisterServerCall(
+        [this, ConnectionId, RequestId, FunctionId](const SServerCallResponse& Response)
+        {
+            TByteArray ClientPacket;
+            if (BuildClientEnvelopePacket(FunctionId, RequestId, Response.Payload, ClientPacket))
+            {
+                const auto It = ClientConnections.find(ConnectionId);
+                if (It != ClientConnections.end() && It->second && It->second->IsConnected())
+                {
+                    It->second->Send(ClientPacket.data(), static_cast<uint32>(ClientPacket.size()));
+                }
+            }
+        },
+        5.0,
+        BuildServerCallLivenessProbe(EchoConn));
+
+    if (CallId == 0)
+    {
+        SendClientError("server_call_register_failed");
+        return;
+    }
+
+    TByteArray ServerPacket;
+    const bool bSent = BuildServerCallPacket(FunctionId, CallId, Payload, ServerPacket)
+        && SendServerCallMessage(EchoConn, ServerPacket);
+    if (!bSent)
+    {
+        CancelServerCall(CallId);
+        SendClientError("server_call_send_failed");
+    }
+    else
+    {
+    }
 }
 
 // CreateService 工厂——ServiceMain.h 中 namespace 内的

@@ -44,6 +44,7 @@ SERVER_ORDER: Sequence[Tuple[str, int, Sequence[str]]] = [
         ECHO_PORT_A,
         [
             f"--listen={ECHO_PORT_A}",
+            "--server-id=2",
             "--inst=1",
             "--actors=1001,1002",
             "--service=MEchoService",
@@ -55,6 +56,7 @@ SERVER_ORDER: Sequence[Tuple[str, int, Sequence[str]]] = [
         ECHO_PORT_B,
         [
             f"--listen={ECHO_PORT_B}",
+            "--server-id=3",
             "--inst=2",
             "--actors=2001,2002",
             "--service=MEchoService",

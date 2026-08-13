@@ -76,6 +76,14 @@ bool DispatchBackendServerCallPacket(
     MObject* ServiceInstance,
     const TSharedPtr<MServerConnection>& Connection,
     const TByteArray& Data);
+
+// 服务器间入站（INetConnection 版——Gateway/Echo 互连的 MTcpConnection 入站）。
+// 与 MServerConnection 版同语义：ParseServerCallPacket → ResponseTarget（连接回包）
+// → DispatchServerCall（按 FunctionId 调函数 + 响应回调用方）。
+bool DispatchBackendServerCallPacketInbound(
+    MObject* ServiceInstance,
+    const TSharedPtr<INetConnection>& Connection,
+    const TByteArray& Data);
 uint64 GetCurrentServerRpcConnectionId();
 const MFunction* FindServerCallFunctionByName(const MClass* TargetClass, const char* FunctionName);
 const MFunction* FindServerCallFunctionById(const MClass* TargetClass, uint16 FunctionId);

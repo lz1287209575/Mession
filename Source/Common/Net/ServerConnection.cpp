@@ -234,13 +234,14 @@ void MServerConnection::SendHandshake()
         return;
     }
 
+    // Rpc_OnServerHandshake 反射签名是 1 参数（uint32 DummyServerId）——
+    // 传 3 参数会让 SerializeFunctionArgsByMeta 参数数量不匹配（BUILD failed，
+    // State 停在 Connected → IsConnected false → 服务器间调用全部 connection_unavailable）。
     if (!MRpc::CallRemote(
             *this,
             ClassName,
             "Rpc_OnServerHandshake",
-            LocalServerInfo.ServerId,
-            static_cast<uint8>(LocalServerInfo.ServerType),
-            LocalServerInfo.ServerName))
+            LocalServerInfo.ServerId))
     {
         LOG_WARN("%s Handshake RPC send failed", LogPrefix.c_str());
         return;

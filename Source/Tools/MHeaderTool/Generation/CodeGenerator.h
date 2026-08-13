@@ -1836,6 +1836,7 @@ public:
         const MString& Indent,
         const mession::headercodegen::SParsedFunction& Func) const
     {
+        const MString RespType = RFromReturnType(Func.ReturnType.CanonicalName);
         for (size_t i = Start; i < Nodes.size(); ++i)
         {
             const CFlowNode& N = Nodes[i];
@@ -1862,19 +1863,28 @@ public:
                 Out += Indent + "Awaiter1 = " + N.F + "(" + N.Args + ").AsAwaiter();\n";
                 Out += Indent + "if (Awaiter1->AwaitReady())\n";
                 Out += Indent + "{\n";
+                Out += Indent + "    try\n";
+                Out += Indent + "    {\n";
                 if (!N.AssignVar.empty())
                 {
-                    Out += Indent + "    " + N.AssignVar + " = Awaiter1->AwaitResume();\n";
+                    Out += Indent + "        " + N.AssignVar + " = Awaiter1->AwaitResume();\n";
                 }
                 else if (!N.LAccumPrefix.empty())
                 {
-                    Out += Indent + "    " + N.LAccumPrefix + "Awaiter1->AwaitResume();\n";
+                    Out += Indent + "        " + N.LAccumPrefix + "Awaiter1->AwaitResume();\n";
                 }
                 else
                 {
-                    Out += Indent + "    AwaitResult = Awaiter1->AwaitResume();\n";
+                    Out += Indent + "        AwaitResult = Awaiter1->AwaitResume();\n";
                 }
-                GenCFExec(Nodes, i + 1, Out, Indent + "    ", Func);
+                GenCFExec(Nodes, i + 1, Out, Indent + "        ", Func);
+                Out += Indent + "    }\n";
+                Out += Indent + "    catch (const FFutureResultError& E)\n";
+                Out += Indent + "    {\n";
+                Out += Indent + "        Promise.SetValue(TResult<" + RespType + ", FAppError>::Err(E.GetError()));\n";
+                Out += Indent + "        SelfGuard.reset();\n";
+                Out += Indent + "        return;\n";
+                Out += Indent + "    }\n";
                 Out += Indent + "}\n";
                 Out += Indent + "else\n";
                 Out += Indent + "{\n";
@@ -2360,28 +2370,37 @@ public:
                 std::to_string(Sites[K]->SourceLine) + "\n";
             Out += Indent + "if (" + AN + "->AwaitReady())\n";
             Out += Indent + "{\n";
+            Out += Indent + "    try\n";
+            Out += Indent + "    {\n";
             if (!AssignVar[K].empty())
             {
-                Out += Indent + "    " + AssignVar[K] + " = " + AN + "->AwaitResume();\n";
+                Out += Indent + "        " + AssignVar[K] + " = " + AN + "->AwaitResume();\n";
             }
             else
             {
-                Out += Indent + "    AwaitResult" + std::to_string(K + 1) +
+                Out += Indent + "        AwaitResult" + std::to_string(K + 1) +
                     " = " + AN + "->AwaitResume();\n";
             }
             if (!SegCode[K].empty())
             {
-                Out += Indent + "    // await " + std::to_string(K + 1) + " 完成后续业务代码\n";
-                Out += Indent + "    " + SegCode[K] + "\n";
+                Out += Indent + "        // await " + std::to_string(K + 1) + " 完成后续业务代码\n";
+                Out += Indent + "        " + SegCode[K] + "\n";
             }
             if (K + 1 < N)
             {
-                Out += GenAwait(K + 1, Indent + "    ");
+                Out += GenAwait(K + 1, Indent + "        ");
             }
             else
             {
-                Out += Indent + "    Finish();\n";
+                Out += Indent + "        Finish();\n";
             }
+            Out += Indent + "    }\n";
+            Out += Indent + "    catch (const FFutureResultError& E)\n";
+            Out += Indent + "    {\n";
+            Out += Indent + "        Promise.SetValue(TResult<" + R[0] + ", FAppError>::Err(E.GetError()));\n";
+            Out += Indent + "        SelfGuard.reset();\n";
+            Out += Indent + "        return;\n";
+            Out += Indent + "    }\n";
             Out += Indent + "}\n";
             Out += Indent + "else\n";
             Out += Indent + "{\n";
@@ -2463,27 +2482,36 @@ public:
         {
             Out << "        case " << K << ":  // await " << K << " 完成（源码行 "
                 << Sites[K - 1]->SourceLine << "）\n";
+            Out << "            try\n";
+            Out << "            {\n";
             if (!AssignVar[K - 1].empty())
             {
-                Out << "            " << AssignVar[K - 1] << " = Awaiter" << K << "->AwaitResume();\n";
+                Out << "                " << AssignVar[K - 1] << " = Awaiter" << K << "->AwaitResume();\n";
             }
             else
             {
-                Out << "            AwaitResult" << K << " = Awaiter" << K << "->AwaitResume();\n";
+                Out << "                AwaitResult" << K << " = Awaiter" << K << "->AwaitResume();\n";
             }
             if (!SegCode[K - 1].empty() && K < N)
             {
-                Out << "            // await " << K << " 后续业务代码\n";
-                Out << "            " << StripLiveDeclTypes(SegCode[K - 1], Func.LiveAcrossAwait) << "\n";
+                Out << "                // await " << K << " 后续业务代码\n";
+                Out << "                " << StripLiveDeclTypes(SegCode[K - 1], Func.LiveAcrossAwait) << "\n";
             }
             if (K < N)
             {
-                Out << GenAwait(K, "            ");
+                Out << GenAwait(K, "                ");
             }
             else
             {
-                Out << "            Finish();\n";
+                Out << "                Finish();\n";
             }
+            Out << "            }\n";
+            Out << "            catch (const FFutureResultError& E)\n";
+            Out << "            {\n";
+            Out << "                Promise.SetValue(TResult<" << R[0] << ", FAppError>::Err(E.GetError()));\n";
+            Out << "                SelfGuard.reset();\n";
+            Out << "                return;\n";
+            Out << "            }\n";
             Out << "            break;\n";
         }
         Out << "        default: break;\n";

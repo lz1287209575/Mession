@@ -530,6 +530,8 @@ mession_add_service(MServiceRegistry MServiceRegistry SServiceRegistryConfig Sou
     SOURCES
         Source/Servers/ServiceRegistry/ServiceRegistryServer.cpp
     GENERATED_GROUPS shared serviceregistry
+    GENERATED_SOURCES
+        ${MESSION_GENERATED_DIR}/SServiceRegistryConfig.mgenerated.cpp
 )
 
 # MClientManifest generated definitions — linked into EchoService.
