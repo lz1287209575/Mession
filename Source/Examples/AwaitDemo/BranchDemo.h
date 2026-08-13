@@ -10,3 +10,6 @@ SFutureResult<int> AsyncAdd2(int A, int B);
 
 MFUNCTION(Async)
 SFutureResult<int> BranchAsync(int N);
+
+MFUNCTION(Async)
+SFutureResult<int> BranchElseAsync(int N);

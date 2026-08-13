@@ -80,5 +80,12 @@ int main()
     std::printf("BranchAsync(5):  %d（if 分支 await）\n", B1);
     std::printf("BranchAsync(-3): %d（early return）\n", B2);
 
-    return (R == 31 && C == 44 && L == 4 && M == 11 && B1 == 12 && B2 == 0) ? 0 : 1;
+    // if/else 两边都 await：N>0 → if(5+1=6)；N<=0 → else(N+10=7)
+    const int E1 = BranchElseAsync(5).GetResult().GetValue();
+    const int E2 = BranchElseAsync(-3).GetResult().GetValue();
+    std::printf("BranchElseAsync(5):  %d（if 分支 await）\n", E1);
+    std::printf("BranchElseAsync(-3): %d（else 分支 await）\n", E2);
+
+    return (R == 31 && C == 44 && L == 4 && M == 11 && B1 == 12 && B2 == 0
+        && E1 == 6 && E2 == 7) ? 0 : 1;
 }

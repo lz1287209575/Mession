@@ -9,6 +9,23 @@ SFutureResult<int> AsyncAdd2(int A, int B)
 
 #ifdef MESSION_AWAIT_CODEGEN_SOURCE
 MFUNCTION(Async)
+SFutureResult<int> BranchElseAsync(int N)
+{
+    if (N > 0)
+    {
+        int R = TAwaitable<AsyncAdd2>(N, 1);                  // if 分支内 await
+        return SFutureResult<int>(TResult<int, FAppError>::Ok(R));
+    }
+    else
+    {
+        int S = TAwaitable<AsyncAdd2>(N, 10);                 // else 分支内 await
+        return SFutureResult<int>(TResult<int, FAppError>::Ok(S));
+    }
+}
+#endif
+
+#ifdef MESSION_AWAIT_CODEGEN_SOURCE
+MFUNCTION(Async)
 SFutureResult<int> BranchAsync(int N)
 {
     if (N > 0)

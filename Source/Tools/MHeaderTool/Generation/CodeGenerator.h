@@ -1820,9 +1820,11 @@ public:
     static bool ParseBranchAsyncBody(
         const MString& Body, const MString& AwaitText,
         MString& OutCond, MString& OutPreCode, MString& OutPostCode,
-        MString& OutBranchReturn, MString& OutEarlyReturn)
+        MString& OutBranchReturn, MString& OutEarlyReturn,
+        MString& OutElseBody)
     {
         OutCond = OutPreCode = OutPostCode = OutBranchReturn = OutEarlyReturn = MString();
+        OutElseBody = MString();
         const size_t IfPos = Body.find("if (");
         if (IfPos == MString::npos) return false;
         const size_t CondOpen = IfPos + 3;
@@ -1867,9 +1869,29 @@ public:
             OutPostCode = TrimText(BranchBody.substr(PostStart, RetPos - PostStart));
         }
 
-        // early return：else 块 或 函数尾 return
+        // early return：else 块 或 函数尾 return。else 分支体提取到 OutElseBody
+        //（供生成器判断 else 内是否也有 await——Sites[1] 位于 else 块内）。
         const MString AfterIf = Body.substr(BraceEnd);
         const size_t ElsePos = AfterIf.find("else");
+        if (ElsePos != MString::npos)
+        {
+            const size_t ElseBrace = AfterIf.find('{', ElsePos);
+            if (ElseBrace != MString::npos)
+            {
+                int EDepth = 1;
+                size_t ElseEnd = ElseBrace + 1;
+                while (ElseEnd < AfterIf.size() && EDepth > 0)
+                {
+                    if (AfterIf[ElseEnd] == '{') ++EDepth;
+                    else if (AfterIf[ElseEnd] == '}') --EDepth;
+                    ++ElseEnd;
+                }
+                if (EDepth == 0)
+                {
+                    OutElseBody = TrimText(AfterIf.substr(ElseBrace + 1, ElseEnd - ElseBrace - 2));
+                }
+            }
+        }
         const size_t ERet = AfterIf.find("return");
         if (ERet != MString::npos)
         {
@@ -1879,7 +1901,6 @@ public:
                 OutEarlyReturn = TrimText(AfterIf.substr(ERet + 6, ESemi - ERet - 6));
             }
         }
-        (void)ElsePos;
         return true;
     }
 
@@ -1892,9 +1913,9 @@ public:
         const mession::headercodegen::SAwaitSite* Site) const
     {
         (void)HeaderPath;
-        MString F, R, Args, Cond, PreCode, PostCode, BranchReturn, EarlyReturn;
+        MString F, R, Args, Cond, PreCode, PostCode, BranchReturn, EarlyReturn, ElseBody;
         if (!ParseBranchAsyncBody(Func.AsyncBody, Site->AwaitExprText,
-                Cond, PreCode, PostCode, BranchReturn, EarlyReturn)) return {};
+                Cond, PreCode, PostCode, BranchReturn, EarlyReturn, ElseBody)) return {};
         if (Cond.empty() || BranchReturn.empty()) return {};
         if (!ParseTAwaitableText(Site->AwaitExprText, F, R, Args)) return {};
         if (R.empty()) R = RFromReturnType(Func.ReturnType.CanonicalName);
@@ -1915,6 +1936,59 @@ public:
                 EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1);
         }
         if (AssignVar.empty()) return {};
+
+        // else 分支 await（Sites[1] 位于 else 块内 → else 也有 await）：
+        // 解析 ElseF/ElseArgs/ElseAssignVar/ElseReturn，生成 State=2 分支。
+        MString ElseF, ElseR, ElseArgs, ElseAssignVar, ElseBranchVal;
+        bool bElseAwait = false;
+        if (!ElseBody.empty() && Func.AwaitSites.size() >= 2)
+        {
+            const mession::headercodegen::SAwaitSite* ElseSite = &Func.AwaitSites[1];
+            if (ElseBody.find(ElseSite->AwaitExprText) != MString::npos)
+            {
+                MString ElseRet;
+                const size_t ElseRetPos = ElseBody.find("return");
+                if (ElseRetPos != MString::npos)
+                {
+                    const size_t ElseSemi = ElseBody.find(';', ElseRetPos);
+                    if (ElseSemi != MString::npos)
+                    {
+                        ElseRet = TrimText(ElseBody.substr(ElseRetPos + 6, ElseSemi - ElseRetPos - 6));
+                    }
+                }
+                if (!ElseRet.empty()
+                    && ParseTAwaitableText(ElseSite->AwaitExprText, ElseF, ElseR, ElseArgs))
+                {
+                    if (ElseR.empty()) ElseR = RFromReturnType(Func.ReturnType.CanonicalName);
+                    const size_t ElseAwaitPos = ElseBody.find(ElseSite->AwaitExprText);
+                    const size_t ElseLineStart = ElseBody.rfind('\n', ElseAwaitPos) == MString::npos
+                        ? 0 : ElseBody.rfind('\n', ElseAwaitPos) + 1;
+                    const MString ElseLine = ElseBody.substr(ElseLineStart, ElseAwaitPos - ElseLineStart);
+                    const size_t ElseEq = ElseLine.rfind('=');
+                    if (ElseEq != MString::npos)
+                    {
+                        const size_t ElseEndV = ElseLine.find_last_not_of(" \t", ElseEq - 1);
+                        if (ElseEndV != MString::npos)
+                        {
+                            const size_t ElseStartV = ElseLine.find_last_of(" \t", ElseEndV);
+                            ElseAssignVar = ElseLine.substr(
+                                ElseStartV == MString::npos ? 0 : ElseStartV + 1,
+                                ElseEndV - (ElseStartV == MString::npos ? 0 : ElseStartV + 1) + 1);
+                        }
+                    }
+                    if (!ElseAssignVar.empty())
+                    {
+                        bElseAwait = true;
+                        ElseBranchVal = StripValueWrapper(ElseRet);
+                    }
+                }
+            }
+        }
+
+        if (Func.AwaitSites.size() >= 2 && !bElseAwait)
+        {
+            return {};  // 2 个 await 都在 if 分支（if 内多 await）——后续扩展，回退串行
+        }
 
         const MString FrameName = "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(NamePrefix) +
             "_" + SanitizeIdentifier(Func.Name);
@@ -1944,6 +2018,19 @@ public:
         {
             if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
             Out << "    " << R << " " << AssignVar << "{};\n";
+        }
+        if (bElseAwait)
+        {
+            bool bElseInLive = false;
+            for (const auto& L : Func.LiveAcrossAwait)
+            {
+                if (L.Name == ElseAssignVar) { bElseInLive = true; break; }
+            }
+            if (!bElseInLive)
+            {
+                if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
+                Out << "    " << R << " " << ElseAssignVar << "{};\n";
+            }
         }
         Out << "    " << R << " ReturnValue{};  // 分支结果（early 或 await 后）\n";
         Out << "    TOptional<SFutureResult<" << R << ">::SAwaiter> Awaiter1;\n";
@@ -1979,15 +2066,34 @@ public:
         Out << "        }\n";
         Out << "        else\n";
         Out << "        {\n";
-        if (EarlyReturn.empty())
+        if (bElseAwait)
         {
-            Out << "            ReturnValue = " << R << "{};\n";
+            Out << "            Awaiter1 = " << ElseF << "(" << ElseArgs << ").AsAwaiter();\n";
+            Out << "            if (Awaiter1->AwaitReady())\n";
+            Out << "            {\n";
+            Out << "                " << ElseAssignVar << " = Awaiter1->AwaitResume();\n";
+            Out << "                ReturnValue = " << ElseBranchVal << ";\n";
+            Out << "                Finish();\n";
+            Out << "            }\n";
+            Out << "            else\n";
+            Out << "            {\n";
+            Out << "                State = 2;\n";
+            Out << "                SelfGuard = shared_from_this();\n";
+            Out << "                Awaiter1->AwaitSuspend(this);\n";
+            Out << "            }\n";
         }
         else
         {
-            Out << "            ReturnValue = " << EarlyVal << ";\n";
+            if (EarlyReturn.empty())
+            {
+                Out << "            ReturnValue = " << R << "{};\n";
+            }
+            else
+            {
+                Out << "            ReturnValue = " << EarlyVal << ";\n";
+            }
+            Out << "            Finish();\n";
         }
-        Out << "            Finish();\n";
         Out << "        }\n";
         Out << "    }\n";
         Out << "\n";
@@ -2003,6 +2109,15 @@ public:
         Out << "            ReturnValue = " << BranchVal << ";\n";
         Out << "            Finish();\n";
         Out << "        }\n";
+        if (bElseAwait)
+        {
+            Out << "        else if (State == 2)\n";
+            Out << "        {\n";
+            Out << "            " << ElseAssignVar << " = Awaiter1->AwaitResume();\n";
+            Out << "            ReturnValue = " << ElseBranchVal << ";\n";
+            Out << "            Finish();\n";
+            Out << "        }\n";
+        }
         Out << "    }\n";
         Out << "\n";
         Out << "    void Finish()\n";
@@ -2046,8 +2161,8 @@ public:
             if (!LoopFrame.empty()) return LoopFrame;
             // 解析失败则回退串行路径
         }
-        // 分支 await（第一步：if 体内单 await + early return）→ 分支生成器
-        if (Sites.size() == 1 && Func.AsyncBody.find("if (") != MString::npos)
+        // 分支 await（if 体内单 await + early return；if/else 各一 await）→ 分支生成器
+        if (Sites.size() <= 2 && Func.AsyncBody.find("if (") != MString::npos)
         {
             const MString BranchFrame = EmitAwaitBranchStateMachine(NamePrefix, HeaderPath, Func, Sites[0]);
             if (!BranchFrame.empty()) return BranchFrame;
