@@ -675,6 +675,7 @@ configure_mession_compile_options(FreeAsyncFuncGenTest)
 option(BUILD_ASYNC_DEMO "Build the AsyncDemo end-to-end C++17 async example" ON)
 if(BUILD_ASYNC_DEMO)
     add_subdirectory(Source/Examples/AsyncDemo)
+enable_testing()
 add_subdirectory(Source/Examples/AwaitDemo)
 endif()
 
