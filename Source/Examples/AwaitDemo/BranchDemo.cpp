@@ -96,6 +96,44 @@ SFutureResult<int> BranchLoopAsync(int N)
 
 #ifdef MESSION_AWAIT_CODEGEN_SOURCE
 MFUNCTION(Async)
+SFutureResult<int> DeepNestAsync(int N)
+{
+    if (N > 0)                        // 第 1 层
+    {
+        if (N > 10)                   // 第 2 层
+        {
+            if (N > 100)              // 第 3 层
+            {
+                int A = TAwaitable<AsyncAdd2>(N, 1);
+                return SFutureResult<int>(TResult<int, FAppError>::Ok(A));
+            }
+            int B = TAwaitable<AsyncAdd2>(N, 2);
+            return SFutureResult<int>(TResult<int, FAppError>::Ok(B));
+        }
+        return SFutureResult<int>(TResult<int, FAppError>::Ok(5));
+    }
+    return SFutureResult<int>(TResult<int, FAppError>::Ok(0));
+}
+#endif
+
+#ifdef MESSION_AWAIT_CODEGEN_SOURCE
+MFUNCTION(Async)
+SFutureResult<int> LoopIfAsync(int N)
+{
+    int Sum = 0;
+    for (int i = 0; i < N; ++i)
+    {
+        if (i % 2 == 0)               // 循环内 if
+        {
+            Sum += TAwaitable<AsyncAdd2>(i, 1);   // if 内 await（偶数轮累加）
+        }
+    }
+    return SFutureResult<int>(TResult<int, FAppError>::Ok(Sum));
+}
+#endif
+
+#ifdef MESSION_AWAIT_CODEGEN_SOURCE
+MFUNCTION(Async)
 SFutureResult<int> BranchAsync(int N)
 {
     if (N > 0)

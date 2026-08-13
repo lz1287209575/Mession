@@ -1812,6 +1812,306 @@ public:
         MString Body;
     };
 
+    // ============ 通用递归控制流（N 层嵌套/循环/组合） ============
+    // 控制流节点：AsyncBody → 树（Seq/If/For/Return/Await/Raw），递归生成状态机。
+    struct CFlowNode
+    {
+        enum class EKind : uint8_t { Seq, If, For, Return, Await, Raw };
+        EKind Kind = EKind::Raw;
+        MString Text;        // Raw: 语句; If: cond; For: "init;cond;incr"; Return: expr; Await: 调用参数
+        MString AssignVar;   // Await: 赋值变量（空 = 无赋值/累加）
+        MString F, R, Args;  // Await: 目标解析
+        MString LInit, LCond, LIncr, LAccumPrefix;  // For: 循环参数
+        TVector<CFlowNode> Children;  // Seq: 语句; If: [then(0), else(1)（可空）]; For: [body]
+        size_t AwaitIndex = 0;        // Await 全局编号
+        size_t LoopIndex = 0;         // For 循环编号（方法命名 LoopEntry_N）
+        bool bHasElse = false;
+    };
+
+    // 剥离注释（// 行注释、/* */ 块注释）——替换为空格（保留 '\n' 行结构）。
+    // 避免注释文本里的 return/if (/TAwaitable< 干扰控制流解析。
+    static MString StripComments(const MString& In)
+    {
+        MString Out = In;
+        size_t i = 0;
+        while (i < Out.size())
+        {
+            if (Out[i] == '/' && i + 1 < Out.size() && Out[i + 1] == '/')
+            {
+                Out[i] = ' '; Out[i + 1] = ' ';
+                i += 2;
+                while (i < Out.size() && Out[i] != '\n') { Out[i] = ' '; ++i; }
+            }
+            else if (Out[i] == '/' && i + 1 < Out.size() && Out[i + 1] == '*')
+            {
+                Out[i] = ' '; Out[i + 1] = ' ';
+                i += 2;
+                while (i + 1 < Out.size() && !(Out[i] == '*' && Out[i + 1] == '/'))
+                {
+                    if (Out[i] != '\n') Out[i] = ' ';
+                    ++i;
+                }
+                if (i + 1 < Out.size()) { Out[i] = ' '; Out[i + 1] = ' '; i += 2; }
+            }
+            else
+            {
+                ++i;
+            }
+        }
+        return Out;
+    }
+
+    // 递归下降解析：Code（一段函数体，无外层大括号）→ 控制流节点列表。
+    // Sites 按源码顺序消费（InOutSiteIndex 递增）；OutEndPos = 消费到的位置
+    // （Code.size() = 末尾，否则 '}' 之后）。
+    static bool ParseControlFlow(
+        const MString& Code,
+        const TVector<mession::headercodegen::SAwaitSite>& Sites,
+        size_t& InOutSiteIndex,
+        TVector<CFlowNode>& OutNodes,
+        size_t& OutEndPos)
+    {
+        size_t Pos = 0;
+        while (Pos < Code.size())
+        {
+            const size_t B = Code.find_first_not_of(" \t\r\n", Pos);
+            if (B == MString::npos) { OutEndPos = Code.size(); return true; }
+            if (Code[B] == '}') { OutEndPos = B + 1; return true; }
+            // ---- if (cond) { ... } [else ...] ----
+            if (Code.compare(B, 4, "if (") == 0)
+            {
+                const size_t CondOpen = B + 3;
+                int CDepth = 1;
+                size_t CondEnd = CondOpen + 1;
+                while (CondEnd < Code.size() && CDepth > 0)
+                {
+                    if (Code[CondEnd] == '(') ++CDepth;
+                    else if (Code[CondEnd] == ')') --CDepth;
+                    ++CondEnd;
+                }
+                if (CDepth != 0) return false;
+                CFlowNode IfNode;
+                IfNode.Kind = CFlowNode::EKind::If;
+                IfNode.Text = TrimText(Code.substr(CondOpen + 1, CondEnd - CondOpen - 2));
+                const size_t BraceOpen = Code.find('{', CondEnd);
+                if (BraceOpen == MString::npos) return false;
+                int BD = 1;
+                size_t BraceEnd = BraceOpen + 1;
+                while (BraceEnd < Code.size() && BD > 0)
+                {
+                    if (Code[BraceEnd] == '{') ++BD;
+                    else if (Code[BraceEnd] == '}') --BD;
+                    ++BraceEnd;
+                }
+                if (BD != 0) return false;
+                const MString ThenCode = Code.substr(BraceOpen + 1, BraceEnd - BraceOpen - 2);
+                CFlowNode ThenSeq; ThenSeq.Kind = CFlowNode::EKind::Seq;
+                size_t ThenEnd;
+                if (!ParseControlFlow(ThenCode, Sites, InOutSiteIndex, ThenSeq.Children, ThenEnd))
+                    return false;
+                IfNode.Children.push_back(ThenSeq);
+                // else / else-if 链
+                size_t AfterIf = BraceEnd;
+                {
+                    const size_t EB = Code.find_first_not_of(" \t\r\n", AfterIf);
+                    if (EB != MString::npos && Code.compare(EB, 4, "else") == 0
+                        && (EB + 4 >= Code.size()
+                            || Code[EB + 4] == '{' || Code[EB + 4] == ' ' || Code[EB + 4] == '\t'
+                            || Code[EB + 4] == '\n' || Code[EB + 4] == 'i'))
+                    {
+                        IfNode.bHasElse = true;
+                        CFlowNode ElseSeq; ElseSeq.Kind = CFlowNode::EKind::Seq;
+                        // else-if 链：`else if (c2) {...} [else {...}]`——把 `if (c2)...`
+                        // 当作独立 If 节点递归解析（条件保留）
+                        const size_t ElseIfP = (Code.compare(EB + 4, 3, " if") == 0
+                            || (EB + 7 < Code.size() && Code[EB + 4] == ' ' && Code[EB + 5] == 'i'
+                                && Code[EB + 6] == 'f')) ? EB + 4 : MString::npos;
+                        if (ElseIfP != MString::npos)
+                        {
+                            // 从 else-if 的 `if` 位置递归解析一个 If 节点
+                            TVector<CFlowNode> NestedIf;
+                            size_t NestedEnd = 0;
+                            const size_t IfB = Code.find("if (", ElseIfP);
+                            if (IfB != MString::npos)
+                            {
+                                if (!ParseControlFlow(Code.substr(IfB),
+                                        Sites, InOutSiteIndex, NestedIf, NestedEnd))
+                                    return false;
+                                ElseSeq.Children = NestedIf;
+                                AfterIf = IfB + NestedEnd;
+                            }
+                            else
+                            {
+                                return false;
+                            }
+                        }
+                        else
+                        {
+                            const size_t ElseOpen = Code.find('{', EB);
+                            if (ElseOpen == MString::npos) return false;
+                            int EBD = 1;
+                            size_t ElseEnd = ElseOpen + 1;
+                            while (ElseEnd < Code.size() && EBD > 0)
+                            {
+                                if (Code[ElseEnd] == '{') ++EBD;
+                                else if (Code[ElseEnd] == '}') --EBD;
+                                ++ElseEnd;
+                            }
+                            if (EBD != 0) return false;
+                            const MString ElseCode = Code.substr(ElseOpen + 1, ElseEnd - ElseOpen - 2);
+                            size_t ElseEndPos;
+                            if (!ParseControlFlow(ElseCode, Sites, InOutSiteIndex, ElseSeq.Children, ElseEndPos))
+                                return false;
+                            AfterIf = ElseEnd;
+                        }
+                        IfNode.Children.push_back(ElseSeq);
+                    }
+                }
+                OutNodes.push_back(IfNode);
+                Pos = AfterIf;
+                continue;
+            }
+
+            // ---- for (init; cond; incr) { body } ----
+            if (Code.compare(B, 5, "for (") == 0)
+            {
+                const size_t ForOpen = B + 4;
+                size_t ForClose = Code.find(')', ForOpen);
+                if (ForClose == MString::npos) return false;
+                CFlowNode ForNode;
+                ForNode.Kind = CFlowNode::EKind::For;
+                ForNode.Text = TrimText(Code.substr(ForOpen + 1, ForClose - ForOpen - 1));
+                // 拆 init; cond; incr
+                const size_t S1 = ForNode.Text.find(';');
+                const size_t S2 = ForNode.Text.find(';', S1 + 1);
+                if (S1 == MString::npos || S2 == MString::npos) return false;
+                ForNode.LInit = TrimText(ForNode.Text.substr(0, S1));
+                ForNode.LCond = TrimText(ForNode.Text.substr(S1 + 1, S2 - S1 - 1));
+                ForNode.LIncr = TrimText(ForNode.Text.substr(S2 + 1));
+                const size_t BraceOpen = Code.find('{', ForClose);
+                if (BraceOpen == MString::npos) return false;
+                int BD = 1;
+                size_t BraceEnd = BraceOpen + 1;
+                while (BraceEnd < Code.size() && BD > 0)
+                {
+                    if (Code[BraceEnd] == '{') ++BD;
+                    else if (Code[BraceEnd] == '}') --BD;
+                    ++BraceEnd;
+                }
+                if (BD != 0) return false;
+                const MString BodyCode = Code.substr(BraceOpen + 1, BraceEnd - BraceOpen - 2);
+                CFlowNode BodySeq; BodySeq.Kind = CFlowNode::EKind::Seq;
+                size_t BodyEnd;
+                if (!ParseControlFlow(BodyCode, Sites, InOutSiteIndex, BodySeq.Children, BodyEnd))
+                    return false;
+                ForNode.Children.push_back(BodySeq);
+                OutNodes.push_back(ForNode);
+                Pos = BraceEnd;
+                continue;
+            }
+
+            // ---- return <expr>; ----
+            if (Code.compare(B, 6, "return") == 0
+                && (B + 6 >= Code.size() || isspace(static_cast<unsigned char>(Code[B + 6]))))
+            {
+                const size_t Semi = Code.find(';', B);
+                if (Semi == MString::npos) return false;
+                CFlowNode Ret;
+                Ret.Kind = CFlowNode::EKind::Return;
+                Ret.Text = TrimText(Code.substr(B + 6, Semi - B - 6));
+                OutNodes.push_back(Ret);
+                Pos = Semi + 1;
+                continue;
+            }
+
+            // ---- TAwaitable<...>(...)（await 语句）----
+            if (Code.compare(B, 11, "TAwaitable<") == 0)
+            {
+                if (InOutSiteIndex >= Sites.size())
+                {
+                    return false;
+                }
+                const mession::headercodegen::SAwaitSite* AS = &Sites[InOutSiteIndex];
+                CFlowNode Aw;
+                Aw.Kind = CFlowNode::EKind::Await;
+                Aw.Text = AS->AwaitExprText;
+                Aw.AwaitIndex = InOutSiteIndex;
+                if (!ParseTAwaitableText(AS->AwaitExprText, Aw.F, Aw.R, Aw.Args)) return false;
+                // 赋值变量（行首 '=' 前；复合赋值 → 空）
+                {
+                    const size_t LineStart = Code.rfind('\n', B) == MString::npos
+                        ? 0 : Code.rfind('\n', B) + 1;
+                    const MString Line = Code.substr(LineStart, B - LineStart);
+                    const size_t Eq = Line.rfind('=');
+                    if (Eq != MString::npos
+                        && (Eq == 0 || (Line[Eq - 1] != '+' && Line[Eq - 1] != '-'
+                            && Line[Eq - 1] != '*' && Line[Eq - 1] != '/')))
+                    {
+                        const size_t EndV = Line.find_last_not_of(" \t", Eq - 1);
+                        if (EndV != MString::npos)
+                        {
+                            const size_t StartV = Line.find_last_of(" \t", EndV);
+                            Aw.AssignVar = Line.substr(
+                                StartV == MString::npos ? 0 : StartV + 1,
+                                EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1);
+                        }
+                    }
+                    // 累加前缀（`Sum += `）
+                    const size_t AEq = Line.rfind('=');
+                    if (AEq != MString::npos && AEq > 0
+                        && (Line[AEq - 1] == '+' || Line[AEq - 1] == '-'
+                            || Line[AEq - 1] == '*' || Line[AEq - 1] == '/'))
+                    {
+                        const size_t EndV = Line.find_last_not_of(" \t", AEq - 2);
+                        if (EndV != MString::npos)
+                        {
+                            const size_t StartV = Line.find_last_of(" \t", EndV);
+                            const MString LV = Line.substr(
+                                StartV == MString::npos ? 0 : StartV + 1,
+                                EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1);
+                            MString Op = Line.substr(AEq - 1, 1);
+                            Aw.LAccumPrefix = LV + Op + "= ";
+                        }
+                    }
+                }
+                ++InOutSiteIndex;
+                // 跳过语句其余（到 ';'）
+                const size_t Semi = Code.find(';', B);
+                Pos = (Semi == MString::npos) ? Code.size() : Semi + 1;
+                OutNodes.push_back(Aw);
+                continue;
+            }
+
+            // ---- Raw 语句（到 ';' 或 '}' / 结构标记）----
+            {
+                size_t Semi = Code.find(';', B);
+                // 若 ';' 前有结构标记（if/for/return/TAwaitable）——截断
+                const size_t NextIf = Code.find("if (", B);
+                const size_t NextFor = Code.find("for (", B);
+                const size_t NextRet = Code.find("return", B);
+                const size_t NextAw = Code.find("TAwaitable<", B);
+                size_t Cut = Semi;
+                if (NextIf != MString::npos && NextIf < Cut) Cut = NextIf;
+                if (NextFor != MString::npos && NextFor < Cut) Cut = NextFor;
+                if (NextRet != MString::npos && NextRet < Cut) Cut = NextRet;
+                if (NextAw != MString::npos && NextAw < Cut) Cut = NextAw;
+                if (Cut == MString::npos || Cut <= B)
+                {
+                    return false;
+                }
+                CFlowNode Raw;
+                Raw.Kind = CFlowNode::EKind::Raw;
+                Raw.Text = TrimText(Code.substr(B, Cut - B));
+                OutNodes.push_back(Raw);
+                // 若 Cut 是 ';'（完整语句）跳过；若是结构标记（截断的赋值前缀）停在标记处
+                Pos = (Semi != MString::npos && Cut == Semi) ? Semi + 1 : Cut;
+                continue;
+            }
+        }
+        OutEndPos = Code.size();
+        return true;
+    }
+
     // 解析 if/else 分支 await 体：
     //   if (cond0) { ... } [else if (condK) { ... }]... [else { ... }] [return EXPR_TAIL;]
     // 输出：第一个 if 的 cond / await 前代码 / await 后代码 / 分支 return、else-if 链
@@ -1985,6 +2285,411 @@ public:
             }
         }
         return true;
+    }
+
+    // ============ 通用递归控制流生成器（N 层嵌套/循环/组合） ============
+    // 生成"执行 Nodes[start..] 的代码"（递归）。Return → Finish+return；
+    // For → 循环进入（方法单独生成）；Await → 挂起/同步继续。
+    void GenCFExec(const TVector<CFlowNode>& Nodes, size_t Start, MString& Out,
+        const MString& Indent,
+        const mession::headercodegen::SParsedFunction& Func) const
+    {
+        for (size_t i = Start; i < Nodes.size(); ++i)
+        {
+            const CFlowNode& N = Nodes[i];
+            switch (N.Kind)
+            {
+            case CFlowNode::EKind::Raw:
+            {
+                // `int A =`（await 语句的赋值前缀——被 TAwaitable 截断）——跳过
+                const MString RawTrim = TrimText(N.Text);
+                if (!RawTrim.empty() && RawTrim.back() == '=')
+                {
+                    break;
+                }
+                Out += Indent + StripLiveDeclTypes(N.Text, Func.LiveAcrossAwait) + ";\n";
+                break;
+            }
+            case CFlowNode::EKind::Return:
+                Out += Indent + "ReturnValue = " + StripValueWrapper(N.Text) + ";\n";
+                Out += Indent + "Finish();\n";
+                Out += Indent + "return;\n";
+                return;
+            case CFlowNode::EKind::Await:
+            {
+                Out += Indent + "Awaiter1 = " + N.F + "(" + N.Args + ").AsAwaiter();\n";
+                Out += Indent + "if (Awaiter1->AwaitReady())\n";
+                Out += Indent + "{\n";
+                if (!N.AssignVar.empty())
+                {
+                    Out += Indent + "    " + N.AssignVar + " = Awaiter1->AwaitResume();\n";
+                }
+                else if (!N.LAccumPrefix.empty())
+                {
+                    Out += Indent + "    " + N.LAccumPrefix + "Awaiter1->AwaitResume();\n";
+                }
+                else
+                {
+                    Out += Indent + "    AwaitResult = Awaiter1->AwaitResume();\n";
+                }
+                GenCFExec(Nodes, i + 1, Out, Indent + "    ", Func);
+                Out += Indent + "}\n";
+                Out += Indent + "else\n";
+                Out += Indent + "{\n";
+                Out += Indent + "    State = " + std::to_string(N.AwaitIndex + 1) + ";\n";
+                Out += Indent + "    SelfGuard = shared_from_this();\n";
+                Out += Indent + "    Awaiter1->AwaitSuspend(this);\n";
+                Out += Indent + "}\n";
+                return;
+            }
+            case CFlowNode::EKind::If:
+            {
+                Out += Indent + "if (" + N.Text + ")\n";
+                if (!N.Children.empty())
+                {
+                    Out += Indent + "{\n";
+                    GenCFExec(N.Children[0].Children, 0, Out, Indent + "    ", Func);
+                    Out += Indent + "}\n";
+                }
+                else
+                {
+                    Out += Indent + "{}\n";
+                }
+                if (N.bHasElse && N.Children.size() >= 2)
+                {
+                    Out += Indent + "else\n";
+                    Out += Indent + "{\n";
+                    GenCFExec(N.Children[1].Children, 0, Out, Indent + "    ", Func);
+                    Out += Indent + "}\n";
+                }
+                break;
+            }
+            case CFlowNode::EKind::For:
+            {
+                // 循环进入
+                if (!N.LInit.empty())
+                {
+                    Out += Indent + StripLiveDeclTypes(N.LInit + ";", Func.LiveAcrossAwait) + "\n";
+                }
+                Out += Indent + "LoopEntry_" + std::to_string(N.LoopIndex) + "();\n";
+                return;  // For 后节点由 LoopEntry 的 false 分支（GenCFExec 剩余）处理
+            }
+            default:
+                break;
+            }
+        }
+    }
+
+    // 生成循环方法（LoopEntry_N / LoopAdvance_N）——递归遍历树，For 在
+    // Nodes[i] 时 false 分支执行 Nodes[i+1..]（循环后剩余）。
+    void GenCFLoopMethods(const TVector<CFlowNode>& Nodes, MString& Out,
+        const mession::headercodegen::SParsedFunction& Func) const
+    {
+        for (size_t i = 0; i < Nodes.size(); ++i)
+        {
+            const CFlowNode& N = Nodes[i];
+            switch (N.Kind)
+            {
+            case CFlowNode::EKind::For:
+            {
+                const MString LE = "LoopEntry_" + std::to_string(N.LoopIndex);
+                const MString LA = "LoopAdvance_" + std::to_string(N.LoopIndex);
+                Out += "    void " + LE + "()\n";
+                Out += "    {\n";
+                Out += "        if (" + N.LCond + ")\n";
+                Out += "        {\n";
+                // 循环体（含 await——挂起 State）
+                if (!N.Children.empty())
+                {
+                    GenCFExec(N.Children[0].Children, 0, Out, "            ", Func);
+                }
+                Out += "            " + LA + "();\n";
+                Out += "        }\n";
+                Out += "        else\n";
+                Out += "        {\n";
+                // 循环后剩余（Nodes[i+1..]）
+                GenCFExec(Nodes, i + 1, Out, "            ", Func);
+                if (i + 1 >= Nodes.size())
+                {
+                    Out += "            return;\n";  // 循环是块尾——Finish 由上层/return 处理
+                }
+                Out += "        }\n";
+                Out += "    }\n";
+                Out += "\n";
+                Out += "    void " + LA + "()\n";
+                Out += "    {\n";
+                Out += "        " + N.LIncr + ";\n";
+                Out += "        " + LE + "();\n";
+                Out += "    }\n";
+                Out += "\n";
+                // 递归 body（嵌套循环）
+                if (!N.Children.empty())
+                {
+                    GenCFLoopMethods(N.Children[0].Children, Out, Func);
+                }
+                break;
+            }
+            case CFlowNode::EKind::If:
+                for (const auto& C : N.Children)
+                {
+                    GenCFLoopMethods(C.Children, Out, Func);
+                }
+                break;
+            default:
+                break;
+            }
+        }
+    }
+
+    // 生成通用递归控制流 Frame（N 层嵌套/循环/组合）。
+    MString EmitAwaitCFrame(
+        const MString& NamePrefix,
+        const fs::path& HeaderPath,
+        const mession::headercodegen::SParsedFunction& Func) const
+    {
+        (void)HeaderPath;
+        if (Func.AsyncBody.empty()) return {};
+        // 剥离函数体外层大括号（{ ... }）
+        MString Body = StripComments(Func.AsyncBody);
+        {
+            const size_t B1 = Body.find_first_not_of(" \t\r\n");
+            const size_t B2 = Body.find_last_not_of(" \t\r\n");
+            if (B1 != MString::npos && Body[B1] == '{' && B2 != MString::npos && Body[B2] == '}')
+            {
+                Body = Body.substr(B1 + 1, B2 - B1 - 1);
+            }
+        }
+        // 1. 解析控制流树
+        size_t SiteIdx = 0, EndPos = 0;
+        TVector<CFlowNode> Top;
+        if (!ParseControlFlow(Body, Func.AwaitSites, SiteIdx, Top, EndPos))
+        {
+            return {};
+        }
+        size_t LoopCounter = 0;
+        {
+            // 递归遍历（用简单 lambda——生成器内）
+            std::function<void(TVector<CFlowNode>&)> AssignLoops =
+                [&](TVector<CFlowNode>& Ns)
+            {
+                for (auto& N : Ns)
+                {
+                    if (N.Kind == CFlowNode::EKind::For)
+                    {
+                        N.LoopIndex = LoopCounter++;
+                        if (!N.Children.empty()) AssignLoops(N.Children[0].Children);
+                    }
+                    else if (N.Kind == CFlowNode::EKind::If)
+                    {
+                        for (auto& C : N.Children) AssignLoops(C.Children);
+                    }
+                }
+            };
+            AssignLoops(Top);
+        }
+        const MString FrameName = "MHeaderTool_AwaitFrame_" + SanitizeIdentifier(NamePrefix) +
+            "_" + SanitizeIdentifier(Func.Name);
+        const MString R = RFromReturnType(Func.ReturnType.CanonicalName);
+        if (R.empty()) return {};
+
+        std::ostringstream Out;
+        Out << "// " << FrameName << ": 通用递归控制流 await Frame\n";
+        Out << "struct " << FrameName << " : TEnableSharedFromThis<" << FrameName << ">\n";
+        Out << "{\n";
+        for (const auto& P : Func.Params)
+        {
+            Out << "    " << P.Type.CanonicalName << " " << P.Name << "{};\n";
+        }
+        bool bHasLive = false;
+        for (const auto& L : Func.LiveAcrossAwait)
+        {
+            if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
+            Out << "    " << L.Type.CanonicalName << " " << L.Name << "{};\n";
+        }
+        // await 结果变量 / 累加变量 / 循环变量：跨挂起需要 Frame 槽
+        //（await 结果即使不"跨多个 await"——Start 挂起后 Resume 也要用）
+        {
+            TVector<MString> ExtraVars;
+            std::function<void(const TVector<CFlowNode>&)> CollectVars =
+                [&](const TVector<CFlowNode>& Ns)
+            {
+                for (const auto& N : Ns)
+                {
+                    if (N.Kind == CFlowNode::EKind::Await)
+                    {
+                        if (!N.AssignVar.empty()) ExtraVars.push_back(N.AssignVar);
+                        if (!N.LAccumPrefix.empty())
+                        {
+                            // `Sum += ` → Sum
+                            const size_t OpPos = N.LAccumPrefix.find("+=");
+                            const size_t E = OpPos == MString::npos ? N.LAccumPrefix.size() : OpPos;
+                            MString V = TrimText(N.LAccumPrefix.substr(0, E));
+                            if (!V.empty()) ExtraVars.push_back(V);
+                        }
+                    }
+                    else if (N.Kind == CFlowNode::EKind::For)
+                    {
+                        // `int i = 0` → i
+                        const size_t Eq = N.LInit.find('=');
+                        if (Eq != MString::npos)
+                        {
+                            const size_t EndV = N.LInit.find_last_not_of(" \t", Eq - 1);
+                            if (EndV != MString::npos)
+                            {
+                                const size_t StartV = N.LInit.find_last_of(" \t", EndV);
+                                ExtraVars.push_back(N.LInit.substr(
+                                    StartV == MString::npos ? 0 : StartV + 1,
+                                    EndV - (StartV == MString::npos ? 0 : StartV + 1) + 1));
+                            }
+                        }
+                        if (!N.Children.empty()) CollectVars(N.Children[0].Children);
+                    }
+                    else if (N.Kind == CFlowNode::EKind::If)
+                    {
+                        for (const auto& C : N.Children) CollectVars(C.Children);
+                    }
+                }
+            };
+            CollectVars(Top);
+            for (const auto& V : ExtraVars)
+            {
+                bool bInLive = false;
+                for (const auto& L : Func.LiveAcrossAwait)
+                {
+                    if (L.Name == V) { bInLive = true; break; }
+                }
+                if (bInLive) continue;
+                bool bDup = false;
+                for (const auto& D : ExtraVars)
+                {
+                    // 简单去重（同类变量）
+                    (void)D;
+                }
+                if (!bHasLive) { Out << "    // 跨 await 存活变量\n"; bHasLive = true; }
+                Out << "    " << R << " " << V << "{};\n";
+            }
+        }
+        Out << "    " << R << " ReturnValue{};\n";
+        Out << "    TOptional<SFutureResult<" << R << ">::SAwaiter> Awaiter1;\n";
+        if (R != "void")
+        {
+            Out << "    " << R << " AwaitResult{};\n";
+        }
+        Out << "    TSharedPtr<" << FrameName << "> SelfGuard;  // 挂起期间持有自己（完成时释放）\n";
+        Out << "    MPromise<TResult<" << R << ", FAppError>> Promise;\n";
+        Out << "    int State = 0;\n";
+        Out << "\n";
+        Out << "    void Start()\n";
+        Out << "    {\n";
+        MString StartBody;
+        GenCFExec(Top, 0, StartBody, "        ", Func);
+        Out << StartBody;
+        // Start 末尾：若未 Finish（fall-through）——默认值
+        if (StartBody.find("Finish();") == MString::npos)
+        {
+            Out << "        ReturnValue = " << R << "{};\n";
+            Out << "        Finish();\n";
+        }
+        Out << "    }\n";
+        Out << "\n";
+        // 循环方法
+        MString LoopMethods;
+        GenCFLoopMethods(Top, LoopMethods, Func);
+        Out << LoopMethods;
+        // Resume：每个 await 一个 case（恢复块 = await 后同列表剩余 + 循环收尾）
+        Out << "    void Resume()\n";
+        Out << "    {\n";
+        Out << "        switch (State)\n";
+        Out << "        {\n";
+        // 收集 await 的"同列表剩余"（遍历树）
+        // 简化：Resume case K = 该 await 所在列表的后续节点（GenCFExec）
+        std::function<void(const TVector<CFlowNode>&, TVector<CFlowNode>&)> CollectResumes =
+            [&](const TVector<CFlowNode>& Ns, TVector<CFlowNode>& CollectOut)
+        {
+            for (size_t i = 0; i < Ns.size(); ++i)
+            {
+                const CFlowNode& N = Ns[i];
+                if (N.Kind == CFlowNode::EKind::Await)
+                {
+                    // 记录该 await 后的剩余
+                    // （Resume case 用——GenCFExec(Ns, i+1)）
+                    // 存储为"节点列表指针+位置"太复杂——直接生成时递归处理：
+                    // 用 map：AwaitIndex → (Ns 引用, i+1)？——引用不稳定。
+                    // 方案：Resume case K 直接调用 GenCFExec（生成时遍历树找到位置）。
+                    // 这里记录"该 await 所在列表"——用副本（小规模可接受）。
+                    CollectOut.push_back(N);  // placeholder——实际在生成 case 时处理
+                }
+                if (N.Kind == CFlowNode::EKind::If)
+                {
+                    for (const auto& C : N.Children) CollectResumes(C.Children, CollectOut);
+                }
+                else if (N.Kind == CFlowNode::EKind::For && !N.Children.empty())
+                {
+                    CollectResumes(N.Children[0].Children, CollectOut);
+                }
+            }
+        };
+        TVector<CFlowNode> CollectDummy;
+        CollectResumes(Top, CollectDummy);
+        // 生成 case：遍历树，对每个 Await 生成恢复块（GenCFExec 该 await 后同列表剩余）
+        std::function<void(const TVector<CFlowNode>&, size_t, bool)> GenCases =
+            [&](const TVector<CFlowNode>& Ns, size_t ParentLoop, bool bInLoop)
+        {
+            for (size_t i = 0; i < Ns.size(); ++i)
+            {
+                const CFlowNode& N = Ns[i];
+                if (N.Kind == CFlowNode::EKind::Await)
+                {
+                    const size_t K = N.AwaitIndex;
+                    Out << "        case " << (K + 1) << ":  // await " << (K + 1) << " 完成\n";
+                    Out << "        {\n";
+                    MString Rest;
+                    GenCFExec(Ns, i + 1, Rest, "            ", Func);
+                    Out << Rest;
+                    // 循环体 await 恢复 → 循环收尾（LoopAdvance）
+                    if (bInLoop && Rest.find("return;") == MString::npos
+                        && Rest.find("Finish();") == MString::npos)
+                    {
+                        Out << "            LoopAdvance_" << ParentLoop << "();\n";
+                    }
+                    else if (Rest.empty())
+                    {
+                        Out << "            ReturnValue = " << R << "{};\n";
+                        Out << "            Finish();\n";
+                    }
+                    Out << "            break;\n";
+                    Out << "        }\n";
+                }
+                if (N.Kind == CFlowNode::EKind::If)
+                {
+                    for (size_t ci = 0; ci < N.Children.size(); ++ci)
+                    {
+                        GenCases(N.Children[ci].Children, ParentLoop, bInLoop);
+                    }
+                }
+                else if (N.Kind == CFlowNode::EKind::For && !N.Children.empty())
+                {
+                    GenCases(N.Children[0].Children, N.LoopIndex, true);
+                }
+            }
+        };
+        GenCases(Top, 0, false);
+        Out << "        default: break;\n";
+        Out << "        }\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    void Finish()\n";
+        Out << "    {\n";
+        Out << "        Promise.SetValue(TResult<" << R << ", FAppError>::Ok(ReturnValue));\n";
+        Out << "        SelfGuard.reset();\n";
+        Out << "    }\n";
+        Out << "\n";
+        Out << "    SFutureResult<" << R << "> GetFuture()\n";
+        Out << "    {\n";
+        Out << "        return SFutureResult<" << R << ">(Promise.GetFuture());\n";
+        Out << "    }\n";
+        Out << "};\n";
+        return Out.str();
     }
 
     // 生成分支 await 状态机 Frame（第一步最小形态：if 体内单 await + early return）。
@@ -2648,6 +3353,15 @@ public:
             }
         }
         if (Sites.empty()) return {};
+        // 通用递归控制流（N 层嵌套/循环/组合）——优先（含 if/for 时）。
+        // 一次性覆盖：直线多 await、if/else/链/嵌套、循环、分支内循环、组合。
+        if (Func.AsyncBody.find("if (") != MString::npos
+            || Func.AsyncBody.find("for (") != MString::npos)
+        {
+            const MString CFrame = EmitAwaitCFrame(NamePrefix, HeaderPath, Func);
+            if (!CFrame.empty()) return CFrame;
+            // 解析失败回退特化
+        }
         // 分支 await（if 体内 await + early return；if/else 各一；else-if 链；嵌套；
         // 分支内循环）→ 分支生成器。有 if 即先尝试（含"分支内循环"）；解析失败回退。
         if (Func.AsyncBody.find("if (") != MString::npos)

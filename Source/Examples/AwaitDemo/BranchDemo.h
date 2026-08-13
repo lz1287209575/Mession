@@ -25,3 +25,9 @@ SFutureResult<int> NestedIfAsync(int N);
 
 MFUNCTION(Async)
 SFutureResult<int> BranchLoopAsync(int N);
+
+MFUNCTION(Async)
+SFutureResult<int> DeepNestAsync(int N);
+
+MFUNCTION(Async)
+SFutureResult<int> LoopIfAsync(int N);

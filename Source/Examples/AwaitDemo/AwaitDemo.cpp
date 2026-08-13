@@ -114,9 +114,25 @@ int main()
     std::printf("BranchLoopAsync(3):  %d（分支内循环 await）\n", BL1);
     std::printf("BranchLoopAsync(-2): %d（early）\n", BL2);
 
+    // 3 层嵌套（通用递归）：200→3层await(201)；50→2层await(52)；5→1层early(5)；-3→0
+    const int D1 = DeepNestAsync(200).GetResult().GetValue();
+    const int D2 = DeepNestAsync(50).GetResult().GetValue();
+    const int D3 = DeepNestAsync(5).GetResult().GetValue();
+    const int D4 = DeepNestAsync(-3).GetResult().GetValue();
+    std::printf("DeepNestAsync(200): %d（3 层嵌套 await）\n", D1);
+    std::printf("DeepNestAsync(50):  %d（2 层嵌套 await）\n", D2);
+    std::printf("DeepNestAsync(5):   %d（1 层 early）\n", D3);
+    std::printf("DeepNestAsync(-3):  %d（外层 early）\n", D4);
+
+    // 循环内 if：i 偶数轮累加（i+1）：0→+1→1；2→+3→4 → Sum=4
+    const int LI = LoopIfAsync(4).GetResult().GetValue();
+    std::printf("LoopIfAsync(4):     %d（循环内 if await）\n", LI);
+
     return (R == 31 && C == 44 && L == 4 && M == 11 && B1 == 12 && B2 == 0
         && E1 == 6 && E2 == 7 && M1 == 14 && M2 == 0
         && CH1 == 21 && CH2 == 7 && CH3 == 0
         && N1 == 42 && N2 == 5 && N3 == 0
-        && BL1 == 4 && BL2 == 0) ? 0 : 1;
+        && BL1 == 4 && BL2 == 0
+        && D1 == 201 && D2 == 52 && D3 == 5 && D4 == 0
+        && LI == 4) ? 0 : 1;
 }
