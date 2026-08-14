@@ -614,7 +614,6 @@ void MASTReflectionVisitor::ApplyMFUNCTIONMacroArgs(
             else if (Part == "ClientCall") { OutFunc.Transport = EFunctionTransport::ClientCall; OutFunc.bIsRpc = true; }
             else if (Part == "Client")     { OutFunc.Transport = EFunctionTransport::Client; }
             else if (Part == "LuaBind")    { OutFunc.Transport = EFunctionTransport::LuaBind; }
-            else if (Part == "Injection")  { OutFunc.bInjection = true; }
             else if (Part == "NetServer")  { OutFunc.RpcKind   = ERpcKind::Server;          OutFunc.bIsRpc = true; }
             else if (Part == "NetClient")  { OutFunc.RpcKind   = ERpcKind::Client;          OutFunc.bIsRpc = true; }
             else if (Part == "RPC")        { OutFunc.bIsRpc    = true; }

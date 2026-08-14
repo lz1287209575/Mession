@@ -230,12 +230,10 @@ SParsedClass ToLegacyClass(const mession::headercodegen::SParsedRecord& In)
 
     for (const auto& P : In.Properties)
     {
-        if (P.bInjection) Out.InjectionProperties.push_back(ToLegacyProperty(P));
         Out.Properties.push_back(ToLegacyProperty(P));
     }
     for (const auto& F : In.Functions)
     {
-        if (F.bInjection) Out.InjectionFunctions.push_back(ToLegacyFunction(F));
         Out.Functions.push_back(ToLegacyFunction(F));
     }
     // manifest 分组键（旧字符串解析路径有同名推导）

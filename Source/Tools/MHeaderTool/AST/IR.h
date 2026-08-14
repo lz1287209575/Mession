@@ -181,7 +181,6 @@ struct SParsedFunction
     MString                ClientApi;
     bool                   bHasAsyncMeta = false;
     bool                   bIsAsync      = false;
-    bool                   bInjection    = false;
     MString                AsyncBody;
     TVector<SAwaitSite>    AwaitSites;
     TVector<SLiveVarDecl>  LiveAcrossAwait;
