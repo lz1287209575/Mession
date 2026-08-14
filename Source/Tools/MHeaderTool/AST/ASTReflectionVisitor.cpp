@@ -63,7 +63,6 @@ bool MASTReflectionVisitor::VisitCXXRecordDecl(clang::CXXRecordDecl* RD)
         Record.bHasMClassMarker  = true;
         Record.ReflectionType    = ExtractMacroValue(MClassArgs->Args, "Type").value_or("Object");
         Record.Owner             = ExtractMacroValue(MClassArgs->Args, "Owner").value_or("");
-        Record.InjectionClass    = ExtractMacroValue(MClassArgs->Args, "InjectionClass").value_or("");
     }
     else if (Near(MStructArgs))
     {
@@ -127,10 +126,6 @@ bool MASTReflectionVisitor::VisitFieldDecl(clang::FieldDecl* FD)
                                 : clang::SourceRange());
 
     Out.FlagsExpr = MacroArgs->Args;
-    if (MacroArgs->Args.find("Injection") != MString::npos)
-    {
-        Out.bInjection = true;
-    }
     if (auto Owner = ExtractMacroValue(MacroArgs->Args, "Owner"))
     {
         Out.Owner = *Owner;

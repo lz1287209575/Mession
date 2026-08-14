@@ -104,10 +104,7 @@ struct SParsedClass
     MString ClassFlagsExpr = "0";
     MString ReflectionType = "Object";
     MString Owner;
-    MString InjectionClass;
     TVector<MString> AllParentClasses;  // 所有基类，用于检查是否继承自 MServerCallProxyBase
-    TVector<SParsedFunction> InjectionFunctions;
-    TVector<SParsedProperty> InjectionProperties;
     bool bScopedEnum = false;
     MString EnumUnderlyingType = "int32";
     TMap<MString, MString> TypeAliases;

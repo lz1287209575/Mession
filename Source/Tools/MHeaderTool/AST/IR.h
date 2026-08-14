@@ -82,7 +82,7 @@ struct SParsedProperty
     SParsedType              Type;
     MString                  Owner;
     MString                  FlagsExpr;
-    bool                     bInjection = false;
+    
     TVector<SMetadataEntry>  Metadata;
 };
 
@@ -146,7 +146,6 @@ struct SParsedRecord
     uint32                 SourceLine = 0;
     MString                ReflectionType;
     MString                Owner;
-    MString                InjectionClass;
     MString                ParentClass;
     MString                ClassFlagsExpr;
     TVector<MString>       AllParentClasses;

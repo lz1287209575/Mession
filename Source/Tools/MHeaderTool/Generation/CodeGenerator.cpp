@@ -224,7 +224,6 @@ SParsedClass ToLegacyClass(const mession::headercodegen::SParsedRecord& In)
     Out.ClassFlagsExpr    = In.ClassFlagsExpr.empty() ? "0" : In.ClassFlagsExpr;
     Out.ReflectionType    = In.ReflectionType.empty() ? "Object" : In.ReflectionType;
     Out.Owner             = In.Owner;
-    Out.InjectionClass    = In.InjectionClass;
     Out.AllParentClasses  = In.AllParentClasses;
     Out.TypeAliases       = In.TypeAliases;
 
