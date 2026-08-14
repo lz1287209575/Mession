@@ -5,8 +5,12 @@
 // MClientManifest 自身在 Source/Common/Net/Rpc/MClientManifest.generated.h 里
 // 由 MHeaderTool 维护（静态声明 + definitions 由 .mgenerated.cpp 提供）。
 //
-// 当前 PoC 阶段仓库里没有任何 MFUNCTION(Client/ClientCall) 函数——
-// GClientManifestEntries 是空数组；FindByFunctionId 会始终返回 nullptr。
+// 条目（GClientManifestEntries）由 MHeaderTool 生成器产出：当前 PoC 阶段
+// 业务侧没有 MFUNCTION(Client/ClientCall) 声明，生成器补收集"客户端可经
+// Gateway 调用的 ServerCall"（如 MEchoService.Echo / EchoAwait），使 Gateway
+// 按 FunctionId 路由到后端服务（OwnerType + FunctionName）。FindByFunctionId
+// 命中返回对应条目，未命中返回 nullptr（Gateway 记 manifest miss 并丢弃）。
+// 后续若引入 MFUNCTION(Client/ClientCall)，条目将由这些声明直接 emit。
 
 #include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Reflect/Reflection.h"
