@@ -122,6 +122,12 @@ using TEnableSharedFromThis = std::enable_shared_from_this<T>;
 template<typename T>
 using TUniquePtr = std::unique_ptr<T>;
 
+template<typename T, typename... TArgs>
+TUniquePtr<T> MakeUnique(TArgs&&... Args)
+{
+    return std::make_unique<T>(std::forward<TArgs>(Args)...);
+}
+
 template<typename T>
 using TEnableSharedFromThis = std::enable_shared_from_this<T>;
 

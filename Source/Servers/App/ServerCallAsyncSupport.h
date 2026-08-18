@@ -43,9 +43,9 @@ TAppFuture<TResponse> MakeErrorFuture(const MString& Code, const MString& Messag
     return MakeResultFuture(TAppResult<TResponse>::Err(FAppError::Make(Code, Message)));
 }
 /**
- * StartDeferredServerCall — 把 ServerCall handler 的返回值包装成 ClientCall 异步响应。
- * 当前 PoC 仅支持同步 ServerCall（不直接生成 ClientCall 包）。
- * TODO: 等反射驱动 ClientCall dispatch 落地后，再实现异步回包路径。
+ * StartDeferredServerCall — 把 ServerCall handler 的返回值包装成 CallClient 异步响应。
+ * 当前 PoC 仅支持同步 ServerCall（不直接生成 CallClient 包）。
+ * TODO: 等反射驱动 CallClient dispatch 落地后，再实现异步回包路径。
  */
 template<typename TResponse>
 TAppFuture<TResponse> StartDeferredServerCall(

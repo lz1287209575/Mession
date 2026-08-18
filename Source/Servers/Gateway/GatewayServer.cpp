@@ -1,6 +1,6 @@
 #include "Servers/Gateway/GatewayServer.h"
 #include "Servers/App/ServiceMain.h"
-#include "Common/Net/Rpc/ClientManifest.h"
+#include "Common/Net/Rpc/MClientManifest.generated.h"
 #include "Common/Net/Rpc/MRpcChannel.h"
 #include "Common/Net/Rpc/RpcClientCall.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
@@ -8,6 +8,8 @@
 #include "Common/Net/Rpc/RpcPayload.h"
 #include "Common/Net/ServiceDiscovery/Endpoint.h"
 #include "Common/Net/ServiceDiscovery/EndpointCache.h"
+#include "Common/Net/ClientCall/MClientTargetResolver.h"
+#include "Common/Net/ClientCall/MClientTargetContextGuard.h"
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Id.h"
@@ -74,8 +76,11 @@ uint16 MGatewayServer::GetListenPort() const
 void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
 {
     ClientConnections[ConnId] = Conn;
+    // 注册到 client-target resolver（server→client 推送的目标解析）
+    MClientTargetResolver::Get().RegisterConn(Conn);
     LOG_INFO("Gateway skeleton accepted connection %llu", static_cast<unsigned long long>(ConnId));
-    EventLoop.RegisterConnection(
+    // P5: 改用基类 DispatchConnection(单/多 Reactor 模式自适应)
+    DispatchConnection(
         ConnId,
         Conn,
         [this](uint64 ConnectionId, const TByteArray& Payload)
@@ -84,9 +89,10 @@ void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn)
                      static_cast<unsigned long long>(ConnectionId), Payload.size());
             HandleClientPacket(ConnectionId, Payload);
         },
-        [this](uint64 ConnectionId)
+        [this, Conn](uint64 ConnectionId)
         {
             ClientConnections.erase(ConnectionId);
+            MClientTargetResolver::Get().UnregisterConn(Conn);
         });
 }
 
@@ -175,6 +181,13 @@ MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::Rpc_OnHeartbeat
 void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& Data)
 {
     // step-2: Gateway 收到 envelope → 反射查 MClientManifest → 反射调对应
+    // 绑定当前客户端连接为推送目标（MClientTargetContextGuard RAII——
+    // 本次调用处理期间 CallClient 的下行解析到该连接）。
+    const auto ClientIt = ClientConnections.find(ConnectionId);
+    if (ClientIt != ClientConnections.end() && ClientIt->second)
+    {
+        MClientTargetContextGuard TargetGuard(ClientIt->second);
+    }
     // MFUNCTION(ServerCall) → 反射回 envelope(无 MessageType 字节)。
     //
     // envelope 形态:[RequestId:8B][FunctionId:2B][PayloadSize:4B][Payload]
@@ -200,7 +213,7 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
     const MClientManifest::SEntry* Entry = MClientManifest::FindByFunctionId(FunctionId);
 
     // step-2: 不再有"PoC 退化硬编码 MEchoService"——manifest miss 直接 no-op
-    // + LOG_WARN,等业务侧把 MFUNCTION(ClientCall) 声明补上之后会自动走对。
+    // + LOG_WARN,等业务侧把 MFUNCTION(CallClient) 声明补上之后会自动走对。
     if (!Entry)
     {
         LOG_WARN("Gateway: unknown client function_id=%u (manifest miss) connection=%llu",

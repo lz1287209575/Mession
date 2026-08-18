@@ -2,8 +2,8 @@
 
 MClientTargetResolver& MClientTargetResolver::Get()
 {
-    // Meyers singleton — first-touch construction, process-local lifetime.
-    // Matches the pattern used by MEndpointCache::Get() and MActorRouter::Get().
+    // Meyers 单例——首次访问时构造，进程内生命周期。
+    // 与 MEndpointCache::Get() / MActorRouter::Get() 同模式。
     static MClientTargetResolver Instance;
     return Instance;
 }
@@ -31,9 +31,8 @@ void MClientTargetResolver::UnregisterConn(TSharedPtr<INetConnection> Conn)
     std::lock_guard<std::mutex> Lock(Mutex);
     Connections.erase(Id);
 
-    // If the unregistered connection was the current bind context, drop it.
-    // Compare by raw pointer to avoid holding the unregistering caller alive
-    // through the binding.
+    // 若被注销的连接正是当前绑定上下文，则清除绑定。
+    // 用裸指针比较，避免通过绑定持有注销调用方的生命周期。
     if (CurrentContext.Get() == Conn.Get())
     {
         CurrentContext.reset();

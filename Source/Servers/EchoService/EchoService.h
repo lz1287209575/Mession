@@ -1,26 +1,25 @@
 #pragma once
 
-#include "Common/Runtime/MLib.h"
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/Routing/ActorRouter.h"
+#include "Common/Net/Rpc/MRpcChannel.h"
+#include "Common/Runtime/Actor/FActorMessage.h"
+#include "Common/Runtime/Async/AwaitMacros.h"
+#include "Common/Runtime/Async/Awaitable.h"
 #include "Common/Runtime/Async/MAsync.h"
+#include "Common/Runtime/Id.h"
+#include "Common/Runtime/Log/Log.h"
+#include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Object/Result.h"
-#include "Common/Runtime/Log/Log.h"
-#include "Common/Runtime/Id.h"
 #include "Common/Runtime/Reflect/Reflection.h"
-#include "Common/Runtime/Reflect/Reflection.h"
-#include "Common/Runtime/Async/MAsync.h"
-#include "Common/Runtime/Async/Awaitable.h"
-#include "Common/Runtime/Async/AwaitMacros.h"
-#include "Common/Net/Rpc/MRpcChannel.h"
-#include "Servers/App/ServiceId.h"
-#include "Servers/App/ServerCallAsyncSupport.h"
-#include "Servers/App/ServiceMain.h"
 #include "Protocol/Messages/Common/AppMessages.h"
 #include "Protocol/Messages/Common/ControlPlaneMessages.h"
 #include "Protocol/Messages/EchoService/FSampleEchoMessages.h"
+#include "Servers/App/ServerCallAsyncSupport.h"
+#include "Servers/App/ServiceId.h"
+#include "Servers/App/ServiceMain.h"
 
 // P3 v1 inline-body design: the generated Frame struct
 // (`MHeaderTool_AsyncFrame_MEchoService_EchoAwait`) lives in a separate
@@ -38,13 +37,11 @@ extern MEchoService* GGlobalEchoService;
 
 // EchoAwait 的 await 目标（A 形态：TAwaitable<F,R,Args...> 的 F）——包装 CallToActor 为可调用。
 // 声明供 #ifdef 体内的 await 表达式引用；定义在 EchoService.cpp。
-SFutureResult<FSampleEchoResponse> CallEchoRemote(const FSampleEchoRequest& Request);
-
+SFutureResult<FSampleEchoResponse> CallEchoRemote(const FSampleEchoRequest& Request, MEchoService* InService);
 
 
 MSTRUCT()
-struct SEchoServiceConfig
-{
+struct SEchoServiceConfig {
     MPROPERTY(Meta=(Cli="--listen"))
     uint16 ListenPort = 0;
 
@@ -86,25 +83,28 @@ struct SEchoServiceConfig
     MString LogConfigPath = "";
 };
 
-MCLASS(Type=Service)
-class MEchoService : public MNetServerBase, public MObject
-{
-public:
+MCLASS(Type = Service)
+class MEchoService : public MNetServerBase, public MObject {
+    public:
     MGENERATED_BODY(MEchoService, MObject, 0)
-public:
+    public:
     using MObject::Tick;
 
-    static MEchoService* GetSingleton() { return GGlobalEchoService; }
+    static MEchoService* GetSingleton() {
+        return GGlobalEchoService;
+    }
 
     bool Init(int InPort = 0);
     void Tick();
-    void Run() override { MNetServerBase::Run(); }
+    void Run() override {
+        MNetServerBase::Run();
+    }
 
     uint16 GetListenPort() const override;
-    void OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
-    void TickBackends() override;
-    void ShutdownConnections() override;
-    void OnRunStarted() override;
+    void   OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
+    void   TickBackends() override;
+    void   ShutdownConnections() override;
+    void   OnRunStarted() override;
 
     // EchoService 暴露的 ServerCall——Gateway 通过 MClientManifest 把 Client_* 转到本类后调用。
     MFUNCTION(ServerCall)
@@ -116,6 +116,18 @@ public:
     // text, not a macro tag (per spec 2026-07-24 §7.3 v1 inline-body design).
     MFUNCTION(ServerCall, Async)
     SFutureResult<FSampleEchoResponse> EchoAwait(const FSampleEchoRequest& Request);
+
+    // 跨进程 actor 消息接收端(Post):对端 MRpcChannel::CallActor 把 FActorMessageWire
+    // 发到这里,本函数 dispatch 到本进程内 MActorSystem::DispatchLocal 后立即返回。
+    // actor-extension spec 阶段 4 + multi-reactor spec 阶段 6 配套入口。
+    MFUNCTION(ServerCall)
+    SFutureResult<SEmptyServerMessage> OnActorMessage(const FActorMessageWire& InWire);
+
+    // 跨进程 actor Call(请求-响应):对端 MRpcChannel::CallActorAndWait 走这里。
+    // 返回 SFutureResult<FActorMessageWire> 等待本地 actor 回复;actor OnMessage
+    // 通过 Msg.ReplyPromise->SetValue(...) 触发本函数 resolve,把回复字节带回对端。
+    MFUNCTION(ServerCall)
+    SFutureResult<FActorMessageWire> OnActorCall(const FActorMessageWire& InWire);
 
     // 传输层握手 / 心跳桩——MServerConnection::SendHandshake / SendHeartbeat 会通过
     // MRpc::CallRemote 调 Rpc_OnServerHandshake / Rpc_OnHeartbeat。
@@ -129,11 +141,10 @@ public:
     MFUNCTION(ServerCall)
     MFuture<TResult<SEmptyServerMessage, FAppError>> Rpc_OnHeartbeat(uint32 Seq);
 
-private:
+    private:
     // 本机 Actor 注册到 MActorRouter（ServerType=Unknown 表示本机）。
     void RegisterLocalActors();
 
-    SEchoServiceConfig Config;
+    SEchoServiceConfig    Config;
     TMap<uint64, MString> ActorMessages;
 };
-

@@ -145,6 +145,20 @@ bool MServerConnection::SendPacketRaw(const TByteArray& Data)
     return false;
 }
 
+bool MServerConnection::SendServerPush(uint8 StatusCode, TByteArray&& Payload)
+{
+    // wire format: [StatusCode:1B][Reserved:2B][Payload:N]（最小 3 字节 + 可选负载）
+    // 不带 CallId ——对端 ConsumeServerCall 不会匹配,直接 drop。
+    // Payload 用途:at-least-once 协议下 server 回 [SequenceId:8B] 让 client 确认投递。
+    TByteArray Pkt;
+    Pkt.reserve(3 + Payload.size());
+    Pkt.push_back(StatusCode);
+    Pkt.push_back(0);  // Reserved
+    Pkt.push_back(0);  // Reserved
+    Pkt.insert(Pkt.end(), Payload.begin(), Payload.end());
+    return SendPacket(static_cast<uint8>(EServerMessageType::MT_ServerPush), Pkt.data(), static_cast<uint32>(Pkt.size()));
+}
+
 void MServerConnection::Tick(float DeltaTime)
 {
     if (State == EConnectionState::Disconnected)

@@ -119,13 +119,10 @@ endif()
 
 # Core 库（底层运行时：Common 下的网络/并发/事件循环基础能力）
 set(MESSION_CORE_SOURCES
-    Source/Common/Net/HttpDebugServer.cpp
     Source/Common/IO/Socket/SocketPlatform.cpp
     Source/Common/IO/Socket/Socket.cpp
     Source/Common/Runtime/EventLoop/TaskEventLoop.cpp
     Source/Common/Runtime/EventLoop/NetEventLoop.cpp
-    Source/Common/Runtime/Concurrency/TaskQueue.cpp
-    Source/Common/Runtime/Concurrency/ThreadPool.cpp
 )
 
 add_library(mession_core STATIC
@@ -147,11 +144,12 @@ configure_mession_compile_options(mession_core)
 
 # Common 库（公共组件：日志/RPC/连接等中层能力）
 set(MESSION_COMMON_SOURCES
-    Source/Common/Asset/UAssetPackageReader.cpp
     Source/Common/Runtime/Async/AsyncContext.cpp
-    Source/Common/Runtime/Concurrency/FiberAwait.cpp
-    Source/Common/Runtime/Concurrency/FiberScheduler.cpp
+    Source/Common/Runtime/Actor/MActorHandle.cpp
+    Source/Common/Runtime/Actor/MActorSystem.cpp
     Source/Common/Runtime/Concurrency/SignalHandler.cpp
+    Source/Common/Runtime/Concurrency/SubReactorPool.cpp
+    Source/Common/Runtime/Concurrency/WorkerPool.cpp
     Source/Common/Runtime/Log/ConsoleSink.cpp
     Source/Common/Runtime/Log/RollingFileSink.cpp
     Source/Common/Runtime/Log/UdpSink.cpp
@@ -171,8 +169,6 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Net/NetServerBase.cpp
     Source/Common/Net/Routing/ActorRouter.cpp
     Source/Common/Net/ServerConnection.cpp
-    Source/Common/Net/Rpc/RpcClientCall.cpp
-    Source/Common/Net/Rpc/RpcDispatch.cpp
     Source/Common/Net/Rpc/RpcManifest.cpp
     Source/Common/Net/Rpc/RpcServerCall.cpp
     Source/Common/Net/Rpc/RpcTransport.cpp
@@ -200,7 +196,6 @@ set(MESSION_NETDRIVER_SOURCES
     Source/Common/Runtime/Asset/MObjectAssetJson.cpp
     Source/Common/Runtime/Asset/MObjectAssetBinary.cpp
     Source/Common/Runtime/Asset/MObjectAssetCompiler.cpp
-    Source/Common/Runtime/Asset/MObjectAssetLoader.cpp
     Source/Common/Runtime/Reflect/Class.cpp
     Source/Common/Runtime/Reflect/Property.cpp
     Source/Common/Runtime/Reflect/Reflection.cpp
@@ -463,32 +458,6 @@ function(mession_add_service TargetName ServiceClass ConfigClass ServiceHeader)
     add_dependencies(${TargetName} mession_reflection_codegen)
 endfunction()
 
-# 暂禁 MObjectAssetSmokeTool：依赖已删除的 Source/Servers/Scene/Combat/。
-# Task 6 后续按需恢复（独立排期）。
-if(FALSE)
-add_executable(MObjectAssetSmokeTool
-    Source/Tools/MObjectAssetSmokeTool.cpp
-)
-target_link_libraries(MObjectAssetSmokeTool
-    PRIVATE
-        mession_netdriver
-)
-configure_mession_target(MObjectAssetSmokeTool)
-target_sources(MObjectAssetSmokeTool
-    PRIVATE
-        ${MESSION_GENERATED_DIR}/FCombatUnitRef.mgenerated.cpp
-        ${MESSION_GENERATED_DIR}/FSceneCombatAvatarSnapshot.mgenerated.cpp
-        ${MESSION_GENERATED_DIR}/FSceneCombatMonsterSpawnParams.mgenerated.cpp
-        ${MESSION_GENERATED_DIR}/MMonster.mgenerated.cpp
-        ${MESSION_GENERATED_DIR}/MMonsterCombatProfile.mgenerated.cpp
-        ${MESSION_GENERATED_DIR}/MMonsterCombatState.mgenerated.cpp
-        ${MESSION_GENERATED_DIR}/MMonsterConfig.mgenerated.cpp
-        ${MESSION_GENERATED_DIR}/MMonsterFactory.mgenerated.cpp
-        ${MESSION_GENERATED_DIR}/MMonsterManager.mgenerated.cpp
-)
-add_dependencies(MObjectAssetSmokeTool mession_reflection_codegen)
-endif()
-
 # 1. Gateway Server - 网关服务器
 mession_add_service(GatewayServer MGatewayServer SGatewayConfig Source/Servers/Gateway/GatewayServer.h
     SOURCES
@@ -517,6 +486,7 @@ mession_add_service(GatewayServer MGatewayServer SGatewayConfig Source/Servers/G
 mession_add_service(EchoService MEchoService SEchoServiceConfig Source/Servers/EchoService/EchoService.h
     SOURCES
         Source/Servers/EchoService/EchoService.cpp
+        Source/Servers/EchoService/MRankListActor.cpp
     GENERATED_GROUPS shared sample
     GENERATED_SOURCES
         ${MESSION_GENERATED_DIR}/FSampleEchoRequest.mgenerated.cpp
@@ -687,6 +657,22 @@ install(TARGETS
     MServiceRegistry
     DESTINATION bin
 )
+
+# *.Async.cpp IDE 索引(自动):每次构建把 codegen 专用源合并进 compile_commands.json。
+# 背景:*.Async.cpp 业务编译不编译(见 spec 2026-07-24 §7.2.1),CMake 不为其生成
+# 编译命令 → 基于 compile_commands 的 IDE(clangd/VS Code/CLion)不索引、无补全。
+# 脚本生成与 MHeaderTool fallback 一致的命令(-fsyntax-only -x c++ -I -D...),幂等。
+if(CMAKE_EXPORT_COMPILE_COMMANDS)
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_FOUND)
+        add_custom_target(update_async_compile_commands ALL
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_SOURCE_DIR}/Scripts/merge_async_compile_commands.py
+                    ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/Source
+            COMMENT "Merging *.Async.cpp into compile_commands.json (IDE indexing)"
+            VERBATIM)
+    endif()
+endif()
 
 message(STATUS "=====================================")
 message(STATUS "  Mession - Distributed MMO Server")

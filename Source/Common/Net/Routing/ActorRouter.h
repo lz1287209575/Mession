@@ -3,10 +3,15 @@
 #include "Common/Net/Routing/ActorRoute.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Net/ServiceDiscovery/EndpointCache.h"
+#include "Common/Runtime/Actor/MActorHandle.h"
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Reflect/Reflection.h"
 
 #include <mutex>
+
+class IActor;
+class MActorHandle;
+class MSubReactorPool;
 
 class MActorRouter
 {
@@ -21,6 +26,19 @@ public:
     bool IsActorLocal(uint64 ActorId) const;
 
     SFutureResult<FLocateActorResult> LocateActor(uint64 ActorId) const;
+
+    // === 阶段 1.2 actor-extension spec:actor 对象表 + Handle 路径 ===
+    // 设计意图:MActorRouter 既存路由(SActorRoute)也存 actor 对象(IActor*)。
+    // 实际存储 actor 对象的部分委托给 MActorSystem(单例),
+    // 避免双份所有权/双份锁。路由表部分仍由 MActorRouter 自己维护。
+    // 见 Docs/superpowers/specs/2026-08-13-actor-extension-design.md §7.4。
+    //
+    // 接受 TSharedPtr<IActor>(而非 IActor*):所有权一次性转入 MActorSystem,
+    // 与 MActorSystem::Register 语义一致。调用方惯例:
+    //   MActorRouter::Get().RegisterActor(NewMObject<MRankListActor>(nullptr, "RankList"), SubPool);
+    void RegisterActor(TSharedPtr<IActor> InActor, MSubReactorPool* InSubPool);
+    void UnregisterActorObject(uint64 InActorId);
+    MActorHandle FindHandle(uint64 InActorId);
 
     // 模板方式：传类名+函数名
     template<typename TResponse, typename TRequest>

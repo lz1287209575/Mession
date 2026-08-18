@@ -117,7 +117,7 @@ Prefer `MSTRUCT` + `MPROPERTY` over hand-rolled serialization.
 
 - `MCLASS` / `MSTRUCT` — type registration
 - `MPROPERTY(...)` — fields + domain / CLI meta
-- `MFUNCTION(...)` — RPC / client surface (`ServerCall`, `ClientCall`, `Client`, `Async`, …)
+- `MFUNCTION(...)` — RPC / client surface (`ServerCall`, `CallClient`, `Client`, `Async`, …)
 - `MGENERATED_BODY` — boilerplate
 
 After changing reflection macros or reflected types: rebuild so `Build/Generated/` updates, then `Scripts/verify_protocol.py` when protocol-related.
@@ -130,7 +130,8 @@ ClientCall stable IDs default from function identity; use `Api=...` / `ClientApi
 - **Mark async methods**: `MFUNCTION(..., Async)` (class members) or `MFUNCTION(Async)` (free functions). `MASYNC` was considered in P0–P3 and dropped in P4 — do not reintroduce.
 - **Await**: `AWAIT_OK(expr)` — only inside an `Async` function; the macro expands to `Frame->AwaitOk(expr)` so a local `Frame` must exist in scope.
 - **Sync barrier**: `F.Get()` / `F.Wait()` outside Async functions. Never on the event-loop thread for a future that depends on that loop (spec §8.2 redline — `MAsyncContext::IsSameContext` triggers assert in DEBUG).
-- **Fiber is legacy**: `MAwait` / `MAwaitOk` / `TPlayerCommandFuture` deleted in P4. `MFiberScheduler` remains only for player-command infrastructure.
+- **Fiber removed**: `MAwait` / `MAwaitOk` / `TPlayerCommandFuture` deleted in P4; the leftover fiber plumbing (`FiberAwait` / `FiberScheduler` / `CommandExecutionContext` / `MEventAwait`) had no consumers and was removed.
+- **`.Async.cpp` convention**: async business bodies live in `Xxx.Async.cpp` (codegen-only source, zero `#ifdef`; MHeaderTool scans it automatically, business build skips it). See spec §7.2.1.
 - Full design: `Docs/superpowers/specs/2026-07-24-cpp17-async-await.md`; P4 wrap (free-func codegen, deletions): `Docs/superpowers/specs/2026-07-28-async-p4-wrap.md`.
 
 ## Recommended reading
@@ -169,7 +170,7 @@ After Log changes: `./Bin/LogTest` (and optional `Scripts/validate_log_*.py`).
 
 | Gap | Intent |
 |-----|--------|
-| `MClientManifest` real emit from `MFUNCTION(Client/ClientCall/…)` | Replace stub; Gateway routes only via generated table |
+| `MClientManifest` real emit from `MFUNCTION(Client/CallClient/…)` | Replace stub; Gateway routes only via generated table |
 | Wire `MClientTargetResolver` at session online/offline + CallClient sites | Complete server→client push path |
 | Prove cross-Echo `CallToActor` under Registry actor metadata | Distributed baseline |
 | Green `validate.py` chains | Gate for further protocol work |

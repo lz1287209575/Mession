@@ -10,11 +10,3 @@ SFutureResult<int> RemoteFetch(int V)
 }
 
 // 类成员 async 业务逻辑体（codegen 输入）
-#ifdef MESSION_AWAIT_CODEGEN_SOURCE
-MFUNCTION(Async)
-SFutureResult<int> MemberService::MemberAsync(int Base)
-{
-    int R = TAwaitable<RemoteFetch>(Base);                              // await 点
-    return SFutureResult<int>(TResult<int, FAppError>::Ok(R + 1));      // 业务逻辑
-}
-#endif

@@ -26,8 +26,11 @@ enum class EServerType : uint32
 enum class EServerMessageType : uint8
 {
     MT_RPC = 27,                  // 服务器间 RPC 调用
-    MT_FunctionCall = 28,         // 服务器间反射函数调用请求
+    MT_FunctionCall = 28,         // 服务器间反射函数调用请求（带 CallId,期待 Response）
     MT_FunctionResponse = 29,     // 服务器间反射函数调用响应
+    MT_ServerPush = 0xCD,         // 服务器单向推送（投递状态/通知）—— 不需要 CallId 匹配，无回包
+    MT_ActorPost = 0xCE,          // actor 消息 Post 远端 wire ——对应 MActorHandle::Post,
+                                  //                  无 CallId，server 收后直接 dispatch 不回任何包（消除 wasted RTT）
 };
 
 // 服务器信息
@@ -203,6 +206,22 @@ public:
     // 发送底层包
     bool SendPacket(uint8 PacketType, const void* Data, uint32 Size);
     bool SendPacketRaw(const TByteArray& Data);
+
+    /**
+     * @brief SendServerPush - 单向推送投递状态（不需要 CallId，不期待回包）.
+     *
+     * 用途：MActorHandle::Post 远端路径的回包——替代 SFutureResult/MPromise 链路，
+     * 真正的「fire-and-forget」语义。客户端可选地 register 一个监听器处理 push，
+     * 默认只 log。
+     *
+     * wire format:
+     *   [StatusCode:1B][Reserved:2B][Payload:N]  (本端 → 对端)
+     *
+     * @param StatusCode 业务级状态码（如 0=Delivered, 1=ActorNotFound, 2=QueueFull）
+     * @param Payload     可选负载（at-least-once 协议下为 [SequenceId:8B] 大端）
+     * @return true 发送成功（已 enqueue 到 SendBuffer）
+     */
+    bool SendServerPush(uint8 StatusCode, TByteArray&& Payload = TByteArray());
     
     // 更新（主循环调用）
     void Tick(float DeltaTime);

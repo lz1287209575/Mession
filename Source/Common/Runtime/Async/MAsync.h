@@ -17,7 +17,7 @@
  * 用法（占位,C++17 异步模型完整说明见父 spec §5.1 / §7）:
  *
  * 业务侧声明异步函数时,在函数签名上挂 transport 标签（如 class 上的
- * ServerCall / ClientCall / Async,namespace-scope 自由函数只允许纯
+ * ServerCall / CallClient / Async,namespace-scope 自由函数只允许纯
  * Async,见 spec 2026-07-28 §B）。函数体返回 SFutureResult<FResp> 或
  * 在帧内使用 AWAIT_OK(expr) 来挂起等待另一个 async 调用。完整 codegen
  * 由 MHeaderTool 完成,见 Docs/superpowers/specs/2026-07-24-cpp17-async-await.md
@@ -83,7 +83,7 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
     // InnerType — 协议层取内层类型的统一入口 (codegen / Awaitable.h 模板用)
     using InnerType = T;
 
-    // 从基类隐式构造（供 FiberAwait 适配层使用）
+    // 从基类隐式构造（兼容 MFuture<TResult<...>> 返回类型的既有代码）
     SFutureResult(const Super& Other) : Super(Other) {}
     SFutureResult(Super&& Other) : Super(std::move(Other)) {}
 

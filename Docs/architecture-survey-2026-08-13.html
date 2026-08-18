@@ -1,0 +1,823 @@
+<title>Mession 整体游戏服务器架构 — 现状图谱</title>
+
+<style>
+  :root {
+    --bg: #0f1419;
+    --fg: #e6e6e0;
+    --fg-muted: #9aa0a6;
+    --accent: #4fc3f7;
+    --accent-dim: #2c5f7a;
+    --border: #2a3038;
+    --code-bg: #1a1f25;
+    --code-fg: #d4d4d4;
+    --ok: #66bb6a;
+    --warn: #ffa726;
+    --err: #ef5350;
+    --gap-bg: #2d1f1f;
+    --gap-fg: #ffcdd2;
+    --section-bg: #161b22;
+    --table-stripe: #1c2128;
+    --link: #79c0ff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #ffffff;
+      --fg: #1f2328;
+      --fg-muted: #57606a;
+      --accent: #0969da;
+      --accent-dim: #ddf4ff;
+      --border: #d0d7de;
+      --code-bg: #f6f8fa;
+      --code-fg: #1f2328;
+      --ok: #1a7f37;
+      --warn: #9a6700;
+      --err: #cf222e;
+      --gap-bg: #ffebe9;
+      --gap-fg: #82071e;
+      --section-bg: #f6f8fa;
+      --table-stripe: #f6f8fa;
+      --link: #0969da;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1419;
+    --fg: #e6e6e0;
+    --fg-muted: #9aa0a6;
+    --accent: #4fc3f7;
+    --accent-dim: #2c5f7a;
+    --border: #2a3038;
+    --code-bg: #1a1f25;
+    --code-fg: #d4d4d4;
+    --ok: #66bb6a;
+    --warn: #ffa726;
+    --err: #ef5350;
+    --gap-bg: #2d1f1f;
+    --gap-fg: #ffcdd2;
+    --section-bg: #161b22;
+    --table-stripe: #1c2128;
+    --link: #79c0ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.6;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+  }
+  h1 { font-size: 28px; margin: 0 0 8px; border-bottom: 2px solid var(--accent); padding-bottom: 12px; }
+  h2 { font-size: 22px; margin: 48px 0 12px; padding-left: 12px; border-left: 4px solid var(--accent); }
+  h3 { font-size: 17px; margin: 24px 0 8px; color: var(--accent); }
+  h4 { font-size: 14px; margin: 16px 0 6px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  p { margin: 8px 0; }
+  .subtitle { color: var(--fg-muted); margin: 0 0 32px; font-size: 14px; }
+  code {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 12px 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.5;
+    border: 1px solid var(--border);
+  }
+  pre.mermaid { background: var(--bg); border: 1px solid var(--border); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 13px;
+  }
+  th, td { text-align: left; padding: 8px 10px; border: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--section-bg); color: var(--accent); font-weight: 600; }
+  tr:nth-child(even) td { background: var(--table-stripe); }
+  td code { white-space: nowrap; }
+  .section {
+    background: var(--section-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 16px 0;
+  }
+  .gap {
+    background: var(--gap-bg);
+    color: var(--gap-fg);
+    border-left: 3px solid var(--err);
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin: 8px 0;
+  }
+  .ok { color: var(--ok); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .err { color: var(--err); font-weight: 600; }
+  ul.tight { margin: 8px 0; padding-left: 20px; }
+  ul.tight li { margin: 4px 0; }
+  .pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin: 12px 0;
+    font-size: 12px;
+    color: var(--fg-muted);
+  }
+  .legend span::before {
+    content: "■";
+    margin-right: 6px;
+  }
+  .legend .ok::before { color: var(--ok); }
+  .legend .warn::before { color: var(--warn); }
+  .legend .err::before { color: var(--err); }
+  .toc {
+    background: var(--section-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 20px;
+    margin: 24px 0;
+    font-size: 13px;
+  }
+  .toc a { color: var(--link); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc ul { margin: 4px 0; padding-left: 20px; }
+</style>
+
+# Mession 整体游戏服务器架构 — 现状图谱
+
+<p class="subtitle">基于当前 main 分支（PoC 收敛后）的整体架构调研。所有路径相对于 <code>/root/Mession/</code>。<br/>
+锚定基线 <code>2026-08-12</code>（AST 重构合入后）。模式:只读探索，事实陈述，不含改动建议。</p>
+
+<div class="toc">
+  <strong>目录</strong>
+  <ul>
+    <li><a href="#topo">1. 进程拓扑与数据流</a></li>
+    <li><a href="#rpc">2. 客户端调用全链路</a></li>
+    <li><a href="#registry">3. 服务发现与 Actor 寻址</a></li>
+    <li><a href="#async">4. 异步运行时层</a></li>
+    <li><a href="#codegen">5. 反射 codegen 流水线</a></li>
+    <li><a href="#transport">6. 传输层 / EventLoop / Fiber</a></li>
+    <li><a href="#gaps">7. 接缝与未落地</a></li>
+    <li><a href="#refs">8. 关键代码引用速查</a></li>
+    <li><a href="#validate">9. 验证与工具链</a></li>
+  </ul>
+</div>
+
+<h2 id="topo">1. 进程拓扑与数据流</h2>
+
+<div class="section">
+  <p>PoC 收敛为 <span class="ok">3 个进程角色</span>(同质 <code>mession_add_service</code> 模板生成的二进制 + Registry)，业务面只承载在 <code>EchoService</code> 实例上。客户端只连 Gateway。</p>
+<pre>
+  ┌──────────────────┐                                                ┌──────────────────┐
+  │  UE / validate.py │                                                │ MServiceRegistry │
+  │   (TCP client)   │                                                │      :18000      │
+  └────────┬─────────┘                                                │  Sessions_ / EPs │
+           │                                                          └─────▲──▲────────┘
+           │ MT_FunctionCall                                                  │  │ ListEndpoints /
+           │ envelope                       ┌────────────────────┐            │  │ EndpointChange
+           ▼                                │   GatewayServer    │            │  │ push
+  ┌──────────────────┐  server→echo   ┌─────│      :8001         │◄───────────┘  │
+  │ MGatewayServer   │  ──────────►   │     │  HandleClientPacket │               │
+  │ HandleClientPacket│                │     │  MEndpointCache     │               │
+  │ MEndpointCache   │  ◄──────────   │     └────────────────────┘               │
+  └──────▲──▲────────┘  heartbeat      │                                          │
+         │  │                          └────────────────────┬─────────────────────┘
+         │  │ echo↔echo                                       │
+         │  │                                                 ▼
+         │  │             ┌────────────────┐  ┌────────────────┐
+         │  │             │ MEchoService A │  │ MEchoService B │
+         │  │             │   :7001        │  │   :7002        │
+         │  └─ServerCall─►│ Actors 1001/2  │◄─│ Actors 2001/2  │
+         │   ServerCall   └────────────────┘  └────────────────┘
+         │                                       CallToActor
+         └────── PushClientDownlink (回包)
+</pre>
+
+<p><strong>实线</strong> = 直接调用（业务路径）；<strong>虚线/推送</strong> = Registry push / 异步回包。</p>
+  <div class="legend">
+    <span class="ok">实线 = 直接调用</span>
+    <span class="warn">虚线 = 推送 / 异步</span>
+  </div>
+  <h4>CLI 参数</h4>
+  <table>
+    <tr><th>参数</th><th>载体</th><th>用途</th></tr>
+    <tr><td><code>--listen</code></td><td>三个 binary</td><td>监听端口</td></tr>
+    <tr><td><code>--registry</code></td><td>Echo/Gateway</td><td>Registry 的 host:port（PoC 必填）</td></tr>
+    <tr><td><code>--inst</code></td><td>Echo</td><td>本实例 ID（响应里带回 <code>SourceActorId</code>）</td></tr>
+    <tr><td><code>--actors</code></td><td>Echo</td><td>本进程持有的 Actor InstId 列表；按 <code>(ServerType&lt;&lt;32)|InstId</code> 编 ActorId 上报 Registry</td></tr>
+    <tr><td><code>--service</code></td><td>Echo</td><td>反射类名（默认 <code>MEchoService</code>）</td></tr>
+    <tr><td><code>--local-type</code></td><td>Echo</td><td>字符串 → <code>EServerType</code> 派生</td></tr>
+  </table>
+</div>
+
+<h2 id="rpc">2. 客户端调用全链路</h2>
+
+<div class="section">
+  <p>统一 <span class="ok">FunctionId 稳定哈希</span>(FNV-1a 32 → 折叠 16 位)，反射 dispatch，无 MT 字节 envelope（<code>[RequestId:8B][FunctionId:2B][Size:4B][Payload]</code>）。</p>
+
+<pre>
+时序骨架（UE → Gateway → EndpointCache → RpcServerCall → Echo）:
+
+  UE ──► GW ──► EC ──► Rpc ──► Echo ──► Rpc ──► GW ──► UE
+
+步骤拆解:
+</pre>
+
+<table>
+  <tr><th>#</th><th>发送方</th><th>→ 接收方</th><th>消息 / 动作</th><th>关键位置</th></tr>
+  <tr><td>1</td><td>UE</td><td>→ Gateway</td><td><code>MT_FunctionCall</code> envelope (FunctionId, RequestId, Payload)</td><td><code>GatewayServer.cpp:175</code></td></tr>
+  <tr><td>2</td><td>Gateway</td><td>→ 自</td><td><code>ParseClientEnvelopePacket</code> 拆 envelope</td><td><code>RpcTransport.cpp:71-105</code></td></tr>
+  <tr><td>3</td><td>Gateway</td><td>→ 自</td><td><code>MClientManifest::FindByFunctionId</code>（PoC 忽略 entry 内容）</td><td><code>GatewayServer.cpp:200</code></td></tr>
+  <tr><td>4</td><td>Gateway</td><td>→ <code>MEndpointCache</code></td><td><code>GetOrConnect(EServerType::Echo)</code></td><td><code>EndpointCache.cpp:131-178</code></td></tr>
+  <tr><td>5</td><td><code>MEndpointCache</code></td><td>→ Gateway</td><td>返回 <code>MServerConnection</code>（round-robin）</td><td>—</td></tr>
+  <tr><td>6</td><td>Gateway</td><td>→ <code>RpcServerCall</code></td><td><code>RegisterServerCall(CallId, 5s timeout)</code></td><td><code>RpcServerCall.cpp:315-422</code></td></tr>
+  <tr><td>7</td><td>Gateway</td><td>→ EchoService</td><td><code>BuildServerCallPacket + SendServerCallMessage</code>（<code>MT_FunctionCall=28</code>）</td><td><code>RpcTransport.cpp:157-186</code></td></tr>
+  <tr><td>8</td><td>EchoService</td><td>→ <code>RpcServerCall</code></td><td><code>DispatchBackendServerCallPacketInbound</code></td><td><code>RpcServerCall.cpp:506-557</code></td></tr>
+  <tr><td>9</td><td><code>RpcServerCall</code></td><td>→ 自</td><td>反射 <code>FindFunctionById(FunctionId)</code></td><td><code>RpcServerCall.cpp:216-239</code></td></tr>
+  <tr><td>10</td><td><code>RpcServerCall</code></td><td>→ 自</td><td>调用生成的 <code>ServerCallHandler</code> = <code>MHeaderTool_HandleServerCall_MEchoService_Echo</code></td><td><code>Build/Generated/MEchoService.mgenerated.h:16-48</code></td></tr>
+  <tr><td>11</td><td><code>RpcServerCall</code></td><td>→ EchoService</td><td><code>TypedObject-&gt;Echo(Request)</code>（可能 <code>SFutureResult</code> pending）</td><td><code>EchoService.cpp:165-205</code></td></tr>
+</table>
+
+<p><strong>分支 A — sync ready</strong>:</p>
+<table>
+  <tr><th>#</th><th>发送方</th><th>→ 接收方</th><th>消息 / 动作</th></tr>
+  <tr><td>12a</td><td>EchoService</td><td>→ <code>RpcServerCall</code></td><td><code>FSampleEchoResponse</code></td></tr>
+  <tr><td>13a</td><td><code>RpcServerCall</code></td><td>→ Gateway</td><td><code>MT_FunctionResponse</code> = 29</td></tr>
+  <tr><td>14a</td><td>Gateway</td><td>→ UE</td><td><code>BuildClientEnvelopePacket</code> 回包</td></tr>
+</table>
+
+<p><strong>分支 B — async pending</strong>:</p>
+<table>
+  <tr><th>#</th><th>发送方</th><th>→ 接收方</th><th>消息 / 动作</th></tr>
+  <tr><td>12b</td><td>EchoService</td><td>→ <code>RpcServerCall</code></td><td><code>Inner.Then(...)</code> — <code>Ctx-&gt;Post</code> 把续体投回 ambient context</td></tr>
+  <tr><td>13b</td><td><code>RpcServerCall</code></td><td>→ Gateway</td><td><code>MT_FunctionResponse</code>（异步续体）</td></tr>
+  <tr><td>14b</td><td>Gateway</td><td>→ UE</td><td><code>BuildClientEnvelopePacket</code> 回包</td></tr>
+</table>
+
+  <h4>三种调用形态区分</h4>
+  <table>
+    <tr><th>形态</th><th>入口</th><th>Transport 字符串</th><th>反射字段</th></tr>
+    <tr>
+      <td><strong>ServerCall</strong></td>
+      <td><code>MRpcChannel::Call&lt;TResp&gt;(EServerType, ...)</code><br/><code>Source/Common/Net/Rpc/MRpcChannel.h:47</code></td>
+      <td><code>"ServerCall"</code></td>
+      <td><code>MFunction::ServerCallHandler</code>（由 codegen 填充）</td>
+    </tr>
+    <tr>
+      <td><strong>CallToActor</strong></td>
+      <td><code>MRpcChannel::CallToActor&lt;TResp&gt;(uint64 ActorId, ...)</code><br/><code>MRpcChannel.h:70</code></td>
+      <td>n/a</td>
+      <td><code>MActorRouter::FindActor → MEndpointCache::GetOrConnect</code></td>
+    </tr>
+    <tr>
+      <td><strong>ClientCall</strong></td>
+      <td><code>MRpcChannel::SendToClient(...)</code><br/><code>MRpcChannel.h:86</code></td>
+      <td><code>"Client" / "ClientCall"</code></td>
+      <td><span class="err">0 caller，整条 caller 链断</span></td>
+    </tr>
+  </table>
+
+  <h4>下行链路 (Server→Client)</h4>
+  <table>
+    <tr><th>组件</th><th>状态</th><th>位置</th></tr>
+    <tr><td><code>FClientDownlinkPushRequest</code> 协议</td><td><span class="ok">已落地</span></td><td><code>Protocol/Messages/Common/ClientDownlinkMessages.h:17</code></td></tr>
+    <tr><td><code>MGatewayServer::PushClientDownlink</code></td><td><span class="ok">已落地（唯一入口）</span></td><td><code>GatewayServer.cpp:118-163</code></td></tr>
+    <tr><td><code>MClientTargetResolver</code></td><td><span class="warn">框架完整，0 caller</span></td><td><code>Common/Net/ClientCall/MClientTargetResolver.cpp</code></td></tr>
+    <tr><td><code>MClientTargetContextGuard</code></td><td><span class="warn">RAII 已落，未串入业务</span></td><td><code>Common/Net/ClientCall/MClientTargetContextGuard.h</code></td></tr>
+    <tr><td>Gateway <code>OnAccept</code>/<code>OnClose</code> 接 RegisterConn</td><td><span class="err">未接</span></td><td><code>GatewayServer.cpp:74-91</code></td></tr>
+  </table>
+</div>
+
+<h2 id="registry">3. 服务发现与 Actor 寻址</h2>
+
+<div class="section">
+<pre>
+  ┌──────────────────────────────┐         ┌──────────────────────────────┐
+  │  MServiceRegistry :18000      │         │  MEndpointCache (Service 侧)   │
+  │  ┌──────────────────────────┐ │         │  ┌──────────────────────────┐ │
+  │  │ Endpoints_ by ServerId    │ │         │  │ Endpoints_ by Type       │ │
+  │  │ MonotonicSeq_ by Type     │ │  push   │  │ ConnectionPool_ by       │ │
+  │  │ Sessions_ by ConnId       │ │────────►│  │   ServerId                │ │
+  │  │ TickHeartbeats            │ │205/206  │  │ FRegistryClient Conn/    │ │
+  │  │   Age>15s unhealthy       │ │         │  │   HeartbeatTimer/        │ │
+  │  │   Age>30s evict           │ │         │  │   ReconnectTimer         │ │
+  │  └──────────────────────────┘ │         │  │ LastSeq_ by Type         │ │
+  └──────────────────────────────┘         │  └──────────────────────────┘ │
+                                          └──────▲──────────────▲───────────┘
+                                                 │              │
+                                ┌────────────────┐│              │
+                                │ MActorRouter   ││              │
+                                │  ActorRoutes   ││ SendToActor  │
+                                │  TMap uint64   ││   →          │
+                                │   → SActorRoute││  GetOrConnect│
+                                │  RoutesMutex   ││              │
+                                └────────────────┘│              │
+                                                  │              │
+                          ┌───────────────────────┴──────────────┘
+                          │
+  ┌────────────────────────┴─────────────────────┐
+  │  RpcServerCall                                │
+  │   GPendingServerCalls                         │
+  │   DispatchServerCall (反射 FindFunctionById)  │
+  │   HandleServerCallResponse (找 CallId)        │
+  │   AttachDispatchToConnection                  │
+  │     MT_FunctionCall(28) → DispatchBackend...  │
+  │     MT_FunctionResponse(29) → HandleResp...   │
+  └──────────────────────────────────────────────┘
+</pre>
+
+<p><strong>数据流</strong>:</p>
+<table>
+  <tr><th>From</th><th>To</th><th>消息 / 动作</th></tr>
+  <tr><td>MServiceRegistry</td><td>MEndpointCache</td><td><code>EndpointChange(205)</code> push，fanout 所有 Sessions</td></tr>
+  <tr><td>MServiceRegistry</td><td>MEndpointCache</td><td><code>Register Ack(206)</code> / <code>ListEndpoints</code> Resp</td></tr>
+  <tr><td>MEndpointCache</td><td>RpcServerCall</td><td><code>GetOrConnect</code> round-robin + <code>LazyConnect</code></td></tr>
+  <tr><td>MActorRouter</td><td>MEndpointCache</td><td><code>SendToActor → GetOrConnect</code></td></tr>
+  <tr><td>RpcServerCall</td><td>MEndpointCache</td><td><code>AttachDispatchToConnection</code> 挂 <code>MT_FunctionCall/Response</code></td></tr>
+</table>
+
+  <h4>Actor 寻址流程（EchoService 业务路由）</h4>
+<pre>
+  ┌─────────────────────────┐
+  │ MEchoService::Echo      │
+  │   TargetActorId         │
+  └──────────┬──────────────┘
+             │
+             ▼
+  ┌─────────────────────────┐
+  │ MActorRouter            │
+  │   IsActorLocal?         │
+  └──────┬──────────┬───────┘
+   Yes   │          │  No
+   ┌─────▼──────┐   └──────────────►  ┌─────────────────────┐
+   │ 本地命中    │                    │ CallToActor         │
+   │ 直接构造    │                    │   MRpcChannel →     │
+   │ Response   │                    │   MActorRouter::    │
+   └────────────┘                    │   SendToActor       │
+                                     └──────────┬──────────┘
+                                                ▼
+                                     ┌─────────────────────┐
+                                     │ MEndpointCache      │
+                                     │   GetOrConnect      │
+                                     │   (ServerType)      │
+                                     └──────────┬──────────┘
+                                                ▼
+                                     ┌─────────────────────┐
+                                     │ CallServerFunction  │
+                                     │   注册 CallId       │
+                                     │   5s timeout       │
+                                     └──────────┬──────────┘
+                                                ▼
+                                     ┌─────────────────────┐
+                                     │ 对端 Echo 实例      │
+                                     │   反射 dispatch     │
+                                     └─────────────────────┘
+</pre>
+
+  <h4>关键数据</h4>
+  <table>
+    <tr><th>字段</th><th>位置</th><th>说明</th></tr>
+    <tr><td>ActorId 布局</td><td><code>ServiceId.h:14-47</code></td><td><code>uint64 ActorId = (ServiceId &lt;&lt; 32) | InstId</code></td></tr>
+    <tr><td><code>SActorRoute</code></td><td><code>Routing/ActorRoute.h:6-12</code></td><td><code>ActorId / ServerType / ConnectionId / LastUpdateTime</code></td></tr>
+    <tr><td>本地 Actor 标记</td><td><code>ActorRouter.cpp:42-46</code></td><td><code>ServerType == EServerType::Unknown</code></td></tr>
+    <tr><td>Registry 协议 base</td><td><code>Endpoint.h:26-35</code></td><td>200 起步，避开 <code>MT_RPC=27/MT_FunctionCall=28/MT_FunctionResponse=29</code></td></tr>
+    <tr><td>stale 端点</td><td><code>EndpointCache.cpp:428-449</code></td><td><code>PurgeDisappeared</code> 直接 erase（spec 原意是标 unhealthy 自愈）</td></tr>
+  </table>
+</div>
+
+<h2 id="async">4. 异步运行时层</h2>
+
+<div class="section">
+  <p>C++17 自建 async/await 模型，<span class="ok">非</span> C++20 coroutines、非 fiber-first。</p>
+
+  <h4>类型层契约</h4>
+  <pre><code>// 唯一对外合同
+class SFutureResult&lt;T&gt; : public MFuture&lt;TResult&lt;T, FAppError&gt;&gt; {
+    // Get() 抛 FFutureResultError on err
+    // PeekResult() v1 非破坏性读取
+    // IsOk() / IsErr() / GetError()
+};
+
+// AWAIT_OK 宏:展开为 Frame->AwaitOk(expr)
+#define AWAIT_OK(expr) Frame->AwaitOk(expr)
+// 隐式契约:局部变量名必须是 Frame</code></pre>
+
+<pre>
+  ┌─────────────────────────────────────────┐
+  │  类型层 (Source/Common/Runtime/Async)   │
+  │  ┌─────────────────────────────────┐    │
+  │  │ SFutureResult&lt;T&gt;                │    │   ┌──────────────────────────┐
+  │  │   MAsync.h:77-231               │    │   │ MAsyncContext (薄         │
+  │  │ SAwaiter (AwaitReady/Suspend/   │    │   │   SynchronizationContext)│
+  │  │   Resume)                       │    │   │  ┌────────────────────┐  │
+  │  │ WrapAsSFutureResult             │    │   │  │ MAsyncContext 抽象 │  │
+  │  │ MAsyncDetail::_unwrap           │    │   │  │   Post / IsSame    │  │
+  │  └─────────────────────────────────┘    │   │  │   Context / Current│  │
+  └─────────────────────────────────────────┘   │  │   / SetCurrent    │  │
+                                                  │  │ MLoopAsyncContext  │  │
+                                                  │  │   绑 ITaskRunner*  │  │
+                                                  │  │ thread_local       │  │
+                                                  │  │   GCurrentContext  │  │
+                                                  │  └────────────────────┘  │
+                                                  └────────────┬─────────────┘
+                                                               │
+                                                               ▼
+  ┌──────────────────────────────┐                ┌────────────────────────────┐
+  │  Codegen (MHeaderTool)       │                │ Fiber 残余 (仅 player-      │
+  │  ┌──────────────────────┐    │                │   command 基础设施)        │
+  │  │ &lt;Class|Free&gt;_       │    │                │  ┌──────────────────────┐  │
+  │  │   AsyncFrames.h      │    │                │  │ MFiberScheduler      │  │
+  │  │ _AwaitStateMachine.h │    │                │  │   ucontext POSIX /   │  │
+  │  │ _AwaitImpl.mgenerated│────┼───AIM─────────►│  │   null Windows       │  │
+  │  │   .cpp (独立编译单元 │    │                │  │ SuspendCurrentCmd    │  │
+  │  │   覆盖业务 await 体) │    │                │  │ MYield / MCheckPoint │  │
+  │  └──────────────────────┘    │                │  └──────────────────────┘  │
+  └──────────────┬───────────────┘                └────────────────────────────┘
+                 │
+                 ▼ (CODEGEN → SF: Frame struct 引用 SFutureResult 桥)
+</pre>
+
+  <h4>Ambient Context 安装点</h4>
+  <p>仅 <code>MNetServerBase::Run()</code> 启停时设置：</p>
+<pre><code>// NetServerBase.cpp:36-37
+LoopContext = MakeShared&lt;MAsync::MLoopAsyncContext&gt;(GetTaskRunner());
+MAsync::MAsyncContext::SetCurrent(LoopContext.Get());
+// NetServerBase.cpp:53 退出时清空</code></pre>
+
+  <h4>Get() 红线 (DEBUG)</h4>
+  <pre><code>// MAsync.h:109-136
+if (!IsReady()) {
+    if (auto* Ctx = MAsync::MAsyncContext::Current()) {
+        if (Ctx->IsSameContext()) {
+            LOG_ERROR("deadlock risk: Get() on event-loop thread...");
+#ifndef NDEBUG
+            assert(false);
+#endif
+        }
+    }
+}</code></pre>
+  <p>只 LOG_ERROR + DEBUG assert，<span class="warn">不抛异常</span>。</p>
+
+  <h4>Codegen 路径 (P4 收口后统一)</h4>
+  <table>
+    <tr><th>形态</th><th>Frame struct</th><th>状态机 Frame</th><th>驱动实现</th></tr>
+    <tr><td>类成员 <code>MFUNCTION(ServerCall, Async)</code></td><td><code>&lt;Class&gt;_AsyncFrames.h</code></td><td><code>&lt;Class&gt;_AwaitStateMachine.h</code></td><td><code>&lt;Class&gt;_AwaitImpl.mgenerated.cpp</code></td></tr>
+    <tr><td>自由函数 <code>MFUNCTION(Async)</code></td><td><code>&lt;Header&gt;_FreeAsyncFrames.mgenerated.h</code></td><td><code>&lt;Header&gt;_FreeAwaitStateMachine.h</code></td><td><code>&lt;Header&gt;_FreeAwaitImpl.mgenerated.cpp</code></td></tr>
+  </table>
+  <p>入口位置：<code>MHeaderTool.cpp:154-292</code>。自由函数版简化掉 <code>Ctx/Service/Request</code> 字段。</p>
+
+  <h4>Fiber 限制点 (Windows)</h4>
+  <div class="gap">
+    <strong>Windows <code>FNullFiberBackend</code></strong>:<code>SupportsSuspendResume() == false</code>；<code>SwitchIn</code> 第二次直接 <code>throw runtime_error</code>。<br/>
+    <code>SuspendCurrentCommandUntil</code> 在 Windows 走 <code>FPlayerCommandError("fiber_backend_unsupported")</code> 报错分支。<br/>
+    POSIX <code>FPosixFiberBackend</code> 完整 <code>ucontext</code> 支持 suspend/resume。<br/>
+    业务侧 <code>MAwait / MAwaitOk / TPlayerCommandFuture</code> 全部清除（grep 0 命中）。
+  </div>
+</div>
+
+<h2 id="codegen">5. 反射 codegen 流水线</h2>
+
+<div class="section">
+<pre>
+  ┌─────────────────────────────┐
+  │ 源码标记                     │
+  │ ┌─────────────────────────┐ │
+  │ │ 业务 .h/.cpp             │ │
+  │ │   MGENERATED_BODY       │ │
+  │ │   #ifdef MESSION_AWAIT_ │ │
+  │ │     CODEGEN_SOURCE      │ │
+  │ │   包裹 await 体          │ │
+  │ └─────────────────────────┘ │
+  └──────────────┬──────────────┘
+                 ▼
+  ┌──────────────────────────────────────────────┐
+  │ MHeaderTool (libtooling)                      │
+  │ ┌────────────────────────────────────────┐    │
+  │ │ MASTPipeline::Run                      │    │
+  │ │   加载 compile_commands                │    │
+  │ │   剥离 GCC PCH                         │    │
+  │ │   注入 -DMESSION_AWAIT_CODEGEN_SOURCE  │    │
+  │ └────────────────┬───────────────────────┘    │
+  │ ┌────────────────▼───────────────────────┐    │
+  │ │ ASTReflectionVisitor                   │    │
+  │ │   类/函数/MFUNCTION 分类               │    │
+  │ └────────────────┬───────────────────────┘    │
+  │ ┌────────────────▼───────────────────────┐    │
+  │ │ IR (EFunctionTransport, SParsedFunction)│    │
+  │ └────────────────┬───────────────────────┘    │
+  │ ┌────────────────▼───────────────────────┐    │
+  │ │ CodeGenerator                          │    │
+  │ │   GenerateHeader/Source/EnumHeader     │    │
+  │ └───┬──────┬─────┬──────┬─────┬───────┬────┘    │
+  └─────┼──────┼─────┼──────┼─────┼───────┼─────────┘
+        │      │     │      │     │       │
+        ▼      ▼     ▼      ▼     ▼       ▼
+  ┌──────────────────────────────────────────────┐
+  │ Build/Generated/ 产物                         │
+  │ ┌──────────────────────────────────────────┐ │
+  │ │ &lt;Class&gt;.mgenerated.h                    │ │
+  │ │   ServerCallHandler / Params struct      │ │
+  │ │ &lt;Class&gt;.mgenerated.cpp                  │ │
+  │ │   StaticClass / RegisterAllProperties/  │ │
+  │ │   Functions                              │ │
+  │ ├──────────────────────────────────────────┤ │
+  │ │ &lt;Class&gt;_AsyncFrames.h                   │ │
+  │ │ &lt;Class&gt;_AwaitStateMachine.h             │ │
+  │ │ &lt;Class&gt;_AwaitImpl.mgenerated.cpp        │ │
+  │ ├──────────────────────────────────────────┤ │
+  │ │ &lt;Header&gt;_FreeAsyncFrames.mgenerated.h   │ │
+  │ │ &lt;Header&gt;_FreeAwaitStateMachine.h        │ │
+  │ │ &lt;Header&gt;_FreeAwaitImpl.mgenerated.cpp   │ │
+  │ ├──────────────────────────────────────────┤ │
+  │ │ MHeaderToolTargets.cmake (按 group 分组) │ │
+  │ │ MClientManifest.mgenerated.cpp           │ │
+  │ │   GClientManifestEntries[]               │ │
+  │ └──────────────────────────────────────────┘ │
+  └──────────────────────────────────────────────┘
+</pre>
+
+  <h4>MGENERATED_BODY 展开</h4>
+  <pre><code>// Reflection.h:540-548
+#define MGENERATED_BODY(ClassName, ParentClass, Flags) \
+    using ThisClass = ClassName; \
+    using Super = ParentClass; \
+    static MClass* StaticClass(); \
+    virtual MClass* GetClass() const override { return StaticClass(); } \
+    static void RegisterAllProperties(MClass* InClass); \
+    static void RegisterAllFunctions(MClass* InClass);</code></pre>
+
+  <h4>MFUNCTION 变体分类</h4>
+  <table>
+    <tr><th>标注</th><th>Transport</th><th>caller</th></tr>
+    <tr><td><code>ServerCall</code></td><td><code>"ServerCall"</code></td><td><span class="ok">已落 — codegen ServerCallHandler</span></td></tr>
+    <tr><td><code>ClientCall</code></td><td><code>"ClientCall"</code></td><td><span class="err">已删 — <code>GenerateClientCallHandler</code> 是 no-op (<code>CodeGenerator.h:627-637</code>)</span></td></tr>
+    <tr><td><code>Client</code></td><td><code>"Client"</code></td><td><span class="warn">emit 最小 stub，待 <code>GenerateClientDownlinkStub</code> 实现</span></td></tr>
+    <tr><td><code>LuaBind</code></td><td><code>"LuaBind"</code></td><td>n/a</td></tr>
+    <tr><td><code>NetServer / NetClient</code></td><td>n/a</td><td><code>CreateRpcFunction&lt;...&gt;</code></td></tr>
+    <tr><td><code>Async</code></td><td>n/a</td><td><code>bIsAsync=true</code> + 状态机生成</td></tr>
+  </table>
+
+  <h4>属性系统（接缝预埋）</h4>
+  <table>
+    <tr><th>机制</th><th>位置</th><th>状态</th></tr>
+    <tr><td><code>EPropertyFlags</code> (<code>Replicated/PersistentData</code> 等)</td><td><code>Property.h:38-55</code></td><td><span class="ok">已落</span></td></tr>
+    <tr><td><code>EPropertyDomainFlags</code> 派生</td><td><code>Class.h:334-351</code></td><td><span class="ok">已落</span></td></tr>
+    <tr><td><code>MObject::DirtyDomainFlags / DirtyPropertyIds</code></td><td><code>Reflection.h:415-485</code></td><td><span class="ok">已落</span></td></tr>
+    <tr><td><code>WriteSnapshot / WriteSnapshotByDomain</code></td><td><code>Class.cpp:171-241</code></td><td><span class="ok">已落</span></td></tr>
+    <tr><td>周期 sweep → ServerCall/ClientCall 推送</td><td>n/a</td><td><span class="err">未实现（PoC 业务无任何 <code>MPROPERTY(Replicated/PersistentData)</code>）</span></td></tr>
+  </table>
+</div>
+
+<h2 id="transport">6. 传输层 / EventLoop / Fiber</h2>
+
+<div class="section">
+<pre>
+  ┌─────────────────────────────┐
+  │  OS Socket                   │
+  │  ┌─────────────────────────┐ │
+  │  │ MSocketHandle (RAII fd) │ │
+  │  │ MSocketPlatform 平台分流 │ │
+  │  │   WSAPoll / poll        │ │
+  │  └─────────────────────────┘ │
+  └──────────────┬──────────────┘
+                 ▼
+  ┌──────────────────────────────┐
+  │  Length-prefixed framing     │
+  │  ┌────────────────────────┐  │
+  │  │ MLengthPrefixedPacket  │  │
+  │  │   Codec                │  │
+  │  │ MTcpConnection         │  │
+  │  │   65535B 双 buffer     │  │
+  │  │   SendBuffer 先 flush  │  │
+  │  │   再 poll POLLIN       │  │
+  │  └────────────────────────┘  │
+  └──────────────┬───────────────┘
+                 ▼
+  ┌──────────────────────────────┐
+  │  EventLoop 双层               │
+  │  ┌────────────────────────┐  │
+  │  │ MNetEventLoop          │  │
+  │  │   (IEventLoopStep)     │  │
+  │  │   单线程 poll          │  │
+  │  │   listeners+conns      │  │
+  │  ├────────────────────────┤  │
+  │  │ MTaskEventLoop         │  │
+  │  │   (ITaskRunner+        │  │
+  │  │    IEventLoopStep)     │  │
+  │  │   mutex+TDeque<TTask>  │  │
+  │  ├────────────────────────┤  │
+  │  │ MEventLoop             │  │
+  │  │   聚合 Steps[]         │  │
+  │  │   顺序 RunOnce         │  │
+  │  └────────────────────────┘  │
+  └──────────────┬───────────────┘
+                 ▼
+  ┌──────────────────────────────────────┐
+  │  MNetServerBase                       │
+  │  ┌────────────────────────────────┐  │
+  │  │ MEventLoop + MTaskEventLoop +  │  │
+  │  │   MNetEventLoop                 │  │
+  │  ├────────────────────────────────┤  │
+  │  │ ambient MAsyncContext::         │  │
+  │  │   SetCurrent(LoopContext)       │  │
+  │  │   (NetServerBase.cpp:36-37)     │  │
+  │  └────────────────────────────────┘  │
+  └──────────────────────────────────────┘
+</pre>
+
+  <h4>主循环驱动顺序</h4>
+  <pre><code>// NetServerBase.cpp:39-50
+while (bRunning) {
+    MasterLoop.RunOnce();        // TaskLoop(timeout=0) 先于 EventLoop(timeout=16)
+    TickBackends();              // 业务 Tick
+    PumpServerCallMaintenance(); // ServerCall 超时/断开维护
+}</code></pre>
+
+  <h4>RPC 异步续体投递（双层 Post）</h4>
+  <pre><code>// RpcServerCall.cpp:282-310  pending 路径
+RespFuture.Then([Ctx, ResponseTarget, FunctionId, CallId](SFutureResult&lt;TByteArray&gt; F) mutable {
+    Ctx->Post([...] { ... });   // 把续体投回 ambient context (TaskLoop)
+});</code></pre>
+
+  <h4>平台抽象</h4>
+  <table>
+    <tr><th>关注点</th><th>实现</th></tr>
+    <tr><td>Socket 系统调用</td><td><code>SocketPlatform.cpp</code> 按 <code>#if defined(_WIN32)</code> 分流（<code>WSAStartup/ioctlsocket</code> vs <code>socket/fcntl</code>）</td></tr>
+    <tr><td>poll 抽象</td><td><code>Poll.h</code> — Windows <code>WSAPoll</code> / POSIX <code>&lt;poll.h&gt;</code></td></tr>
+    <tr><td>非阻塞</td><td><code>SetNonBlocking</code> 平台分流</td></tr>
+    <tr><td>Fiber 后端</td><td>POSIX 走 <code>ucontext</code>；Windows <code>FNullFiberBackend</code> 仅 first SwitchIn，suspend/resume 不可用</td></tr>
+  </table>
+</div>
+
+<h2 id="gaps">7. 接缝与未落地（active gaps）</h2>
+
+<div class="section">
+  <div class="gap">
+    <strong>MClientManifest 真 emit</strong>：当前 <code>GClientManifestEntries</code> 有 7 条全为 <code>ServerCall</code> 借调，<code>MFUNCTION(Client/ClientCall)</code> 0 实例；Gateway 转发逻辑写死走 Echo，忽略 Entry 内容。下一步：在业务里加 <code>MFUNCTION(Client/ClientCall)</code> 并让 codegen emit。<br/>
+    参考：<code>CodeGenerator.h:627-637</code>（<code>GenerateClientCallHandler</code> no-op）、<code>ManifestGenerators.h:329-424</code>。
+  </div>
+  <div class="gap">
+    <strong>下行链路接线</strong>：<code>MClientTargetResolver</code> + <code>MClientTargetContextGuard</code> 框架完整，但 <code>GatewayServer::OnAccept/OnClose</code> 未接 <code>RegisterConn/UnregisterConn</code>，整个 resolver 0 caller（除 guard 自身）。<br/>
+    参考：<code>Common/Net/ClientCall/MClientTargetResolver.cpp</code>、<code>GatewayServer.cpp:74-91</code>。
+  </div>
+  <div class="gap">
+    <strong>属性 replication 推送</strong>：<code>MPROPERTY(Replicated/PersistentData)</code> 标记 + 脏位 + 按域 snapshot 写出口径已就位，但 PoC 业务无任何使用；缺周期 sweep → ServerCall/ClientCall 推送链路。<br/>
+    参考：<code>Reflection.h:102-109, 415-485</code>、<code>Class.cpp:171-241</code>。
+  </div>
+  <div class="gap">
+    <strong>跨实例 ActorId 解析真路径</strong>：<code>MActorRouter::LocateActor</code> 仍是同步实现（包装 <code>FindActor</code> 结果到 <code>TResult::Ok</code>），预留异步接缝但未真正接 Registry 的 actor metadata。<br/>
+    参考：<code>ActorRouter.cpp:48-67</code>。
+  </div>
+  <div class="gap">
+    <strong><code>ValidationProtocolSchema.json</code> 未接通</strong>：MHeaderTool 有 <code>GenerateValidationSchema</code> 选项（<code>ManifestGenerators.h:158</code>），但顶层 CMake 没传 <code>--validation-schema-out</code>，Python 端 <code>ReflectionDecoder</code> 链路实际不通。<br/>
+    参考：<code>CMakeLists.txt:293-299</code>、<code>validation/schema_loader.py:9</code>。
+  </div>
+  <div class="gap">
+    <strong>ABI 白名单有死链接</strong>：<code>check-style.sh</code> 列了 <code>Protocol/Messages/Common/ForwardedClientCallMessages.h</code>，但该文件不存在。<br/>
+    参考：<code>Scripts/check-style.sh:26</code>。
+  </div>
+  <div class="gap">
+    <strong>Fiber Windows 后端</strong>：<code>FNullFiberBackend</code> 仅 first SwitchIn 可用，<code>SuspendCurrentCommandUntil</code> 在 Windows 抛 <code>fiber_backend_unsupported</code>。player-command 基础设施在 Windows 不可跑。<br/>
+    参考：<code>FiberScheduler.cpp:30-84</code>、<code>FiberAwait.cpp:68-80</code>。
+  </div>
+  <div class="gap">
+    <strong>测试框架不一致</strong>：仅 <code>AwaitCodegenTest</code> 进了 CTest（<code>AwaitDemo/CMakeLists.txt:58</code>），其他可执行文件未接 <code>add_test</code>。<br/>
+    参考：<code>Source/Examples/AwaitDemo/CMakeLists.txt</code>。
+  </div>
+</div>
+
+<h2 id="refs">8. 关键代码引用速查</h2>
+
+<div class="section">
+  <h4>RPC 通道与分发</h4>
+  <table>
+    <tr><th>位置</th><th>说明</th></tr>
+    <tr><td><code>Source/Common/Net/Rpc/MRpcChannel.h:37-108</code></td><td><code>MRpcChannel</code> 单例 + <code>Call/CallToActor/SendToClient</code> 三方法</td></tr>
+    <tr><td><code>Source/Common/Net/Rpc/RpcServerCall.cpp:216-313</code></td><td><code>DispatchServerCall</code> 反射分发 + sync/pending 双分支</td></tr>
+    <tr><td><code>Source/Common/Net/Rpc/RpcServerCall.cpp:281-313</code></td><td>pending → <code>MAsyncContext::Post</code> 回 event-loop</td></tr>
+    <tr><td><code>Source/Common/Net/Rpc/RpcServerCall.cpp:449-557</code></td><td>入站 <code>MT_FunctionCall/Response</code> 分流</td></tr>
+    <tr><td><code>Source/Common/Net/Rpc/RpcTransport.cpp:62-105</code></td><td><code>BuildClientEnvelopePacket</code> / <code>ParseClientEnvelopePacket</code> wire 格式</td></tr>
+    <tr><td><code>Source/Common/Net/ServiceDiscovery/EndpointCache.cpp:131-178</code></td><td><code>GetOrConnect</code> round-robin + 健康过滤 + 连接池复用</td></tr>
+    <tr><td><code>Source/Common/Net/ServiceDiscovery/EndpointCache.cpp:38-57</code></td><td><code>AttachDispatchToConnection</code> 挂 <code>MT_FunctionCall/Response</code> 分流</td></tr>
+    <tr><td><code>Source/Common/Net/Routing/ActorRouter.h:48-73</code></td><td><code>SendToActor</code> 模板（FindActor → GetOrConnect → CallServerFunction）</td></tr>
+  </table>
+
+  <h4>服务发现</h4>
+  <table>
+    <tr><th>位置</th><th>说明</th></tr>
+    <tr><td><code>Source/Common/Net/ServiceDiscovery/Endpoint.h:9-103</code></td><td><code>FServiceEndpoint</code> / <code>EServiceRegistryMessageType</code> / <code>MakeLocalEndpoint</code> / <code>ParseAddrPort</code></td></tr>
+    <tr><td><code>Source/Common/Net/ServiceDiscovery/RegistryProtocol.cpp:65-211</code></td><td>Registry 协议 build/parse 全集</td></tr>
+    <tr><td><code>Source/Servers/ServiceRegistry/ServiceRegistryServer.cpp:35-303</code></td><td>Registry 协议 dispatch + 心跳维护</td></tr>
+    <tr><td><code>Source/Common/Net/ServiceDiscovery/EndpointCache.cpp:97-129</code></td><td>启动期 <code>RegisterLocal</code> + 灌 <code>PendingListTypes_</code></td></tr>
+    <tr><td><code>Source/Common/Net/ServiceDiscovery/EndpointCache.cpp:260-300</code></td><td><code>HandleRegistryPacket</code> → <code>OnEndpointChange</code></td></tr>
+  </table>
+
+  <h4>业务模型与 EchoService</h4>
+  <table>
+    <tr><th>位置</th><th>说明</th></tr>
+    <tr><td><code>Source/Servers/App/ServiceId.h:14-54</code></td><td>ActorId 编/解码 <code>(ServiceId&lt;&lt;32)|InstId</code></td></tr>
+    <tr><td><code>Source/Servers/EchoService/EchoService.h:45-138</code></td><td><code>SEchoServiceConfig</code> + <code>MEchoService</code> 类 + <code>MFUNCTION(ServerCall)</code> 声明</td></tr>
+    <tr><td><code>Source/Servers/EchoService/EchoService.cpp:165-205</code></td><td><code>Echo</code> 业务体：拆 TargetActorId → 本地/远程分支</td></tr>
+    <tr><td><code>Source/Servers/EchoService/EchoService.cpp:143-158</code></td><td><code>RegisterLocalActors</code> 把本地 Actor 标 <code>ServerType=Unknown</code></td></tr>
+    <tr><td><code>Source/Servers/EchoService/EchoService.cpp:254-262</code></td><td><code>EchoAwait</code> 业务 await 体（<code>#ifdef MESSION_AWAIT_CODEGEN_SOURCE</code> 包裹）</td></tr>
+    <tr><td><code>Source/Common/Net/Rpc/RpcServerCall.cpp:216-313</code></td><td>ServerCall 入站全链路（按 FunctionId → 生成的 ServerCallHandler）</td></tr>
+    <tr><td><code>Source/Servers/Gateway/GatewayServer.cpp:175-267</code></td><td><code>HandleClientPacket</code> envelope → manifest 查表 → ServerCall 转发</td></tr>
+    <tr><td><code>Build/Generated/MEchoService.mgenerated.h:1-283</code></td><td>实际 emit：<code>ServerCallHandler</code> + Params struct + 注册宏</td></tr>
+  </table>
+
+  <h4>异步运行时</h4>
+  <table>
+    <tr><th>位置</th><th>说明</th></tr>
+    <tr><td><code>Source/Common/Runtime/Async/MAsync.h:77-231</code></td><td><code>SFutureResult&lt;T&gt;</code> 主体 + <code>SAwaiter</code> + <code>Get</code> redline</td></tr>
+    <tr><td><code>Source/Common/Runtime/Async/AwaitMacros.h:32</code></td><td><code>AWAIT_OK</code> 宏定义</td></tr>
+    <tr><td><code>Source/Common/Runtime/Async/AsyncContext.h:22-51</code></td><td><code>MAsyncContext</code> 抽象 + <code>MLoopAsyncContext</code></td></tr>
+    <tr><td><code>Source/Common/Net/NetServerBase.cpp:36-37, 53</code></td><td>ambient <code>MAsyncContext</code> 安装/清空</td></tr>
+    <tr><td><code>Source/Common/Runtime/Log/Log.cpp:74-327</code></td><td>MLog Init/Shutdown/WriteV/HandleFatal hot path</td></tr>
+    <tr><td><code>Source/Common/Runtime/Log/Dispatcher.cpp:31-86</code></td><td>单线程 dispatcher RunLoop fan-out</td></tr>
+  </table>
+
+  <h4>反射 codegen</h4>
+  <table>
+    <tr><th>位置</th><th>说明</th></tr>
+    <tr><td><code>Source/Tools/MHeaderTool/MHeaderTool.cpp:122-316</code></td><td>主程序 + 生成调度</td></tr>
+    <tr><td><code>Source/Tools/MHeaderTool/AST/ASTPipeline.cpp:205-388</code></td><td><code>MASTPipeline::Run</code> pipeline</td></tr>
+    <tr><td><code>Source/Tools/MHeaderTool/Generation/CodeGenerator.h:639-688</code></td><td><code>GenerateServerCallHandler</code> 解包 → 调 TypedObject → 桥接 ready/pending</td></tr>
+    <tr><td><code>Source/Tools/MHeaderTool/Generation/CodeGenerator.h:834-922</code></td><td><code>BuildFunctionRegistrationBlock</code> 按 Transport 分发</td></tr>
+    <tr><td><code>Source/Tools/MHeaderTool/Generation/CodeGenerator.h:2255-2514</code></td><td><code>EmitAwaitStateMachineFrame</code> 状态机 Frame</td></tr>
+    <tr><td><code>Source/Common/Runtime/Reflect/Class.h:18-69</code></td><td><code>ComputeStableReflectHash32/ReflectId/ClientFunctionId</code></td></tr>
+    <tr><td><code>Source/Common/Runtime/Reflect/Class.h:354-382</code></td><td><code>MClass::RegisterFunction</code> 注册期 FunctionId 计算 + 碰撞</td></tr>
+  </table>
+</div>
+
+<h2 id="validate">9. 验证与工具链</h2>
+
+<div class="section">
+  <h4>CMake 结构（顶层）</h4>
+  <pre><code>/root/Mession/CMakeLists.txt
+├── 三层核心库: mession_core / mession_common / mession_netdriver
+├── mession_add_service() 宏 → 自动生成 &lt;Target&gt;_main.cpp
+│   └── 内容: MServiceMain::Run&lt;ServiceClass, ConfigClass&gt;(argc, argv)
+├── MHeaderTool 集成（CMakeLists.txt:239-374）
+│   ├── bootstrap: 首次 checkout 编译单文件 MHeaderTool.cpp
+│   ├── MESSION_HEADERTOOL_CMD: --source-root=Source --output-dir=Build/Generated ...
+│   ├── 写 MHeaderToolTargets.cmake + MClientManifest.mgenerated.cpp
+│   └── include 生成的 manifest → 生成 mession_generated_&lt;group&gt; OBJECT 库
+├── 测试可执行: LogTest / MAsyncTest / AwaitableTest / StringUtilsTest / FreeAsyncFuncGenTest
+│   └── 唯一 add_test: AwaitCodegenTest (AwaitDemo/CMakeLists.txt:58)
+└── install: 仅 GatewayServer + MServiceRegistry</code></pre>
+
+  <h4>测试套件</h4>
+  <table>
+    <tr><th>维度</th><th>位置</th></tr>
+    <tr><td>端到端 (Registry+EchoA+EchoB+Gateway)</td><td><code>Scripts/validate.py</code>（client → Gateway → Echo 全链路）</td></tr>
+    <tr><td>Suite 表</td><td><code>Scripts/validation/config.py:17-24</code>（<code>chain_local / chain_remote / chain_remote_async / error_unknown</code>）</td></tr>
+    <tr><td>Python 协议栈</td><td><code>Scripts/validation/transport/{gateway_client,packets,reflect,reflection_decoder}.py</code></td></tr>
+    <tr><td>FunctionId 稳定哈希</td><td><code>Scripts/validate.py:115</code>（FNV-1a 折叠，与 C++ 端 <code>Reflect/Class.h:49</code> 一致）</td></tr>
+    <tr><td>协议 round-trip</td><td><code>Scripts/verify_protocol.py</code>（4 条消息 BE wire）</td></tr>
+    <tr><td>Log 模块单元</td><td><code>Source/Common/Runtime/Log/Tests/main.cpp</code>（单 TU 合并其他 test cpp）+ <code>TestHarness.h</code></td></tr>
+    <tr><td>Log e2e</td><td><code>Scripts/validate_log_{basics,fatal,filter,rotation,routing}.py</code></td></tr>
+  </table>
+
+  <h4>代码风格守卫</h4>
+  <div class="gap">
+    <strong><code>Scripts/check-style.sh</code></strong> 两段式：① reflected-ABI guard（<code>check-style.sh:15-71</code>）—— ABI 关键 header + 字段名白名单，任何 <code>git diff</code> 触及即阻断；② <code>clang-format --dry-run --Werror</code>（<code>check-style.sh:73-109</code>）。<br/>
+    风格基线：<code>.clang-format</code>（LLVM + IndentWidth=4 + ColumnLimit=240 + Allman + PointerAlignment=Left）。<br/>
+    意图：防止手工序列化破坏反射 ABI（反射字段名决定 wire 布局 + <code>MCompletionClientManifest</code> stable ID 派生）。
+  </div>
+
+  <h4>PoC 拓扑脚本</h4>
+  <pre><code># Scripts/servers.py 启动顺序
+SERVER_ORDER = [
+    ("MServiceRegistry", 18000, ["--listen=18000"]),
+    ("EchoService", 7001, ["--listen=7001", "--inst=1", "--actors=1001,1002",
+                            "--service=MEchoService", "--registry=127.0.0.1:18000"]),
+    ("EchoService", 7002, ["--listen=7002", "--inst=2", "--actors=2001,2002",
+                            "--service=MEchoService", "--registry=127.0.0.1:18000"]),
+    ("GatewayServer", 8001, ["--listen=8001", "--registry=127.0.0.1:18000"]),
+]
+# 关闭逆序</code></pre>
+</div>
+
+<hr/>
+
+<p class="subtitle" style="margin-top: 32px;">
+    <strong>调研范围</strong>:网络与 RPC、服务发现与路由、业务模型与 EchoService、异步运行时、验证与工具链 — 5 维度并行只读探索。<br/>
+    <strong>模式</strong>:只读事实陈述，不含改动建议。所有接缝与未落地项已在 <a href="#gaps">§7</a> 列出。<br/>
+    <strong>冲突处理</strong>:拓扑/进程列表以本图谱 + <code>Scripts/servers.py</code> 为准；如与历史文档冲突以此为准。
+  </p>

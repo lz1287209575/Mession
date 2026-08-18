@@ -1,17 +1,17 @@
+/**
+ * @file ITaskRunner.h
+ * @brief 兼容别名:ITaskRunner = mession::async::IExecutor.
+ *
+ * 历史上 mession-core 定义 ITaskRunner,被 EventLoop 体系(MTaskEventLoop 等)实现。
+ * 抽 mession-async 库后,通用执行器接口搬到 Async/IExecutor.h,这里只留 typedef
+ * 别名以保持既有代码兼容。
+ *
+ * 新代码请直接用 mession::async::IExecutor。
+ */
 #pragma once
 
-#include "Common/Runtime/MLib.h"
+#include "Common/Runtime/Async/IExecutor.h"
 
-/** 仅表示“可投递任务、下一 tick 执行”的抽象；MAsync::Yield/Post 依赖此接口。 */
-class ITaskRunner
-{
-public:
-    using TTask = TFunction<void()>;
-    virtual ~ITaskRunner() = default;
-    virtual void PostTask(TTask Task) = 0;
-
-    /** True iff the calling thread is the loop that drains this runner's tasks.
-     *  Default = true（保守返回；具体 runner 应 override）。
-     *  Used by MAsyncContext::IsSameContext() for Get-redline detection. */
-    virtual bool IsCurrentThread() const { return true; }
-};
+// ITaskRunner = IExecutor:旧名字 + 新位置,接口形态不变(都是 Post + IsCurrentThread)。
+// 注意:方法名是 Post(不是 PostTask),既有 PostTask 调用点已重命名。
+using ITaskRunner = ::mession::async::IExecutor;

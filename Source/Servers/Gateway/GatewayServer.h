@@ -4,7 +4,6 @@
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/ServerConnection.h"
-#include "Common/Net/Rpc/RpcDispatch.h"
 #include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Object/Result.h"
 #include "Protocol/Messages/Common/AppMessages.h"

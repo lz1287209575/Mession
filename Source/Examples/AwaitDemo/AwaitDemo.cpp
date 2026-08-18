@@ -1,6 +1,7 @@
 // AwaitDemo — await 状态机框架端到端验证（C# async 模型，方案 B）
-// 业务逻辑体（含 await 表达式）在 .cpp（#ifdef 保护——codegen 输入）；
-// 编译版实现由 MHeaderTool 生成（独立编译单元），业务编译（宏关）只提供
+// async 业务逻辑体（含 await 表达式）在 AwaitDemo.Async.cpp（约定：*.Async.cpp =
+// codegen 专用源，天然带 MESSION_AWAIT_CODEGEN_SOURCE，业务编译不编译它）；
+// 编译版实现由 MHeaderTool 生成（独立编译单元），业务编译只提供
 // await 目标实现 + main 调用（真实场景由 ServerCall/RPC 自动分发）。
 
 #include "AwaitDemo.h"
@@ -21,15 +22,6 @@ SFutureResult<int> AwaitDemoHelper(int V)
 }
 
 // MFUNCTION(Async) 业务逻辑体（codegen 输入：正常业务逻辑 + await 点）
-#ifdef MESSION_AWAIT_CODEGEN_SOURCE
-MFUNCTION(Async)
-SFutureResult<int> AwaitDemoCompute(int Seed)
-{
-    int Mid = Seed * 3;                                             // 正常业务逻辑 1
-    int R = TAwaitable<AwaitDemoHelper>(Mid);  // await 点
-    return SFutureResult<int>(TResult<int, FAppError>::Ok(R + 1));  // 正常业务逻辑 2
-}
-#endif
 
 int main()
 {

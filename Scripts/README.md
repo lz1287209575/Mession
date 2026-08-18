@@ -64,42 +64,6 @@ python3 Scripts/validate.py --build-dir Build --no-build --suite scene_downlink
 - `forward_errors`：转发参数绑定、业务校验、后端不可用错误链路
 - `runtime_dispatch`：当前主运行时链路覆盖集合，包含登录到重登恢复的主要 World 流程
 
-### `compile_assets.py`
-
-统一编译 `*.mobj.json -> *.mob` 的资产工具：
-
-```bash
-python3 Scripts/compile_assets.py --build GameData/Combat/Monsters/Slime.mobj.json
-python3 Scripts/compile_assets.py GameData/Combat/Monsters
-python3 Scripts/compile_assets.py --no-roundtrip
-python3 Scripts/compile_assets.py --publish GameData/Combat/Monsters/Slime.mobj.json
-```
-
-默认行为：
-
-- 输入源：`*.mobj.json`
-- 生成目录：`Build/Generated/Assets/...`
-- 输出产物：`Build/Generated/Assets/.../*.mob`
-- 验证输出：`Build/Generated/Assets/.../*.roundtrip.json`
-- 可选发布：`--publish` 后再把 `.mob` 同步到 `GameData/...`
-- 每次编译前会先清掉该资产旧的生成物，避免残留脏文件
-
-命名规则固定为：
-
-- `GameData/Combat/Monsters/Slime.mobj.json`
-  -> `Build/Generated/Assets/Combat/Monsters/Slime.mob`
-- `GameData/Combat/Monsters/Slime.mobj.json`
-  -> `Build/Generated/Assets/Combat/Monsters/Slime.roundtrip.json`
-- `--publish`
-  -> `GameData/Combat/Monsters/Slime.mob`
-
-内部调用 `MObjectAssetSmokeTool`，所以除了编译 `.mob`，也会顺手验证：
-
-- `JSON -> .mob`
-- `.mob -> Load`
-- `Load -> Export JSON`
-- 如果是 `MMonsterConfig`，额外验证一次 `MonsterManager` 生成 Monster
-
 ### `verify_protocol.py`
 
 协议和函数 ID 相关检查脚本，适合在改消息结构或 RPC 元数据后运行。
@@ -127,10 +91,9 @@ python3 Scripts/compile_assets.py --publish GameData/Combat/Monsters/Slime.mobj.
 ## 推荐使用顺序
 
 1. 编译项目
-2. 跑 `python3 Scripts/compile_assets.py --build`
-3. 跑 `validate.py`
-4. 需要长期观察服务时，再用 `servers.py start`
-5. 协议变更时补跑 `verify_protocol.py`
+2. 跑 `validate.py`
+3. 需要长期观察服务时，再用 `servers.py start`
+4. 协议变更时补跑 `verify_protocol.py`
 
 ## 相关文档
 

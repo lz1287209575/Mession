@@ -8,7 +8,7 @@
 namespace mession::script {
 
     // IScriptRepl 统一 REPL 接口
-    // 前端:WebSocket(走 HttpDebugServer)或 TCP(stdin/stdout 转发)
+    // 前端:WebSocket(未实现)或 TCP(stdin/stdout 转发)
     // 多 VM 并存:每个 REPL session 绑定一个 IScriptEngine 实例
     class IScriptRepl {
         public:

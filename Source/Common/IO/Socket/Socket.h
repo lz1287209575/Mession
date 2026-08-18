@@ -42,6 +42,11 @@ public:
     virtual void SetNonBlocking(bool bNonBlocking) = 0;
     virtual bool IsConnected() const = 0;
     virtual void Close() = 0;
+    virtual const MString& GetRemoteAddress() const
+    {
+        static const MString Empty;
+        return Empty;
+    }
 
     // 包模式（粘包/半包处理），默认返回 false/空
     virtual bool ReceivePacket(TByteArray& OutPacket) { (void)OutPacket; return false; }

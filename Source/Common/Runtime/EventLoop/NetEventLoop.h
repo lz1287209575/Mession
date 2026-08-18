@@ -1,11 +1,11 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
-#include "Common/Runtime/EventLoop/EventLoopStep.h"
+#include "Common/Runtime/EventLoop/IEventLoop.h"
 #include "Common/IO/Socket/Socket.h"
 
-/** 单线程网络事件循环：仅负责监听 + 连接 poll，可读时 accept 或收包并回调；不包含任务队列。实现 IEventLoopStep。 */
-class MNetEventLoop : public IEventLoopStep
+/** 单线程网络事件循环：仅负责监听 + 连接 poll，可读时 accept 或收包并回调；不包含任务队列。实现 IEventLoop。 */
+class MNetEventLoop : public IEventLoop
 {
 public:
     using TAcceptCallback = TFunction<void(uint64 ConnectionId, TSharedPtr<INetConnection> Connection)>;
