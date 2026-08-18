@@ -47,8 +47,9 @@ bool MRpcChannel::SendActor(uint64 InActorId, const FActorMessage& InMsg) const 
     Envelope.TargetId = InMsg.Header.TargetId;
     Envelope.MsgType  = InMsg.Header.MsgType;
     Envelope.Payload  = InMsg.Payload;
-    // 阶段 C 完善:分配 per-actor SequenceId（写入 wire,server 回 ack 带相同 id）
-    Envelope.SequenceId = MActorSystem::Get().AllocateSequenceId(InActorId);
+    // 阶段 C 完善:SequenceId 由调用方(MActorSystem::SendActor)分配,这里透传。
+    // SendActor 也负责把 SequenceId 写到 InMsg.SequenceId 用于 outbox ack 匹配。
+    Envelope.SequenceId = InMsg.SequenceId;
 
     // 2) 寻址
     const SActorRoute Route = MActorRouter::Get().FindActor(InActorId);

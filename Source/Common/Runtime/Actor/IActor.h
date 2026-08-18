@@ -51,4 +51,30 @@ class IActor {
     /** @brief actor 销毁前回调(在自己的 Sub 线程调). */
     virtual void OnDestroyed() {
     }
+
+    /**
+     * @brief SerializeState - 序列化 actor 内部 state（持久化支持）.
+     *
+     * 默认实现:返回空 TByteArray（actor 不需要持久化）。
+     * 业务派生类重写时,必须**只在 actor 自己的 Sub 线程**被调（直接读 state,无锁）。
+     * wire format 由派生类自己定义;MActorSystem 只负责 byte buffer 的存取。
+     */
+    virtual TByteArray SerializeState() const {
+        return TByteArray();
+    }
+
+    /**
+     * @brief RestoreState - 从 byte buffer 恢复 actor 内部 state.
+     *
+     * 默认实现:no-op,返回 true（actor 不需要持久化）。
+     * 业务派生类重写时,会**在 actor 自己的 Sub 线程**被调（直接写 state,无锁）。
+     * 业务应保证:Restore 期间不会收到 OnMessage（MActorSystem::Restore 流程会先
+     * Unregister 再 Restore 再 Register,或类似保证）。
+     *
+     * @return true 成功;false 数据格式不识别,跳过恢复
+     */
+    virtual bool RestoreState(const TByteArray& InStateBytes) {
+        (void)InStateBytes;
+        return true;
+    }
 };

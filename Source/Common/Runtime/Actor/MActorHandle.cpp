@@ -1,8 +1,6 @@
 #include "Common/Runtime/Actor/MActorHandle.h"
 
-#include "Common/Net/Routing/ActorRouter.h"
 #include "Common/Net/Rpc/MRpcChannel.h"
-#include "Common/Net/ServiceDiscovery/Endpoint.h"
 #include "Common/Runtime/Actor/FActorMessage.h"
 #include "Common/Runtime/Actor/IActor.h"
 #include "Common/Runtime/Actor/MActorSystem.h"
@@ -22,20 +20,12 @@ MActorHandle::MActorHandle(uint64 InActorId) : ActorId(InActorId), Actor(nullptr
 
 void MActorHandle::Post(const FActorMessage& InMsg) const {
     if (!IsLocal()) {
-        // 远端 actor —— 走 MRpcChannel::SendActor(真 fire-and-forget):
+        // 远端 actor —— 走 MActorSystem::SendActor(真 fire-and-forget):
         // - 不分配 MPromise
         // - 不 RegisterServerCall
         // - server OnActorMessage 收到 → DispatchLocal → 不回任何包（0 RTT wasted）
-        //
-        // 阶段 C:SendActor 返回 false（路由无 / 连接断 / SendBuffer 满）→
-        // 入 MActorSystem::EnqueueActorOutbox。等 MEndpointCache::OnEndpointChange
-        // 检测到 actor 端点恢复时调 DrainActorOutbox 重发。
-        FActorMessage Captured = InMsg;  // 入 outbox 需要可移动副本
-        if (!MRpcChannel::Get().SendActor(ActorId, Captured)) {
-            const SActorRoute Route = MActorRouter::Get().FindActor(ActorId);
-            const EServerType Target = Route.ActorId ? Route.ServerType : EServerType::Unknown;
-            MActorSystem::Get().EnqueueActorOutbox(ActorId, Target, std::move(Captured));
-        }
+        // - 失败 → 自动入 outbox,带 SequenceId 等 ack
+        MActorSystem::SendActor(ActorId, InMsg);
         return;
     }
 

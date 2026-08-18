@@ -61,11 +61,25 @@ namespace {
                 DispatchActorPostMessage(Service, Sender, Data);
                 break;
             case EServerMessageType::MT_ServerPush:
-                // MT_ServerPush: 服务端单向 push（投递状态/通知）。
-                // 默认 handler 只 log;后续可挂 listener 做业务处理。
-                if (!Data.empty()) {
-                    LOG_DEBUG("MT_ServerPush: status=%u conn=%p",
-                              static_cast<unsigned>(Data[0]), Sender.Get());
+                // 投递 ack 格式:[StatusCode:1B][ActorId:8B][SequenceId:8B] little-endian
+                // → 解析后调 MActorSystem::AckOutbox 删 outbox 对应 entry
+                if (Data.size() >= 1 + 8 + 8) {
+                    const uint8 Status = Data[0];
+                    uint64 ActorId = 0, SequenceId = 0;
+                    for (int i = 0; i < 8; ++i) {
+                        ActorId    |= static_cast<uint64>(Data[1 + i]) << (i * 8);
+                        SequenceId |= static_cast<uint64>(Data[9 + i]) << (i * 8);
+                    }
+                    if (Status == 0 /* Delivered */) {
+                        MActorSystem::Get().AckOutbox(ActorId, SequenceId);
+                    } else {
+                        LOG_DEBUG("MT_ServerPush: negative ack status=%u actor=%llu seq=%llu",
+                                  static_cast<unsigned>(Status),
+                                  static_cast<unsigned long long>(ActorId),
+                                  static_cast<unsigned long long>(SequenceId));
+                    }
+                } else {
+                    LOG_DEBUG("MT_ServerPush: short payload (%zu bytes), ignoring", Data.size());
                 }
                 break;
             default:
@@ -81,16 +95,17 @@ namespace {
      * 与 DispatchBackendServerCallPacket 的区别:
      * - 不分配 MPromise（无 future 链）
      * - **不发** MT_FunctionResponse（消除 wasted RTT）
-     * - **发** MT_ServerPush 投递状态 ack（状态码 1 字节 + SequenceId 8B）
+     * - **发** MT_ServerPush 投递状态 ack（含 ActorId + SequenceId 用于 ack-based outbox 删除）
      * - 直接反射 invoke OnActorMessage 然后 return，actor dispatch 走 Sub 队列（async）
      *
      * wire format: [FunctionId:2B][Payload:N]
      *   FunctionId 必须在 receiver 端的反射表里存在（与 codegen 一致）
      *   Payload 是 FActorMessageWire 序列化后的字节
      *
-     * reply format (MT_ServerPush): [StatusCode:1B][Reserved:2B][SequenceId:8B]
+     * reply format (MT_ServerPush): [StatusCode:1B][ActorId:8B][SequenceId:8B] little-endian
      *   StatusCode 0 = Delivered, 1 = ActorNotFound, 2 = ParseError, 3 = QueueFull
-     *   SequenceId 大端,与 wire 中 Envelope.SequenceId 一致
+     *   ActorId 是 Envelope.TargetId（让 client 知道 ack 对应哪个 actor 的 outbox）
+     *   SequenceId 是 Envelope.SequenceId（让 client 在 outbox 找到对应 entry 删）
      */
     void DispatchActorPostMessage(MObject* Service, TSharedPtr<MServerConnection> Sender, const TByteArray& Data) {
         if (!Service || Data.size() < 2) return;
@@ -108,7 +123,9 @@ namespace {
                      Function ? Function->Name.c_str() : "(none)");
             // 投递失败 → 仍然回 ServerPush 让 client 知道
             if (Sender && Sender->IsConnected()) {
-                Sender->SendServerPush(1 /* ActorNotFound */);
+                TByteArray ErrAck(1 + 8 + 8, 0);
+                ErrAck[0] = 1; // ActorNotFound
+                Sender->SendServerPush(1, std::move(ErrAck));
             }
             return;
         }
@@ -120,7 +137,9 @@ namespace {
         if (!ParseResult.IsOk()) {
             LOG_WARN("DispatchActorPostMessage: ParsePayload failed: %s", ParseResult.GetError().c_str());
             if (Sender && Sender->IsConnected()) {
-                Sender->SendServerPush(2 /* ParseError */);
+                TByteArray ErrAck(1 + 8 + 8, 0);
+                ErrAck[0] = 2; // ParseError
+                Sender->SendServerPush(2, std::move(ErrAck));
             }
             return;
         }
@@ -136,16 +155,18 @@ namespace {
         // 5) dispatch to local actor (Sub 线程 async, 不等 OnMessage 执行完)
         const bool bDispatched = MActorSystem::Get().DispatchLocalWithStatus(Envelope.TargetId, Msg);
 
-        // 6) 发投递状态 ack —— MT_ServerPush + SequenceId（at-least-once 协议）
-        // StatusCode: 0=Delivered, 3=QueueFull
-        // Payload: SequenceId 8B big-endian（让 client 端能找到对应 outbox entry 删）
+        // 6) 发投递状态 ack —— MT_ServerPush + (ActorId, SequenceId) little-endian
+        // 让 client 端通过 AckOutbox(ActorId, Seq) 找到对应 outbox entry 删除。
         if (Sender && Sender->IsConnected()) {
             const uint8 Status = bDispatched ? 0 /* Delivered */ : 3 /* QueueFull */;
             TByteArray AckPayload;
-            AckPayload.resize(8);
-            const uint64 Seq = Envelope.SequenceId;
+            AckPayload.resize(1 + 8 + 8, 0);
+            AckPayload[0] = Status;
+            const uint64 ActorIdLE = Envelope.TargetId;
+            const uint64 SequenceIdLE = Envelope.SequenceId;
             for (int i = 0; i < 8; ++i) {
-                AckPayload[static_cast<size_t>(i)] = static_cast<uint8>((Seq >> (i * 8)) & 0xFFu);
+                AckPayload[1 + i]     = static_cast<uint8>((ActorIdLE    >> (i * 8)) & 0xFFu);
+                AckPayload[1 + 8 + i] = static_cast<uint8>((SequenceIdLE >> (i * 8)) & 0xFFu);
             }
             Sender->SendServerPush(Status, std::move(AckPayload));
         }

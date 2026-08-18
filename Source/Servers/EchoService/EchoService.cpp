@@ -145,6 +145,9 @@ void MEchoService::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) {
 }
 
 void MEchoService::ShutdownConnections() {
+    // 关闭前保存 actor 持久化 state(覆盖式)
+    MActorSystem::Get().SaveActorState(MRankListActor::RANK_LIST_ACTOR_ID, "Logs/ranklist_actor.bin");
+
     for (uint32 InstId : Config.LocalActorIds) {
         const uint64 ActorId = MServiceId::Make(Config.LocalServerType, InstId);
         MActorRouter::Get().UnregisterActor(ActorId);
@@ -157,6 +160,9 @@ void MEchoService::ShutdownConnections() {
 
 void MEchoService::OnRunStarted() {
     LOG_INFO("%s running on port %u", Config.ServiceName.c_str(), static_cast<unsigned>(Config.ListenPort));
+    // 启动时恢复 actor 持久化 state(Restaurant 排名等)
+    // 文件存在 → 恢复;不存在 → 跳过(首次启动或 actor 不持久化)
+    MActorSystem::Get().LoadActorState(MRankListActor::RANK_LIST_ACTOR_ID, "Logs/ranklist_actor.bin");
 }
 
 void MEchoService::RegisterLocalActors() {

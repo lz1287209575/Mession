@@ -6,10 +6,12 @@
 #include "Common/Runtime/Actor/IActor.h"
 #include "Common/Runtime/Async/AsyncContext.h"
 #include "Common/Runtime/Async/MAsync.h"
+#include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Concurrency/SubReactorPool.h"
 #include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Object/Result.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <mutex>
 
@@ -188,7 +190,11 @@ bool MActorSystem::DispatchLocal(uint64 InActorId, const FActorMessage& InMsg) {
 void MActorSystem::EnqueueActorOutbox(uint64 InActorId, EServerType InTarget, FActorMessage&& InMsg) {
     // 注意:无锁 fast path——失败 Post 来自业务线程,直接进 outbox
     // 不阻塞;满了丢最早,记录 metric。
-    TPair<EServerType, FActorMessage> Entry(InTarget, std::move(InMsg));
+    // 保留 InMsg.SequenceId 以便 AckOutbox 找到对应 entry 删除。
+    SOutboxEntry Entry;
+    Entry.Target     = InTarget;
+    Entry.SequenceId = InMsg.SequenceId;
+    Entry.Msg        = std::move(InMsg);
 
     std::lock_guard<std::mutex> Lock(ActorsMutex);
     auto It = LocalActors.find(InActorId);
@@ -214,10 +220,49 @@ void MActorSystem::EnqueueActorOutbox(uint64 InActorId, EServerType InTarget, FA
     Outbox.push(std::move(Entry));
 }
 
+void MActorSystem::AckOutbox(uint64 InActorId, uint64 InAckedSeqId) {
+    // 收到 server 投递确认 → 从 outbox 删所有 Seq ≤ InAckedSeqId 的 entry。
+    // 用 ≤ 而不是 == 处理 ack-in-flight 期间的乱序（虽然走同一条 TCP 一般顺序,
+    // 但极端 race 下 ack 仍可能与发送顺序不一致）。FIFO ack 简化为 ≤ 一次删到
+    // ack 之前所有 entry；后续 ack 命中时 outbox 应该已空。
+    if (InAckedSeqId == 0) return;  // 0 = 未分配,无意义
+
+    std::lock_guard<std::mutex> Lock(ActorsMutex);
+    auto It = LocalActors.find(InActorId);
+    if (It == LocalActors.end()) {
+        return;  // actor 已注销
+    }
+    auto& Outbox = It->second.Outbox;
+
+    // TQueue 没有 iterator erase;做法:把所有 ≤ 的元素从队头取出,其余 push 回队尾
+    // 由于 TQueue 内部是 std::deque,pop_front 一次一个
+    TVector<SOutboxEntry> ToKeep;
+    uint32 AckedCount = 0;
+    while (!Outbox.empty()) {
+        SOutboxEntry E = std::move(Outbox.front());
+        Outbox.pop();
+        if (E.SequenceId != 0 && E.SequenceId <= InAckedSeqId) {
+            ++AckedCount;  // 已确认 → 丢弃
+        } else {
+            ToKeep.push_back(std::move(E));  // 还没确认 → 保留
+        }
+    }
+    // 把保留的 push 回去
+    for (auto& E : ToKeep) {
+        Outbox.push(std::move(E));
+    }
+    if (AckedCount > 0) {
+        LOG_DEBUG("MActorSystem::AckOutbox: actor %llu acked %u entries (up to seq %llu)",
+                  static_cast<unsigned long long>(InActorId),
+                  static_cast<unsigned>(AckedCount),
+                  static_cast<unsigned long long>(InAckedSeqId));
+    }
+}
+
 void MActorSystem::DrainActorOutbox(uint64 InActorId, EServerType InTarget) {
     // 把 outbox 里所有匹配 InTarget 的消息按序重发。
     // 失败的消息（对方 actor 已 Unregister / 路由失效）继续留在 outbox,等下次重试。
-    TVector<TPair<EServerType, FActorMessage>> ToSend;
+    TVector<SOutboxEntry> ToSend;
 
     {
         std::lock_guard<std::mutex> Lock(ActorsMutex);
@@ -228,12 +273,12 @@ void MActorSystem::DrainActorOutbox(uint64 InActorId, EServerType InTarget) {
         auto& Outbox = It->second.Outbox;
         // 把匹配 InTarget 的元素挑出来,按 FIFO 顺序重发
         // 不能在持锁时调 SendActor（避免死锁——SendActor 可能回调 MEndpointCache 又拿 ActorsMutex）
-        TVector<TPair<EServerType, FActorMessage>> Tmp;
+        TVector<SOutboxEntry> Tmp;
         Tmp.reserve(Outbox.size());
         while (!Outbox.empty()) {
-            TPair<EServerType, FActorMessage> E = std::move(Outbox.front());
+            SOutboxEntry E = std::move(Outbox.front());
             Outbox.pop();
-            if (E.first == InTarget) {
+            if (E.Target == InTarget) {
                 ToSend.push_back(std::move(E));
             } else {
                 Tmp.push_back(std::move(E));  // 不是这个 Target 的,暂存
@@ -247,8 +292,134 @@ void MActorSystem::DrainActorOutbox(uint64 InActorId, EServerType InTarget) {
 
     // 锁外重发（避免持锁回调）
     for (auto& E : ToSend) {
-        MRpcChannel::Get().SendActor(InActorId, E.second);
+        MRpcChannel::Get().SendActor(InActorId, E.Msg);
     }
+}
+
+bool MActorSystem::SendActor(uint64 InActorId, FActorMessage InMsg) {
+    // 1) 分配 SequenceId（写入 InMsg.SequenceId,outbox 用它做 ack 匹配）
+    InMsg.SequenceId = MActorSystem::Get().AllocateSequenceId(InActorId);
+    if (InMsg.SequenceId == 0) {
+        // actor 未注册,业务侧 bug 或 race;直接 fail
+        return false;
+    }
+
+    // 2) try send
+    if (MRpcChannel::Get().SendActor(InActorId, InMsg)) {
+        return true;  // 成功
+    }
+
+    // 3) 失败 → 入 outbox（带 SequenceId 等 ack）
+    // 寻址（拿 ServerType 用于 drain 时过滤）
+    SActorRoute Route = MActorRouter::Get().FindActor(InActorId);
+    EServerType Target = Route.ActorId ? Route.ServerType : EServerType::Unknown;
+    MActorSystem::Get().EnqueueActorOutbox(InActorId, Target, std::move(InMsg));
+    return false;
+}
+
+// =====================================================================
+// 持久化:Save/Load actor 内部 state 到文件
+// =====================================================================
+
+bool MActorSystem::SaveActorState(uint64 InActorId, const MString& InFilePath) {
+    // 1) 找到 actor 和它的 SubId
+    TSharedPtr<IActor>       Actor;
+    uint32                  SubId  = 0;
+    MAsync::MAsyncContext*   Ambient = nullptr;
+    {
+        std::lock_guard<std::mutex> Lock(ActorsMutex);
+        auto It = LocalActors.find(InActorId);
+        if (It == LocalActors.end() || SubPool == nullptr) {
+            return false;
+        }
+        Actor   = It->second.Actor;
+        SubId   = It->second.SubId;
+        Ambient = SubPool->GetAmbient(SubId);
+    }
+    if (!Actor || !Ambient) {
+        return false;
+    }
+
+    // 2) 在 Sub 线程跑 SerializeState(无锁读 actor state),用 Promise 等结果
+    auto Promise = MakeShared<MPromise<TByteArray>>();
+    auto Future  = Promise->GetFuture();
+    Ambient->Post([Actor, Promise]() mutable {
+        const TByteArray State = Actor->SerializeState();
+        Promise->SetValue(std::move(State));
+    });
+    TByteArray State = Future.Get();
+
+    // 3) 主线程写文件(binary 覆盖式)
+    FILE* F = std::fopen(InFilePath.c_str(), "wb");
+    if (F == nullptr) {
+        LOG_ERROR("MActorSystem::SaveActorState: fopen(%s) failed", InFilePath.c_str());
+        return false;
+    }
+    const size_t Written = std::fwrite(State.data(), 1, State.size(), F);
+    std::fclose(F);
+    if (Written != State.size()) {
+        LOG_ERROR("MActorSystem::SaveActorState: short write %zu/%zu", Written, State.size());
+        return false;
+    }
+    LOG_INFO("MActorSystem::SaveActorState: actor %llu -> %s (%zu bytes)",
+             static_cast<unsigned long long>(InActorId), InFilePath.c_str(), State.size());
+    return true;
+}
+
+bool MActorSystem::LoadActorState(uint64 InActorId, const MString& InFilePath) {
+    // 1) 读文件
+    FILE* F = std::fopen(InFilePath.c_str(), "rb");
+    if (F == nullptr) {
+        // 文件不存在不算错（首次启动、actor 未持久化）—— 不算 Load 失败
+        LOG_DEBUG("MActorSystem::LoadActorState: %s not found, skip", InFilePath.c_str());
+        return true;
+    }
+    std::fseek(F, 0, SEEK_END);
+    const long Size = std::ftell(F);
+    std::fseek(F, 0, SEEK_SET);
+    if (Size < 0) {
+        std::fclose(F);
+        return false;
+    }
+    TByteArray State(static_cast<size_t>(Size));
+    const size_t Read = std::fread(State.data(), 1, State.size(), F);
+    std::fclose(F);
+    if (Read != State.size()) {
+        LOG_ERROR("MActorSystem::LoadActorState: short read %zu/%zu", Read, State.size());
+        return false;
+    }
+
+    // 2) 找到 actor 和 SubId
+    TSharedPtr<IActor>       Actor;
+    uint32                  SubId  = 0;
+    MAsync::MAsyncContext*   Ambient = nullptr;
+    {
+        std::lock_guard<std::mutex> Lock(ActorsMutex);
+        auto It = LocalActors.find(InActorId);
+        if (It == LocalActors.end() || SubPool == nullptr) {
+            return false;
+        }
+        Actor   = It->second.Actor;
+        SubId   = It->second.SubId;
+        Ambient = SubPool->GetAmbient(SubId);
+    }
+    if (!Actor || !Ambient) {
+        return false;
+    }
+
+    // 3) 在 Sub 线程跑 RestoreState(直接写 actor state)
+    auto Promise = MakeShared<MPromise<bool>>();
+    auto Future  = Promise->GetFuture();
+    Ambient->Post([Actor, State = std::move(State), Promise]() mutable {
+        const bool Ok = Actor->RestoreState(State);
+        Promise->SetValue(Ok);
+    });
+    const bool Ok = Future.Get();
+    if (!Ok) {
+        LOG_WARN("MActorSystem::LoadActorState: actor %llu RestoreState returned false",
+                 static_cast<unsigned long long>(InActorId));
+    }
+    return Ok;
 }
 
 void MActorSystem::OnActorEndpointRecovered(uint64 InActorId, EServerType InNewTarget) {

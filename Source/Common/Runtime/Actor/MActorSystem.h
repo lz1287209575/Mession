@@ -82,6 +82,19 @@ class MActorSystem {
     private:
     MActorSystem() = default;
 
+    /**
+     * @brief SOutboxEntry - per-actor outbox 中的一条待重发消息.
+     *
+     * SequenceId 用于 ack-based 删除:server 回 MT_ServerPush ack 带 SequenceId,
+     * 客户端按 Seq 在 outbox 里找到对应 entry 删掉。
+     * Target 记的是原始目标 ServerType,drain 时按此过滤（只重发到该 target）。
+     */
+    struct SOutboxEntry {
+        EServerType    Target;
+        uint64         SequenceId;
+        FActorMessage  Msg;
+    };
+
     struct SActorEntry {
         TSharedPtr<IActor>  Actor;
         uint32             SubId = 0;
@@ -95,7 +108,8 @@ class MActorSystem {
         // 容量上限 kMaxOutboxPerActor;满了就丢最早（FIFO 退化）。
         // MEndpointCache::OnEndpointChange 检测到 actor 端点恢复时 →
         // DrainActor() 把 outbox 里的消息按序重发。
-        TQueue<TPair<EServerType, FActorMessage>> Outbox;
+        // 收到 server 的 MT_ServerPush ack(ActorId, SequenceId) 时 AckOutbox 删对应 entry。
+        TQueue<SOutboxEntry> Outbox;
 
         // === 阶段 C 完善:at-least-once SequenceId ===
         // per-actor 单调递增计数器。MRpcChannel::SendActor 取号 +1,server 收到后
@@ -124,14 +138,26 @@ public:
     /**
      * @brief EnqueueActorOutbox - 把失败 Post 入 outbox.
      *
-     * 调用方:MActorHandle::Post 在 SendActor 失败时调用。
+     * 调用方:SendActor 失败时调用。
      * outbox 满则丢最早,记录 metric。
      *
      * @param InActorId  目标 actor id
      * @param InTarget   原要发送到的 ServerType
-     * @param InMsg      失败的消息
+     * @param InMsg      失败的消息（Msg.SequenceId 已分配,用于 ack 匹配）
      */
     void EnqueueActorOutbox(uint64 InActorId, EServerType InTarget, FActorMessage&& InMsg);
+
+    /**
+     * @brief AckOutbox - server 确认投递后,删 outbox 里 <= AckedSeqId 的 entry.
+     *
+     * 调用方:MT_ServerPush handler(MEndpointCache::AttachDispatchToConnection switch case)
+     * 解析 ack 拿到 ActorId + SequenceId,调本方法。
+     *
+     * 阈值 ≤ AckedSeqId 是为了处理 ack-in-flight 期间的乱序（虽然走同一条 TCP
+     * 一般顺序,但极端 race 仍可能 ack 顺序与发送顺序不一致）。FIFO ack 简化为
+     * ≤ 一次性删到 ack 之前所有 entry,后续 ack 命中时 outbox 应该已空。
+     */
+    void AckOutbox(uint64 InActorId, uint64 InAckedSeqId);
 
     /**
      * @brief DrainActorOutbox - 把 outbox 里的消息按序重发.
@@ -160,4 +186,54 @@ public:
      * 线程安全:per-actor atomic fetch_add,多线程并发安全。
      */
     uint64 AllocateSequenceId(uint64 InActorId);
+
+    /**
+     * @brief SendActor - 跨进程 actor Post 高层入口(分配 Seq + try send + outbox fallback).
+     *
+     * 流程:
+     * 1) 调 AllocateSequenceId 给本次 Post 分配 Seq → 写入 InMsg.SequenceId
+     * 2) 调 MRpcChannel::SendActor(InMsg) 真正写 wire
+     * 3) 失败 → 调 EnqueueActorOutbox 入 outbox（带 SequenceId 用于 ack 匹配）
+     *
+     * 调用方:MActorHandle::Post 远端路径
+     *
+     * @return true 成功入 wire;false 入 outbox / actor 未注册
+     */
+    static bool SendActor(uint64 InActorId, FActorMessage InMsg);
+
+    /**
+     * @brief SaveActorState - 同步保存 actor 内部 state 到文件.
+     *
+     * 流程:
+     * 1) 通过 ambient.Post 把"序列化"任务投递到 actor 自己的 Sub 线程
+     * 2) Sub 线程上 actor->SerializeState() 执行（无锁读 state）
+     * 3) 通过 MPromise 把结果回给调用线程
+     * 4) 调用线程拿到 bytes 后写文件
+     *
+     * 安全性:SerializeState 在 actor Sub 线程跑（无锁读 actor state）;
+     * 调用线程阻塞等 future;无锁竞争。
+     *
+     * @param InActorId 目标 actor
+     * @param InFilePath 写入路径(覆盖式)
+     * @return true 成功;false actor 不存在 / 序列化失败 / 文件写入失败
+     */
+    bool SaveActorState(uint64 InActorId, const MString& InFilePath);
+
+    /**
+     * @brief LoadActorState - 同步从文件恢复 actor 内部 state.
+     *
+     * 流程:
+     * 1) 主线程读文件 → bytes
+     * 2) 通过 ambient.Post 把"反序列化"任务投递到 actor Sub 线程
+     * 3) Sub 线程上 actor->RestoreState() 执行(直接写 actor state)
+     * 4) 通过 MPromise 把结果(bool)回给调用线程
+     *
+     * 安全性:RestoreState 在 actor Sub 线程跑,直接写 state,无锁。
+     * 业务应保证:Restore 期间 actor 不会收到 OnMessage(MActorSystem 不保证,
+     * 业务自己保证时序;PoC 阶段 EchoService::OnRunStarted 里就 actor 注册前
+     * 完成 restore,避开 race)。
+     *
+     * @return true 成功;false actor 不存在 / 文件不存在 / RestoreState 失败
+     */
+    bool LoadActorState(uint64 InActorId, const MString& InFilePath);
 };

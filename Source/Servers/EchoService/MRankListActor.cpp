@@ -121,3 +121,56 @@
         }
         }
     }
+
+    TByteArray MRankListActor::SerializeState() const {
+        // 简单二进制格式:[Count:4B LE][Entry x N:PlayerId:8B LE + Score:8B LE]
+        // 与 MRankListActor.cpp 内的解析格式对称 —— SerializeState ↔ RestoreState。
+        // 必须由 actor 自己的 Sub 线程调(无锁读 State);PoC 阶段不加密不压缩。
+        TByteArray Out;
+        const uint32 Count = static_cast<uint32_t>(State.PlayerScores.size());
+        Out.resize(4);
+        for (int i = 0; i < 4; ++i) {
+            Out[static_cast<size_t>(i)] = static_cast<uint8>((Count >> (i * 8)) & 0xFFu);
+        }
+        for (const auto& KV : State.PlayerScores) {
+            const uint64 Pid = KV.first;
+            const int64  Sc  = KV.second;
+            const size_t Base = Out.size();
+            Out.resize(Base + 16);
+            for (int i = 0; i < 8; ++i) {
+                Out[Base + i]     = static_cast<uint8>((Pid >> (i * 8)) & 0xFFu);
+                Out[Base + 8 + i] = static_cast<uint8>((static_cast<uint64>(Sc) >> (i * 8)) & 0xFFu);
+            }
+        }
+        return Out;
+    }
+
+    bool MRankListActor::RestoreState(const TByteArray& InStateBytes) {
+        // 解析格式与 SerializeState 对称
+        if (InStateBytes.size() < 4) {
+            return false;  // 太短,空 snapshot
+        }
+        uint32 Count = 0;
+        for (int i = 0; i < 4; ++i) {
+            Count |= static_cast<uint32_t>(InStateBytes[static_cast<size_t>(i)]) << (i * 8);
+        }
+        if (InStateBytes.size() != 4 + Count * 16) {
+            LOG_WARN("MRankListActor::RestoreState: size mismatch (got %zu, expected %zu)",
+                     InStateBytes.size(), 4 + static_cast<size_t>(Count) * 16);
+            return false;
+        }
+        State.PlayerScores.clear();
+        for (uint32 i = 0; i < Count; ++i) {
+            const size_t Base = 4 + i * 16;
+            uint64 Pid = 0;
+            int64  Sc  = 0;
+            for (int j = 0; j < 8; ++j) {
+                Pid |= static_cast<uint64>(InStateBytes[Base + j])      << (j * 8);
+                Sc  |= static_cast<uint64>(InStateBytes[Base + 8 + j]) << (j * 8);
+            }
+            State.PlayerScores[Pid] = Sc;
+        }
+        State.Version = 0;  // restore 后从 0 重新计(避免和历史 Version 混)
+        LOG_INFO("MRankListActor::RestoreState: restored %u player scores", static_cast<unsigned>(Count));
+        return true;
+    }

@@ -52,6 +52,11 @@ class MRankListActor : public IActor, public MObject {
 
     void OnCreated() override;
 
+    // 持久化:SerializeState/RestoreState 由 MActorSystem 在 actor Sub 线程调,
+    // 业务只需重写 2 个方法把 SState 序列化/反序列化（PoC 阶段用简单二进制格式）。
+    TByteArray SerializeState() const override;
+    bool        RestoreState(const TByteArray& InStateBytes) override;
+
     private:
     /**
      * @brief 排行榜 state —— actor 内部,只在 actor 自己的 Sub 线程访问.
