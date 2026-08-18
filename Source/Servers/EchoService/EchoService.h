@@ -42,44 +42,44 @@ SFutureResult<FSampleEchoResponse> CallEchoRemote(const FSampleEchoRequest& Requ
 
 MSTRUCT()
 struct SEchoServiceConfig {
-    MPROPERTY(Meta=(Cli="--listen"))
+    MPROPERTY(Meta = (Cli = "--listen"))
     uint16 ListenPort = 0;
 
-    MPROPERTY(Meta=(Cli="--service"))
+    MPROPERTY(Meta = (Cli = "--service"))
     MString ServiceName = "MEchoService";
 
     // --local-type 接受字符串（"Echo" / "Gateway"），反射到 LocalServerType 后再派生 LocalServerId。
-    MPROPERTY(Meta=(Cli="--local-type"))
+    MPROPERTY(Meta = (Cli = "--local-type"))
     MString LocalServerTypeName = "Echo";
 
     MPROPERTY()
     EServerType LocalServerType = EServerType::Unknown;
 
-    MPROPERTY(Meta=(Cli="--server-id"))
+    MPROPERTY(Meta = (Cli = "--server-id"))
     uint32 LocalServerId = 0;
 
-    MPROPERTY(Meta=(Cli="--inst"))
+    MPROPERTY(Meta = (Cli = "--inst"))
     uint32 LocalInstId = 0;
 
-    MPROPERTY(Meta=(Cli="--actors"))
+    MPROPERTY(Meta = (Cli = "--actors"))
     TVector<uint32> LocalActorIds;
 
     // Service 注册中心地址（"127.0.0.1:18000"）。PoC 阶段强制要求传
     // ——MEndpointCache 启动期就要连 Registry 取全量 endpoint。
-    MPROPERTY(Meta=(Cli="--registry"))
+    MPROPERTY(Meta = (Cli = "--registry"))
     MString RegistryAddr;
 
     // 日志：ServiceMain::Run 会读这些字段初始化 MLog 管道。
-    MPROPERTY(Meta=(Cli="--log-file"))
+    MPROPERTY(Meta = (Cli = "--log-file"))
     MString LogFilePath = "";
 
-    MPROPERTY(Meta=(Cli="--log-rotate-bytes"))
+    MPROPERTY(Meta = (Cli = "--log-rotate-bytes"))
     uint64 LogRotateBytes = 100ull * 1024ull * 1024ull;
 
-    MPROPERTY(Meta=(Cli="--log-archives"))
+    MPROPERTY(Meta = (Cli = "--log-archives"))
     uint32 LogArchives = 5;
 
-    MPROPERTY(Meta=(Cli="--log-config"))
+    MPROPERTY(Meta = (Cli = "--log-config"))
     MString LogConfigPath = "";
 };
 

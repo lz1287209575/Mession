@@ -1,4 +1,5 @@
 #include "AST/ASTReflectionVisitor.h"
+#include "AST/MMetaLexer.h"
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
@@ -131,66 +132,20 @@ bool MASTReflectionVisitor::VisitFieldDecl(clang::FieldDecl* FD)
         Out.Owner = *Owner;
     }
 
-    // 解析 MPROPERTY(Meta=(K=V,...)) — legacy 生成 SetMetadata("K", "V")
+    // 解析 MPROPERTY(Meta=(K=V,...)) — 通过手写 lexer + 递归下降 parser
     // （服务 CLI 参数注册依赖，如 Meta=(Cli="--listen")）。
+    //
+    // 容忍任意空白写法（Meta= / Meta = / Meta=( / Meta = (）：AST/MMetaLexer.h。
+    // 失败时静默忽略（宏解析不应该让 codegen 整个挂掉）。
     {
-        const MString& Args = MacroArgs->Args;
-        const MString Needle = "Meta=(";
-        const size_t MetaPos = Args.find(Needle);
-        if (MetaPos != MString::npos)
+        if (auto Meta = metaarg::ParseMetaBlock(MacroArgs->Args))
         {
-            size_t Open = MetaPos + Needle.size();
-            int Depth = 1;
-            size_t Close = Open;
-            while (Close < Args.size() && Depth > 0)
+            for (auto& KV : *Meta)
             {
-                if (Args[Close] == '(') ++Depth;
-                else if (Args[Close] == ')') --Depth;
-                ++Close;
-            }
-            if (Depth == 0)
-            {
-                const MString Body = Args.substr(Open, Close - Open - 1);
-                auto TrimMeta = [](MString In)
-                {
-                    const size_t B = In.find_first_not_of(" \t\r\n");
-                    if (B == MString::npos) return MString();
-                    const size_t E = In.find_last_not_of(" \t\r\n");
-                    return In.substr(B, E - B + 1);
-                };
-                size_t Start = 0;
-                for (size_t I = 0; I <= Body.size(); ++I)
-                {
-                    if (I == Body.size() || Body[I] == ',')
-                    {
-                        const MString Item = TrimMeta(Body.substr(Start, I - Start));
-                        Start = I + 1;
-                        const size_t Eq = Item.find('=');
-                        if (Eq == MString::npos)
-                        {
-                            // 裸标记（如 Meta=(NonZero, ...)）→ 值默认 "true"（对齐 legacy）
-                            if (!Item.empty())
-                            {
-                                Out.Metadata.push_back({Item, "true"});
-                            }
-                        }
-                        else
-                        {
-                            MString Key = TrimMeta(Item.substr(0, Eq));
-                            MString Val = TrimMeta(Item.substr(Eq + 1));
-                            if (Val.size() >= 2
-                                && (Val.front() == '"' || Val.front() == '\'')
-                                && Val.back() == Val.front())
-                            {
-                                Val = Val.substr(1, Val.size() - 2);
-                            }
-                            if (!Key.empty())
-                            {
-                                Out.Metadata.push_back({std::move(Key), std::move(Val)});
-                            }
-                        }
-                    }
-                }
+                SMetadataEntry E;
+                E.Key   = std::move(KV.first);
+                E.Value = std::move(KV.second);
+                Out.Metadata.push_back(std::move(E));
             }
         }
     }
