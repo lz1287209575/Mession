@@ -22,6 +22,10 @@ class MActorRouter {
     void UnregisterRoute(uint64 ActorId, EServerType ServerType, uint64 ConnectionId);
     void UpdateActorRoute(uint64 ActorId, EServerType ServerType, uint64 ConnectionId = 0);
 
+    // 收集本进程"本地 actor"（ServerType==Unknown 的路由,即 MActorRouter 直接
+    // 注册的业务 actor,如 EchoService 静态 actor）——供进程级 ActorIds 全量上报。
+    void CollectLocalActorIds(TVector<uint64>& OutActorIds) const;
+
     SActorRoute FindActor(uint64 ActorId) const;
 
     /**

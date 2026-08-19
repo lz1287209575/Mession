@@ -172,6 +172,7 @@ void MServiceRegistry::HandleUpdateActors(TSharedPtr<FRegistryClientSession> Ses
         return;
     }
     It->second.ActorIds = ActorIds;
+    LOG_INFO("Registry: UpdateActors server_id=%u actor_count=%zu", static_cast<unsigned>(ServerId), ActorIds.size());
     SendEndpointChange(It->second.ServerType);
 }
 

@@ -81,10 +81,6 @@ bool MEchoService::Init(int InPort) {
 
         // 阶段 5:actor 运行时绑定 SubPool(业务 actor 分布到各 Sub)
         MActorSystem::Get().Init(GetSubPool());
-
-        // 阶段 5.7:注册第一个业务 actor —— 排行榜。
-        // 所有权转给 MActorSystem(Unregister/Shutdown 时 delete)。
-        MActorSystem::Get().Register(NewMObject<MRankListActor>(nullptr, "RankList"));
     }
 
     // 注册到 Registry：
@@ -106,6 +102,15 @@ bool MEchoService::Init(int InPort) {
     MEndpointCache::Get().RegisterLocal(MakeLocalEndpoint(Config));
 
     RegisterLocalActors();
+
+    // 阶段 5.7:注册第一个业务 actor —— 排行榜。放在 RegisterLocal /
+    // RegisterLocalActors 之后:MActorSystem::Register 会触发进程级 ActorIds
+    // 全量上报(MActorSystem ∪ MActorRouter 本地),此时 LocalServerId 已设、
+    // 静态 actor 已进 MActorRouter——并集上报不会覆盖丢失。
+    // 所有权转给 MActorSystem(Unregister/Shutdown 时 delete)。
+    if (SubCount > 0) {
+        MActorSystem::Get().Register(NewMObject<MRankListActor>(nullptr, "RankList"));
+    }
 
     return true;
 }

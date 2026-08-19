@@ -2,6 +2,7 @@
 
 #include "Common/Net/Rpc/MRpcChannel.h"
 #include "Common/Net/ServiceDiscovery/Endpoint.h"
+#include "Common/Net/ServiceDiscovery/EndpointCache.h"
 #include "Common/Runtime/Actor/FActorMessage.h"
 #include "Common/Runtime/Actor/IActor.h"
 #include "Common/Runtime/Async/AsyncContext.h"
@@ -81,6 +82,9 @@ void MActorSystem::Register(TSharedPtr<IActor> InActor, uint32 InPreferredSubId)
     }
 
     LOG_INFO("actor %llu registered to SubId=%u", static_cast<unsigned long long>(ActorId), static_cast<unsigned>(SubId));
+
+    // 本地 actor 列表变化 → 上报 Registry（跨实例 actor 路由依赖 endpoint.ActorIds）
+    NotifyRegistryActorChange();
 }
 
 void MActorSystem::Unregister(uint64 InActorId) {
@@ -98,6 +102,23 @@ void MActorSystem::Unregister(uint64 InActorId) {
     if (ReleasedActor != nullptr) {
         ReleasedActor->OnDestroyed();
     }
+    // 本地 actor 列表变化 → 上报 Registry
+    NotifyRegistryActorChange();
+}
+
+void MActorSystem::NotifyRegistryActorChange() {
+    TVector<uint64> ActorIds;
+    {
+        std::lock_guard<std::mutex> Lock(ActorsMutex);
+        ActorIds.reserve(LocalActors.size());
+        for (const auto& Pair : LocalActors) {
+            ActorIds.push_back(Pair.first);
+        }
+    }
+    // 合并 MActorRouter 直接注册的本地业务 actor（如 EchoService 静态 actor
+    // 1001/1002）——进程级 ActorIds = MActorSystem ∪ MActorRouter 本地。
+    MActorRouter::Get().CollectLocalActorIds(ActorIds);
+    MEndpointCache::Get().UpdateLocalActorIds(ActorIds);
 }
 
 MActorHandle MActorSystem::Find(uint64 InActorId) {

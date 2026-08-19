@@ -40,6 +40,11 @@ class MEndpointCache {
     void BindRegistry(const MString& Addr, uint16 Port);
     void RegisterLocal(const FServiceEndpoint& Self);
 
+    // 运行时 actor 上线/下线后全量更新本进程 ActorIds 并上报 Registry
+    // （Registry 端 HandleUpdateActors 更新 endpoint 并 EndpointChange 推送，
+    //  对端 MActorRouter 据新 ActorIds 注册/注销远端 actor 路由）。
+    void UpdateLocalActorIds(const TVector<uint64>& InActorIds);
+
     // 主业务路径：MRpcChannel::Call / SendToActor 通过这里。空表 / 全
     // unhealthy → 返回 nullptr，调用方走 RPC 错误路径。
     TSharedPtr<MServerConnection> GetOrConnect(EServerType TargetServerType);

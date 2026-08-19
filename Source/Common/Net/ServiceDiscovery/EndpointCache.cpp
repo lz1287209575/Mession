@@ -241,6 +241,20 @@ void MEndpointCache::RegisterLocal(const FServiceEndpoint& Self) {
     PendingListTypes.clear();
 }
 
+void MEndpointCache::UpdateLocalActorIds(const TVector<uint64>& InActorIds) {
+    std::lock_guard<std::mutex> Lock(Mutex);
+    Registry.LocalActorIds = InActorIds;
+    if (!Registry.bConnected || Registry.LocalServerId == 0) {
+        return;
+    }
+    TByteArray Packet;
+    if (!RegistryProtocol::BuildRegistryUpdateActorsPacket(Registry.LocalServerId, InActorIds, Packet)) {
+        LOG_ERROR("MEndpointCache: build update-actors packet failed");
+        return;
+    }
+    SendToRegistry(Packet);
+}
+
 TSharedPtr<MServerConnection> MEndpointCache::GetOrConnect(EServerType TargetServerType) {
     std::lock_guard<std::mutex> Lock(Mutex);
     auto                        It = Endpoints.find(TargetServerType);

@@ -124,6 +124,9 @@ class MActorSystem {
     mutable std::mutex        ActorsMutex;
     TMap<uint64, SActorEntry> LocalActors;
 
+    // 本地 actor 列表变化后全量上报 Registry（跨实例 actor 路由依赖 endpoint.ActorIds）。
+    void NotifyRegistryActorChange();
+
     public:
     /** @brief Per-actor pending message count threshold (drop policy). */
     static constexpr uint32_t kMaxPendingPerActor = 1024;

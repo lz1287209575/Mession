@@ -71,8 +71,19 @@ TVector<SActorRoute> MActorRouter::FindAllActorRoutes(uint64 ActorId) const {
     return {};
 }
 
-bool MActorRouter::IsActorLocal(uint64 ActorId) const {
-    SActorRoute Route = FindActor(ActorId);
+void MActorRouter::CollectLocalActorIds(TVector<uint64>& OutActorIds) const {
+    std::lock_guard<std::mutex> Lock(RoutesMutex);
+    for (const auto& [ActorId, Routes] : ActorRoutes) {
+        for (const auto& R : Routes) {
+            if (R.ServerType == EServerType::Unknown) {
+                OutActorIds.push_back(ActorId);
+                break;
+            }
+        }
+    }
+}
+
+bool MActorRouter::IsActorLocal(uint64 ActorId) const {    SActorRoute Route = FindActor(ActorId);
     return Route.ActorId != 0 && Route.ServerType == EServerType::Unknown;
 }
 
