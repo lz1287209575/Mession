@@ -10,6 +10,7 @@ add_library(mession_lua STATIC
     MLuaVector.cpp
     MLuaMap.cpp
     MLuaLog.cpp
+    MLuaFormat.cpp
 )
 target_include_directories(mession_lua
     PUBLIC
