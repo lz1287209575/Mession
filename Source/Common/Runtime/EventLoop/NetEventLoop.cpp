@@ -74,6 +74,14 @@ void MNetEventLoop::RunOnce(int TimeoutMs) {
     }
 
     if (PollFds.empty()) {
+        // 无可 poll 的 fd（如多 Reactor 的 Sub 线程尚未派发任何连接）：
+        // 必须阻塞等待，否则调用方（MSubReactorPool 的 while 循环）会
+        // 忙转吃满 CPU（曾实测 96 Sub 线程 ≈ 1500%）。
+        if (TimeoutMs > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(TimeoutMs));
+        } else {
+            std::this_thread::yield();
+        }
         return;
     }
 

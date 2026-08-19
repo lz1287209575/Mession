@@ -67,14 +67,31 @@ uint16 MGatewayServer::GetListenPort() const {
 }
 
 void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) {
+    // 客户端连接注册（server→client 推送的目标解析）。服务器间连接（其他服务连
+    // Gateway）也会先注册（首包是 MT_* 服务器协议，不会走 HandleClientPacket；
+    // 广播下行发给它会被对端按非客户端包忽略，无害）。
     ClientConnections[ConnId] = Conn;
-    // 注册到 client-target resolver（server→client 推送的目标解析）
     MClientTargetResolver::Get().RegisterConn(Conn);
     LOG_INFO("Gateway skeleton accepted connection %llu", static_cast<unsigned long long>(ConnId));
-    // P5: 改用基类 DispatchConnection(单/多 Reactor 模式自适应)
     DispatchConnection(
         ConnId, Conn,
-        [this](uint64 ConnectionId, const TByteArray& Payload) {
+        [this, Conn](uint64 ConnectionId, const TByteArray& Payload) {
+            if (Payload.empty()) {
+                return;
+            }
+            const uint8 PacketType = Payload[0];
+            // 服务器间入站：其他服务（如 EchoService）经 MServerConnection 调
+            // Gateway 的 ServerCall（如 PushClientDownlink）。
+            if (static_cast<EServerMessageType>(PacketType) == EServerMessageType::MT_FunctionCall) {
+                TByteArray Data(Payload.begin() + 1, Payload.end());
+                DispatchBackendServerCallPacketInbound(this, Conn, Data);
+                return;
+            }
+            if (static_cast<EServerMessageType>(PacketType) == EServerMessageType::MT_FunctionResponse) {
+                TByteArray Data(Payload.begin() + 1, Payload.end());
+                HandleServerCallResponse(Data);
+                return;
+            }
             LOG_INFO("Gateway received client packet: conn=%llu size=%zu", static_cast<unsigned long long>(ConnectionId), Payload.size());
             HandleClientPacket(ConnectionId, Payload);
         },
@@ -105,18 +122,12 @@ void MGatewayServer::OnRunStarted() {
 
 
 MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::PushClientDownlink(const FClientDownlinkPushRequest& Request) {
-    if (Request.GatewayConnectionId == 0) {
-        return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>("gateway_connection_id_required", "PushClientDownlink");
-    }
-
     if (Request.FunctionId == 0) {
         return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>("client_downlink_function_required", "PushClientDownlink");
     }
 
-    const auto It = ClientConnections.find(Request.GatewayConnectionId);
-    if (It == ClientConnections.end() || !It->second || !It->second->IsConnected()) {
-        return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>("gateway_client_connection_missing", "PushClientDownlink");
-    }
+    // connId==0 = 广播到全部在线客户端（与 RpcClientCall::CallClient(bBroadcast) 语义一致）。
+    const bool bBroadcast = (Request.GatewayConnectionId == 0);
 
     TByteArray Packet;
     // step-2: 下行 envelope 走 BuildClientEnvelopePacket(无 MessageType 字节)。
@@ -125,6 +136,24 @@ MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::PushClientDownl
     // 引入 CallClient 时如果需要再考虑)。
     if (!BuildClientEnvelopePacket(Request.FunctionId, /*RequestId=*/0, Request.Payload, Packet)) {
         return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>("client_downlink_packet_build_failed", "PushClientDownlink");
+    }
+
+    if (bBroadcast) {
+        uint32 Sent = 0;
+        for (const auto& [ConnId, Conn] : ClientConnections) {
+            if (Conn && Conn->IsConnected() && Conn->Send(Packet.data(), static_cast<uint32>(Packet.size()))) {
+                ++Sent;
+            }
+        }
+        if (Sent == 0) {
+            return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>("gateway_client_connection_missing", "PushClientDownlink");
+        }
+        return MServerCallAsyncSupport::MakeSuccessFuture(SEmptyServerMessage{});
+    }
+
+    const auto It = ClientConnections.find(Request.GatewayConnectionId);
+    if (It == ClientConnections.end() || !It->second || !It->second->IsConnected()) {
+        return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>("gateway_client_connection_missing", "PushClientDownlink");
     }
 
     if (!It->second->Send(Packet.data(), static_cast<uint32>(Packet.size()))) {

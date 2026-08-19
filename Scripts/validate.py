@@ -140,6 +140,16 @@ def pack_string(value: str) -> bytes:
     return struct.pack("<I", len(encoded)) + encoded
 
 
+def parse_packed_string(payload: bytes) -> Optional[str]:
+    # 与 pack_string 对称：[len:4][utf8]
+    if len(payload) < 4:
+        return None
+    (length,) = struct.unpack_from("<I", payload, 0)
+    if len(payload) < 4 + length:
+        return None
+    return payload[4:4 + length].decode("utf-8", errors="replace")
+
+
 def build_client_call_packet(function_id: int, call_id: int, payload: bytes) -> bytes:
     # step-2 新格式（Gateway ParseClientEnvelopePacket）:
     #   [RequestId:8][FunctionId:2][PayloadSize:4][Payload]（无 MessageType 字节）
@@ -397,6 +407,48 @@ def run_test_error_unknown(sock: socket.socket) -> bool:
     return True
 
 
+TRIGGER_NOTIFY_FUNCTION_ID = compute_stable_id("MEchoService", "TriggerNotify")
+# MDownlink_MEchoService_NotifyEvent —— 生成器 ComputeStableReflectIdCpp 算出（与 C++ 侧一致）
+NOTIFY_EVENT_FUNCTION_ID = compute_stable_id("MEchoService", "NotifyEvent")
+
+
+def run_test_downlink_notify(sock: socket.socket) -> bool:
+    """Test 5: 服务端→客户端下行通知端到端（MFUNCTION(CallClient)）
+    Client → Gateway → EchoService.TriggerNotify(ServerCall)
+         → EchoService 调 Gateway.PushClientDownlink(connId=0 广播)
+         → 客户端收到 RequestId==0 的下行包（FunctionId = NotifyEvent）
+    """
+    log("Test 5 (downlink): Client -> Gateway -> EchoService.TriggerNotify -> Gateway.PushClientDownlink -> 客户端收 NotifyEvent 下行包")
+    payload = pack_string("downlink-hello")
+    sock.sendall(build_client_call_packet(TRIGGER_NOTIFY_FUNCTION_ID, call_id=5, payload=payload))
+
+    got_downlink = False
+    got_response = False
+    deadline = time.time() + 5.0
+    while time.time() < deadline and not (got_downlink and got_response):
+        body = recv_one_packet(sock, timeout=min(1.0, max(0.1, deadline - time.time())))
+        if not body:
+            continue
+        env = parse_client_response(body)
+        if env is None:
+            continue
+        if env["request_id"] == 0 and env["function_id"] == NOTIFY_EVENT_FUNCTION_ID:
+            # 下行包 payload = FNotifyEventMsg{ Text: MString } = [len:4][utf8]（单字段）
+            text = parse_packed_string(env["payload"])
+            if text == "downlink-hello":
+                got_downlink = True
+                log("  OK: 收到 NotifyEvent 下行包（RequestId=0, 广播）")
+        elif env["function_id"] == TRIGGER_NOTIFY_FUNCTION_ID:
+            got_response = True
+
+    if not got_downlink:
+        log("  FAIL: 未收到 NotifyEvent 下行包")
+        return False
+    if not got_response:
+        log("  WARN: 未收到 TriggerNotify 响应（下行已到，响应可能被下行包掩盖）")
+    return True
+
+
 # ===== Process orchestration =====
 
 
@@ -499,6 +551,8 @@ def run_validation(
             if ok and 4 in enabled_tests and not run_test_chain_remote_async(sock):
                 ok = False
             if ok and 3 in enabled_tests and not run_test_error_unknown(sock):
+                ok = False
+            if ok and 5 in enabled_tests and not run_test_downlink_notify(sock):
                 ok = False
 
             return ok

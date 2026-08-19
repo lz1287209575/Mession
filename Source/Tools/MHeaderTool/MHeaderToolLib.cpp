@@ -30,7 +30,7 @@ TVector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(const TMap<fs::path, MString>&
 
     // Transport tags that must NOT appear on a free function (spec 2026-07-24 §6.1
     // + 2026-07-28 §B — transport is a class-method concept).
-    const TSet<MString> TransportTags = {"ServerCall", "ClientCall", "RPC", "NetServer", "NetClient", "Client"};
+    const TSet<MString> TransportTags = {"ServerCall", "ClientCall", "RPC", "NetServer", "NetClient", "Client", "CallClient"};
 
     const MString Needle = "MFUNCTION(";
 

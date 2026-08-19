@@ -4,6 +4,8 @@
 #include "Common/Net/Rpc/RpcTransport.h"
 #include "Common/Net/ServiceDiscovery/Endpoint.h"
 #include "Common/Net/ServiceDiscovery/EndpointCache.h"
+#include "MClientDownlinkManifest.mgenerated.h"
+#include "Protocol/Messages/Common/ClientDownlinkMessages.h"
 #include "Common/Runtime/Actor/FActorMessage.h"
 #include "Common/Runtime/Actor/MActorSystem.h"
 #include "Common/Runtime/Async/MAsync.h"
@@ -62,9 +64,11 @@ bool MEchoService::Init(int InPort) {
     // P5: 多 Reactor 装配 —— 按 CPU 核数启动 Sub reactor。
     // N=0(单核机器)走单 Reactor 路径(等价旧行为);N>0 时网络 poll
     // 分布到各 Sub 线程,OnAccept 派发由 MNetServerBase::DispatchConnection 处理。
-    const uint32 HardwareThreads = std::thread::hardware_concurrency();
-    if (HardwareThreads > 1) {
-        const uint32 SubCount = std::max(uint32(2), HardwareThreads);
+    // SubCount 可配置(--subs,默认 4);0 = 禁用多 Reactor(单 Reactor)。
+    // 不要按 hardware_concurrency 启动(96 核机器 96 个 Sub 线程,空闲服务
+    // 空转吃 CPU)。
+    const uint32 SubCount = Config.SubCount;
+    if (SubCount > 0) {
         InitSubPool(SubCount);
         LOG_INFO("MEchoService: InitSubPool(%u) enabled (multi-reactor)", static_cast<unsigned>(SubCount));
 
@@ -339,3 +343,31 @@ SFutureResult<FSampleEchoResponse> MEchoService::EchoAwait(const FSampleEchoRequ
     return TAwaitable<CallEchoRemote>(Request, GGlobalEchoService);
 }
 #endif
+
+// CallClient 下行通知——服务端不直接调用本方法体；真正的下行由 TriggerNotify
+// 经 Gateway PushClientDownlink 发送。此实现仅为满足反射注册
+// （TRpcMethodInvoker 引用成员函数指针）的链接需求。
+void MEchoService::NotifyEvent(const FNotifyEventMsg& Msg) {
+    LOG_INFO("%s: NotifyEvent(下行通知声明) text=%s", Config.ServiceName.c_str(), Msg.Text.c_str());
+}
+
+// 下行通知测试入口：客户端调用它 → 本服务经 Gateway PushClientDownlink
+// 把 NotifyEvent（MFUNCTION(CallClient)）广播给全部在线客户端连接。
+// 端到端：Client → Gateway → EchoService.TriggerNotify → Gateway.PushClientDownlink
+//        → 客户端收到 RequestId==0 的下行包（FunctionId = MDownlink_MEchoService_NotifyEvent）。
+SFutureResult<SEmptyServerMessage> MEchoService::TriggerNotify(const FTriggerNotifyRequest& Req) {
+    FNotifyEventMsg Notify;
+    Notify.Text = Req.Text;
+
+    FClientDownlinkPushRequest Push;
+    Push.GatewayConnectionId = 0; // 0 = 广播到全部在线客户端（与 RpcClientCall::CallClient(bBroadcast) 语义一致）
+    Push.FunctionId          = MDownlink_MEchoService_NotifyEvent;
+    Push.Payload             = BuildPayload(Notify);
+
+    TSharedPtr<MServerConnection> GatewayConn = MEndpointCache::Get().GetOrConnect(EServerType::Gateway);
+    if (!GatewayConn) {
+        return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>("gateway_unavailable", "TriggerNotify");
+    }
+
+    return CallServerFunction<SEmptyServerMessage>(GatewayConn, EServerType::Gateway, "PushClientDownlink", Push);
+}

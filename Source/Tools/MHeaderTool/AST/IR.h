@@ -12,7 +12,7 @@ namespace mession::headercodegen {
     enum class ERecordKind : uint8_t { Class, Struct };
 
     // spec §2.4: 函数传输语义分类（MFUNCTION 上的 ServerCall/ClientCall/Client 等）
-    enum class EFunctionTransport : uint8_t { None, ServerCall, ClientCall, Client, LuaBind };
+    enum class EFunctionTransport : uint8_t { None, ServerCall, ClientCall, Client, LuaBind, CallClient };
 
     // spec §2.5: RPC 调用方向（Server↔Client 哪一侧发起）
     enum class ERpcKind : uint8_t { None, Server, Client };

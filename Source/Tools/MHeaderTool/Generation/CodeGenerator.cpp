@@ -173,6 +173,9 @@ namespace MHeaderTool {
             case mession::headercodegen::EFunctionTransport::ClientCall:
                 Out.Transport = "ClientCall";
                 break;
+            case mession::headercodegen::EFunctionTransport::CallClient:
+                Out.Transport = "CallClient";
+                break;
             case mession::headercodegen::EFunctionTransport::Client:
                 Out.Transport = "Client";
                 break;

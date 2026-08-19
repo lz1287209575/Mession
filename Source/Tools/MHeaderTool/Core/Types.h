@@ -142,6 +142,8 @@ namespace MHeaderTool {
         fs::path CMakeManifestPath    = "Build/Generated/MHeaderToolTargets.cmake";
         fs::path ValidationSchemaPath = "Build/Generated/ValidationProtocolSchema.json";
         fs::path ClientManifestPath   = "Build/Generated/MClientManifest.mgenerated.cpp";
+        fs::path ClientDownlinkManifestPath = "Build/Generated/MClientDownlinkManifest.mgenerated.cpp";
+        fs::path ClientDownlinkHeaderPath   = "Build/Generated/MClientDownlinkManifest.mgenerated.h";
         bool     bVerbose             = false;
         bool     bIncremental         = true;
         bool     bForceFull           = false;

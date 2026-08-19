@@ -173,6 +173,7 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Net/Rpc/RpcServerCall.cpp
     Source/Common/Net/Rpc/RpcTransport.cpp
     Source/Common/Net/Rpc/MClientManifest.cpp
+    Source/Common/Net/Rpc/MClientDownlinkManifest.cpp
     Source/Common/Net/Rpc/MRpcChannel.cpp
 )
 
@@ -291,6 +292,8 @@ set(MESSION_HEADERTOOL_CMD
     "--output-dir=${MESSION_GENERATED_DIR}"
     "--cmake-manifest=${MESSION_HEADERTOOL_MANIFEST}"
     "--client-manifest=${MESSION_GENERATED_DIR}/MClientManifest.mgenerated.cpp"
+    "--client-downlink-manifest=${MESSION_GENERATED_DIR}/MClientDownlinkManifest.mgenerated.cpp"
+    "--client-downlink-header=${MESSION_GENERATED_DIR}/MClientDownlinkManifest.mgenerated.h"
 )
 
 if(EXISTS "${MESSION_HEADERTOOL_RUNNER}")
@@ -465,6 +468,7 @@ mession_add_service(GatewayServer MGatewayServer SGatewayConfig Source/Servers/G
     GENERATED_GROUPS shared gateway
     GENERATED_SOURCES
         ${MESSION_GENERATED_DIR}/MClientManifest.mgenerated.cpp
+        ${MESSION_GENERATED_DIR}/MClientDownlinkManifest.mgenerated.cpp
 )
 
 # 2. Login Server - 已由 EchoService（同质多进程）替代
@@ -508,6 +512,7 @@ mession_add_service(MServiceRegistry MServiceRegistry SServiceRegistryConfig Sou
 add_dependencies(EchoService mession_reflection_codegen)
 target_sources(EchoService PRIVATE
     ${MESSION_GENERATED_DIR}/MClientManifest.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/MClientDownlinkManifest.mgenerated.cpp
 )
 
 # NetBench - 简单网络压测工具

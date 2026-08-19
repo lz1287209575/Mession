@@ -65,6 +65,10 @@ namespace {
                 options.ValidationSchemaPath = arg.substr(24);
             } else if (arg.rfind("--client-manifest=", 0) == 0) {
                 options.ClientManifestPath = arg.substr(18);
+            } else if (arg.rfind("--client-downlink-manifest=", 0) == 0) {
+                options.ClientDownlinkManifestPath = arg.substr(27);
+            } else if (arg.rfind("--client-downlink-header=", 0) == 0) {
+                options.ClientDownlinkHeaderPath = arg.substr(25);
             } else if (arg.rfind("--jobs=", 0) == 0) {
                 options.NumThreads = std::stoi(arg.substr(7));
             } else {
@@ -249,6 +253,14 @@ int main(int argc, char** argv) {
     if (!Options.ClientManifestPath.empty()) {
         ManifestGenerators ManifestGen(Options);
         WriteFile(Options.ClientManifestPath, ManifestGen.GenerateClientManifest(LegacyClasses));
+    }
+    if (!Options.ClientDownlinkManifestPath.empty()) {
+        ManifestGenerators ManifestGen(Options);
+        WriteFile(Options.ClientDownlinkManifestPath, ManifestGen.GenerateClientDownlinkManifest(LegacyClasses));
+    }
+    if (!Options.ClientDownlinkHeaderPath.empty()) {
+        ManifestGenerators ManifestGen(Options);
+        WriteFile(Options.ClientDownlinkHeaderPath, ManifestGen.GenerateClientDownlinkHeader(LegacyClasses));
     }
 
     // LuaBind — emit <Class>.lua / <Class>.d.tl（await merge 接线；

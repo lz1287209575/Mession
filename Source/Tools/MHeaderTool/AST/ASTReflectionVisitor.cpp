@@ -559,6 +559,10 @@ namespace mession::headercodegen {
                 } else if (Part == "ClientCall") {
                     OutFunc.Transport = EFunctionTransport::ClientCall;
                     OutFunc.bIsRpc    = true;
+                } else if (Part == "CallClient") {
+                    // 服务端→客户端下行通知：生成器分配下行 FunctionId + 服务端调用 stub
+                    OutFunc.Transport = EFunctionTransport::CallClient;
+                    OutFunc.bIsRpc    = true;
                 } else if (Part == "Client") {
                     OutFunc.Transport = EFunctionTransport::Client;
                 } else if (Part == "LuaBind") {

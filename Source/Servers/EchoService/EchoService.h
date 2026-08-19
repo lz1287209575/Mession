@@ -64,6 +64,12 @@ struct SEchoServiceConfig {
     MPROPERTY(Meta = (Cli = "--actors"))
     TVector<uint32> LocalActorIds;
 
+    // 多 Reactor Sub 线程数(0 = 禁用,走单 Reactor)。默认 4——按核数(96)
+    // 启动 96 个 Sub 线程会让空闲服务空转吃掉 ~19% CPU(曾实测 1500% 忙转,
+    // 修复后仍残留 96 线程唤醒开销)。
+    MPROPERTY(Meta = (Cli = "--subs"))
+    uint32 SubCount = 4;
+
     // Service 注册中心地址（"127.0.0.1:18000"）。PoC 阶段强制要求传
     // ——MEndpointCache 启动期就要连 Registry 取全量 endpoint。
     MPROPERTY(Meta = (Cli = "--registry"))
@@ -128,6 +134,16 @@ class MEchoService : public MNetServerBase, public MObject {
     // 通过 Msg.ReplyPromise->SetValue(...) 触发本函数 resolve,把回复字节带回对端。
     MFUNCTION(ServerCall)
     SFutureResult<FActorMessageWire> OnActorCall(const FActorMessageWire& InWire);
+
+    // 下行通知声明（MFUNCTION(CallClient)）——生成器分配下行 FunctionId
+    // （MDownlink_MEchoService_NotifyEvent，见 MClientDownlinkManifest.mgenerated.h），
+    // 服务端业务经 Gateway PushClientDownlink 把该消息推送到客户端。
+    MFUNCTION(CallClient)
+    void NotifyEvent(const FNotifyEventMsg& Msg);
+
+    // 测试入口：客户端调用它触发一次下行广播（NotifyEvent 发给全部在线客户端）。
+    MFUNCTION(ServerCall)
+    SFutureResult<SEmptyServerMessage> TriggerNotify(const FTriggerNotifyRequest& Req);
 
     // 传输层握手 / 心跳桩——MServerConnection::SendHandshake / SendHeartbeat 会通过
     // MRpc::CallRemote 调 Rpc_OnServerHandshake / Rpc_OnHeartbeat。

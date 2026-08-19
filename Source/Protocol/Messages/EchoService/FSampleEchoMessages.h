@@ -27,3 +27,19 @@ struct FSampleEchoResponse {
     MPROPERTY()
     MString SourceServerName;
 };
+
+// ---- 下行通知（MFUNCTION(CallClient) 端到端示例）----
+
+// 服务端→客户端下行通知内容（客户端按 MDownlink_MEchoService_NotifyEvent 识别）。
+MSTRUCT()
+struct FNotifyEventMsg {
+    MPROPERTY()
+    MString Text;
+};
+
+// 触发下行通知的 ServerCall 入口（客户端调用它来触发一次广播下行）。
+MSTRUCT()
+struct FTriggerNotifyRequest {
+    MPROPERTY()
+    MString Text;
+};
