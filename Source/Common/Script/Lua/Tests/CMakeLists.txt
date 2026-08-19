@@ -25,6 +25,9 @@ add_executable(LuaRpcTest
 add_executable(LuaHotReloadTest
     TestLuaHotReload.cpp
 )
+add_executable(MobDebugTest
+    TestMobDebug.cpp
+)
 
 target_include_directories(LuaTypeBridgeTest
     PRIVATE
@@ -75,6 +78,12 @@ target_include_directories(LuaRpcTest
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_include_directories(LuaHotReloadTest
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/Source
+        ${CMAKE_SOURCE_DIR}/Source/ThirdParty/lua/src
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_include_directories(MobDebugTest
     PRIVATE
         ${CMAKE_SOURCE_DIR}/Source
         ${CMAKE_SOURCE_DIR}/Source/ThirdParty/lua/src
@@ -138,6 +147,13 @@ target_link_libraries(LuaHotReloadTest
         mession_common
         mession_script_abstract
 )
+target_link_libraries(MobDebugTest
+    PRIVATE
+        mession_lua
+        mession_lua_vendor
+        mession_common
+        mession_script_abstract
+)
 
 configure_mession_compile_options(LuaTypeBridgeTest)
 configure_mession_compile_options(LuaCoroutineTest)
@@ -148,3 +164,4 @@ configure_mession_compile_options(LuaLogTest)
 configure_mession_compile_options(LuaFormatTest)
 configure_mession_compile_options(LuaRpcTest)
 configure_mession_compile_options(LuaHotReloadTest)
+configure_mession_compile_options(MobDebugTest)

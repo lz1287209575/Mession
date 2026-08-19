@@ -56,6 +56,9 @@ namespace mession::script::lua {
         if (!State->IsValid()) {
             return TResult<void>::Err(MString("luaL_newstate failed"));
         }
+        // Bind extraspace:让 DebugHook 能从 lua_State 反查到本 engine
+        DebugStatePtr = &DebugState;
+        State->SetOpaque(this);
         // Bootstrap:把 5 个 stdlib 装到初始 VM 上(Mession.* 全局表)
         InstallStandardLibraries(*State);
         return TResult<void>::Ok();
@@ -94,6 +97,12 @@ namespace mession::script::lua {
         PendingOldState = std::move(State);
         State           = std::move(NewState);
         ++VmGeneration;
+        // 新 VM extraspace 反查 — 让 DebugHook 仍能找到本 engine
+        if (State) {
+            State->SetOpaque(this);
+        }
+        // 如果旧 VM 上挂了 MobDebug hook,摘掉(否则 hook 会指已死的 VM)
+        // T11 简化:这里不自动重 enable;业务侧在 BeginSwap 后调 Enable 重新挂新 VM
         // Rebind 所有 modules — 每个 module 重新 luaL_ref + 重放 reflection
         for (auto& Kv : Modules) {
             if (auto* LM = dynamic_cast<MLuaModule*>(Kv.second.Get())) {

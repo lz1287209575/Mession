@@ -12,6 +12,7 @@
 #include "Common/Script/Abstract/ScriptErrorCodes.h"
 #include "Common/Script/Lua/LuaScriptState.h"
 #include "Common/Script/Lua/FPendingCall.h"
+#include "Common/Script/Lua/MobDebugServer.h"
 
 #include <shared_mutex>
 
@@ -65,6 +66,11 @@ namespace mession::script::lua {
         // TScriptInstanceHandle.Generation 持它创建时的值;跨 generation 调用立即 fail-fast
         uint32 GetVmGeneration() const {
             return VmGeneration;
+        }
+
+        // MobDebug hook 状态(DualVM 兼容 — per-engine 实例)
+        FMobDebugState* GetDebugStatePtr() {
+            return DebugStatePtr;
         }
 
         // 测试 / 业务代码加载辅助:把 Lua 字节流加载到当前 State
@@ -127,7 +133,8 @@ namespace mession::script::lua {
         FLuaPendingCallRegistry                                   PendingCalls;
         uint32                                                    VmGeneration = 1;
         MSharedMutex                                              StateMutex;
-        struct FMobDebugState;                                    // per-engine MobDebug hook 状态(T11)
+        FMobDebugState                                            DebugState;
+        // Raw ptr 给 DebugHook 通过 extraspace 反查(避免 include 循环)
         FMobDebugState*                                           DebugStatePtr = nullptr;
     };
 

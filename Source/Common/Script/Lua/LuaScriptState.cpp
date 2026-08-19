@@ -19,6 +19,20 @@ namespace mession::script::lua {
         }
     }
 
+    void MLuaScriptState::SetOpaque(void* P) {
+        if (!L) return;
+        // Lua 5.4 extraspace:前 sizeof(void*) 字节存 opaque pointer
+        // (LUA_EXTRASPACE 默认 20 字节,够用)
+        void** Extraspace = static_cast<void**>(lua_getextraspace(L));
+        Extraspace[0] = P;
+    }
+
+    void* MLuaScriptState::GetOpaque() const {
+        if (!L) return nullptr;
+        void** Extraspace = static_cast<void**>(lua_getextraspace(L));
+        return Extraspace[0];
+    }
+
     MString MLuaScriptState::LoadBuffer(const MString& Name, const char* Bytes, size_t Size) {
         int RC = luaL_loadbufferx(L, Bytes, Size, Name.c_str(), nullptr);
         if (RC != LUA_OK) {

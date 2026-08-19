@@ -23,4 +23,8 @@ namespace mession::script::lua {
         static void Disable();
     };
 
+    // 单 engine disable(MobDebugServer.cpp 内部)
+    // DualVM swap 时调用 — 摘旧 VM 的 hook,标记 bRunning=false
+    void DisableForEngine(MLuaEngine& Engine);
+
 } // namespace mession::script::lua
