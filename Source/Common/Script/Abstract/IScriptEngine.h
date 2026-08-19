@@ -73,6 +73,23 @@ namespace mession::script {
         // ====== 元信息 ======
         virtual EScriptLanguage GetLanguage() const = 0;
         virtual bool            IsSandboxed() const = 0;
+
+        // ====== DualVM 热重载专用(DualVM Plan) ======
+
+        // 快照所有 Script-side actor 的持久化 state
+        // key = ActorId (uint64);value = opaque state blob (具体格式 VM 自定,
+        // Lua 默认走 __dualvm_save 钩子 → string;C++ 反射 fallback 可由实现者扩展)
+        virtual TMap<uint64, MString> SaveAllActorStates() = 0;
+
+        // 在新 VM 上重建所有 actor + 恢复 state
+        // 由 LuaHotReload::ReloadDualVM_Real 在 BeginSwap 之后调
+        virtual void RestoreAllActorStates(const TMap<uint64, MString>& Snapshot) = 0;
+
+        // 遍历所有 actor,调 IActor::OnVmSwapped(OldH, NewH)
+        virtual void RebindCrossInstanceRefs() = 0;
+
+        // 按 ActorId 查 handle(重建后 caller 拿新 handle 调 invoke)
+        virtual TResult<TScriptInstanceHandle> GetActorHandle(uint64 ActorId) = 0;
     };
 
 } // namespace mession::script

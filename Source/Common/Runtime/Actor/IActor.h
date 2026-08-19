@@ -18,6 +18,7 @@
 #include "Common/Runtime/MLib.h"
 
 struct FActorMessage;
+struct TScriptInstanceHandle;
 
 /**
  * @brief IActor - 业务 actor 基类.
@@ -76,5 +77,21 @@ class IActor {
     virtual bool RestoreState(const TByteArray& InStateBytes) {
         (void)InStateBytes;
         return true;
+    }
+
+    /**
+     * @brief OnVmSwapped - DualVM 热重载完成后的回调(DualVM Plan).
+     *
+     * Lua 业务 actor 实现:旧 VM 的 handle 已失效,新 VM 的 handle 是 engine 重新
+     * :new + luaL_ref 后给的。默认实现:no-op。Lua-side proxy 派生类 override 时,
+     * 把 self.Handle 替换成 NewHandle;如果业务有缓存的 Lua table / closure
+     * (例如 setmetatable 之前捕获的对方 actor 句柄),在这里更新。
+     *
+     * @param OldHandle 旧 VM 的 handle(已失效,只用于比对 / 日志)
+     * @param NewHandle 新 VM 的 handle(可立即用于 InvokeInstanceMethod)
+     */
+    virtual void OnVmSwapped(const struct TScriptInstanceHandle& OldHandle, const struct TScriptInstanceHandle& NewHandle) {
+        (void)OldHandle;
+        (void)NewHandle;
     }
 };

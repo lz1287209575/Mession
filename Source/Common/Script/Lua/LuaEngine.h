@@ -9,6 +9,7 @@
 #include "Common/Script/Abstract/IScriptModule.h"
 #include "Common/Script/Abstract/SScriptEngineConfig.h"
 #include "Common/Script/Abstract/TVariant.h"
+#include "Common/Script/Abstract/ScriptErrorCodes.h"
 #include "Common/Script/Lua/LuaScriptState.h"
 #include "Common/Script/Lua/FPendingCall.h"
 
@@ -71,6 +72,18 @@ namespace mession::script::lua {
             if (!State || !State->IsValid())
                 return MString("engine_not_initialized");
             return State->LoadBuffer(Name, Bytes, Size);
+        }
+
+        // DualVM actor 持久化(T7 stub,T8/T9 真实现)
+        TMap<uint64, MString> SaveAllActorStates() override {
+            return TMap<uint64, MString>();
+        }
+        void RestoreAllActorStates(const TMap<uint64, MString>& /*Snapshot*/) override {
+        }
+        void RebindCrossInstanceRefs() override {
+        }
+        TResult<TScriptInstanceHandle> GetActorHandle(uint64 /*ActorId*/) override {
+            return TResult<TScriptInstanceHandle>::Err(MString(ScriptErrorCodes::kActorNotFound));
         }
 
         TResult<EReloadResult> Reload(EReloadMode Mode) override;
