@@ -12,6 +12,7 @@ add_library(mession_lua STATIC
     MLuaLog.cpp
     MLuaFormat.cpp
     MLuaRpc.cpp
+    FPendingCall.cpp
 )
 target_include_directories(mession_lua
     PUBLIC
