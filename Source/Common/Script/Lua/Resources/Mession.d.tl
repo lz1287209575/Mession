@@ -29,7 +29,7 @@ local record MVector
     new: function(size?: integer, init?: MScalar.Type): MVector
     size: function(self): integer
     push: function(self, v: MScalar.Type): integer
-    pop:  function(self): MScalar.Type
+    pop:  function(self): MScalar.Type | nil
     get:  function(self, i: integer): MScalar.Type
     set:  function(self, i: integer, v: MScalar.Type)
     insert: function(self, i: integer, v: MScalar.Type)
@@ -48,10 +48,10 @@ local record MMap
     userdata
 
     new: function(): MMap
-    get:    function(self, key: MScalar.Type): MScalar.Type
+    get:    function(self, key: MScalar.Type): MScalar.Type | nil
     set:    function(self, key: MScalar.Type, val: MScalar.Type)
     has:    function(self, key: MScalar.Type): boolean
-    remove: function(self, key: MScalar.Type): MScalar.Type
+    remove: function(self, key: MScalar.Type): MScalar.Type | nil
     size:   function(self): integer
     clear:  function(self)
     keys:   function(self): {MScalar.Type}

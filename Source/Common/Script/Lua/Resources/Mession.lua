@@ -87,6 +87,7 @@ local MMap = {}
 --- @return MMap
 function MMap.new() end
 
+--- 取键对应值;键不存在返回 nil
 --- @param key integer|number|string|boolean
 --- @return integer|number|string|boolean|nil
 function MMap:get(key) end
@@ -111,10 +112,12 @@ function MMap:size() end
 --- @return nil
 function MMap:clear() end
 
---- @return MVector  # 实际是普通 Lua 表(array of keys)
+--- 返回所有键(普通 Lua 数组表,非 MVector)
+--- @return integer[]|number[]|string[]|boolean[]
 function MMap:keys() end
 
---- @return MVector  # 实际是普通 Lua 表(array of values)
+--- 返回所有值(普通 Lua 数组表,非 MVector)
+--- @return integer[]|number[]|string[]|boolean[]
 function MMap:values() end
 
 -- ============================================================================
