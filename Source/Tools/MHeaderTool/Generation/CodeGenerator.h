@@ -544,10 +544,10 @@ namespace MHeaderTool {
         // step-2: ClientCall 的 MHeaderTool emit 路径已删除。原 GenerateClientCallHandler
         // 依赖 EGeneratedClientCallHandlerResult / IsCurrentClientCallDeferred /
         // MFunctionObject::ClientCallHandler,这些字段都随 ClientProtocol 重构拆掉。
-        // 后续如果有 MFUNCTION(Async, CallClient) 这类下行通知的需求(本工作树后续
-        // task 引入),会走 GenerateClientDownlinkStub 那条新路径,emit 到
-        // MClientDownlinkManifest + 静态 stub 函数,而不是 emit ClientCallHandler
-        // 虚表项。
+        // MFUNCTION(CallClient) 下行通知已实现:走 ManifestGenerators 的
+        // GenerateClientDownlinkManifest/Header,emit MClientDownlinkManifest 表 +
+        // 下行 FunctionId 常量 + 服务端调用 stub(MDownlinkCall_<Class>_<Func>),
+        // 而不是 emit ClientCallHandler 虚表项。
         void GenerateClientCallHandler(std::ostringstream& /*out*/, const SParsedClass& /*parsedClass*/, const SParsedFunction& /*func*/) const {
             // no-op: client-side call dispatch 由 Gateway 反射接管,这里不再 emit
         }
@@ -738,8 +738,8 @@ namespace MHeaderTool {
 
             // step-2: 客户端 dispatch 字段(MessageName/RouteName/TargetName/AuthMode/
             // WrapMode)整段从 MFunctionObject 删除。Client / ClientCall 这两条
-            // transport 也不再走 RegisterFunction 直接 emit 字段;改由后续 task
-            // 引入的 GenerateClientDownlinkStub 走 MClientDownlinkManifest 路径。
+            // transport 也不再走 RegisterFunction 直接 emit 字段;下行(CallClient)
+            // 走 ManifestGenerators 的 MClientDownlinkManifest 路径(表 + stub)。
             // 这里把 Client 路径保留最小 stub 形态(Transport 字段仍留 Class.h,
             // 因为 ServerCall 也用它)。
             if (func.Transport == "Client" || !func.MessageName.empty()) {
@@ -1196,8 +1196,10 @@ namespace MHeaderTool {
         //   Start()  触发第一个 await（调 F(args) → AsAwaiter）
         //   Resume() 挂起完成后恢复（awaiter 已 ready → AwaitResume 取值）
         //   GetFuture() 返回 SFutureResult<R>（Promise 驱动）
-        // 本轮：单 await 形态（多 await 串行 / 循环 await 为 await 后续工作包）。
-        // 不替换 P4 生成器（KD-16 共存期 = 0 前，P5 产物独立输出）。
+        // 控制流：单 await / 多 await 串行 / if-else 分支 / for 循环 / 嵌套均以实现
+        //（简单串行走本函数；含 if/for 的走 EmitAwaitCFrame 递归控制流；
+        //  验证见 AwaitCodegenTest 32 用例）。不替换 P4 生成器（KD-16 共存期
+        //  = 0 前，P5 产物独立输出）。
 
         // 参数槽类型：去 const 前缀 + 尾随 &/*（成员不能是引用/const 值）
         static MString StripParamQualifiers(MString TypeName) {

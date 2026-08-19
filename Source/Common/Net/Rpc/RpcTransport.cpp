@@ -54,7 +54,9 @@ bool SendServerRpcMessage(const TSharedPtr<INetConnection>& Connection, const TB
 //
 // RequestId 由 UE 客户端唯一分配,Gateway 透传不解释:
 //   - 普通上行请求 → UE 给一个 id,Gateway 拿到后塞同一个 id 回包
-//   - 服务器主动 push → Gateway 自己分配 id,UE 收到后 RequestId != 0 表示 push
+//   - 服务器主动 push（下行）→ RequestId = 0 表示 push（见
+//     GatewayServer::PushClientDownlink 与 RpcClientCall::SendClientDownlink，
+//     与 RequestId!=0 的请求/响应区分）
 // UE 协议族的"Request/Response/Push"区分完全靠 RequestId + 自身 manifest,
 // Gateway 不做 enum 分发(架构决定,见 TODO/architecture refactor)。
 
