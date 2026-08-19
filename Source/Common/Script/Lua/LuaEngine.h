@@ -86,6 +86,10 @@ namespace mession::script::lua {
             return TResult<TScriptInstanceHandle>::Err(MString(ScriptErrorCodes::kActorNotFound));
         }
 
+        // Reload 数据源:外部(file watcher / debug)在调 Reload 之前填入
+        // empty → no-op(返回 Success)
+        MString HotReloadNewBytes;
+
         TResult<EReloadResult> Reload(EReloadMode Mode) override;
 
         TResult<void> CallFunction(MFunctionObject* Fn, const mession::script::TScriptArgs& Args) override;

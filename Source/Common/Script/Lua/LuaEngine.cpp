@@ -14,6 +14,7 @@
 #include "Common/Script/Lua/MLuaMap.h"
 #include "Common/Script/Lua/MLuaRpc.h"
 #include "Common/Script/Lua/MLuaVector.h"
+#include "Common/Script/Lua/LuaHotReload.h"
 
 #include <chrono>
 #include "Common/Script/Lua/LuaTypeBridge.h"
@@ -155,8 +156,23 @@ namespace mession::script::lua {
         MLuaVector::Install(L);
     }
 
-    TResult<EReloadResult> MLuaEngine::Reload(EReloadMode /*Mode*/) {
-        return TResult<EReloadResult>::Ok(EReloadResult::Success);
+    TResult<EReloadResult> MLuaEngine::Reload(EReloadMode Mode) {
+        // HotReloadNewBytes 由外部(file watcher / debug 注入 / 业务侧 reload() API)
+        // 在调 Reload 之前填入;空 → no-op
+        if (HotReloadNewBytes.empty()) {
+            return TResult<EReloadResult>::Ok(EReloadResult::Success);
+        }
+        switch (Mode) {
+        case EReloadMode::AtomicSwap:
+            return MLuaHotReload::ReloadAtomicSwap(*this, HotReloadNewBytes);
+        case EReloadMode::DualVM:
+            return MLuaHotReload::ReloadDualVM(*this, HotReloadNewBytes);
+        case EReloadMode::Discard:
+            // T11 简化:Discard 当前没区分,fallback 到 AtomicSwap
+            LOG_WARN("Reload: Discard mode not fully implemented, falling back to AtomicSwap");
+            return MLuaHotReload::ReloadAtomicSwap(*this, HotReloadNewBytes);
+        }
+        return TResult<EReloadResult>::Err(MString("unknown_reload_mode"));
     }
 
     TResult<void> MLuaEngine::CallFunction(MFunctionObject* Fn, const mession::script::TScriptArgs& Args) {
