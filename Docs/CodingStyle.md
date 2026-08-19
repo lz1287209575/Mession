@@ -659,3 +659,15 @@ MHeaderTool 生成的代码在 `Build/Generated/`,**不参与**风格检查。
 - `Docs/Architecture.md`:系统架构,Server 拓扑、对象模型。
 - `Docs/RuntimeAndRpc.md`:反射系统与 RPC 派发。
 - `Docs/superpowers/specs/2026-07-14-coding-style/design.md`:本规范的设计依据。
+
+---
+
+## 14. Lua IDE 提示文件（自动生成）
+
+`Build/Generated/Mession.lua` 和 `Build/Generated/Mession.d.tl` 是 MHeaderTool 自动 emit 的 Lua/Teal IDE 提示文件，覆盖 `MLuaVector` / `MLuaMap` / `MLuaLog` / `MLuaFormat` / `MLuaRpc` 注册的全局 API。
+
+**来源**：解析 `Source/Common/Script/Lua/MLua*.cpp` 中 cfunction 上方的 `/// @lua-*` 注解块（`@lua-stdlib NS.func` / `@lua-self Type` / `@lua-param name type?` / `@lua-return type`）。修改 MLua*.cpp 后必须重跑 `cmake --build Build -j4` 或 `cmake -S . -B Build` 让生成器重新输出，否则 IDE 补全/类型检查会过期。
+
+**IDE 配置**：把 `Build/Generated/` 加到 lua-language-server 的 `Lua.workspace.library` 列表（Teal checker 同理），业务脚本里 `Mession.Vector.new():push(1):get(1)` 即可正常补全与类型检查。
+
+**禁止手写**：仓库内不再保留 `Source/Common/Script/Lua/Resources/Mession.{lua,d.tl}`；所有签名集中在 cfunction 注解里维护。
