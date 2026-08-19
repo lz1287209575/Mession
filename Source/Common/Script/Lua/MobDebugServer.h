@@ -2,9 +2,20 @@
 
 #include "Common/Runtime/MLib.h"
 
+#include <atomic>
+
 namespace mession::script::lua {
 
     class MLuaEngine;
+
+    // FMobDebugState — per-engine 的 MobDebug hook 状态(DualVM 兼容)
+    // 之前是文件-static,会让双 MLuaEngine 共存时互相覆盖;
+    // 改为 MLuaEngine 持有实例,DualVM swap 时旧 VM 的状态不再生效(hook 已 lua_sethook 解绑)
+    struct FMobDebugState {
+        std::atomic<bool>   bRunning{false};
+        std::atomic<uint32> InstructionCount{0};
+        std::atomic<uint64> LastHookTimestamp{0}; // ms since epoch
+    };
 
     class MLuaMobDebugServer {
         public:

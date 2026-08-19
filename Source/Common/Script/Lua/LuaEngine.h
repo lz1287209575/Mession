@@ -123,6 +123,8 @@ namespace mession::script::lua {
         FLuaPendingCallRegistry                                   PendingCalls;
         uint32                                                    VmGeneration = 1;
         MSharedMutex                                              StateMutex;
+        struct FMobDebugState;                                    // per-engine MobDebug hook 状态(T11)
+        FMobDebugState*                                           DebugStatePtr = nullptr;
     };
 
 } // namespace mession::script::lua
