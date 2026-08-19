@@ -13,6 +13,9 @@ add_executable(LuaVectorTest
 add_executable(LuaMapTest
     TestLuaMap.cpp
 )
+add_executable(LuaLogTest
+    TestLuaLog.cpp
+)
 
 target_include_directories(LuaTypeBridgeTest
     PRIVATE
@@ -39,6 +42,12 @@ target_include_directories(LuaVectorTest
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_include_directories(LuaMapTest
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/Source
+        ${CMAKE_SOURCE_DIR}/Source/ThirdParty/lua/src
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_include_directories(LuaLogTest
     PRIVATE
         ${CMAKE_SOURCE_DIR}/Source
         ${CMAKE_SOURCE_DIR}/Source/ThirdParty/lua/src
@@ -76,9 +85,16 @@ target_link_libraries(LuaMapTest
         mession_lua_vendor
         mession_common
 )
+target_link_libraries(LuaLogTest
+    PRIVATE
+        mession_lua
+        mession_lua_vendor
+        mession_common
+)
 
 configure_mession_compile_options(LuaTypeBridgeTest)
 configure_mession_compile_options(LuaCoroutineTest)
 configure_mession_compile_options(LuaInstanceHandleTest)
 configure_mession_compile_options(LuaVectorTest)
 configure_mession_compile_options(LuaMapTest)
+configure_mession_compile_options(LuaLogTest)

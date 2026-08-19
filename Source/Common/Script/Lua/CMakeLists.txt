@@ -9,6 +9,7 @@ add_library(mession_lua STATIC
     MobDebugServer.cpp
     MLuaVector.cpp
     MLuaMap.cpp
+    MLuaLog.cpp
 )
 target_include_directories(mession_lua
     PUBLIC
