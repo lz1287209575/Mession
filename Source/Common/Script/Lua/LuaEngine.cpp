@@ -8,6 +8,8 @@
 #include "Common/Script/Abstract/TScriptInstanceHandle.h"
 #include "Common/Script/Lua/LuaCoroutineBridge.h"
 #include "Common/Script/Lua/LuaModule.h"
+
+#include <chrono>
 #include "Common/Script/Lua/LuaTypeBridge.h"
 
 extern "C" {
@@ -53,6 +55,8 @@ namespace mession::script::lua {
     void MLuaEngine::Tick(float /*DeltaSeconds*/) {
     }
     void MLuaEngine::StepCoroutines() {
+        // 走 FLuaPendingCallRegistry:把所有 bResumePending 的 call 真正 resume
+        PendingCalls.StepAll();
     }
 
     TResult<void> MLuaEngine::Shutdown() {
@@ -112,12 +116,21 @@ namespace mession::script::lua {
     }
 
     uint32 MLuaEngine::CountPendingCalls() const {
-        // 暂未实现 FLuaPendingCall registry(T4);返回 0 让 ReloadAtomicSwap 路径可走
-        return 0;
+        return PendingCalls.CountPending();
     }
 
-    TResult<uint32> MLuaEngine::DrainPendingCalls(uint32 /*TimeoutSeconds*/) {
-        // Stub:T4 完成后实做;目前始终返回 0 pending(无 drain)
+    TResult<uint32> MLuaEngine::DrainPendingCalls(uint32 TimeoutSeconds) {
+        // Drain loop:StepCoroutines 每 10ms 一次,直到 pending==0 或 timeout
+        auto Start = std::chrono::steady_clock::now();
+        while (PendingCalls.CountPending() > 0) {
+            StepCoroutines();
+            auto Elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - Start).count();
+            if (Elapsed >= TimeoutSeconds) {
+                return TResult<uint32>::Err(MString(ScriptErrorCodes::kVmDrainTimeout));
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
         return TResult<uint32>::Ok(0);
     }
 

@@ -10,6 +10,7 @@
 #include "Common/Script/Abstract/SScriptEngineConfig.h"
 #include "Common/Script/Abstract/TVariant.h"
 #include "Common/Script/Lua/LuaScriptState.h"
+#include "Common/Script/Lua/FPendingCall.h"
 
 #include <shared_mutex>
 
@@ -105,6 +106,7 @@ namespace mession::script::lua {
         TUniquePtr<MLuaScriptState>                               State;
         TUniquePtr<MLuaScriptState>                               PendingOldState;
         TMap<MClass*, TSharedPtr<mession::script::IScriptModule>> Modules;
+        FLuaPendingCallRegistry                                   PendingCalls;
         uint32                                                    VmGeneration = 1;
         MSharedMutex                                              StateMutex;
     };
