@@ -14,25 +14,25 @@ add_executable(LuaVectorTest
 target_include_directories(LuaTypeBridgeTest
     PRIVATE
         ${CMAKE_SOURCE_DIR}/Source
-        ${CMAKE_SOURCE_DIR}/Source/Common/Script/lua/src
+        ${CMAKE_SOURCE_DIR}/Source/ThirdParty/lua/src
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_include_directories(LuaCoroutineTest
     PRIVATE
         ${CMAKE_SOURCE_DIR}/Source
-        ${CMAKE_SOURCE_DIR}/Source/Common/Script/lua/src
+        ${CMAKE_SOURCE_DIR}/Source/ThirdParty/lua/src
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_include_directories(LuaInstanceHandleTest
     PRIVATE
         ${CMAKE_SOURCE_DIR}/Source
-        ${CMAKE_SOURCE_DIR}/Source/Common/Script/lua/src
+        ${CMAKE_SOURCE_DIR}/Source/ThirdParty/lua/src
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_include_directories(LuaVectorTest
     PRIVATE
         ${CMAKE_SOURCE_DIR}/Source
-        ${CMAKE_SOURCE_DIR}/Source/Common/Script/lua/src
+        ${CMAKE_SOURCE_DIR}/Source/ThirdParty/lua/src
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 

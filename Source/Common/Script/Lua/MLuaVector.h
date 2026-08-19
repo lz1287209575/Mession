@@ -77,4 +77,15 @@ inline bool operator!=(const MScalarValue& A, const MScalarValue& B)
     return !(A == B);
 }
 
+// MLuaVector — Lua ↔ TVector<MScalarValue> 桥接器
+// 用法:在 Lua 初始化阶段 MLuaVector::Install(L),把 Mession.Vector.new(...) 注册到 Lua
+// 内部:userdata 持 TVector<MScalarValue>*,metatable MVectorProxy 提供 __len / __pairs / __index / __newindex / __gc
+class MLuaVector
+{
+public:
+    // 注册 Mession.Vector.new() + MVectorProxy metatable 到 Lua 状态机
+    // 应当从 MLuaEngine::Initialize / 启动 lua_init.lua 之前调用
+    static void Install(lua_State* L);
+};
+
 } // namespace mession::script::lua

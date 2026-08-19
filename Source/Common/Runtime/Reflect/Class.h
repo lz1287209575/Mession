@@ -171,6 +171,11 @@ class MFunctionObject {
     TVector<MProperty*> Params;
     MProperty*          ReturnProperty = nullptr;
 
+    // Back-pointer to the owning MClass. Set by MClass::RegisterFunction.
+    // Used by callers (e.g. Lua engine fallback) that need both the function
+    // name and its class to locate a class.method global in the script VM.
+    class MClass* OwnerClass = nullptr;
+
     MFunctionObject() = default;
     virtual ~MFunctionObject() {
         for (MProperty* Param : Params) {
@@ -339,6 +344,7 @@ class MClass {
             }
             InFunction->FunctionId = StableId;
         }
+        InFunction->OwnerClass = this;
         Functions.push_back(InFunction);
     }
 };
