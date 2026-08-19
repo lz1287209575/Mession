@@ -671,3 +671,81 @@ MHeaderTool 生成的代码在 `Build/Generated/`,**不参与**风格检查。
 **IDE 配置**：把 `Build/Generated/` 加到 lua-language-server 的 `Lua.workspace.library` 列表（Teal checker 同理），业务脚本里 `Mession.Vector.new():push(1):get(1)` 即可正常补全与类型检查。
 
 **禁止手写**：仓库内不再保留 `Source/Common/Script/Lua/Resources/Mession.{lua,d.tl}`；所有签名集中在 cfunction 注解里维护。
+
+---
+
+## 15. DualVM Lua 热重载 — Actor 持久化契约
+
+业务侧 Lua actor class 实现 `DualVM` 友好的**可选**钩子。缺失钩子时,C++ 侧 fallback 到 `MLuaProxyActor` 的 `SaveLuaState`/`RestoreLuaState` 默认实现（空 snapshot + no-op restore，即 actor 重生但 state 丢失）。
+
+### 15.1 Actor class 模板
+
+```lua
+-- 业务侧 actor(任意 class)
+local EchoService = {}
+EchoService.__index = EchoService
+
+-- 必选:工厂
+function EchoService:new(name)
+    return setmetatable({ name = name, count = 0 }, EchoService)
+end
+
+-- 必选:消息入口(MLuaProxyActor::OnMessage 反射)
+function EchoService:on_message(msg)
+    self.count = self.count + 1
+end
+
+-- 可选:生命周期
+function EchoService:on_created()   end  -- actor 创建后
+function EchoService:on_destroyed() end  -- actor 销毁前
+
+-- 可选:DualVM 持久化钩子
+function EchoService:__dualvm_save()
+    -- 必须返回 string(强制业务思考序列化格式)
+    return MFormat.fmt('{}:{}', self.name, self.count)
+end
+
+function EchoService:__dualvm_restore(state)
+    -- 收到 __dualvm_save 返回的 state;no-op 时 default 行为是 actor 状态被丢弃
+    local n, c = state:match('(%w+):(%d+)')
+    self.name = n
+    self.count = tonumber(c) or 0
+end
+```
+
+### 15.2 语义约束
+
+| 钩子 | 必须返回 | 触发时机 |
+|---|---|---|
+| `__dualvm_save()` | **string**(MFormat 序列化后) | 每次 `MLuaEngine::Reload(DualVM)` 前 drain 完,VM_A 销毁前 |
+| `__dualvm_restore(state)` | nil(成功)/ error msg(失败) | BeginSwap 后新 VM 上 `MLuaProxyActor::RebindHandleOnCurrentVm` 重建 instance 之后 |
+
+### 15.3 Cross-actor 引用硬约束
+
+**禁止跨 actor 引用 Lua 端 handle**(`TScriptInstanceHandle` 是 C++ 端 transient 标识)。业务代码必须用 `ActorId` (uint64) 引用 peer:
+
+```lua
+-- 错误:缓存对方 handle,reload 后失效
+local B_handle = engine.create_actor_by_class_name("EchoService", {})
+A.peer_handle = B_handle
+
+-- 正确:缓存 ActorId,reload 后通过 engine 重新查新 handle
+local B_id = engine.create_actor_by_class_name("EchoService", {})
+A.peer_id = B_id
+function A:ping_peer()
+    -- 通过 C++ 端 GetActorHandle(B_id) 拿新 handle invoke
+end
+```
+
+### 15.4 不变量
+
+- `__dualvm_save` 返回 string 时,reload 后 actor state 完全保留(`__dualvm_restore` 必须能 parse 这个 string)
+- 缺失 `__dualvm_save` 时,reload 后 actor state 丢失(actor 仍存在,handle 换新)
+- 缺失 `__dualvm_restore` 时,reload 后 actor 状态为 factory 默认值
+- save/restore hook 异常 → `MLuaProxyActor` 默认实现 fallback,reload 仍成功但 state 不保留
+
+### 15.5 Debug 路径
+
+- 验证 hook 注册:`Mession.<ClassName>` 全局表能找到
+- 验证 hook 调用:`luaL_loadbufferx` 加载一段调 `Reload(DualVM)` 的测试代码,断点看 `__dualvm_save` 是否被调
+- 验证 fallback:`CommentOut` 整个 `__dualvm_save` 函数,确认 reload 仍能完成且 actor 状态丢失但不崩溃
