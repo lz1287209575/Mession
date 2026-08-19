@@ -13,6 +13,11 @@
 
 namespace mession::script::lua {
 
+    // 前向声明(避免在 header 引入 FLuaPendingCall/MLuaProxyActor 全定义)
+    class MLuaEngine;
+    struct FLuaPendingCall;
+    class MLuaProxyActor;
+
     class MLuaEngine : public mession::script::IScriptEngine {
         public:
         MLuaEngine();
@@ -30,6 +35,12 @@ namespace mession::script::lua {
         // Hot reload 内部 helper:暴露旧 State 引用供 Drain / CountPendingCalls
         MLuaScriptState& GetStateForReload() {
             return *State;
+        }
+
+        // DualVM 计数器:每次 ReplaceState/BeginSwap 时 ++
+        // TScriptInstanceHandle.Generation 持它创建时的值;跨 generation 调用立即 fail-fast
+        uint32 GetVmGeneration() const {
+            return VmGeneration;
         }
 
         // 测试 / 业务代码加载辅助:把 Lua 字节流加载到当前 State
@@ -71,6 +82,7 @@ namespace mession::script::lua {
         private:
         TUniquePtr<MLuaScriptState>                               State;
         TMap<MClass*, TSharedPtr<mession::script::IScriptModule>> Modules;
+        uint32                                                    VmGeneration = 1;
     };
 
 } // namespace mession::script::lua

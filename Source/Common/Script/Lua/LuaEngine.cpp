@@ -332,7 +332,7 @@ namespace mession::script::lua {
         }
 
         int Ref = luaL_ref(L, LUA_REGISTRYINDEX);
-        return TResult<TScriptInstanceHandle>::Ok(TScriptInstanceHandle(Ref));
+        return TResult<TScriptInstanceHandle>::Ok(TScriptInstanceHandle(Ref, VmGeneration));
     }
 
     TResult<TVariant> MLuaEngine::InvokeInstanceMethod(TScriptInstanceHandle Handle, const MString& MethodName, const TScriptArgs& Args) {
