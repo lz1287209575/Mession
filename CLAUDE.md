@@ -61,10 +61,10 @@ UE / Scripts/validate.py
 ## Client / server request flow
 
 1. Client connects to **Gateway** and sends `MT_FunctionCall` (stable **FunctionId** envelope; legacy `EClientMessageType` / `ForwardedClientCall` removed).
-2. Gateway looks up `MClientManifest::FindByFunctionId` (emit still incomplete — table may be empty/stub; do not reintroduce hard-coded route tables as the long-term design).
+2. Gateway looks up `MClientManifest::FindByFunctionId` (generated table of client-callable `ServerCall`s — non-empty; do not reintroduce hard-coded route tables).
 3. Gateway resolves backend via **`MEndpointCache::GetOrConnect(EServerType)`** (fed by Registry), then server RPC.
 4. EchoService handles `MFUNCTION(ServerCall)` on local actors (`MActorRouter`); cross-instance uses `MRpcChannel::CallToActor` + cache.
-5. Downlink to clients is Gateway-mediated (`PushClientDownlink` / `SendToClient` style paths). Server→client push targeting framework: `MClientTargetResolver` + `MClientTargetContextGuard` (framework landed; full call-site wiring still ongoing).
+5. Downlink to clients is Gateway-mediated: business services call generated `MDownlinkCall_<Class>_<Func>` stubs (`MFUNCTION(CallClient)`, see `MClientDownlinkManifest.mgenerated.h`) → Gateway `PushClientDownlink` (`connId==0` = broadcast) → client. Targeting via `MClientTargetResolver` + `MClientTargetContextGuard`.
 
 ## Object / actor model
 
@@ -168,10 +168,11 @@ After Log changes: `./Bin/LogTest` (and optional `Scripts/validate_log_*.py`).
 
 ## Active gaps (do not “fix” by reverting architecture)
 
+已闭环(2026-08-19):`MClientManifest` 真生成(ServerCall 表 + `CallClient` 下行 manifest/stub)、
+`MClientTargetResolver` 接线(Gateway RegisterConn/UnregisterConn + CallClient 端到端)、
+跨实例 `CallToActor` under Registry actor metadata(动态 actor 上报 + 本地/跨实例路由)、
+`validate.py` 全链 6/6 绿。
+
 | Gap | Intent |
 |-----|--------|
-| `MClientManifest` real emit from `MFUNCTION(Client/CallClient/…)` | Replace stub; Gateway routes only via generated table |
-| Wire `MClientTargetResolver` at session online/offline + CallClient sites | Complete server→client push path |
-| Prove cross-Echo `CallToActor` under Registry actor metadata | Distributed baseline |
-| Green `validate.py` chains | Gate for further protocol work |
 | Coding-style C2–C5 bulk format | Deferred; see `Docs/CodingStyle.md` §落地进度 |
