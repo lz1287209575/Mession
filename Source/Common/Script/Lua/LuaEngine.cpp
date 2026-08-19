@@ -9,6 +9,11 @@
 #include "Common/Script/Lua/LuaCoroutineBridge.h"
 #include "Common/Script/Lua/LuaModule.h"
 #include "Common/Script/Lua/MLuaProxyActor.h"
+#include "Common/Script/Lua/MLuaFormat.h"
+#include "Common/Script/Lua/MLuaLog.h"
+#include "Common/Script/Lua/MLuaMap.h"
+#include "Common/Script/Lua/MLuaRpc.h"
+#include "Common/Script/Lua/MLuaVector.h"
 
 #include <chrono>
 #include "Common/Script/Lua/LuaTypeBridge.h"
@@ -50,6 +55,8 @@ namespace mession::script::lua {
         if (!State->IsValid()) {
             return TResult<void>::Err(MString("luaL_newstate failed"));
         }
+        // Bootstrap:把 5 个 stdlib 装到初始 VM 上(Mession.* 全局表)
+        InstallStandardLibraries(*State);
         return TResult<void>::Ok();
     }
 
@@ -135,9 +142,17 @@ namespace mession::script::lua {
         return TResult<uint32>::Ok(0);
     }
 
-    void MLuaEngine::InstallStandardLibraries(MLuaScriptState& /*State*/) {
-        // Stub:T12 完成后实做;按序调 5 个 stdlib Install
-        // 每个 Install 都是 idempotent get-or-create,所以多次调用安全
+    void MLuaEngine::InstallStandardLibraries(MLuaScriptState& S) {
+        lua_State* L = S.GetLuaState();
+        if (!L) return;
+
+        // 顺序:Rpc 先(它建 Mession 全局表),其他 4 个按 namespace 字母序
+        // 每个 Install 都 idempotent(get-or-create Mession 全局表)
+        MLuaRpc::Install(L, /*pEngine*/ nullptr); // nullptr — Install(L, ptr) 旧签名;新桥不传 bridge
+        MLuaFormat::Install(L);
+        MLuaLog::Install(L);
+        MLuaMap::Install(L);
+        MLuaVector::Install(L);
     }
 
     TResult<EReloadResult> MLuaEngine::Reload(EReloadMode /*Mode*/) {
