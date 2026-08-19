@@ -8,11 +8,13 @@ add_library(mession_lua STATIC
     LuaHotReload.cpp
     MobDebugServer.cpp
     MLuaVector.cpp
+    MLuaMap.cpp
 )
 target_include_directories(mession_lua
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/Source
+        ${CMAKE_SOURCE_DIR}/Source/ThirdParty/lua/src
 )
 target_link_libraries(mession_lua
     PUBLIC
