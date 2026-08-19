@@ -16,9 +16,9 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
+#include "Common/Script/Abstract/TScriptInstanceHandle.h"
 
 struct FActorMessage;
-struct TScriptInstanceHandle;
 
 /**
  * @brief IActor - 业务 actor 基类.
@@ -90,7 +90,7 @@ class IActor {
      * @param OldHandle 旧 VM 的 handle(已失效,只用于比对 / 日志)
      * @param NewHandle 新 VM 的 handle(可立即用于 InvokeInstanceMethod)
      */
-    virtual void OnVmSwapped(const struct TScriptInstanceHandle& OldHandle, const struct TScriptInstanceHandle& NewHandle) {
+    virtual void OnVmSwapped(const mession::script::TScriptInstanceHandle& OldHandle, const mession::script::TScriptInstanceHandle& NewHandle) {
         (void)OldHandle;
         (void)NewHandle;
     }

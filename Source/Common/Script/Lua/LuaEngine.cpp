@@ -8,6 +8,7 @@
 #include "Common/Script/Abstract/TScriptInstanceHandle.h"
 #include "Common/Script/Lua/LuaCoroutineBridge.h"
 #include "Common/Script/Lua/LuaModule.h"
+#include "Common/Script/Lua/MLuaProxyActor.h"
 
 #include <chrono>
 #include "Common/Script/Lua/LuaTypeBridge.h"
@@ -256,11 +257,26 @@ namespace mession::script::lua {
         if (!Cls) {
             return TResult<uint64>::Err(MString("class_null"));
         }
-        // 简化:生成 ActorId + 注册到 MActorRouter
-        // Object 本体留给业务侧业务逻辑注册(走 OnNewActor 回调)
+        if (!State || !State->IsValid()) {
+            return TResult<uint64>::Err(MString("engine_not_initialized"));
+        }
+
+        // 1. Lua 端按 ClassName 创建 instance
+        MString ClassName = Cls->GetName();
+        auto InstanceResult = CreateInstanceByClassName(ClassName, Args);
+        if (InstanceResult.IsErr()) {
+            return TResult<uint64>::Err(InstanceResult.GetError());
+        }
+        TScriptInstanceHandle Handle = InstanceResult.GetValue();
+
+        // 2. 生成 ActorId + 构造 MLuaProxyActor
         uint64 ActorId = MUniqueIdGenerator::Generate();
-        MActorRouter::Get().RegisterActor(ActorId, EServerType::Unknown);
-        (void)Args;
+        auto Proxy = MakeShared<MLuaProxyActor>(*this, Cls, ActorId, Handle, ClassName);
+        ActorsById[ActorId] = Proxy;
+
+        // 3. 触发 OnCreated 钩子
+        Proxy->OnCreated();
+
         return TResult<uint64>::Ok(ActorId);
     }
 

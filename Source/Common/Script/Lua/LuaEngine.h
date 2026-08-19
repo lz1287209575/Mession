@@ -119,6 +119,7 @@ namespace mession::script::lua {
         TUniquePtr<MLuaScriptState>                               State;
         TUniquePtr<MLuaScriptState>                               PendingOldState;
         TMap<MClass*, TSharedPtr<mession::script::IScriptModule>> Modules;
+        TMap<uint64, TSharedPtr<class MLuaProxyActor>>            ActorsById;
         FLuaPendingCallRegistry                                   PendingCalls;
         uint32                                                    VmGeneration = 1;
         MSharedMutex                                              StateMutex;

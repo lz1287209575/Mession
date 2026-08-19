@@ -2,7 +2,10 @@
 
 #include "Common/Runtime/Actor/IActor.h"
 #include "Common/Runtime/MLib.h"
+#include "Common/Runtime/Object/Result.h"
 #include "Common/Script/Abstract/TScriptInstanceHandle.h"
+
+#include <cstdint>
 
 extern "C" {
 struct lua_State;
@@ -32,8 +35,8 @@ namespace mession::script::lua {
         void   OnMessage(const struct FActorMessage& InMsg) override;
         void   OnCreated() override;
         void   OnDestroyed() override;
-        void   OnVmSwapped(const TScriptInstanceHandle& OldHandle,
-                            const TScriptInstanceHandle& NewHandle) override;
+        void   OnVmSwapped(const mession::script::TScriptInstanceHandle& OldHandle,
+                            const mession::script::TScriptInstanceHandle& NewHandle) override;
 
         // Lua state 序列化(供 SaveAllActorStates 调用)
         // 优先调 Lua 端 __dualvm_save() 钩子;无钩子走 C++ 反射 fallback
