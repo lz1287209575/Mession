@@ -144,6 +144,8 @@ namespace MHeaderTool {
         fs::path ClientManifestPath   = "Build/Generated/MClientManifest.mgenerated.cpp";
         fs::path ClientDownlinkManifestPath = "Build/Generated/MClientDownlinkManifest.mgenerated.cpp";
         fs::path ClientDownlinkHeaderPath   = "Build/Generated/MClientDownlinkManifest.mgenerated.h";
+        fs::path LuaStdlibHintLuaPath       = "Build/Generated/Mession.lua";
+        fs::path LuaStdlibHintTealPath      = "Build/Generated/Mession.d.tl";
         bool     bVerbose             = false;
         bool     bIncremental         = true;
         bool     bForceFull           = false;

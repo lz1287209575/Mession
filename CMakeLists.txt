@@ -294,6 +294,8 @@ set(MESSION_HEADERTOOL_CMD
     "--client-manifest=${MESSION_GENERATED_DIR}/MClientManifest.mgenerated.cpp"
     "--client-downlink-manifest=${MESSION_GENERATED_DIR}/MClientDownlinkManifest.mgenerated.cpp"
     "--client-downlink-header=${MESSION_GENERATED_DIR}/MClientDownlinkManifest.mgenerated.h"
+    "--lua-stdlib-hint-lua=${MESSION_GENERATED_DIR}/Mession.lua"
+    "--lua-stdlib-hint-teal=${MESSION_GENERATED_DIR}/Mession.d.tl"
 )
 
 if(EXISTS "${MESSION_HEADERTOOL_RUNNER}")

@@ -25,6 +25,10 @@ namespace {
         std::cerr << "  --cmake-manifest=<path>   CMake manifest path\n";
         std::cerr << "  --validation-schema-out=<path>  Validation schema output path\n";
         std::cerr << "  --client-manifest=<path>  Client manifest output path (.cpp)\n";
+        std::cerr << "  --client-downlink-manifest=<path>  Client downlink manifest output path\n";
+        std::cerr << "  --client-downlink-header=<path>   Client downlink header output path\n";
+        std::cerr << "  --lua-stdlib-hint-lua=<path>       Mession.lua output path (lua-language-server hint)\n";
+        std::cerr << "  --lua-stdlib-hint-teal=<path>      Mession.d.tl output path (Teal type-checker hint)\n";
         std::cerr << "  --verbose                 Verbose output\n";
         std::cerr << "  --incremental             Enable incremental build (default: true)\n";
         std::cerr << "  --force-full             Force full rebuild\n";
@@ -69,6 +73,10 @@ namespace {
                 options.ClientDownlinkManifestPath = arg.substr(27);
             } else if (arg.rfind("--client-downlink-header=", 0) == 0) {
                 options.ClientDownlinkHeaderPath = arg.substr(25);
+            } else if (arg.rfind("--lua-stdlib-hint-lua=", 0) == 0) {
+                options.LuaStdlibHintLuaPath = arg.substr(22);
+            } else if (arg.rfind("--lua-stdlib-hint-teal=", 0) == 0) {
+                options.LuaStdlibHintTealPath = arg.substr(23);
             } else if (arg.rfind("--jobs=", 0) == 0) {
                 options.NumThreads = std::stoi(arg.substr(7));
             } else {
