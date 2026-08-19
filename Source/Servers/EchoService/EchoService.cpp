@@ -359,25 +359,15 @@ void MEchoService::NotifyEvent(const FNotifyEventMsg& Msg) {
     LOG_INFO("%s: NotifyEvent(下行通知声明) text=%s", Config.ServiceName.c_str(), Msg.Text.c_str());
 }
 
-// 下行通知测试入口：客户端调用它 → 本服务经 Gateway PushClientDownlink
-// 把 NotifyEvent（MFUNCTION(CallClient)）广播给全部在线客户端连接。
+// 下行通知测试入口：客户端调用它 → 触发下行广播。用生成器产出的
+// MDownlinkCall_MEchoService_NotifyEvent stub（MClientDownlinkManifest.mgenerated.h），
+// 内部经 Gateway PushClientDownlink 把 NotifyEvent 广播给全部在线客户端连接。
 // 端到端：Client → Gateway → EchoService.TriggerNotify → Gateway.PushClientDownlink
 //        → 客户端收到 RequestId==0 的下行包（FunctionId = MDownlink_MEchoService_NotifyEvent）。
 SFutureResult<SEmptyServerMessage> MEchoService::TriggerNotify(const FTriggerNotifyRequest& Req) {
     FNotifyEventMsg Notify;
     Notify.Text = Req.Text;
-
-    FClientDownlinkPushRequest Push;
-    Push.GatewayConnectionId = 0; // 0 = 广播到全部在线客户端（与 RpcClientCall::CallClient(bBroadcast) 语义一致）
-    Push.FunctionId          = MDownlink_MEchoService_NotifyEvent;
-    Push.Payload             = BuildPayload(Notify);
-
-    TSharedPtr<MServerConnection> GatewayConn = MEndpointCache::Get().GetOrConnect(EServerType::Gateway);
-    if (!GatewayConn) {
-        return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>("gateway_unavailable", "TriggerNotify");
-    }
-
-    return CallServerFunction<SEmptyServerMessage>(GatewayConn, EServerType::Gateway, "PushClientDownlink", Push);
+    return MDownlinkCall_MEchoService_NotifyEvent(/*GatewayConnectionId=*/0, Notify);
 }
 
 // 运行时动态注册 actor:MDynamicTestActor 进入 MActorSystem + MActorRouter 本地

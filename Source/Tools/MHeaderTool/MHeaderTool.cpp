@@ -114,6 +114,10 @@ int main(int argc, char** argv) {
     // ClangTool 解析时会 chdir 到 compile_commands 的 directory——相对 OutputDir
     // 会在错误 cwd 下写文件（ofstream 失败静默）。统一绝对化，任何调用方式都稳。
     Options.OutputDir = fs::absolute(Options.OutputDir);
+    Options.CMakeManifestPath = fs::absolute(Options.CMakeManifestPath);
+    Options.ClientManifestPath = fs::absolute(Options.ClientManifestPath);
+    Options.ClientDownlinkManifestPath = fs::absolute(Options.ClientDownlinkManifestPath);
+    Options.ClientDownlinkHeaderPath = fs::absolute(Options.ClientDownlinkHeaderPath);
 
     SParseIR IR = MASTPipeline::Run(Options);
 
