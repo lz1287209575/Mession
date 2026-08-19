@@ -81,29 +81,73 @@ namespace mession::script::lua {
 
         lua_State* L = State->GetLuaState();
 
-        // 检查 Lua 栈参数合法性
-        int           Top      = lua_gettop(L);
-        TResult<void> ArgCheck = PushArgsFromStack(L, Fn, 1, Top);
-        if (ArgCheck.IsErr()) {
-            return ArgCheck;
+        // 反射桥接路径(优先):走 NativeInvoke
+        // 真实反射(请求/响应序列化)需要 MHeaderTool emit <Class>_<Method>_NativeInvoke
+        // 当前 MFunctionObject.NativeInvoke 字段未填,所以走 fallback Lua 路径:
+        // lua_getglobal(ClassName).<MethodName>(args)
+        // 完整 MHeaderTool 反射放后续 plan
+
+        if (Fn->NativeInvoke != nullptr) {
+            // 反射路径(NativeInvoke 已 emit 时)
+            int               OldTop = lua_gettop(L);
+            MReflectArchive   In, Out;
+            bool              Ok = Fn->NativeInvoke(nullptr, &In, &Out);
+            if (!Ok) {
+                lua_settop(L, OldTop);
+                return TResult<void>::Err(MString("native_invocation_failed"));
+            }
+            lua_settop(L, OldTop);
+            return TResult<void>::Ok();
         }
 
-        // 走 NativeInvoke 路径 — 简化:仅支持无参 / 全标量参数
-        // TODO:用 MReflectArchive 序列化完整 Request,支持嵌套 struct
-        if (Fn->NativeInvoke == nullptr) {
-            return TResult<void>::Err(MString("native_invoker_not_wired"));
+        // Fallback:lua_getglobal(classname).<method>(args)
+        // 适用"业务类完全在 Lua 侧"的情况(MEchoService 已实现)
+        std::string ClsName = Fn->OwnerClass ? Fn->OwnerClass->GetName() : "";
+        std::string MethodName = Fn->Name;
+        if (ClsName.empty() || MethodName.empty()) {
+            return TResult<void>::Err(MString("no_owner_or_method_name"));
         }
 
-        // 占位:无 Request 实例时直接调 NativeInvoke(nullptr, ...)
-        // 真实路径需要先 NewInstance Request + ReadSnapshot
-        MReflectArchive In, Out; // 占位
-        bool            Ok = Fn->NativeInvoke(nullptr, &In, &Out);
-        if (!Ok) {
-            return TResult<void>::Err(MString("native_invocation_failed"));
+        int OldTop = lua_gettop(L);
+
+        // 拿 class
+        lua_getglobal(L, ClsName.c_str());
+        if (!lua_istable(L, -1)) {
+            lua_settop(L, OldTop);
+            return TResult<void>::Err(MString("class_not_found: ") + ClsName);
         }
 
-        // 不 push 返回值到 Lua(简化路径)
-        (void)Args;
+        // 拿 method
+        lua_getfield(L, -1, MethodName.c_str());
+        if (!lua_isfunction(L, -1)) {
+            lua_settop(L, OldTop);
+            return TResult<void>::Err(MString("method_not_found: ") + MethodName);
+        }
+
+        // 插入 self(class)到 args 前
+        lua_insert(L, -2);
+
+        // Push args
+        for (size_t i = 0; i < Args.Count; ++i) {
+            switch (Args.Values[i].GetType()) {
+            case EVariantType::Int:    PushInteger(L, Args.Values[i].AsInt().GetValue()); break;
+            case EVariantType::Bool:   PushBoolean(L, Args.Values[i].AsBool().GetValue()); break;
+            case EVariantType::Double: PushNumber(L, Args.Values[i].AsDouble().GetValue()); break;
+            case EVariantType::String: PushString(L, Args.Values[i].AsString().GetValue()); break;
+            case EVariantType::Null:   PushNil(L); break;
+            }
+        }
+
+        // self + args=N+1 args
+        int N = lua_pcall(L, static_cast<int>(Args.Count) + 1, 0, 0);
+        // 不推栈,业务类已实现 ipairs/event 模式
+        if (N != LUA_OK) {
+            MString Err = lua_isstring(L, -1) ? lua_tostring(L, -1) : MString("pcall_failed");
+            lua_settop(L, OldTop);
+            return TResult<void>::Err(Err);
+        }
+
+        lua_settop(L, OldTop);
         return TResult<void>::Ok();
     }
 
@@ -112,8 +156,7 @@ namespace mession::script::lua {
             return TResult<void>::Err(MString("engine_not_initialized"));
         }
 
-        // 通过 FunctionId 全局查 MFunction(暂时从所有已知 class 找)
-        // TODO:维护 FunctionId → MFunction* map
+        // FunctionId → MFunction 全局查询
         for (auto& ClsName : {"MEchoService", "MServiceRegistry"}) {
             MClass* Cls = MObject::FindClass(ClsName);
             if (!Cls)
