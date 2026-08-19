@@ -7,6 +7,9 @@
 // 从函数指针类型提取返回类型（F 是 auto 非类型模板参数——await 目标函数）
 template <typename T> struct TAwaitableFnTraits;
 template <typename R, typename... Args> struct TAwaitableFnTraits<R (*)(Args...)> { using Ret = R; };
+// 成员函数指针：TAwaitable<&C::M>(obj, args...) —— F 是 &C::M（auto NTTP 可持有成员指针）
+template <typename R, typename C, typename... Args> struct TAwaitableFnTraits<R (C::*)(Args...)> { using Ret = R; };
+template <typename R, typename C, typename... Args> struct TAwaitableFnTraits<R (C::*)(Args...) const> { using Ret = R; };
 
 /**
  * TAwaitable — P5 awaitable 类型层（最简签名）

@@ -19,3 +19,14 @@ public:
     MFUNCTION(Async)
     SFutureResult<int> MemberAsync(int Base);
 };
+
+// await 目标成员方法（模拟异步 I/O）：V*2 —— 定义在 MemberDemo.cpp（业务编译提供）
+class MAwaitTarget
+{
+public:
+    SFutureResult<int> Fetch(int V);
+};
+
+// MFUNCTION(Async) 声明 —— 业务体在 MemberDemo.Async.cpp（await 成员方法）
+MFUNCTION(Async)
+SFutureResult<int> MemberMethodAwait(int Base);

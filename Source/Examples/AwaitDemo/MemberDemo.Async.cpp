@@ -12,3 +12,11 @@ SFutureResult<int> MemberService::MemberAsync(int Base)
     int R = TAwaitable<RemoteFetch>(Base);                              // await 点
     return SFutureResult<int>(TResult<int, FAppError>::Ok(R + 1));      // 业务逻辑
 }
+
+MFUNCTION(Async)
+SFutureResult<int> MemberMethodAwait(int Base)
+{
+    MAwaitTarget Target;
+    int R = TAwaitable<&MAwaitTarget::Fetch>(&Target, Base);            // await 成员方法(对象指针)
+    return SFutureResult<int>(TResult<int, FAppError>::Ok(R + 1));      // 业务逻辑
+}

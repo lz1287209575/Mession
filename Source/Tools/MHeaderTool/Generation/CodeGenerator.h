@@ -1225,7 +1225,7 @@ namespace MHeaderTool {
             return R;
         }
 
-        static bool ParseTAwaitableText(const MString& Text, MString& OutF, MString& OutR, MString& OutArgs) {
+        static bool ParseTAwaitableText(const MString& Text, MString& OutF, MString& OutR, MString& OutArgs, bool& OutMember, MString& OutObj) {
             const MString Prefix = "TAwaitable<";
             const size_t  Start  = Text.find(Prefix);
             if (Start == MString::npos)
@@ -1276,10 +1276,11 @@ namespace MHeaderTool {
             // 最简签名 TAwaitable<F>(args)：R 不写，由调用处从函数返回类型补；
             // 兼容旧写法 TAwaitable<F, R, Args...>(args)（R = Params[1]）。
             OutR = (Params.size() >= 2) ? TrimP(Params[1]) : MString();
-            // 业务写 TAwaitable<decltype(&Func), R, Args...>（F 是函数指针类型）——
-            // 生成器需要真实函数名才能生成 `Func(args)` 调用。提取 decltype(&X) 的 X。
+            // 兼容旧写法 TAwaitable<decltype(&Func), R, Args...>（F 是函数指针类型）——
+            // 生成器需要真实函数名才能生成调用。提取 decltype(&X) 的 X 并保留 '&'（成员
+            // 函数指针 &C::M 需要 &；自由函数 &Func 的 & 在后面统一剥掉）。
             {
-                const MString DTPrefix = "decltype(&";
+                const MString DTPrefix = "decltype(";
                 if (OutF.rfind(DTPrefix, 0) == 0 && OutF.back() == ')') {
                     OutF = OutF.substr(DTPrefix.size(), OutF.size() - DTPrefix.size() - 1);
                 }
@@ -1303,7 +1304,55 @@ namespace MHeaderTool {
                     ArgsRaw = ArgsRaw.substr(B, E - B + 1);
             }
             OutArgs = ArgsRaw;
+
+            // 成员函数指针 `&C::M`：分离对象参数（Args 第一个）与成员调用参数（其余）。
+            // 生成侧统一 std::invoke(&C::M, obj, args...)——对象可为值/指针/引用。
+            OutMember = false;
+            OutObj.clear();
+            if (!OutF.empty() && OutF[0] == '&') {
+                if (OutF.find("::") != MString::npos) {
+                    OutMember    = true;
+                    int    D     = 0;
+                    size_t Comma = MString::npos;
+                    for (size_t I = 0; I < OutArgs.size(); ++I) {
+                        const char C = OutArgs[I];
+                        if (C == '(' || C == '<' || C == '[') {
+                            ++D;
+                        } else if (C == ')' || C == '>' || C == ']') {
+                            --D;
+                        } else if (C == ',' && D == 0) {
+                            Comma = I;
+                            break;
+                        }
+                    }
+                    if (Comma == MString::npos) {
+                        OutObj = TrimP(OutArgs);
+                        OutArgs.clear();
+                    } else {
+                        OutObj         = TrimP(OutArgs.substr(0, Comma));
+                        const size_t B = OutArgs.find_first_not_of(" \t", Comma + 1);
+                        OutArgs        = (B == MString::npos) ? MString() : OutArgs.substr(B);
+                    }
+                } else {
+                    OutF = OutF.substr(1); // &Func → Func（自由函数）
+                }
+            }
             return true;
+        }
+
+        // 生成 await 目标调用表达式：自由函数 `F(args)`；成员函数指针 `&C::M`
+        // 用 std::invoke(&C::M, obj, args...)——对象可为值/指针/引用/this，
+        // 无需区分对象形态（`.Member()` 与 `->Member()` 的差异由 invoke 处理）。
+        static MString MakeAwaitCall(const MString& F, const MString& Obj, const MString& Args, bool bMember) {
+            if (!bMember) {
+                return F + "(" + Args + ")";
+            }
+            MString Call = "std::invoke(" + F + ", " + Obj;
+            if (!Args.empty()) {
+                Call += ", " + Args;
+            }
+            Call += ")";
+            return Call;
         }
 
         // 解析循环 await 业务体（KD-13 最小形态：单 for + 体内单 await）：
@@ -1316,6 +1365,8 @@ namespace MHeaderTool {
             MString            Text;                              // Raw: 语句; If: cond; For: "init;cond;incr"; Return: expr; Await: 调用参数
             MString            AssignVar;                         // Await: 赋值变量（空 = 无赋值/累加）
             MString            F, R, Args;                        // Await: 目标解析
+            MString            Obj;                               // Await: 成员函数目标的对象（bMember）
+            bool               bMember = false;                   // Await: 目标是成员函数指针 &C::M
             MString            LInit, LCond, LIncr, LAccumPrefix; // For: 循环参数
             TVector<CFlowNode> Children;                          // Seq: 语句; If: [then(0), else(1)（可空）]; For: [body]
             size_t             AwaitIndex     = 0;                // Await 全局编号
@@ -1539,7 +1590,7 @@ namespace MHeaderTool {
                         Aw.Kind       = CFlowNode::EKind::Await;
                         Aw.Text       = AS->AwaitExprText;
                         Aw.AwaitIndex = InOutSiteIndex;
-                        if (!ParseTAwaitableText(AS->AwaitExprText, Aw.F, Aw.R, Aw.Args))
+                        if (!ParseTAwaitableText(AS->AwaitExprText, Aw.F, Aw.R, Aw.Args, Aw.bMember, Aw.Obj))
                             return false;
                         Aw.bIsReturnAwait = true;
                         ++InOutSiteIndex;
@@ -1565,7 +1616,7 @@ namespace MHeaderTool {
                     Aw.Kind       = CFlowNode::EKind::Await;
                     Aw.Text       = AS->AwaitExprText;
                     Aw.AwaitIndex = InOutSiteIndex;
-                    if (!ParseTAwaitableText(AS->AwaitExprText, Aw.F, Aw.R, Aw.Args))
+                    if (!ParseTAwaitableText(AS->AwaitExprText, Aw.F, Aw.R, Aw.Args, Aw.bMember, Aw.Obj))
                         return false;
                     // 赋值变量（行首 '=' 前；复合赋值 → 空）
                     {
@@ -1726,7 +1777,7 @@ namespace MHeaderTool {
                     Out += Indent + "return;\n";
                     return;
                 case CFlowNode::EKind::Await: {
-                    Out += Indent + "Awaiter1 = " + N.F + "(" + N.Args + ").AsAwaiter();\n";
+                    Out += Indent + "Awaiter1 = " + MakeAwaitCall(N.F, N.Obj, N.Args, N.bMember) + ".AsAwaiter();\n";
                     Out += Indent + "if (Awaiter1->AwaitReady())\n";
                     Out += Indent + "{\n";
                     Out += Indent + "    try\n";
@@ -2105,12 +2156,17 @@ namespace MHeaderTool {
             std::sort(Sites.begin(), Sites.end(), [](const mession::headercodegen::SAwaitSite* A, const mession::headercodegen::SAwaitSite* B) { return A->SourceLine < B->SourceLine; });
 
             const size_t     N = Sites.size();
-            TVector<MString> F(N), R(N), Args(N), AssignVar(N), SegCode(N);
+            TVector<MString> F(N), R(N), Args(N), AssignVar(N), SegCode(N), Obj(N);
+            TVector<bool>    bMemberFlags(N, false);
             MString          PostReturnExpr;
 
             for (size_t K = 0; K < N; ++K) {
-                if (!ParseTAwaitableText(Sites[K]->AwaitExprText, F[K], R[K], Args[K]))
+                bool    bMember = false;
+                MString ObjStr;
+                if (!ParseTAwaitableText(Sites[K]->AwaitExprText, F[K], R[K], Args[K], bMember, ObjStr))
                     return {};
+                bMemberFlags[K] = bMember;
+                Obj[K]          = std::move(ObjStr);
                 if (R[K].empty())
                     R[K] = RFromReturnType(Func.ReturnType.CanonicalName);
                 // 赋值变量：本 await 语句行首到 await 表达式（`int A = `）
@@ -2167,7 +2223,7 @@ namespace MHeaderTool {
             std::function<MString(size_t, const MString&)> GenAwait = [&](size_t K, const MString& Indent) -> MString {
                 const MString AN = "Awaiter" + std::to_string(K + 1);
                 MString       Out;
-                Out += Indent + AN + " = " + F[K] + "(" + Args[K] + ").AsAwaiter();  // 源码行 " + std::to_string(Sites[K]->SourceLine) + "\n";
+                Out += Indent + AN + " = " + MakeAwaitCall(F[K], Obj[K], Args[K], bMemberFlags[K]) + ".AsAwaiter();  // 源码行 " + std::to_string(Sites[K]->SourceLine) + "\n";
                 Out += Indent + "if (" + AN + "->AwaitReady())\n";
                 Out += Indent + "{\n";
                 Out += Indent + "    try\n";
@@ -2336,6 +2392,7 @@ namespace MHeaderTool {
                         Out << "#include \"Common/Runtime/Async/MAsync.h\"\n";
                         Out << "#include \"Common/Runtime/Async/Awaitable.h\"\n";
                         Out << "#include \"Common/Runtime/Concurrency/Promise.h\"\n";
+                        Out << "#include <functional>  // std::invoke(成员函数 await)\n";
                         Out << "\n";
                         bAny = true;
                     }
@@ -2362,6 +2419,7 @@ namespace MHeaderTool {
                         Out << "#include \"Common/Runtime/Async/MAsync.h\"\n";
                         Out << "#include \"Common/Runtime/Async/Awaitable.h\"\n";
                         Out << "#include \"Common/Runtime/Concurrency/Promise.h\"\n";
+                        Out << "#include <functional>  // std::invoke(成员函数 await)\n";
                         Out << "\n";
                         bAny = true;
                     }

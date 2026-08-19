@@ -112,6 +112,12 @@ TEST_CASE(Await_ClassMemberAsync)
     EXPECT_EQ(Service.MemberAsync(5).GetResult().GetValue(), 11);  // 5*2+1
 }
 
+TEST_CASE(Await_MemberMethodTarget)
+{
+    // await 成员方法：TAwaitable<&MAwaitTarget::Fetch>(&Target, 5) → 5*2=10 → +1=11
+    EXPECT_EQ(MemberMethodAwait(5).GetResult().GetValue(), 11);
+}
+
 TEST_CASE(Await_FallThrough)
 {
     // if 块内 await 无 return → 恢复后继续外层

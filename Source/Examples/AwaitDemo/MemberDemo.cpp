@@ -9,4 +9,12 @@ SFutureResult<int> RemoteFetch(int V)
     return SFutureResult<int>(P.GetFuture());
 }
 
+// await 目标成员方法实现（模拟异步 I/O：V*2）——被 TAwaitable<&MAwaitTarget::Fetch> 调用
+SFutureResult<int> MAwaitTarget::Fetch(int V)
+{
+    MPromise<TResult<int, FAppError>> P;
+    P.SetValue(TResult<int, FAppError>::Ok(V * 2));
+    return SFutureResult<int>(P.GetFuture());
+}
+
 // 类成员 async 业务逻辑体（codegen 输入）
