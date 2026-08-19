@@ -1,266 +1,210 @@
 #include "Common/Runtime/Reflect/Reflection.h"
 
-MClass::MClass()
-{
+MClass::MClass() {
     ClassId = ++GlobalClassId;
 }
 
-MClass::~MClass()
-{
-    for (MProperty* Prop : Properties)
-    {
+MClass::~MClass() {
+    for (MProperty* Prop : Properties) {
         delete Prop;
     }
-    for (MFunction* Func : Functions)
-    {
+    for (MFunction* Func : Functions) {
         delete Func;
     }
 }
 
-void* MClass::CreateInstance() const
-{
-    if (!Constructor)
-    {
+void* MClass::CreateInstance() const {
+    if (!Constructor) {
         return nullptr;
     }
 
     void* Obj = Constructor(nullptr);
 
     auto* ReflectObj = (ClassKind != EClassKind::Struct) ? static_cast<MObject*>(Obj) : nullptr;
-    if (ReflectObj)
-    {
+    if (ReflectObj) {
         ReflectObj->SetClass(const_cast<MClass*>(this));
     }
 
     return Obj;
 }
 
-void MClass::DestroyInstance(void* Object) const
-{
-    if (!Object || !Destructor)
-    {
+void MClass::DestroyInstance(void* Object) const {
+    if (!Object || !Destructor) {
         return;
     }
 
     Destructor(Object);
 }
 
-void MClass::Construct(void* Object) const
-{
-    if (!Constructor || !Object)
-    {
+void MClass::Construct(void* Object) const {
+    if (!Constructor || !Object) {
         return;
     }
 
     Constructor(Object);
 
     auto* ReflectObj = (ClassKind != EClassKind::Struct) ? static_cast<MObject*>(Object) : nullptr;
-    if (ReflectObj)
-    {
+    if (ReflectObj) {
         ReflectObj->SetClass(const_cast<MClass*>(this));
     }
 }
 
-MProperty* MClass::FindProperty(const MString& InName) const
-{
-    for (MProperty* Prop : Properties)
-    {
-        if (Prop && Prop->Name == InName)
-        {
+MProperty* MClass::FindProperty(const MString& InName) const {
+    for (MProperty* Prop : Properties) {
+        if (Prop && Prop->Name == InName) {
             return Prop;
         }
     }
 
-    if (ParentClass)
-    {
+    if (ParentClass) {
         return ParentClass->FindProperty(InName);
     }
 
     return nullptr;
 }
 
-MProperty* MClass::FindPropertyById(uint16 InId) const
-{
-    for (MProperty* Prop : Properties)
-    {
-        if (Prop && Prop->PropertyId == InId)
-        {
+MProperty* MClass::FindPropertyById(uint16 InId) const {
+    for (MProperty* Prop : Properties) {
+        if (Prop && Prop->PropertyId == InId) {
             return Prop;
         }
     }
 
-    if (ParentClass)
-    {
+    if (ParentClass) {
         return ParentClass->FindPropertyById(InId);
     }
 
     return nullptr;
 }
 
-MProperty* MClass::FindPropertyByAssetFieldId(uint32 InAssetFieldId) const
-{
-    for (MProperty* Prop : Properties)
-    {
-        if (Prop && Prop->AssetFieldId == InAssetFieldId)
-        {
+MProperty* MClass::FindPropertyByAssetFieldId(uint32 InAssetFieldId) const {
+    for (MProperty* Prop : Properties) {
+        if (Prop && Prop->AssetFieldId == InAssetFieldId) {
             return Prop;
         }
     }
 
-    if (ParentClass)
-    {
+    if (ParentClass) {
         return ParentClass->FindPropertyByAssetFieldId(InAssetFieldId);
     }
 
     return nullptr;
 }
 
-MProperty* MClass::FindPropertyByMetadata(const MString& InKey, const MString& InValue) const
-{
-    for (MProperty* Prop : Properties)
-    {
-        if (!Prop) continue;
-        if (const MString* Val = Prop->FindMetadata(InKey))
-        {
-            if (InValue.empty() || *Val == InValue)
-            {
+MProperty* MClass::FindPropertyByMetadata(const MString& InKey, const MString& InValue) const {
+    for (MProperty* Prop : Properties) {
+        if (!Prop)
+            continue;
+        if (const MString* Val = Prop->FindMetadata(InKey)) {
+            if (InValue.empty() || *Val == InValue) {
                 return Prop;
             }
         }
     }
-    if (ParentClass) return ParentClass->FindPropertyByMetadata(InKey, InValue);
+    if (ParentClass)
+        return ParentClass->FindPropertyByMetadata(InKey, InValue);
     return nullptr;
 }
 
-MFunction* MClass::FindFunction(const MString& InName) const
-{
-    for (MFunction* Func : Functions)
-    {
-        if (Func && Func->Name == InName)
-        {
+MFunction* MClass::FindFunction(const MString& InName) const {
+    for (MFunction* Func : Functions) {
+        if (Func && Func->Name == InName) {
             return Func;
         }
     }
 
-    if (ParentClass)
-    {
+    if (ParentClass) {
         return ParentClass->FindFunction(InName);
     }
 
     return nullptr;
 }
 
-MFunction* MClass::FindFunctionById(uint16 InId) const
-{
-    for (MFunction* Func : Functions)
-    {
-        if (Func && Func->FunctionId == InId)
-        {
+MFunction* MClass::FindFunctionById(uint16 InId) const {
+    for (MFunction* Func : Functions) {
+        if (Func && Func->FunctionId == InId) {
             return Func;
         }
     }
 
-    if (ParentClass)
-    {
+    if (ParentClass) {
         return ParentClass->FindFunctionById(InId);
     }
 
     return nullptr;
 }
 
-void MClass::WriteSnapshot(void* Object, MReflectArchive& Ar) const
-{
-    if (!Object)
-    {
+void MClass::WriteSnapshot(void* Object, MReflectArchive& Ar) const {
+    if (!Object) {
         return;
     }
 
-    for (MProperty* Prop : Properties)
-    {
-        if (!Prop)
-        {
+    for (MProperty* Prop : Properties) {
+        if (!Prop) {
             continue;
         }
         Prop->WriteValue(Object, Ar);
     }
 }
 
-void MClass::WriteSnapshotByDomain(void* Object, MReflectArchive& Ar, uint64 InDomainMask) const
-{
-    if (!Object || InDomainMask == 0)
-    {
+void MClass::WriteSnapshotByDomain(void* Object, MReflectArchive& Ar, uint64 InDomainMask) const {
+    if (!Object || InDomainMask == 0) {
         return;
     }
 
-    for (MProperty* Prop : Properties)
-    {
-        if (!Prop || (Prop->DomainFlags & InDomainMask) == 0)
-        {
+    for (MProperty* Prop : Properties) {
+        if (!Prop || (Prop->DomainFlags & InDomainMask) == 0) {
             continue;
         }
         Prop->WriteValue(Object, Ar);
     }
 }
 
-void MClass::ReadSnapshot(void* Object, const TByteArray& Data) const
-{
-    if (!Object)
-    {
+void MClass::ReadSnapshot(void* Object, const TByteArray& Data) const {
+    if (!Object) {
         return;
     }
 
     MReflectArchive Ar(Data);
 
-    for (MProperty* Prop : Properties)
-    {
-        if (!Prop)
-        {
+    for (MProperty* Prop : Properties) {
+        if (!Prop) {
             continue;
         }
         Prop->WriteValue(Object, Ar);
     }
 }
 
-void MClass::ReadSnapshotByDomain(void* Object, const TByteArray& Data, uint64 InDomainMask) const
-{
-    if (!Object || InDomainMask == 0)
-    {
+void MClass::ReadSnapshotByDomain(void* Object, const TByteArray& Data, uint64 InDomainMask) const {
+    if (!Object || InDomainMask == 0) {
         return;
     }
 
     MReflectArchive Ar(Data);
 
-    for (MProperty* Prop : Properties)
-    {
-        if (!Prop || (Prop->DomainFlags & InDomainMask) == 0)
-        {
+    for (MProperty* Prop : Properties) {
+        if (!Prop || (Prop->DomainFlags & InDomainMask) == 0) {
             continue;
         }
         Prop->WriteValue(Object, Ar);
     }
 }
 
-MString MClass::ExportObjectToString(const void* Object) const
-{
-    if (!Object)
-    {
+MString MClass::ExportObjectToString(const void* Object) const {
+    if (!Object) {
         return ClassName + "{<null>}";
     }
 
     MString Result = ClassName + "{";
-    bool bFirst = true;
-    if (ParentClass)
-    {
+    bool    bFirst = true;
+    if (ParentClass) {
         const TVector<MProperty*>& ParentProperties = ParentClass->GetProperties();
-        for (const MProperty* Prop : ParentProperties)
-        {
-            if (!Prop)
-            {
+        for (const MProperty* Prop : ParentProperties) {
+            if (!Prop) {
                 continue;
             }
 
-            if (!bFirst)
-            {
+            if (!bFirst) {
                 Result += ", ";
             }
             Result += Prop->Name + "=" + Prop->ExportValueToString(Object);
@@ -268,15 +212,12 @@ MString MClass::ExportObjectToString(const void* Object) const
         }
     }
 
-    for (const MProperty* Prop : Properties)
-    {
-        if (!Prop)
-        {
+    for (const MProperty* Prop : Properties) {
+        if (!Prop) {
             continue;
         }
 
-        if (!bFirst)
-        {
+        if (!bFirst) {
             Result += ", ";
         }
         Result += Prop->Name + "=" + Prop->ExportValueToString(Object);
@@ -287,24 +228,19 @@ MString MClass::ExportObjectToString(const void* Object) const
     return Result;
 }
 
-void MClass::CopyProperties(void* Dest, const void* Src) const
-{
-    if (!Dest || !Src)
-    {
+void MClass::CopyProperties(void* Dest, const void* Src) const {
+    if (!Dest || !Src) {
         return;
     }
 
-    for (MProperty* Prop : Properties)
-    {
-        if (!Prop || Prop->Size == 0)
-        {
+    for (MProperty* Prop : Properties) {
+        if (!Prop || Prop->Size == 0) {
             continue;
         }
 
-        void* DestPtr = Prop->GetValueVoidPtr(Dest);
-        const void* SrcPtr = Prop->GetValueVoidPtr(Src);
-        if (!DestPtr || !SrcPtr)
-        {
+        void*       DestPtr = Prop->GetValueVoidPtr(Dest);
+        const void* SrcPtr  = Prop->GetValueVoidPtr(Src);
+        if (!DestPtr || !SrcPtr) {
             continue;
         }
         memcpy(DestPtr, SrcPtr, Prop->Size);

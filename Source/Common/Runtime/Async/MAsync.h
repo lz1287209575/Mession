@@ -1,8 +1,8 @@
 #pragma once
 
+#include "Common/Runtime/Async/AsyncContext.h"
 #include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Object/Result.h"
-#include "Common/Runtime/Async/AsyncContext.h"
 #include "Protocol/Messages/Common/AppMessages.h"
 
 #include <cassert>
@@ -28,37 +28,29 @@
 // 统一错误类型
 // ============================================
 
-class FFutureResultError : public std::exception
-{
-public:
-    explicit FFutureResultError(FAppError InError)
-        : Error(std::move(InError))
-        , Message(BuildMessage())
-    {
+class FFutureResultError : public std::exception {
+    public:
+    explicit FFutureResultError(FAppError InError) : Error(std::move(InError)), Message(BuildMessage()) {
     }
 
-    const char* what() const noexcept override
-    {
+    const char* what() const noexcept override {
         return Message.c_str();
     }
 
-    const FAppError& GetError() const
-    {
+    const FAppError& GetError() const {
         return Error;
     }
 
-private:
-    MString BuildMessage() const
-    {
-        if (Error.Code.empty())
-        {
+    private:
+    MString BuildMessage() const {
+        if (Error.Code.empty()) {
             return Error.Message.empty() ? "async_operation_failed" : Error.Message;
         }
         return Error.Message.empty() ? Error.Code : Error.Code + ": " + Error.Message;
     }
 
     FAppError Error;
-    MString Message;
+    MString   Message;
 };
 
 // ============================================
@@ -74,9 +66,7 @@ private:
  * - GetResult(): err 时不抛，返回原始 TResult（用于需要判断错误的场景）
  * - IsOk() / IsErr() / GetError(): 便捷查询
  */
-template<typename T>
-struct SFutureResult : MFuture<TResult<T, FAppError>>
-{
+template <typename T> struct SFutureResult : MFuture<TResult<T, FAppError>> {
     using Super = MFuture<TResult<T, FAppError>>;
     using Super::Super;
 
@@ -84,40 +74,37 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
     using InnerType = T;
 
     // 从基类隐式构造（兼容 MFuture<TResult<...>> 返回类型的既有代码）
-    SFutureResult(const Super& Other) : Super(Other) {}
-    SFutureResult(Super&& Other) : Super(std::move(Other)) {}
+    SFutureResult(const Super& Other) : Super(Other) {
+    }
+    SFutureResult(Super&& Other) : Super(std::move(Other)) {
+    }
 
     // 隐式转换为基类（供旧的实现代码使用 MFuture<TResult<...>> 返回类型）
-    operator Super() const { return *this; }
+    operator Super() const {
+        return *this;
+    }
 
     // 从 TResult<T, FAppError> 构造（async 函数体内 early-return 路径）
-    SFutureResult(const TResult<T, FAppError>& Result)
-    {
+    SFutureResult(const TResult<T, FAppError>& Result) {
         MPromise<TResult<T, FAppError>> Promise;
         Promise.SetValue(Result);
         *static_cast<Super*>(this) = Promise.GetFuture();
     }
 
-    SFutureResult(TResult<T, FAppError>&& Result)
-    {
+    SFutureResult(TResult<T, FAppError>&& Result) {
         MPromise<TResult<T, FAppError>> Promise;
         Promise.SetValue(std::move(Result));
         *static_cast<Super*>(this) = Promise.GetFuture();
     }
 
     // T != void：GetValue() exists
-    template<typename U = T, std::enable_if_t<!std::is_same<U, void>::value, int> = 0>
-    T Get() const
-    {
+    template <typename U = T, std::enable_if_t<!std::is_same<U, void>::value, int> = 0> T Get() const {
         // P1 §8.2 Get redline: detect "loop thread waiting for a future that
         // depends on this loop" — would deadlock. Log and assert, do NOT
         // throw (replacing a deadlock with a different crash is worse).
-        if (!this->IsReady())
-        {
-            if (auto* Ctx = MAsync::MAsyncContext::Current())
-            {
-                if (Ctx->IsSameContext())
-                {
+        if (!this->IsReady()) {
+            if (auto* Ctx = MAsync::MAsyncContext::Current()) {
+                if (Ctx->IsSameContext()) {
                     LOG_ERROR("deadlock risk: Get() on event-loop thread for future "
                               "that depends on this loop; use AWAIT_OK (P4) or move the "
                               "wait off-loop");
@@ -128,28 +115,22 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
             }
         }
         const TResult<T, FAppError>& Result = Super::Get();
-        if (Result.IsErr())
-        {
+        if (Result.IsErr()) {
             throw FFutureResultError(Result.GetError());
         }
         return Result.GetValue();
     }
 
     // T == void：TResult<void, E> has no GetValue()
-    template<typename U = T, std::enable_if_t<std::is_same<U, void>::value, int> = 0>
-    void Get() const
-    {
+    template <typename U = T, std::enable_if_t<std::is_same<U, void>::value, int> = 0> void Get() const {
         const TResult<void, FAppError>& Result = Super::Get();
-        if (Result.IsErr())
-        {
+        if (Result.IsErr()) {
             throw FFutureResultError(Result.GetError());
         }
     }
 
     // 返回原始 TResult，不抛
-    template<typename U = T, std::enable_if_t<!std::is_same<U, void>::value, int> = 0>
-    const TResult<T, FAppError>& PeekResult() const
-    {
+    template <typename U = T, std::enable_if_t<!std::is_same<U, void>::value, int> = 0> const TResult<T, FAppError>& PeekResult() const {
         // P3 v1: non-destructive view of the resolved value. Unlike Get()
         // (which moves the value out via MFuture::Get()), PeekResult keeps
         // the underlying state intact so callers can return the same
@@ -158,23 +139,19 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
         // must block via Get()/Wait() instead.
         return Super::Peek();
     }
-    TResult<T, FAppError> GetResult() const
-    {
+    TResult<T, FAppError> GetResult() const {
         return Super::Get();
     }
 
-    bool IsOk() const
-    {
+    bool IsOk() const {
         return GetResult().IsOk();
     }
 
-    bool IsErr() const
-    {
+    bool IsErr() const {
         return GetResult().IsErr();
     }
 
-    const FAppError& GetError() const
-    {
+    const FAppError& GetError() const {
         return GetResult().GetError();
     }
 
@@ -188,44 +165,33 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
     //   AwaitSuspend(FrameT*)  — 未就绪时把续体（Frame->Resume()）挂到 Then
     //   AwaitResume()          — 就绪后取值；Err 抛 FFutureResultError
     // 协议层完全通用：新增 awaitable 类型只需实现这三方法（KD-1 §3.2）。
-    struct SAwaiter
-    {
+    struct SAwaiter {
         SFutureResult<T> Self;
 
-        bool AwaitReady() const noexcept
-        {
+        bool AwaitReady() const noexcept {
             return Self.IsReady();
         }
 
-        template <typename FrameT>
-        void AwaitSuspend(FrameT* Frame)
-        {
+        template <typename FrameT> void AwaitSuspend(FrameT* Frame) {
             // Frame 由 P5 codegen 生成（业务侧不可见，KD-6）；此处只依赖
             // 其 Resume() 契约——future 完成时恢复状态机执行。
-            Self.Then([Frame](MFuture<TResult<T, FAppError>> /*F*/) mutable
-            {
-                Frame->Resume();
-            });
+            Self.Then([Frame](MFuture<TResult<T, FAppError>> /*F*/) mutable { Frame->Resume(); });
         }
 
-        T AwaitResume()
-        {
+        T AwaitResume() {
             const TResult<T, FAppError>& Result = Self.GetResult();
-            if (Result.IsErr())
-            {
+            if (Result.IsErr()) {
                 throw FFutureResultError(Result.GetError());
             }
-            if constexpr (!std::is_void_v<T>)
-            {
+            if constexpr (!std::is_void_v<T>) {
                 return Result.GetValue();
             }
         }
     };
 
-    SAwaiter AsAwaiter()
-    {
+    SAwaiter AsAwaiter() {
         SAwaiter Awaiter;
-        Awaiter.Self = *this;  // awaiter 持 future 副本（KD-1 §3.2）
+        Awaiter.Self = *this; // awaiter 持 future 副本（KD-1 §3.2）
         return Awaiter;
     }
 };
@@ -234,54 +200,39 @@ struct SFutureResult : MFuture<TResult<T, FAppError>>
 // _unwrap — 统一解包辅助（供 MHeaderTool 生成的状态机使用）
 // ============================================
 
-namespace MAsyncDetail
-{
-template<typename T>
-auto _unwrap(const MFuture<T>& Future) -> TResult<decltype(std::declval<T>().GetValue()), FAppError>
-{
-    if (!Future.IsReady())
-    {
-        return TResult<decltype(std::declval<T>().GetValue()), FAppError>::Err(FAppError{
-            "future_not_ready",
-            "Attempted to unwrap a future that is not yet ready"});
+namespace MAsyncDetail {
+    template <typename T> auto _unwrap(const MFuture<T>& Future) -> TResult<decltype(std::declval<T>().GetValue()), FAppError> {
+        if (!Future.IsReady()) {
+            return TResult<decltype(std::declval<T>().GetValue()), FAppError>::Err(FAppError{"future_not_ready", "Attempted to unwrap a future that is not yet ready"});
+        }
+
+        auto Result = Future.Get();
+        if (Result.IsErr()) {
+            return TResult<decltype(std::declval<T>().GetValue()), FAppError>::Err(Result.GetError());
+        }
+        return TResult<decltype(std::declval<T>().GetValue()), FAppError>::Ok(std::move(Result).GetValue());
     }
 
-    auto Result = Future.Get();
-    if (Result.IsErr())
-    {
-        return TResult<decltype(std::declval<T>().GetValue()), FAppError>::Err(Result.GetError());
+    template <typename T> auto _unwrap(const SFutureResult<T>& Future) -> TResult<T, FAppError> {
+        return Future.GetResult();
     }
-    return TResult<decltype(std::declval<T>().GetValue()), FAppError>::Ok(std::move(Result).GetValue());
-}
 
-template<typename T>
-auto _unwrap(const SFutureResult<T>& Future) -> TResult<T, FAppError>
-{
-    return Future.GetResult();
-}
-
-// MFuture<void> — concrete class (not a template instantiation), use regular overload
-inline TResult<void, FAppError> _unwrap(const MFuture<void>& Future)
-{
-    if (!Future.IsReady())
-    {
-        return TResult<void, FAppError>::Err(FAppError{"future_not_ready", ""});
+    // MFuture<void> — concrete class (not a template instantiation), use regular overload
+    inline TResult<void, FAppError> _unwrap(const MFuture<void>& Future) {
+        if (!Future.IsReady()) {
+            return TResult<void, FAppError>::Err(FAppError{"future_not_ready", ""});
+        }
+        Future.Get();
+        return TResult<void, FAppError>::Ok();
     }
-    Future.Get();
-    return TResult<void, FAppError>::Ok();
-}
 
-// MFuture<TResult<void, E>> — TResult<void, E> has no GetValue(), needs explicit overload
-template<typename E>
-[[nodiscard]]
-inline TResult<void, E> _unwrap(const MFuture<TResult<void, E>>& Future)
-{
-    if (!Future.IsReady())
-    {
-        return TResult<void, E>::Err(E{"future_not_ready", ""});
+    // MFuture<TResult<void, E>> — TResult<void, E> has no GetValue(), needs explicit overload
+    template <typename E> [[nodiscard]] inline TResult<void, E> _unwrap(const MFuture<TResult<void, E>>& Future) {
+        if (!Future.IsReady()) {
+            return TResult<void, E>::Err(E{"future_not_ready", ""});
+        }
+        return Future.Get();
     }
-    return Future.Get();
-}
 } // namespace MAsyncDetail
 
 // ============================================
@@ -295,8 +246,7 @@ inline TResult<void, E> _unwrap(const MFuture<TResult<void, E>>& Future)
  * TAsyncFuture<T> — async 函数内部等待其他 async 函数时的返回类型
  * 等价于 MFuture<TResult<T, FAppError>>
  */
-template<typename T>
-using TAsyncFuture = MFuture<TResult<T, FAppError>>;
+template <typename T> using TAsyncFuture = MFuture<TResult<T, FAppError>>;
 
 // =========================================================================
 // WrapAsSFutureResult — MFuture<T> -> SFutureResult<T> 桥接
@@ -319,44 +269,31 @@ using TAsyncFuture = MFuture<TResult<T, FAppError>>;
  * converting ctor (line 85); this helper exists for the `MFuture<T>` (no
  * wrapper) case used by the generated adapter's `Then(serialize) -> T`.
  */
-namespace MAsyncDetail
-{
-template<typename T>
-SFutureResult<T> WrapAsSFutureResult(MFuture<T> Inner)
-{
-    MPromise<T> Promise;
-    auto Future = Promise.GetFuture();
+namespace MAsyncDetail {
+    template <typename T> SFutureResult<T> WrapAsSFutureResult(MFuture<T> Inner) {
+        MPromise<T> Promise;
+        auto        Future = Promise.GetFuture();
 
-    if (Inner.IsReady())
-    {
-        try
-        {
-            Promise.SetValue(Inner.Get());
-        }
-        catch (...)
-        {
-            // Bridge forward-compat: no FAppError info survives raw MFuture's
-            // exception path; wrap as a generic Err so callers can inspect.
-            Promise.SetValue(T{});
-        }
-    }
-    else
-    {
-        Inner.Then([Promise](MFuture<T> F) mutable
-        {
-            try
-            {
-                Promise.SetValue(F.Get());
-            }
-            catch (...)
-            {
+        if (Inner.IsReady()) {
+            try {
+                Promise.SetValue(Inner.Get());
+            } catch (...) {
+                // Bridge forward-compat: no FAppError info survives raw MFuture's
+                // exception path; wrap as a generic Err so callers can inspect.
                 Promise.SetValue(T{});
             }
-        });
-    }
+        } else {
+            Inner.Then([Promise](MFuture<T> F) mutable {
+                try {
+                    Promise.SetValue(F.Get());
+                } catch (...) {
+                    Promise.SetValue(T{});
+                }
+            });
+        }
 
-    // SFutureResult<T> has a ctor from MPromise-initiated future of type
-    // MFuture<TResult<T, FAppError>> — convert via raw MFuture ctor.
-    return SFutureResult<T>(MFuture<TResult<T, FAppError>>(Future));
-}
+        // SFutureResult<T> has a ctor from MPromise-initiated future of type
+        // MFuture<TResult<T, FAppError>> — convert via raw MFuture ctor.
+        return SFutureResult<T>(MFuture<TResult<T, FAppError>>(Future));
+    }
 } // namespace MAsyncDetail

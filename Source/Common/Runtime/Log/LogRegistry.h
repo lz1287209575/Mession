@@ -1,12 +1,11 @@
 #pragma once
-#include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Log/LogCategory.h"
 #include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/MLib.h"
 #include <mutex>
 
-class MLogRegistry
-{
-public:
+class MLogRegistry {
+    public:
     static MLogRegistry& Get();
 
     // Register a category by name. Idempotent: if a category with the same
@@ -20,9 +19,11 @@ public:
     SLogCategory*       GetById(uint16 Id);
     const SLogCategory* FindByName(const MString& Name) const;
 
-    size_t NumCategories() const { return Categories.size(); }
+    size_t NumCategories() const {
+        return Categories.size();
+    }
 
-private:
+    private:
     MLogRegistry() = default;
 
     // SLogCategory contains std::atomic members, which are non-copyable and

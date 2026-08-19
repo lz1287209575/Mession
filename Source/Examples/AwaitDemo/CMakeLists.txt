@@ -7,11 +7,11 @@ add_executable(AwaitDemo
     MemberDemo.cpp
     BranchDemo.cpp
     StringDemo.cpp
-    ${MESSION_GENERATED_DIR}/AwaitDemo_FreeAwaitImpl.mgenerated.cpp
-    ${MESSION_GENERATED_DIR}/ComplexDemo_FreeAwaitImpl.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/AwaitDemo_Async_FreeAwaitImpl.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/ComplexDemo_Async_FreeAwaitImpl.mgenerated.cpp
     ${MESSION_GENERATED_DIR}/MemberService_AwaitImpl.mgenerated.cpp
-    ${MESSION_GENERATED_DIR}/BranchDemo_FreeAwaitImpl.mgenerated.cpp
-    ${MESSION_GENERATED_DIR}/StringDemo_FreeAwaitImpl.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/BranchDemo_Async_FreeAwaitImpl.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/StringDemo_Async_FreeAwaitImpl.mgenerated.cpp
 )
 target_include_directories(AwaitDemo
     PRIVATE
@@ -35,10 +35,10 @@ add_executable(AwaitCodegenTest
     ComplexDemo.cpp
     MemberDemo.cpp
     StringDemo.cpp
-    ${MESSION_GENERATED_DIR}/BranchDemo_FreeAwaitImpl.mgenerated.cpp
-    ${MESSION_GENERATED_DIR}/ComplexDemo_FreeAwaitImpl.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/BranchDemo_Async_FreeAwaitImpl.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/ComplexDemo_Async_FreeAwaitImpl.mgenerated.cpp
     ${MESSION_GENERATED_DIR}/MemberService_AwaitImpl.mgenerated.cpp
-    ${MESSION_GENERATED_DIR}/StringDemo_FreeAwaitImpl.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/StringDemo_Async_FreeAwaitImpl.mgenerated.cpp
 )
 target_include_directories(AwaitCodegenTest
     PRIVATE

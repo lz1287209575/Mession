@@ -1,8 +1,8 @@
 #pragma once
 
+#include "Common/Net/Rpc/RpcPayload.h"
 #include "Common/Net/ServerConnection.h"
 #include "Common/Serialization/MessageUtils.h"
-#include "Common/Net/Rpc/RpcPayload.h"
 
 #include <cstddef>
 

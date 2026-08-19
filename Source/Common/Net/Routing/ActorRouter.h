@@ -13,9 +13,8 @@ class IActor;
 class MActorHandle;
 class MSubReactorPool;
 
-class MActorRouter
-{
-public:
+class MActorRouter {
+    public:
     static MActorRouter& Get();
 
     void RegisterActor(uint64 ActorId, EServerType ServerType, uint64 ConnectionId = 0);
@@ -47,57 +46,40 @@ public:
     // 接受 TSharedPtr<IActor>(而非 IActor*):所有权一次性转入 MActorSystem,
     // 与 MActorSystem::Register 语义一致。调用方惯例:
     //   MActorRouter::Get().RegisterActor(NewMObject<MRankListActor>(nullptr, "RankList"), SubPool);
-    void RegisterActor(TSharedPtr<IActor> InActor, MSubReactorPool* InSubPool);
-    void UnregisterActorObject(uint64 InActorId);
+    void         RegisterActor(TSharedPtr<IActor> InActor, MSubReactorPool* InSubPool);
+    void         UnregisterActorObject(uint64 InActorId);
     MActorHandle FindHandle(uint64 InActorId);
 
     // 模板方式：传类名+函数名
-    template<typename TResponse, typename TRequest>
-    SFutureResult<TResponse> SendToActor(
-        uint64 ActorId,
-        const char* TargetClassName,
-        const char* FunctionName,
-        const TRequest& Request,
-        EServerType DefaultServerType = EServerType::Unknown) const;
+    template <typename TResponse, typename TRequest>
+    SFutureResult<TResponse> SendToActor(uint64 ActorId, const char* TargetClassName, const char* FunctionName, const TRequest& Request, EServerType DefaultServerType = EServerType::Unknown) const;
 
     // Lambda 方式：用户提供如何调用的逻辑
-    template<typename TCall>
-    auto RouteToActor(uint64 ActorId, TCall&& Call) const
-        -> decltype(Call(std::declval<TSharedPtr<MServerConnection>>()));
+    template <typename TCall> auto RouteToActor(uint64 ActorId, TCall&& Call) const -> decltype(Call(std::declval<TSharedPtr<MServerConnection>>()));
 
-private:
+    private:
     // 1:N fan-out:一个 ActorId 对应多个 endpoint(route)。同一个 ActorId 可能在
     // 多个 ServerType 上都有连接(MRankListActor 可能在多台 EchoService 上跑),
     // SendActor 遍历此列表逐个 send。
     TMap<uint64, TVector<SActorRoute>> ActorRoutes;
-    mutable std::mutex RoutesMutex;
+    mutable std::mutex                 RoutesMutex;
 };
 
 // ============================================
 // SendToActor 实现
 // ============================================
 
-template<typename TResponse, typename TRequest>
-SFutureResult<TResponse> MActorRouter::SendToActor(
-    uint64 ActorId,
-    const char* TargetClassName,
-    const char* FunctionName,
-    const TRequest& Request,
-    EServerType DefaultServerType) const
-{
-    SActorRoute Route = FindActor(ActorId);
+template <typename TResponse, typename TRequest> SFutureResult<TResponse> MActorRouter::SendToActor(uint64 ActorId, const char* TargetClassName, const char* FunctionName, const TRequest& Request, EServerType DefaultServerType) const {
+    SActorRoute Route            = FindActor(ActorId);
     EServerType TargetServerType = Route.ActorId ? Route.ServerType : DefaultServerType;
 
     TSharedPtr<MServerConnection> Connection = MEndpointCache::Get().GetOrConnect(TargetServerType);
-    if (!Connection || !Connection->IsConnected())
-    {
-        return MakeRpcErrorFuture<TResponse>("connection_unavailable",
-            TargetServerType == EServerType::Unknown ? "actor_route_invalid" : "");
+    if (!Connection || !Connection->IsConnected()) {
+        return MakeRpcErrorFuture<TResponse>("connection_unavailable", TargetServerType == EServerType::Unknown ? "actor_route_invalid" : "");
     }
 
     const MClass* TargetClass = MObject::FindClass(TargetClassName);
-    if (!TargetClass)
-    {
+    if (!TargetClass) {
         return MakeRpcErrorFuture<TResponse>("class_not_found", TargetClassName);
     }
 
@@ -108,22 +90,16 @@ SFutureResult<TResponse> MActorRouter::SendToActor(
 // RouteToActor 实现
 // ============================================
 
-template<typename TCall>
-auto MActorRouter::RouteToActor(
-    uint64 ActorId,
-    TCall&& Call) const -> decltype(Call(std::declval<TSharedPtr<MServerConnection>>()))
-{
+template <typename TCall> auto MActorRouter::RouteToActor(uint64 ActorId, TCall&& Call) const -> decltype(Call(std::declval<TSharedPtr<MServerConnection>>())) {
     using TResponse = decltype(Call(std::declval<TSharedPtr<MServerConnection>>()));
 
     SActorRoute Route = FindActor(ActorId);
-    if (!Route.ActorId)
-    {
+    if (!Route.ActorId) {
         return MakeRpcErrorFuture<TResponse>("actor_not_found", "Actor not registered");
     }
 
     TSharedPtr<MServerConnection> Connection = MEndpointCache::Get().GetOrConnect(Route.ServerType);
-    if (!Connection || !Connection->IsConnected())
-    {
+    if (!Connection || !Connection->IsConnected()) {
         return MakeRpcErrorFuture<TResponse>("connection_unavailable", Route.ServerType == EServerType::Unknown ? "actor_route_invalid" : "");
     }
 

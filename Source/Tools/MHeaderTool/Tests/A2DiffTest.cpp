@@ -94,11 +94,12 @@ namespace mession::headercodegen {
         // valid legacy baseline). The test prints a warning if the baseline
         // is missing so a fresh checkout doesn't silently compare against an
         // empty directory.
-        const fs::path   LegacyDir = "/tmp/legacy_baseline";
+        const fs::path LegacyDir = "/tmp/legacy_baseline";
         if (!fs::exists(LegacyDir)) {
             std::printf("A2DiffTest: WARNING legacy baseline %s does not exist; "
                         "run `cp -r /root/Mession/Build/Generated/ /tmp/legacy_baseline/` "
-                        "first to establish the pre-AST reference.\n", LegacyDir.c_str());
+                        "first to establish the pre-AST reference.\n",
+                        LegacyDir.c_str());
         }
         TVector<MString> LegacySide;
         if (fs::exists(LegacyDir)) {
@@ -120,10 +121,10 @@ namespace mession::headercodegen {
             return false;
         };
 
-        int NumSharedEql   = 0;
-        int NumSharedNeq   = 0;
-        int NumIROnly      = 0;
-        int NumLegacyOnly  = 0;
+        int NumSharedEql  = 0;
+        int NumSharedNeq  = 0;
+        int NumIROnly     = 0;
+        int NumLegacyOnly = 0;
 
         std::printf("\n=== A2DiffTest per-file comparison (after StripTimestamp) ===\n");
         std::printf("%-50s  %-20s  %s\n", "Filename", "Status", "First divergence / note");
@@ -133,7 +134,8 @@ namespace mession::headercodegen {
         auto FirstDivergence = [](const MString& A, const MString& B) -> size_t {
             const size_t Limit = std::min(A.size(), B.size());
             for (size_t i = 0; i < Limit; ++i) {
-                if (A[i] != B[i]) return i;
+                if (A[i] != B[i])
+                    return i;
             }
             return MString::npos;
         };
@@ -162,9 +164,8 @@ namespace mession::headercodegen {
             } else {
                 ++NumSharedNeq;
                 const size_t DivPos = FirstDivergence(StrippedIR, StrippedLegacy);
-                MString Note = (DivPos == MString::npos)
-                    ? MString("length differs (ir=") + std::to_string(StrippedIR.size()) + ", legacy=" + std::to_string(StrippedLegacy.size()) + ")"
-                    : MString("first diff at byte ") + std::to_string(DivPos);
+                MString      Note =
+                    (DivPos == MString::npos) ? MString("length differs (ir=") + std::to_string(StrippedIR.size()) + ", legacy=" + std::to_string(StrippedLegacy.size()) + ")" : MString("first diff at byte ") + std::to_string(DivPos);
                 std::printf("%-50s  %-20s  %s\n", Name.c_str(), "AST_NEQ_LEGACY", Note.c_str());
             }
 

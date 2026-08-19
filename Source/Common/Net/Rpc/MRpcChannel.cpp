@@ -5,8 +5,7 @@
 #include "Common/Runtime/Actor/MActorSystem.h"
 #include "Common/Runtime/Object/Result.h"
 
-MRpcChannel& MRpcChannel::Get()
-{
+MRpcChannel& MRpcChannel::Get() {
     static MRpcChannel Instance;
     return Instance;
 }
@@ -55,24 +54,25 @@ bool MRpcChannel::SendActor(uint64 InActorId, const FActorMessage& InMsg) const 
     const SActorRoute Route = MActorRouter::Get().FindActor(InActorId);
     if (Route.ActorId == 0) {
         LOG_DEBUG("SendActor: actor %llu not in route table", static_cast<unsigned long long>(InActorId));
-        return false;  // 容错:未注册 actor
+        return false; // 容错:未注册 actor
     }
     auto Connection = MEndpointCache::Get().GetOrConnect(Route.ServerType);
     if (!Connection || !Connection->IsConnected()) {
-        LOG_DEBUG("SendActor: connection_unavailable type=%s",
-                  GetServerTypeDisplayName(Route.ServerType));
-        return false;  // 容错:连不上
+        LOG_DEBUG("SendActor: connection_unavailable type=%s", GetServerTypeDisplayName(Route.ServerType));
+        return false; // 容错:连不上
     }
 
     // 3) 找 OnActorMessage 的 FunctionId
     const MClass* TargetClass = MObject::FindClass("MEchoService");
-    if (!TargetClass) return false;
+    if (!TargetClass)
+        return false;
     const MFunction* Function = TargetClass->FindFunction("OnActorMessage");
-    if (!Function) return false;
+    if (!Function)
+        return false;
 
     // 4) 构造 MT_ActorPost 包 —— [FunctionId:2B][Payload:N] 无 CallId
     const TByteArray EnvelopeBytes = BuildPayload(Envelope);
-    TByteArray Packet;
+    TByteArray       Packet;
     Packet.reserve(2 + EnvelopeBytes.size());
     const uint16 FunctionId = Function->FunctionId;
     Packet.push_back(static_cast<uint8>(FunctionId & 0xFF));
@@ -104,15 +104,14 @@ SFutureResult<TByteArray> MRpcChannel::CallActorAndWait(uint64 InActorId, const 
     auto Promise = MakeShared<MPromise<TResult<TByteArray, FAppError>>>();
     auto Future  = SFutureResult<TByteArray>(Promise->GetFuture());
 
-    Call<FActorMessageWire>(ServerT, "MEchoService", "OnActorCall", Request)
-        .Then([Promise](MFuture<TResult<FActorMessageWire, FAppError>> F) mutable {
-            TResult<FActorMessageWire, FAppError> R = F.Get();
-            if (R.IsErr()) {
-                Promise->SetValue(TResult<TByteArray, FAppError>::Err(R.GetError()));
-                return;
-            }
-            Promise->SetValue(TResult<TByteArray, FAppError>::Ok(R.GetValue().Payload));
-        });
+    Call<FActorMessageWire>(ServerT, "MEchoService", "OnActorCall", Request).Then([Promise](MFuture<TResult<FActorMessageWire, FAppError>> F) mutable {
+        TResult<FActorMessageWire, FAppError> R = F.Get();
+        if (R.IsErr()) {
+            Promise->SetValue(TResult<TByteArray, FAppError>::Err(R.GetError()));
+            return;
+        }
+        Promise->SetValue(TResult<TByteArray, FAppError>::Ok(R.GetValue().Payload));
+    });
 
     return Future;
 }

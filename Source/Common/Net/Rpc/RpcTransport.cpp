@@ -2,8 +2,7 @@
 
 #include <cstring>
 
-bool BuildServerRpcPayload(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutData)
-{
+bool BuildServerRpcPayload(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutData) {
     const uint32 PayloadSize = static_cast<uint32>(InPayload.size());
 
     OutData.clear();
@@ -15,16 +14,14 @@ bool BuildServerRpcPayload(uint16 FunctionId, const TByteArray& InPayload, TByte
     const uint8* SizePtr = reinterpret_cast<const uint8*>(&PayloadSize);
     OutData.insert(OutData.end(), SizePtr, SizePtr + sizeof(PayloadSize));
 
-    if (PayloadSize > 0)
-    {
+    if (PayloadSize > 0) {
         OutData.insert(OutData.end(), InPayload.begin(), InPayload.end());
     }
 
     return true;
 }
 
-bool BuildServerRpcMessage(const TByteArray& RpcPayload, TByteArray& OutPacket)
-{
+bool BuildServerRpcMessage(const TByteArray& RpcPayload, TByteArray& OutPacket) {
     OutPacket.clear();
     OutPacket.reserve(1 + RpcPayload.size());
     OutPacket.push_back(static_cast<uint8>(EServerMessageType::MT_RPC));
@@ -32,28 +29,21 @@ bool BuildServerRpcMessage(const TByteArray& RpcPayload, TByteArray& OutPacket)
     return true;
 }
 
-bool SendServerRpcMessage(MServerConnection& Connection, const TByteArray& RpcPayload)
-{
-    return Connection.SendPacket(
-        static_cast<uint8>(EServerMessageType::MT_RPC),
-        RpcPayload.empty() ? nullptr : RpcPayload.data(),
-        static_cast<uint32>(RpcPayload.size()));
+bool SendServerRpcMessage(MServerConnection& Connection, const TByteArray& RpcPayload) {
+    return Connection.SendPacket(static_cast<uint8>(EServerMessageType::MT_RPC), RpcPayload.empty() ? nullptr : RpcPayload.data(), static_cast<uint32>(RpcPayload.size()));
 }
 
-bool SendServerRpcMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& RpcPayload)
-{
+bool SendServerRpcMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& RpcPayload) {
     return Connection ? SendServerRpcMessage(*Connection, RpcPayload) : false;
 }
 
-bool SendServerRpcMessage(INetConnection& Connection, const TByteArray& RpcPayload)
-{
+bool SendServerRpcMessage(INetConnection& Connection, const TByteArray& RpcPayload) {
     TByteArray Packet;
     BuildServerRpcMessage(RpcPayload, Packet);
     return Connection.Send(Packet.data(), static_cast<uint32>(Packet.size()));
 }
 
-bool SendServerRpcMessage(const TSharedPtr<INetConnection>& Connection, const TByteArray& RpcPayload)
-{
+bool SendServerRpcMessage(const TSharedPtr<INetConnection>& Connection, const TByteArray& RpcPayload) {
     return Connection ? SendServerRpcMessage(*Connection, RpcPayload) : false;
 }
 
@@ -68,10 +58,8 @@ bool SendServerRpcMessage(const TSharedPtr<INetConnection>& Connection, const TB
 // UE 协议族的"Request/Response/Push"区分完全靠 RequestId + 自身 manifest,
 // Gateway 不做 enum 分发(架构决定,见 TODO/architecture refactor)。
 
-bool BuildClientEnvelopePacket(uint16 FunctionId, uint64 RequestId, const TByteArray& InPayload, TByteArray& OutPacket)
-{
-    if (FunctionId == 0)
-    {
+bool BuildClientEnvelopePacket(uint16 FunctionId, uint64 RequestId, const TByteArray& InPayload, TByteArray& OutPacket) {
+    if (FunctionId == 0) {
         return false;
     }
 
@@ -89,11 +77,9 @@ bool BuildClientEnvelopePacket(uint16 FunctionId, uint64 RequestId, const TByteA
     return true;
 }
 
-bool ParseClientEnvelopePacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutRequestId, uint32& OutPayloadSize, size_t& OutPayloadOffset)
-{
+bool ParseClientEnvelopePacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutRequestId, uint32& OutPayloadSize, size_t& OutPayloadOffset) {
     const size_t HeaderSize = sizeof(uint64) + sizeof(uint16) + sizeof(uint32);
-    if (Data.size() < HeaderSize)
-    {
+    if (Data.size() < HeaderSize) {
         return false;
     }
 
@@ -111,8 +97,7 @@ bool ParseClientEnvelopePacket(const TByteArray& Data, uint16& OutFunctionId, ui
 // MessageType 头(MT_FunctionCall=13)。Gateway 那一侧还没切,先用旧
 // 形式糊住。
 
-bool BuildClientFunctionPacket(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutPacket)
-{
+bool BuildClientFunctionPacket(uint16 FunctionId, const TByteArray& InPayload, TByteArray& OutPacket) {
     // step-2: 旧 BuildClientFunctionPacket(1-byte MessageType=MT_FunctionCall=13)
     // 整体删除;统一用 BuildClientEnvelopePacket。这里保留空函数体是为了兼容
     // 第三方 stub / 老 validate.py 子模块的引用,如有再彻底移除。
@@ -122,8 +107,7 @@ bool BuildClientFunctionPacket(uint16 FunctionId, const TByteArray& InPayload, T
     return false;
 }
 
-bool BuildClientCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& InPayload, TByteArray& OutPacket)
-{
+bool BuildClientCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& InPayload, TByteArray& OutPacket) {
     // step-2: 旧 BuildClientCallPacket 整体删除。
     (void)FunctionId;
     (void)CallId;
@@ -132,8 +116,7 @@ bool BuildClientCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& I
     return false;
 }
 
-bool ParseClientFunctionPacket(const TByteArray& Data, uint16& OutFunctionId, uint32& OutPayloadSize, size_t& OutPayloadOffset)
-{
+bool ParseClientFunctionPacket(const TByteArray& Data, uint16& OutFunctionId, uint32& OutPayloadSize, size_t& OutPayloadOffset) {
     // step-2: 旧 ParseClientFunctionPacket 整体删除。Gateway 已切到
     // ParseClientEnvelopePacket。下面这几行保留兼容签名。
     (void)Data;
@@ -143,8 +126,7 @@ bool ParseClientFunctionPacket(const TByteArray& Data, uint16& OutFunctionId, ui
     return false;
 }
 
-bool ParseClientCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutCallId, uint32& OutPayloadSize, size_t& OutPayloadOffset)
-{
+bool ParseClientCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutCallId, uint32& OutPayloadSize, size_t& OutPayloadOffset) {
     // step-2: 旧 ParseClientCallPacket 整体删除。
     (void)Data;
     (void)OutFunctionId;
@@ -154,10 +136,8 @@ bool ParseClientCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64
     return false;
 }
 
-bool BuildServerCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& InPayload, TByteArray& OutPayload)
-{
-    if (FunctionId == 0 || CallId == 0)
-    {
+bool BuildServerCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& InPayload, TByteArray& OutPayload) {
+    if (FunctionId == 0 || CallId == 0) {
         return false;
     }
 
@@ -170,10 +150,8 @@ bool BuildServerCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& I
     return true;
 }
 
-bool BuildServerCallResponsePacket(uint16 FunctionId, uint64 CallId, bool bSuccess, const TByteArray& InPayload, TByteArray& OutPayload)
-{
-    if (FunctionId == 0 || CallId == 0)
-    {
+bool BuildServerCallResponsePacket(uint16 FunctionId, uint64 CallId, bool bSuccess, const TByteArray& InPayload, TByteArray& OutPayload) {
+    if (FunctionId == 0 || CallId == 0) {
         return false;
     }
 
@@ -187,11 +165,9 @@ bool BuildServerCallResponsePacket(uint16 FunctionId, uint64 CallId, bool bSucce
     return true;
 }
 
-bool ParseServerCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutCallId, uint32& OutPayloadSize, size_t& OutPayloadOffset)
-{
+bool ParseServerCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutCallId, uint32& OutPayloadSize, size_t& OutPayloadOffset) {
     const size_t HeaderSize = sizeof(uint16) + sizeof(uint64) + sizeof(uint32);
-    if (Data.size() < HeaderSize)
-    {
+    if (Data.size() < HeaderSize) {
         return false;
     }
 
@@ -206,16 +182,14 @@ bool ParseServerCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64
     return Data.size() >= OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
 }
 
-bool ParseServerCallResponsePacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutCallId, bool& OutSuccess, uint32& OutPayloadSize, size_t& OutPayloadOffset)
-{
+bool ParseServerCallResponsePacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutCallId, bool& OutSuccess, uint32& OutPayloadSize, size_t& OutPayloadOffset) {
     const size_t HeaderSize = sizeof(uint16) + sizeof(uint64) + sizeof(uint8) + sizeof(uint32);
-    if (Data.size() < HeaderSize)
-    {
+    if (Data.size() < HeaderSize) {
         return false;
     }
 
-    size_t Offset = 0;
-    uint8 SuccessByte = 0;
+    size_t Offset      = 0;
+    uint8  SuccessByte = 0;
     std::memcpy(&OutFunctionId, Data.data() + Offset, sizeof(OutFunctionId));
     Offset += sizeof(OutFunctionId);
     std::memcpy(&OutCallId, Data.data() + Offset, sizeof(OutCallId));
@@ -224,26 +198,20 @@ bool ParseServerCallResponsePacket(const TByteArray& Data, uint16& OutFunctionId
     Offset += sizeof(SuccessByte);
     std::memcpy(&OutPayloadSize, Data.data() + Offset, sizeof(OutPayloadSize));
     Offset += sizeof(OutPayloadSize);
-    OutSuccess = SuccessByte != 0;
+    OutSuccess       = SuccessByte != 0;
     OutPayloadOffset = Offset;
     return Data.size() >= OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
 }
 
-bool SendServerCallMessage(MServerConnection& Connection, const TByteArray& PacketPayload)
-{
-    return Connection.SendPacket(
-        static_cast<uint8>(EServerMessageType::MT_FunctionCall),
-        PacketPayload.empty() ? nullptr : PacketPayload.data(),
-        static_cast<uint32>(PacketPayload.size()));
+bool SendServerCallMessage(MServerConnection& Connection, const TByteArray& PacketPayload) {
+    return Connection.SendPacket(static_cast<uint8>(EServerMessageType::MT_FunctionCall), PacketPayload.empty() ? nullptr : PacketPayload.data(), static_cast<uint32>(PacketPayload.size()));
 }
 
-bool SendServerCallMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& PacketPayload)
-{
+bool SendServerCallMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& PacketPayload) {
     return Connection ? SendServerCallMessage(*Connection, PacketPayload) : false;
 }
 
-bool SendServerCallMessage(INetConnection& Connection, const TByteArray& PacketPayload)
-{
+bool SendServerCallMessage(INetConnection& Connection, const TByteArray& PacketPayload) {
     TByteArray Packet;
     Packet.reserve(1 + PacketPayload.size());
     Packet.push_back(static_cast<uint8>(EServerMessageType::MT_FunctionCall));
@@ -251,26 +219,19 @@ bool SendServerCallMessage(INetConnection& Connection, const TByteArray& PacketP
     return Connection.Send(Packet.data(), static_cast<uint32>(Packet.size()));
 }
 
-bool SendServerCallMessage(const TSharedPtr<INetConnection>& Connection, const TByteArray& PacketPayload)
-{
+bool SendServerCallMessage(const TSharedPtr<INetConnection>& Connection, const TByteArray& PacketPayload) {
     return Connection ? SendServerCallMessage(*Connection, PacketPayload) : false;
 }
 
-bool SendServerCallResponseMessage(MServerConnection& Connection, const TByteArray& PacketPayload)
-{
-    return Connection.SendPacket(
-        static_cast<uint8>(EServerMessageType::MT_FunctionResponse),
-        PacketPayload.empty() ? nullptr : PacketPayload.data(),
-        static_cast<uint32>(PacketPayload.size()));
+bool SendServerCallResponseMessage(MServerConnection& Connection, const TByteArray& PacketPayload) {
+    return Connection.SendPacket(static_cast<uint8>(EServerMessageType::MT_FunctionResponse), PacketPayload.empty() ? nullptr : PacketPayload.data(), static_cast<uint32>(PacketPayload.size()));
 }
 
-bool SendServerCallResponseMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& PacketPayload)
-{
+bool SendServerCallResponseMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& PacketPayload) {
     return Connection ? SendServerCallResponseMessage(*Connection, PacketPayload) : false;
 }
 
-bool SendServerCallResponseMessage(INetConnection& Connection, const TByteArray& PacketPayload)
-{
+bool SendServerCallResponseMessage(INetConnection& Connection, const TByteArray& PacketPayload) {
     TByteArray Packet;
     Packet.reserve(1 + PacketPayload.size());
     Packet.push_back(static_cast<uint8>(EServerMessageType::MT_FunctionResponse));
@@ -278,7 +239,6 @@ bool SendServerCallResponseMessage(INetConnection& Connection, const TByteArray&
     return Connection.Send(Packet.data(), static_cast<uint32>(Packet.size()));
 }
 
-bool SendServerCallResponseMessage(const TSharedPtr<INetConnection>& Connection, const TByteArray& PacketPayload)
-{
+bool SendServerCallResponseMessage(const TSharedPtr<INetConnection>& Connection, const TByteArray& PacketPayload) {
     return Connection ? SendServerCallResponseMessage(*Connection, PacketPayload) : false;
 }

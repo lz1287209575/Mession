@@ -7,17 +7,16 @@
 // main.cpp so they share internal-linkage statics. (Alternative: switch to extern +
 // single TestGlobals.cpp definition; kept off for now to match the brief verbatim.)
 
-#include "Common/Runtime/Log/Tests/TestHarness.h"
-#include "Common/Runtime/Log/Tests/TestMpscRingBuffer.cpp"
 #include "Common/Runtime/Log/Tests/TestLogContext.cpp"
-#include "Common/Runtime/Log/Tests/TestLogRegistry.cpp"
 #include "Common/Runtime/Log/Tests/TestLogMetrics.cpp"
+#include "Common/Runtime/Log/Tests/TestLogPerf.cpp"
+#include "Common/Runtime/Log/Tests/TestLogRegistry.cpp"
 #include "Common/Runtime/Log/Tests/TestLogRouter.cpp"
 #include "Common/Runtime/Log/Tests/TestLogSinks.cpp"
-#include "Common/Runtime/Log/Tests/TestLogPerf.cpp"
+#include "Common/Runtime/Log/Tests/TestMpscRingBuffer.cpp"
+#include "Common/Runtime/Log/Tests/TestHarness.h"
 
-int main()
-{
+int main() {
     std::printf("Running LogTest (Task 1+2+3+4+5+10)...\n");
 
     std::printf("[ MpscRingBuffer_Basic ]\n");

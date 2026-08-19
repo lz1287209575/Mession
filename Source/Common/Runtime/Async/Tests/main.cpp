@@ -1,58 +1,51 @@
-#include "Common/Runtime/Log/Tests/TestHarness.h"
 #include "Common/Runtime/Async/AsyncContext.h"
 #include "Common/Runtime/Async/MAsync.h"
-#include "Common/Runtime/EventLoop/TaskEventLoop.h"
 #include "Common/Runtime/Concurrency/Promise.h"
+#include "Common/Runtime/EventLoop/TaskEventLoop.h"
+#include "Common/Runtime/Log/Tests/TestHarness.h"
 
 #include <future>
 #include <thread>
 
-namespace
-{
-MTaskEventLoop& SharedLoop()
-{
-    static MTaskEventLoop Loop;
-    return Loop;
-}
-}
+namespace {
+    MTaskEventLoop& SharedLoop() {
+        static MTaskEventLoop Loop;
+        return Loop;
+    }
+} // namespace
 
-TEST_CASE(Async_ContextPostRunsOnLoop)
-{
-    auto& Loop = SharedLoop();
+TEST_CASE(Async_ContextPostRunsOnLoop) {
+    auto&                     Loop = SharedLoop();
     MAsync::MLoopAsyncContext Ctx(&Loop);
-    bool bRan = false;
-    Ctx.Post([&]{ bRan = true; });
+    bool                      bRan = false;
+    Ctx.Post([&] { bRan = true; });
     EXPECT_TRUE(!bRan);
     Loop.RunOnce();
     EXPECT_TRUE(bRan);
 }
 
-TEST_CASE(Async_IsCurrentThread)
-{
-    auto& Loop = SharedLoop();
+TEST_CASE(Async_IsCurrentThread) {
+    auto&                     Loop = SharedLoop();
     MAsync::MLoopAsyncContext Ctx(&Loop);
     Loop.RunOnce();
     EXPECT_TRUE(Ctx.IsSameContext());
 
-    bool bOtherThreadSame = true;
-    std::thread T([&]{
-        bOtherThreadSame = Ctx.IsSameContext();
-    });
+    bool        bOtherThreadSame = true;
+    std::thread T([&] { bOtherThreadSame = Ctx.IsSameContext(); });
     T.join();
     EXPECT_TRUE(!bOtherThreadSame);
 }
 
-TEST_CASE(Async_PendingFutureResolvesViaContext)
-{
-    auto& Loop = SharedLoop();
+TEST_CASE(Async_PendingFutureResolvesViaContext) {
+    auto&                     Loop = SharedLoop();
     MAsync::MLoopAsyncContext Ctx(&Loop);
     MAsync::MAsyncContext::SetCurrent(&Ctx);
 
     MPromise<TResult<int, FAppError>> Promise;
-    auto Future = Promise.GetFuture();
+    auto                              Future = Promise.GetFuture();
     EXPECT_TRUE(!Future.IsReady());
 
-    Ctx.Post([&]{ Promise.SetValue(TResult<int, FAppError>::Ok(42)); });
+    Ctx.Post([&] { Promise.SetValue(TResult<int, FAppError>::Ok(42)); });
     EXPECT_TRUE(!Future.IsReady());
     Loop.RunOnce();
     EXPECT_TRUE(Future.IsReady());
@@ -63,8 +56,7 @@ TEST_CASE(Async_PendingFutureResolvesViaContext)
     MAsync::MAsyncContext::SetCurrent(nullptr);
 }
 
-int main()
-{
+int main() {
     std::printf("Running MAsyncTest (P1: MAsyncContext + IsCurrentThread + Pending resolves via context)\n");
 
     std::printf("[ Async_ContextPostRunsOnLoop ]\n");

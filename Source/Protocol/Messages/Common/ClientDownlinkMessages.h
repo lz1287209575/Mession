@@ -14,8 +14,7 @@
 // RequestId /* Gateway 自管 correlation id */, Payload) 发出去。
 
 MSTRUCT()
-struct FClientDownlinkPushRequest
-{
+struct FClientDownlinkPushRequest {
     MPROPERTY()
     uint64 GatewayConnectionId = 0;
 

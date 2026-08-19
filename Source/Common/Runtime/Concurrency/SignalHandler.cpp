@@ -5,27 +5,23 @@
 
 std::atomic<bool> MSignalHandler::sShutdownRequested{false};
 
-void MSignalHandler::HandleSignal(int /*Signum*/)
-{
+void MSignalHandler::HandleSignal(int /*Signum*/) {
     // async-signal-safe：仅原子写 + 简单赋值。
     // 禁止调用 printf / LOG_* / new —— 都不是 async-signal-safe。
     sShutdownRequested.store(true, std::memory_order_release);
 }
 
-void MSignalHandler::Install()
-{
+void MSignalHandler::Install() {
     struct sigaction Action;
     Action.sa_handler = &MSignalHandler::HandleSignal;
     sigemptyset(&Action.sa_mask);
     // SA_RESTART：被信号中断的系统调用自动重启（如 accept / read / write）。
     Action.sa_flags = SA_RESTART;
 
-    if (sigaction(SIGINT, &Action, nullptr) != 0)
-    {
+    if (sigaction(SIGINT, &Action, nullptr) != 0) {
         LOG_ERROR("MSignalHandler: sigaction(SIGINT) failed");
     }
-    if (sigaction(SIGTERM, &Action, nullptr) != 0)
-    {
+    if (sigaction(SIGTERM, &Action, nullptr) != 0) {
         LOG_ERROR("MSignalHandler: sigaction(SIGTERM) failed");
     }
 
@@ -34,8 +30,7 @@ void MSignalHandler::Install()
     Ignore.sa_handler = SIG_IGN;
     sigemptyset(&Ignore.sa_mask);
     Ignore.sa_flags = 0;
-    if (sigaction(SIGPIPE, &Ignore, nullptr) != 0)
-    {
+    if (sigaction(SIGPIPE, &Ignore, nullptr) != 0) {
         LOG_ERROR("MSignalHandler: sigaction(SIGPIPE) failed");
     }
 

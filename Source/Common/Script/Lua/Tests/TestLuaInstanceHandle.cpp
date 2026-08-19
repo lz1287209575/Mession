@@ -1,50 +1,50 @@
+#include "Common/Script/Abstract/TVariant.h"
 #include "Common/Script/Lua/LuaEngine.h"
 #include "Common/Script/Lua/LuaScriptState.h"
-#include "Common/Script/Abstract/TVariant.h"
 
-#include <cstdio>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 #include <lualib.h>
-#include <lauxlib.h>
 }
 
 using namespace mession::script;
 using namespace mession::script::lua;
 
 namespace {
-MLuaEngine* GEngine = nullptr;
+    MLuaEngine* GEngine = nullptr;
 
-// MLuaEngine 内部创建 State;通过它加载业务代码
-void SetupEnv(const char* Code)
-{
-    MString Err = GEngine->LoadBufferIntoState("test", Code, strlen(Code));
-    assert(Err.empty());
-}
+    // MLuaEngine 内部创建 State;通过它加载业务代码
+    void SetupEnv(const char* Code) {
+        MString Err = GEngine->LoadBufferIntoState("test", Code, strlen(Code));
+        assert(Err.empty());
+    }
 
-TVariant MakeVarInt(int64 V) { return TVariant::MakeInt(V); }
-TVariant MakeVarStr(const char* S) { return TVariant::MakeString(MString(S)); }
+    TVariant MakeVarInt(int64 V) {
+        return TVariant::MakeInt(V);
+    }
+    TVariant MakeVarStr(const char* S) {
+        return TVariant::MakeString(MString(S));
+    }
 } // namespace
 
-static void TestBasicCreate()
-{
-    SetupEnv(
-        "Monster = {}\n"
-        "Monster.__index = Monster\n"
-        "function Monster:new(name, hp) return setmetatable({name=name, hp=hp or 100}, Monster) end\n"
-        "function Monster:take_damage(d) self.hp = self.hp - d; return self.hp end\n");
+static void TestBasicCreate() {
+    SetupEnv("Monster = {}\n"
+             "Monster.__index = Monster\n"
+             "function Monster:new(name, hp) return setmetatable({name=name, hp=hp or 100}, Monster) end\n"
+             "function Monster:take_damage(d) self.hp = self.hp - d; return self.hp end\n");
 
     TScriptArgs Args;
-    TVariant V0[] = {MakeVarStr("goblin"), MakeVarInt(100)};
-    Args.Values = V0;
-    Args.Count  = 2;
+    TVariant    V0[] = {MakeVarStr("goblin"), MakeVarInt(100)};
+    Args.Values      = V0;
+    Args.Count       = 2;
 
     auto R = GEngine->CreateInstanceByClassName("Monster", Args);
-    if (!R.IsOk())
-    {
+    if (!R.IsOk()) {
         std::printf("ERR: %s\n", R.GetError().c_str());
         std::fflush(stdout);
     }
@@ -56,16 +56,14 @@ static void TestBasicCreate()
     GEngine->ReleaseInstance(H);
 }
 
-static void TestFallbackCall()
-{
-    SetupEnv(
-        "Adder = {}\n"
-        "setmetatable(Adder, {__call = function(_, a, b) return a + b end})\n");
+static void TestFallbackCall() {
+    SetupEnv("Adder = {}\n"
+             "setmetatable(Adder, {__call = function(_, a, b) return a + b end})\n");
 
     TScriptArgs Args;
-    TVariant V0[] = {MakeVarInt(3), MakeVarInt(4)};
-    Args.Values = V0;
-    Args.Count  = 2;
+    TVariant    V0[] = {MakeVarInt(3), MakeVarInt(4)};
+    Args.Values      = V0;
+    Args.Count       = 2;
 
     auto R = GEngine->CreateInstanceByClassName("Adder", Args);
     assert(R.IsOk());
@@ -79,46 +77,41 @@ static void TestFallbackCall()
     GEngine->ReleaseInstance(H);
 }
 
-static void TestClassNotFound()
-{
+static void TestClassNotFound() {
     TScriptArgs Args;
-    auto R = GEngine->CreateInstanceByClassName("NoSuchClass", Args);
+    auto        R = GEngine->CreateInstanceByClassName("NoSuchClass", Args);
     assert(R.IsErr());
     assert(R.GetError().find("class_not_found") != MString::npos);
     std::printf("ok: TestClassNotFound\n");
 }
 
-static void TestNewThrows()
-{
-    SetupEnv(
-        "Bad = {}\n"
-        "function Bad:new() error('boom') end\n");
+static void TestNewThrows() {
+    SetupEnv("Bad = {}\n"
+             "function Bad:new() error('boom') end\n");
 
     TScriptArgs Args;
-    auto R = GEngine->CreateInstanceByClassName("Bad", Args);
+    auto        R = GEngine->CreateInstanceByClassName("Bad", Args);
     assert(R.IsErr());
     assert(R.GetError().find("boom") != MString::npos);
     std::printf("ok: TestNewThrows\n");
 }
 
-static void TestMethodCall()
-{
-    SetupEnv(
-        "Monster = {}; Monster.__index = Monster\n"
-        "function Monster:new(name, hp) return setmetatable({name=name, hp=hp}, Monster) end\n"
-        "function Monster:take_damage(d) self.hp = self.hp - d; return self.hp end\n");
+static void TestMethodCall() {
+    SetupEnv("Monster = {}; Monster.__index = Monster\n"
+             "function Monster:new(name, hp) return setmetatable({name=name, hp=hp}, Monster) end\n"
+             "function Monster:take_damage(d) self.hp = self.hp - d; return self.hp end\n");
 
     TScriptArgs Args;
-    TVariant V0[] = {MakeVarStr("goblin"), MakeVarInt(100)};
-    Args.Values = V0;
-    Args.Count  = 2;
+    TVariant    V0[] = {MakeVarStr("goblin"), MakeVarInt(100)};
+    Args.Values      = V0;
+    Args.Count       = 2;
 
     auto R = GEngine->CreateInstanceByClassName("Monster", Args);
     assert(R.IsOk());
     TScriptInstanceHandle H = R.GetValue();
 
     TScriptArgs DamageArgs;
-    TVariant DV[] = {MakeVarInt(10)};
+    TVariant    DV[]  = {MakeVarInt(10)};
     DamageArgs.Values = DV;
     DamageArgs.Count  = 1;
 
@@ -131,14 +124,12 @@ static void TestMethodCall()
     GEngine->ReleaseInstance(H);
 }
 
-static void TestMethodNotFound()
-{
-    SetupEnv(
-        "Foo = {}; Foo.__index = Foo\n"
-        "function Foo:new() return setmetatable({}, Foo) end\n");
+static void TestMethodNotFound() {
+    SetupEnv("Foo = {}; Foo.__index = Foo\n"
+             "function Foo:new() return setmetatable({}, Foo) end\n");
 
     TScriptArgs Args;
-    auto R = GEngine->CreateInstanceByClassName("Foo", Args);
+    auto        R = GEngine->CreateInstanceByClassName("Foo", Args);
     assert(R.IsOk());
     TScriptInstanceHandle H = R.GetValue();
 
@@ -149,16 +140,14 @@ static void TestMethodNotFound()
     GEngine->ReleaseInstance(H);
 }
 
-static void TestReleaseAfterGC()
-{
-    SetupEnv(
-        "Monster = {}; Monster.__index = Monster\n"
-        "function Monster:new(name) return setmetatable({name=name}, Monster) end\n");
+static void TestReleaseAfterGC() {
+    SetupEnv("Monster = {}; Monster.__index = Monster\n"
+             "function Monster:new(name) return setmetatable({name=name}, Monster) end\n");
 
     TScriptArgs Args;
-    TVariant V0[] = {MakeVarStr("ephemeral")};
-    Args.Values = V0;
-    Args.Count  = 1;
+    TVariant    V0[] = {MakeVarStr("ephemeral")};
+    Args.Values      = V0;
+    Args.Count       = 1;
 
     auto R = GEngine->CreateInstanceByClassName("Monster", Args);
     assert(R.IsOk());
@@ -170,8 +159,7 @@ static void TestReleaseAfterGC()
     lua_pushnil(L);
     lua_setglobal(L, "Monster");
     // 多次 GC 走完 mark + sweep
-    for (int i = 0; i < 5; ++i)
-    {
+    for (int i = 0; i < 5; ++i) {
         lua_gc(L, LUA_GCCOLLECT, 0);
     }
 
@@ -183,14 +171,12 @@ static void TestReleaseAfterGC()
     std::printf("ok: TestReleaseAfterGC (err='%s')\n", M.GetError().c_str());
 }
 
-static void TestReleaseExplicit()
-{
-    SetupEnv(
-        "Foo = {}; Foo.__index = Foo\n"
-        "function Foo:new() return setmetatable({x=42}, Foo) end\n");
+static void TestReleaseExplicit() {
+    SetupEnv("Foo = {}; Foo.__index = Foo\n"
+             "function Foo:new() return setmetatable({x=42}, Foo) end\n");
 
     TScriptArgs Args;
-    auto R = GEngine->CreateInstanceByClassName("Foo", Args);
+    auto        R = GEngine->CreateInstanceByClassName("Foo", Args);
     assert(R.IsOk());
     TScriptInstanceHandle H = R.GetValue();
 
@@ -201,8 +187,7 @@ static void TestReleaseExplicit()
     std::printf("ok: TestReleaseExplicit\n");
 }
 
-int main()
-{
+int main() {
     MLuaEngine Engine;
     Engine.Initialize(SScriptEngineConfig{});
     GEngine = &Engine;

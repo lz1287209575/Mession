@@ -2,25 +2,20 @@
 #include "Common/Net/Rpc/RpcManifest.h"
 
 // MTcpMessageChannel implementation
-bool MTcpMessageChannel::Send(const void* Data, uint32 Size)
-{
+bool MTcpMessageChannel::Send(const void* Data, uint32 Size) {
     return Connection && Connection->Send(Data, Size);
 }
 
-bool MTcpMessageChannel::ReceivePacket(TByteArray& OutPacket)
-{
+bool MTcpMessageChannel::ReceivePacket(TByteArray& OutPacket) {
     return Connection && Connection->ReceivePacket(OutPacket);
 }
 
-bool MTcpMessageChannel::IsConnected() const
-{
+bool MTcpMessageChannel::IsConnected() const {
     return Connection && Connection->IsConnected();
 }
 
-void MTcpMessageChannel::Close()
-{
-    if (Connection)
-    {
+void MTcpMessageChannel::Close() {
+    if (Connection) {
         Connection->Close();
     }
 }
@@ -28,46 +23,38 @@ void MTcpMessageChannel::Close()
 // 静态成员定义
 SServerInfo MServerConnection::LocalServerInfo;
 
-void MServerConnection::UpdateLogPrefix()
-{
+void MServerConnection::UpdateLogPrefix() {
     LogPrefix = "[Server:" + Config.ServerName + "]";
 }
 
-bool MServerConnection::Connect()
-{
-    if (State == EConnectionState::Authenticated || State == EConnectionState::Connected)
-    {
+bool MServerConnection::Connect() {
+    if (State == EConnectionState::Authenticated || State == EConnectionState::Connected) {
         return true;
     }
-    
-    if (State == EConnectionState::Connecting)
-    {
+
+    if (State == EConnectionState::Connecting) {
         return false;
     }
-    
+
     return TryConnect();
 }
 
-bool MServerConnection::TryConnect()
-{
-    if (Config.Address.empty() || Config.Port == 0)
-    {
+bool MServerConnection::TryConnect() {
+    if (Config.Address.empty() || Config.Port == 0) {
         LOG_WARN("%s Invalid address or port", LogPrefix.c_str());
         return false;
     }
-    
+
     State = EConnectionState::Connecting;
 
-    if (!MSocket::EnsureInit())
-    {
+    if (!MSocket::EnsureInit()) {
         LOG_ERROR("%s Platform init failed", LogPrefix.c_str());
         State = EConnectionState::Disconnected;
         return false;
     }
 
     TSharedPtr<MTcpConnection> TcpConn = MTcpConnection::ConnectTo(SSocketAddress(Config.Address, Config.Port), Config.ConnectTimeout);
-    if (!TcpConn || !TcpConn->IsConnected())
-    {
+    if (!TcpConn || !TcpConn->IsConnected()) {
         LOG_ERROR("%s Connect failed", LogPrefix.c_str());
         TcpConn.reset();
         Transport.reset();
@@ -84,94 +71,79 @@ bool MServerConnection::TryConnect()
 
     SendHandshake();
 
-    if (OnConnectCallback)
-    {
+    if (OnConnectCallback) {
         OnConnectCallback(shared_from_this());
     }
 
     return true;
 }
 
-void MServerConnection::Disconnect()
-{
-    if (Transport)
-    {
+void MServerConnection::Disconnect() {
+    if (Transport) {
         Transport->Close();
         Transport.reset();
     }
-    
-    State = EConnectionState::Disconnected;
+
+    State          = EConnectionState::Disconnected;
     HeartbeatTimer = 0.0f;
-    
+
     LOG_INFO("%s Disconnected", LogPrefix.c_str());
-    
-    if (OnDisconnectCallback)
-    {
+
+    if (OnDisconnectCallback) {
         OnDisconnectCallback(shared_from_this());
     }
 }
 
-bool MServerConnection::SendPacket(uint8 PacketType, const void* Data, uint32 Size)
-{
-    if (State != EConnectionState::Connected && State != EConnectionState::Authenticated)
-    {
+bool MServerConnection::SendPacket(uint8 PacketType, const void* Data, uint32 Size) {
+    if (State != EConnectionState::Connected && State != EConnectionState::Authenticated) {
         return false;
     }
-    
+
     TByteArray Payload;
     Payload.resize(1 + Size);
     Payload[0] = PacketType;
-    if (Size > 0 && Data)
-    {
+    if (Size > 0 && Data) {
         memcpy(Payload.data() + 1, Data, Size);
     }
 
     return SendPacketRaw(Payload);
 }
 
-bool MServerConnection::SendPacketRaw(const TByteArray& Data)
-{
-    if (!Transport || !Transport->IsConnected() || Data.empty())
-    {
+bool MServerConnection::SendPacketRaw(const TByteArray& Data) {
+    if (!Transport || !Transport->IsConnected() || Data.empty()) {
         return false;
     }
 
     const uint32 Size = static_cast<uint32>(Data.size());
-    if (Transport->Send(Data.data(), Size))
-    {
+    if (Transport->Send(Data.data(), Size)) {
         BytesSent += Size;
         return true;
     }
     return false;
 }
 
-bool MServerConnection::SendServerPush(uint8 StatusCode, TByteArray&& Payload)
-{
+bool MServerConnection::SendServerPush(uint8 StatusCode, TByteArray&& Payload) {
     // wire format: [StatusCode:1B][Reserved:2B][Payload:N]（最小 3 字节 + 可选负载）
     // 不带 CallId ——对端 ConsumeServerCall 不会匹配,直接 drop。
     // Payload 用途:at-least-once 协议下 server 回 [SequenceId:8B] 让 client 确认投递。
     TByteArray Pkt;
     Pkt.reserve(3 + Payload.size());
     Pkt.push_back(StatusCode);
-    Pkt.push_back(0);  // Reserved
-    Pkt.push_back(0);  // Reserved
+    Pkt.push_back(0); // Reserved
+    Pkt.push_back(0); // Reserved
     Pkt.insert(Pkt.end(), Payload.begin(), Payload.end());
     return SendPacket(static_cast<uint8>(EServerMessageType::MT_ServerPush), Pkt.data(), static_cast<uint32>(Pkt.size()));
 }
 
-void MServerConnection::Tick(float DeltaTime)
-{
-    if (State == EConnectionState::Disconnected)
-    {
-        if (Config.Address.empty() || Config.Port == 0)
-        {
+void MServerConnection::Tick(float DeltaTime) {
+    if (State == EConnectionState::Disconnected) {
+        if (Config.Address.empty() || Config.Port == 0) {
             return;
         }
 
         // 尝试重连
         ReconnectTimer += DeltaTime;
-        if (ReconnectTimer >= ReconnectInterval)
-        {
+        if (ReconnectTimer >= ReconnectInterval) {
             ReconnectTimer = 0.0f;
             ++ReconnectAttempts;
             LOG_INFO("%s Attempting to reconnect...", LogPrefix.c_str());
@@ -179,71 +151,58 @@ void MServerConnection::Tick(float DeltaTime)
         }
         return;
     }
-    
-    if (State != EConnectionState::Connected && State != EConnectionState::Authenticated)
-    {
+
+    if (State != EConnectionState::Connected && State != EConnectionState::Authenticated) {
         return;
     }
-    
+
     // 处理接收
     ProcessRecv();
-    
+
     // 心跳
     HeartbeatTimer += DeltaTime;
-    if (HeartbeatTimer >= HeartbeatInterval)
-    {
+    if (HeartbeatTimer >= HeartbeatInterval) {
         HeartbeatTimer = 0.0f;
         SendHeartbeat();
     }
 }
 
-void MServerConnection::ProcessRecv()
-{
-    if (!Transport)
-    {
+void MServerConnection::ProcessRecv() {
+    if (!Transport) {
         return;
     }
 
     TByteArray Packet;
-    while (Transport->ReceivePacket(Packet))
-    {
-        if (!Packet.empty())
-        {
+    while (Transport->ReceivePacket(Packet)) {
+        if (!Packet.empty()) {
             BytesReceived += static_cast<uint64>(Packet.size());
             const uint8 PacketType = Packet[0];
-            TByteArray Payload(Packet.begin() + 1, Packet.end());
+            TByteArray  Payload(Packet.begin() + 1, Packet.end());
             HandlePacket(PacketType, Payload);
         }
     }
 
-    if (Transport && !Transport->IsConnected())
-    {
+    if (Transport && !Transport->IsConnected()) {
         LOG_INFO("%s Connection closed by remote", LogPrefix.c_str());
         Disconnect();
     }
 }
 
-void MServerConnection::HandlePacket(uint8 PacketType, const TByteArray& Data)
-{
-    switch (PacketType)
-    {
-        default:
-        {
-            // 转发给应用层
-            if (OnMessageCallback)
-            {
-                OnMessageCallback(shared_from_this(), PacketType, Data);
-            }
-            break;
+void MServerConnection::HandlePacket(uint8 PacketType, const TByteArray& Data) {
+    switch (PacketType) {
+    default: {
+        // 转发给应用层
+        if (OnMessageCallback) {
+            OnMessageCallback(shared_from_this(), PacketType, Data);
         }
+        break;
+    }
     }
 }
 
-void MServerConnection::SendHandshake()
-{
+void MServerConnection::SendHandshake() {
     const char* ClassName = GetServerEndpointClassName(Config.ServerType);
-    if (!ClassName)
-    {
+    if (!ClassName) {
         LOG_WARN("%s No RPC handshake endpoint for server type %d", LogPrefix.c_str(), static_cast<int>(Config.ServerType));
         return;
     }
@@ -251,29 +210,21 @@ void MServerConnection::SendHandshake()
     // Rpc_OnServerHandshake 反射签名是 1 参数（uint32 DummyServerId）——
     // 传 3 参数会让 SerializeFunctionArgsByMeta 参数数量不匹配（BUILD failed，
     // State 停在 Connected → IsConnected false → 服务器间调用全部 connection_unavailable）。
-    if (!MRpc::CallRemote(
-            *this,
-            ClassName,
-            "Rpc_OnServerHandshake",
-            LocalServerInfo.ServerId))
-    {
+    if (!MRpc::CallRemote(*this, ClassName, "Rpc_OnServerHandshake", LocalServerInfo.ServerId)) {
         LOG_WARN("%s Handshake RPC send failed", LogPrefix.c_str());
         return;
     }
 
     State = EConnectionState::Authenticated;
     LOG_INFO("%s Authentication successful!", LogPrefix.c_str());
-    if (OnServerAuthenticatedCallback)
-    {
+    if (OnServerAuthenticatedCallback) {
         OnServerAuthenticatedCallback(shared_from_this(), GetRemoteServerInfo());
     }
 }
 
-void MServerConnection::SendHeartbeat()
-{
+void MServerConnection::SendHeartbeat() {
     const char* ClassName = GetServerEndpointClassName(Config.ServerType);
-    if (!ClassName)
-    {
+    if (!ClassName) {
         return;
     }
 

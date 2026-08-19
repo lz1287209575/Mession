@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Common/Runtime/Event/MEvent.h"
 #include "Common/Runtime/Event/MDelegate.h"
+#include "Common/Runtime/Event/MEvent.h"
 
 /**
  * MEventBus - 全局事件总线（type-erased 实现）
@@ -37,11 +37,9 @@
  * 注意：MEventBus 是单例，所有服务器共享。
  */
 
-class MEventBus
-{
-public:
-    static MEventBus& Get()
-    {
+class MEventBus {
+    public:
+    static MEventBus& Get() {
         static MEventBus Instance;
         return Instance;
     }
@@ -51,35 +49,21 @@ public:
     // ================================
 
     // 普通订阅，返回句柄
-    template<typename TEvent>
-    MEventSubscription Subscribe(
-        void* Object,
-        void (*Handler)(void*, const TEvent*))
-    {
+    template <typename TEvent> MEventSubscription Subscribe(void* Object, void (*Handler)(void*, const TEvent*)) {
         uint32 TypeId = TEvent::GetStaticEventTypeId();
-        auto& List = GetOrCreateList(TypeId);
+        auto&  List   = GetOrCreateList(TypeId);
         uint32 Handle = static_cast<uint32>(List.size());
         List.push_back(MakeErasedHandler<TEvent>(Object, Handler));
-        return { Handle, TypeId };
+        return {Handle, TypeId};
     }
 
     // 普通订阅（成员函数版本，最常用）
-    template<typename TObject, typename TEvent>
-    MEventSubscription Subscribe(
-        TObject* Object,
-        void (TObject::*Method)(const TEvent*))
-    {
-        return Subscribe<TEvent>(Object, [](void* Obj, const TEvent* E) {
-            (static_cast<TObject*>(Obj)->*Method)(E);
-        });
+    template <typename TObject, typename TEvent> MEventSubscription Subscribe(TObject* Object, void (TObject::*Method)(const TEvent*)) {
+        return Subscribe<TEvent>(Object, [](void* Obj, const TEvent* E) { (static_cast<TObject*>(Obj)->*Method)(E); });
     }
 
     // 一次性订阅（触发一次后自动退订）
-    template<typename TEvent>
-    MEventSubscription SubscribeOnce(
-        void* Object,
-        void (*Handler)(void*, const TEvent*))
-    {
+    template <typename TEvent> MEventSubscription SubscribeOnce(void* Object, void (*Handler)(void*, const TEvent*)) {
         MEventSubscription Sub = Subscribe<TEvent>(Object, Handler);
         Sub.OneShot();
         uint32 TypeId = TEvent::GetStaticEventTypeId();
@@ -87,11 +71,7 @@ public:
         return Sub;
     }
 
-    template<typename TObject, typename TEvent>
-    MEventSubscription SubscribeOnce(
-        TObject* Object,
-        void (TObject::*Method)(const TEvent*))
-    {
+    template <typename TObject, typename TEvent> MEventSubscription SubscribeOnce(TObject* Object, void (TObject::*Method)(const TEvent*)) {
         MEventSubscription Sub = Subscribe<TEvent>(Object, Method);
         Sub.OneShot();
         uint32 TypeId = TEvent::GetStaticEventTypeId();
@@ -104,32 +84,26 @@ public:
     // ================================
 
     // 通过句柄退订
-    void Unsubscribe(const MEventSubscription& Sub)
-    {
-        if (!Sub.IsValid())
-        {
+    void Unsubscribe(const MEventSubscription& Sub) {
+        if (!Sub.IsValid()) {
             return;
         }
 
         auto It = HandlerMap.find(Sub.EventTypeId);
-        if (It == HandlerMap.end())
-        {
+        if (It == HandlerMap.end()) {
             return;
         }
 
         auto& List = It->second;
-        if (Sub.Handle < List.size())
-        {
-            List[Sub.Handle] = nullptr;  // 标记为空，后续广播跳过
+        if (Sub.Handle < List.size()) {
+            List[Sub.Handle] = nullptr; // 标记为空，后续广播跳过
         }
     }
 
     // 清空某个事件类型的所有订阅
-    void UnsubscribeAll(uint32 EventTypeId)
-    {
+    void UnsubscribeAll(uint32 EventTypeId) {
         auto It = HandlerMap.find(EventTypeId);
-        if (It != HandlerMap.end())
-        {
+        if (It != HandlerMap.end()) {
             auto& List = It->second;
             List.clear();
         }
@@ -137,10 +111,8 @@ public:
     }
 
     // 清空所有事件的所有订阅（服务器关闭时）
-    void ClearAll()
-    {
-        for (auto& Pair : HandlerMap)
-        {
+    void ClearAll() {
+        for (auto& Pair : HandlerMap) {
             Pair.second.clear();
         }
         HandlerMap.clear();
@@ -151,24 +123,19 @@ public:
     // 发布
     // ================================
 
-    template<typename TEvent>
-    void Publish(const TEvent* Event)
-    {
+    template <typename TEvent> void Publish(const TEvent* Event) {
         uint32 TypeId = TEvent::GetStaticEventTypeId();
-        auto It = HandlerMap.find(TypeId);
-        if (It == HandlerMap.end())
-        {
+        auto   It     = HandlerMap.find(TypeId);
+        if (It == HandlerMap.end()) {
             return;
         }
 
-        auto& List = It->second;
-        bool HasOneShot = false;
+        auto& List       = It->second;
+        bool  HasOneShot = false;
 
-        for (size_t i = 0; i < List.size(); ++i)
-        {
+        for (size_t i = 0; i < List.size(); ++i) {
             auto& Handler = List[i];
-            if (!Handler)
-            {
+            if (!Handler) {
                 continue;
             }
 
@@ -178,23 +145,19 @@ public:
 
             // 检查是否是一次性订阅
             auto ShotIt = OneShotHandles.find(TypeId);
-            if (ShotIt != OneShotHandles.end() && ShotIt->second.count(static_cast<uint32>(i)))
-            {
-                Handler = nullptr;  // 标记移除
+            if (ShotIt != OneShotHandles.end() && ShotIt->second.count(static_cast<uint32>(i))) {
+                Handler    = nullptr; // 标记移除
                 HasOneShot = true;
             }
         }
 
         // 清理一次性订阅句柄
-        if (HasOneShot)
-        {
+        if (HasOneShot) {
             OneShotHandles.erase(TypeId);
         }
     }
 
-    template<typename TEvent>
-    void Publish(const TEvent& Event)
-    {
+    template <typename TEvent> void Publish(const TEvent& Event) {
         Publish<TEvent>(&Event);
     }
 
@@ -202,51 +165,42 @@ public:
     // 诊断
     // ================================
 
-    template<typename TEvent>
-    size_t GetSubscriberCount() const
-    {
+    template <typename TEvent> size_t GetSubscriberCount() const {
         uint32 TypeId = TEvent::GetStaticEventTypeId();
         return GetSubscriberCountById(TypeId);
     }
 
-    size_t GetSubscriberCountById(uint32 EventTypeId) const
-    {
+    size_t GetSubscriberCountById(uint32 EventTypeId) const {
         auto It = HandlerMap.find(EventTypeId);
-        if (It == HandlerMap.end())
-        {
+        if (It == HandlerMap.end()) {
             return 0;
         }
-        const auto& List = It->second;
-        size_t Count = 0;
-        for (const auto& H : List)
-        {
-            if (H) ++Count;
+        const auto& List  = It->second;
+        size_t      Count = 0;
+        for (const auto& H : List) {
+            if (H)
+                ++Count;
         }
         return Count;
     }
 
     // 获取已注册的事件类型数量
-    size_t GetEventTypeCount() const { return HandlerMap.size(); }
+    size_t GetEventTypeCount() const {
+        return HandlerMap.size();
+    }
 
-private:
+    private:
     // type-erased handler: TFunction<void(const void*)>
 
     MEventBus() = default;
 
-    TVector<TFunction<void(const void*)>>& GetOrCreateList(uint32 TypeId)
-    {
+    TVector<TFunction<void(const void*)>>& GetOrCreateList(uint32 TypeId) {
         return HandlerMap[TypeId];
     }
 
     // 将成员函数 handler 打包成 type-erased function
-    template<typename TEvent>
-    static TFunction<void(const void*)> MakeErasedHandler(
-        void* Object,
-        void (*Handler)(void*, const TEvent*))
-    {
-        return [Object, Handler](const void* Event) {
-            Handler(Object, static_cast<const TEvent*>(Event));
-        };
+    template <typename TEvent> static TFunction<void(const void*)> MakeErasedHandler(void* Object, void (*Handler)(void*, const TEvent*)) {
+        return [Object, Handler](const void* Event) { Handler(Object, static_cast<const TEvent*>(Event)); };
     }
 
     // 事件类型 ID -> 处理器列表（type-erased）
@@ -257,6 +211,6 @@ private:
     // EventTypeId -> 句柄集合
     TMap<uint32, TSet<uint32>> OneShotHandles;
 
-    MEventBus(const MEventBus&) = delete;
+    MEventBus(const MEventBus&)            = delete;
     MEventBus& operator=(const MEventBus&) = delete;
 };

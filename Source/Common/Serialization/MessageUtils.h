@@ -6,9 +6,7 @@
 #include <utility>
 
 // 主机字节序（当前行为，保持兼容）
-template<typename T>
-inline void AppendValue(TByteArray& OutData, const T& Value)
-{
+template <typename T> inline void AppendValue(TByteArray& OutData, const T& Value) {
     static_assert(std::is_trivially_copyable_v<T>, "AppendValue requires trivially copyable type");
 
     const size_t WriteOffset = OutData.size();
@@ -16,13 +14,10 @@ inline void AppendValue(TByteArray& OutData, const T& Value)
     memcpy(OutData.data() + WriteOffset, &Value, sizeof(T));
 }
 
-template<typename T>
-inline bool ReadValue(const TByteArray& Data, size_t& Offset, T& OutValue)
-{
+template <typename T> inline bool ReadValue(const TByteArray& Data, size_t& Offset, T& OutValue) {
     static_assert(std::is_trivially_copyable_v<T>, "ReadValue requires trivially copyable type");
 
-    if (Offset + sizeof(T) > Data.size())
-    {
+    if (Offset + sizeof(T) > Data.size()) {
         return false;
     }
 
@@ -32,56 +27,45 @@ inline bool ReadValue(const TByteArray& Data, size_t& Offset, T& OutValue)
 }
 
 // 网络字节序（大端）：多字节整数应使用以下接口以保证跨平台
-inline void AppendValueBE(TByteArray& OutData, uint16 Value)
-{
+inline void AppendValueBE(TByteArray& OutData, uint16 Value) {
     uint16 Net = HostToNetwork(Value);
     AppendValue(OutData, Net);
 }
-inline void AppendValueBE(TByteArray& OutData, uint32 Value)
-{
+inline void AppendValueBE(TByteArray& OutData, uint32 Value) {
     uint32 Net = HostToNetwork(Value);
     AppendValue(OutData, Net);
 }
-inline void AppendValueBE(TByteArray& OutData, uint64 Value)
-{
+inline void AppendValueBE(TByteArray& OutData, uint64 Value) {
     uint64 Net = HostToNetwork(Value);
     AppendValue(OutData, Net);
 }
 
-inline bool ReadValueBE(const TByteArray& Data, size_t& Offset, uint16& OutValue)
-{
-    if (!ReadValue(Data, Offset, OutValue))
-    {
+inline bool ReadValueBE(const TByteArray& Data, size_t& Offset, uint16& OutValue) {
+    if (!ReadValue(Data, Offset, OutValue)) {
         return false;
     }
     OutValue = NetworkToHost(OutValue);
     return true;
 }
-inline bool ReadValueBE(const TByteArray& Data, size_t& Offset, uint32& OutValue)
-{
-    if (!ReadValue(Data, Offset, OutValue))
-    {
+inline bool ReadValueBE(const TByteArray& Data, size_t& Offset, uint32& OutValue) {
+    if (!ReadValue(Data, Offset, OutValue)) {
         return false;
     }
     OutValue = NetworkToHost(OutValue);
     return true;
 }
-inline bool ReadValueBE(const TByteArray& Data, size_t& Offset, uint64& OutValue)
-{
-    if (!ReadValue(Data, Offset, OutValue))
-    {
+inline bool ReadValueBE(const TByteArray& Data, size_t& Offset, uint64& OutValue) {
+    if (!ReadValue(Data, Offset, OutValue)) {
         return false;
     }
     OutValue = NetworkToHost(OutValue);
     return true;
 }
 
-inline void AppendString(TByteArray& OutData, const MString& Value)
-{
+inline void AppendString(TByteArray& OutData, const MString& Value) {
     const uint16 Length = static_cast<uint16>(Value.size());
     AppendValue(OutData, Length);
-    if (Length == 0)
-    {
+    if (Length == 0) {
         return;
     }
 
@@ -90,12 +74,10 @@ inline void AppendString(TByteArray& OutData, const MString& Value)
     memcpy(OutData.data() + WriteOffset, Value.data(), Length);
 }
 
-inline void AppendStringBE(TByteArray& OutData, const MString& Value)
-{
+inline void AppendStringBE(TByteArray& OutData, const MString& Value) {
     const uint16 Length = static_cast<uint16>(Value.size());
     AppendValueBE(OutData, Length);
-    if (Length == 0)
-    {
+    if (Length == 0) {
         return;
     }
 
@@ -104,11 +86,9 @@ inline void AppendStringBE(TByteArray& OutData, const MString& Value)
     memcpy(OutData.data() + WriteOffset, Value.data(), Length);
 }
 
-inline bool ReadString(const TByteArray& Data, size_t& Offset, MString& OutValue)
-{
+inline bool ReadString(const TByteArray& Data, size_t& Offset, MString& OutValue) {
     uint16 Length = 0;
-    if (!ReadValue(Data, Offset, Length) || Offset + Length > Data.size())
-    {
+    if (!ReadValue(Data, Offset, Length) || Offset + Length > Data.size()) {
         return false;
     }
 
@@ -117,11 +97,9 @@ inline bool ReadString(const TByteArray& Data, size_t& Offset, MString& OutValue
     return true;
 }
 
-inline bool ReadStringBE(const TByteArray& Data, size_t& Offset, MString& OutValue)
-{
+inline bool ReadStringBE(const TByteArray& Data, size_t& Offset, MString& OutValue) {
     uint16 Length = 0;
-    if (!ReadValueBE(Data, Offset, Length) || Offset + Length > Data.size())
-    {
+    if (!ReadValueBE(Data, Offset, Length) || Offset + Length > Data.size()) {
         return false;
     }
 
@@ -129,4 +107,3 @@ inline bool ReadStringBE(const TByteArray& Data, size_t& Offset, MString& OutVal
     Offset += Length;
     return true;
 }
-

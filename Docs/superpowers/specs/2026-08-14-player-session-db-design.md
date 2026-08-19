@@ -510,9 +510,24 @@ OtherService/SDK 连接(MServerConnection,server RPC),一边桥接 backend;协�
   连接/协议/backend 全共享——两形态都是"服务"。
 - 配置(`SDBServiceConfig`,仿 SEchoServiceConfig):`--listen` / `--registry`(可空=形态 B)/
   `--db-driver=mongo\|mysql` / `--db-conn=<连接串>` / `--db-name=<库名/集合前缀>`。
-- 内部:`MMongoDatabaseClient` / `MMysqlDatabaseClient` 适配(3.4);可含自身
-  worker 线程跑阻塞 DB 调用(DBService 进程内,与业务无关)。
+- 内部:`MMongoDatabaseClient` / `MMysqlDatabaseClient` 适配(3.4)。
 - Handler:`MFUNCTION(ServerCall)` `FindOne/UpsertOne/DeleteOne` → backend 调用 → 回包。
+
+**调用模型(已决策:worker 池 + backend 纯同步阻塞)**:
+- Handler(事件循环线程)收到请求 → Post 到 worker 池 → worker 执行阻塞 backend 调用
+  → 结果回投事件循环 → 回包;事件循环零阻塞。
+- backend 实现为**纯同步**(不内部管线程);worker 池集中在 Handler 层一处管理。
+
+**分桶与顺序(已决策:属主 ID 统一分桶)**:
+- **workerId = hash(属主 ID) % N**——同一属主永远同一 worker → 同属主操作串行有序。
+- 属主 ID = `Meta=(ShardKey)` 显式标记的字段(可不在主键首列;跨集合同属主同桶,
+  玩家 Profile/背包/邮件 全数据串行一致)。
+- 跨集合 B 依赖 A 的结果:同属主 → 同桶顺序保证;**强原子(要么全成要么全败)→ 事务**
+  (不靠分桶)。
+- 边界:同属主高频写受单桶串行限(游戏单玩家写频率低,可接受);跨玩家天然并行。
+
+**SyncTable 处理(启动期)**:`FDbSyncTable` → backend 建表 + `schema_versions` 版本校验
+(§3.5:加列自动 ALTER、删列拒启)。
 
 ### 3.4 backend 适配(双 DB,各自用足特性)
 
@@ -556,30 +571,50 @@ OtherService/SDK 连接(MServerConnection,server RPC),一边桥接 backend;协�
   首次访问 DDL 延迟)。Mongo 集合隐式(首次 insert 自动创建),无需建表。
 - 第一版写入:整行 `INSERT ... ON DUPLICATE KEY UPDATE`(字段级增量后置)。
 
-**Mongo 映射**:Schema 字段 → BSON 字段(`_id` = Key),嵌套天然。
+**Mongo 映射(已决策:字段级,类型保真)**:Schema 字段 → BSON 字段(`_id` = FDbKey 拼接),嵌套天然。
+
+- 写入:反射遍历 `MClass::GetProperties()` → 按 `EPropertyType` 转 bsoncxx 值
+  (`Int64`→`b_int64`、`String`→`b_string`、嵌套 Struct/Vector→子文档),**字段级**,
+  非整文档 `from_json`——类型保真(int64/二进制不丢)、字段级查询可用、嵌套天然。
+- 读取:BSON 文档 → 按反射字段解析(或转 JSON 回 SDK),与写入对称。
+- 反射映射器与 MySQL 拆列同思路(一个反射驱动,两 backend 各自落法)。
 
 > 否决记录:曾考虑 MySQL `BLOB`(黑盒,不可查/不可读/不可迁移)与 JSON 列整包
 > (丢 MySQL 关系特性)——均已否决。正确形态是"Schema 抽象 + 每 backend 原生落库"。
 
+**实现状态**:
+- `MMongoDatabaseClient`:`libmongocxx`(环境已装,mongod 运行中),立即实现。
+- `MMysqlDatabaseClient`:本轮写代码,`#ifdef MESSION_ENABLE_MYSQL` 守护(当前无驱动默认不编译)。
+
 ### 3.5 Schema 版本化与字段生命周期(铁律)
 
-**铁律:字段一经发布,永不删除、永不改名。变更只允许"加字段"或"标记废弃"。**
+**铁律:字段一经发布,永不删除、永不改名。变更只允许"加字段"。**
 
 | 变更 | 策略 | 机制 |
 |---|---|---|
-| **加字段** | 允许,自动兼容 | MySQL 启动对比反射 Schema vs `SHOW COLUMNS` 自动 `ALTER TABLE ADD COLUMN`;Mongo 天然;读旧数据缺字段 → 默认值 |
-| **废弃字段** | **标记不删除** | `MPROPERTY(Meta=(Deprecated))`;字段永久保留在 Schema:写入跳过(不落新值),读取仍可导入旧数据。**禁止物理删除**——删除会让旧数据反序列化失败(未知字段) |
-| **改名** | 禁止 | 改名 = 删+加,违反铁律;确需改名 → 保留旧字段(Deprecated)+ 新增字段 + 一次性迁移脚本拷贝数据 |
-| **改类型** | 不自动做 | 人工版本化迁移;自动 DDL 改类型风险高,禁止 |
+| **加字段** | 允许,自动兼容 | 连接时 SyncTables 对比快照 → 自动 `ALTER TABLE ADD COLUMN`;Mongo 天然;读旧数据缺字段 → 默认值 |
+| **删字段** | **禁止** | 字段集变小 → 拒连(版本只增不减的守护);删除会让旧数据反序列化失败 |
+| **改名** | 禁止 | 改名 = 删+加,违反铁律;确需改名 → 保留旧字段 + 新增字段 + 一次性迁移脚本拷贝 |
+| **改类型** | 不自动做 | 人工迁移;自动 DDL 改类型风险高,禁止 |
 | 开发期 | `--db-reset` | DROP 重建表/集合(仅开发/测试) |
 
-**版本化机制(第一版即做)**:
-- 每 Schema 一个 `SchemaVersion`(int),DBService 启动时读 `schema_versions` 表
-  (`SchemaName, Version, AppliedAt, ChangeNote`)。
-- 启动校验:对比"上次记录的字段集 vs 当前 Schema 字段集":
-  - 只增 → 自动 ALTER + 版本 +1,记录 ChangeNote;
-  - **发现字段被删除 → 报错并拒绝启动**(铁律保护,防止误删字段);
-  - 发现 Deprecated 标记 → 记录但不动表结构。
+**Deprecated(纯业务语义,不进版本机制)**:`MPROPERTY(Meta=(Deprecated))` 标记字段
+**不影响表结构、字段集不变、版本不变**——只影响写入端:**写入跳过该字段**(不落新值);
+读取端照常(旧数据保留历史值,新数据读默认值)。业务在标记时即完成迁移(不再依赖)。
+
+**版本化机制(第一版即做;SyncTables 在连接时触发)**:
+- **SyncTables 时机(已决策)**:SDK 连接到 DBService 时自动触发(连接建立流程内,业务
+  零调用)——DBService 校验/建表/版本更新后返回就绪,业务才开始请求;幂等(无变更空转)。
+- **DBService 维护持久化版本(已决策,Service 级单版本,单调递增)**——`schema_versions`
+  (全局一张):`Version, FieldSnapshot, AppliedAt, ChangeNote`。
+  - **整个 DBService 一个 Version**:任一 Schema 字段集变化(只增)→ 全局 +1;
+    代码侧不写版本号(DBService 按快照对比自动累计)。
+  - FieldSnapshot = **全部 Schema 的字段集**(所有表字段清单 JSON)。
+- SyncTables 校验流程(全量快照对比):
+  - 无记录 → 建表,Version=1,快照=当前全量字段集;
+  - 一致 → 幂等空转;
+  - **只增字段 → 自动 ALTER + Version+1 + 快照更新 + ChangeNote**;
+  - **当前字段集 ⊄ 快照(字段被删/降级,如旧代码连新库)→ 拒绝连接**。
 - 反序列化仍启用 `bIgnoreUnknown` 容错(防御降级/脏数据),但设计上不应出现未知字段。
 
 **Mongo 侧**:文档天然无 schema,加字段零成本;废弃字段同样保留在 Schema 定义中;
@@ -602,70 +637,199 @@ OtherService/SDK 连接(MServerConnection,server RPC),一边桥接 backend;协�
 | **B. 独立剥离** | 独立 CMake target 编译部署,不注册 Registry;SDK 配置 `host:port` 直连 | 脱离 mession 生态、其他语言/系统接入、DBProxy 化 |
 
 **两种形态共享的接口设计**(这是可剥离性的根本保证):
-- **SDK(mession 服务接入)**:`MDatabaseClient`(`FindOne<T>/UpsertOne<T>/DeleteOne` 模板,
-  反射↔JSON + async + 连接管理);**寻址差异在 SDK 内部**(配置:Registry 发现 or 直连),
-  业务代码同一接口;外部系统按协议自实现客户端(§3.1 双载体 IDL)。
-- **协议语义**:轻量、Schema 无关——`(Collection, Key, JSON 值)`(§3.1 消息),
-  不依赖 mession 反射 RPC 链 → 独立部署时无需 mession 服务栈。
+- **SDK(mession 服务接入)**:`MDatabaseClient`(§3.2 全量接口:`FindOne<T>`/`SelectMany<T>`/
+  `SelectPartKey<T>`/`UpsertOne<T>`/`Insert<T>`/`Delete<T>`/`Increment<T>`/`Traverse<T>`/
+  `Transaction`/`SyncTables`;类型即表名 + 反射↔JSON + async + 连接管理);**寻址差异在
+  SDK 内部**(配置:Registry 发现 or 直连),业务代码同一接口;外部系统按协议自实现客户端
+  (§3.1 双载体 IDL)。
+- **协议语义**:轻量、Schema 无关——完整操作集见 §3.1(单条 CRUD / 批量 / 部分列查询 /
+  遍历 / 事务 / 建表同步;`Collection`+`FDbKey`+JSON 值),不依赖 mession 反射 RPC 链 →
+  独立部署时无需 mession 服务栈。
 - **协议载体双轨**(§3.1):形态 A 用反射载体(MSTRUCT + MHeaderTool),
   形态 B 用独立 IDL 载体(protobuf 等)生成独立代码——同一语义、同一 JSON 线格式。
-- **Schema 感知不下沉**:序列化在 SDK 侧;MySQL 建表清单(反射生成字段名+类型)随建表请求下发,
+- **Schema 感知不下沉**:序列化在 SDK 侧;建表清单(字段名+类型)随 SyncTables 请求下发,
   DBService 执行 DDL——DBService 自身无 Schema 编译期依赖,两种形态皆然。
+- **建表清单的两个载体(已决策:IDL 含 Schema 元数据 + 类型映射器)**:
+  - 反射载体:MSTRUCT → 反射元数据(`MProperty::Type`)→ `FDbFieldDef`;
+  - IDL 载体:.proto → 生成器同时产出 **Schema 元数据**(字段名+protobuf 类型+标记)
+    → **IDL→FDbFieldDef 类型映射器**(protobuf→EPropertyType:uint64→Int64、string→String、
+    嵌套 message→Struct、repeated→Vector 等)→ `FDbFieldDef`;
+  - 两载体汇聚到同一 `FDbFieldDef`,线格式一致,可互操作;转换在 SDK/生成器侧,
+    DBService 只收已归一的 `FDbFieldDef`。
 - 形态 A 的 Registry/EndpointCache 只是**接入层选择**,不影响协议与 Schema 边界;
   形态 B 剥离时替换接入层,业务侧无感知。
-
-- `MMongoDatabaseClient`:`libmongocxx`(环境已装,mongod 运行中),立即实现。
-- `MMysqlDatabaseClient`:本轮写代码,`#ifdef MESSION_ENABLE_MYSQL` 守护(当前无驱动默认不编译)。
+- **传输层抽象(已决策:复用 Socket 库,抽象为基础库)**:
+  ```
+  MDatabaseClient
+    └─ ITransport(抽象:发请求/收响应)
+         ├─ 形态 A: RegistryRpcTransport —— MEndpointCache + MServerConnection(server RPC)
+         └─ 形态 B: DirectSocketTransport —— Socket 库(连接/收发)+ 自定义帧(长度前缀 + FDb 消息 JSON)
+  ```
+  - mession `Common/IO/Socket/`(SocketPlatform/Socket)是**可移植 OS socket 封装**,
+    抽象为**独立可编译的基础库**(CMake 目标独立于 mession 业务栈)——形态 B 的 SDK
+    编译 = SDK 核心(协议/序列化/类型映射)+ Socket 库 + DirectSocketTransport,不拉
+    mession_common;剥离不重造 socket。
+  - 传输由配置选择(A: Registry 发现 / B: 直连地址),业务代码同一接口,无感知。
 
 ## 4. 玩家模块
 
 > 可实施规格(代码骨架 + 时序 + 文件布局):`2026-08-14-player-design.md`。
 
-### 4.1 玩家定位(决策 A:PlayerId 编码实例)
+### 4.1 玩家定位与 ID 规则(2026-08 修订:PlayerId 稳定 + ActorId 分段)
 
-- `PlayerId = ActorId`,布局沿用 `[ServiceId: high32][InstId: low32]`(Id.h)。
-- **登录时选实例**:账号 hash → 选业务实例(如按 hash % 实例数,或 Registry 均匀分配),
-  生成带 `InstId` 的 PlayerId;`MActorRouter::IsActorLocal` + `CallToActor` 天然正确路由。
-- **实例亲和性**:PlayerActor 注册后 ActorId 上报 Registry(`FServiceEndpoint.ActorIds`);
-  后续路由按 PlayerId 查 ActorIds 定位实例(非 round-robin),保证同一 Player 同一实例
-  (详见 player-design §1.1;实现缺口 = Active gap "Registry actor metadata")。
-- 迁移/重连的实例变更:后置(登录态固定实例;重连仍回原实例,见 6)。
+**PlayerId:稳定身份(DB 主键,永不变)**:
+- PlayerId = 玩家唯一身份,落 DB(`_id`/pkey),**注册时定、永久稳定**;
+  不编码运行时实例(实例变更/崩溃迁移不改变 PlayerId → DB 主键稳定)。
+- 生成规则:账号 hash(确定性,同账号同 ID)或注册分配;PoC 用账号 hash 确定性。
+- **PlayerId → Service/实例**:靠 **Registry actor 元数据查**(`FServiceEndpoint.ActorIds`,
+  §1.1 实例亲和性),不靠 ID 解析。
 
-### 4.2 消息(`Source/Protocol/Messages/Player/FPlayerMessages.h`)
+**ActorId 分段(双布局,各系统独立空间不冲突)**:
+
+| Actor 类型 | ActorId 布局 | 说明 |
+|---|---|---|
+| **玩家** | `[Kind:16][PlayerId:48]` | 玩家占 48 位大空间(承载 2^48≈281 万亿),无 Service 段 |
+| **其他**(房间/怪物/全局) | `[Kind:16][Service:16][Domain:32]` | 显式带 Service 段 + 域内 Domain(32 位够) |
 
 ```cpp
-MSTRUCT() struct FLoginRequest
+enum class EActorKind : uint16 { Player = 1, Global = 2, Room = 3, Monster = 4, ... };
+// 玩家: ActorId = (Player<<48) | PlayerId
+// 其他: ActorId = (Kind<<48) | (Service<<32) | Domain
+```
+
+- 解析:按 Kind 分流——玩家走 PlayerId 布局,其他走 Service+Domain;各 Kind 空间独立,
+  PlayerId/全局固定段(9001 等)/房间/怪物互不冲突。
+- **玩家路由**:按 PlayerId 查 Registry ActorIds → 实例(§1.1);非玩家 actor 从 ID 解析
+  Service 段直接定位。
+- 迁移/重连的实例变更:后置(登录态固定实例;重连仍回原实例,见 §4.6)。
+
+### 4.2 消息与表类型(协议/落库分离)
+
+**分离规则**:协议消息(不落 DB)与表类型(落 DB)分文件;表类型 = `Meta=(DbTable)` +
+`DbKey`(主键)/ `ShardKey`(分桶列)标记(§3.2/§3.3),表名即类型名。
+
+```
+Source/Protocol/Messages/Player/
+  FPlayerMessages.h   ← 协议消息(Login/Logout/业务请求响应,不落 DB)
+  FPlayerEntity.h     ← 表类型(落 DB:Profile + 成员数据,全部 Meta=(DbTable))
+```
+
+```cpp
+// FPlayerMessages.h —— 协议消息(普通 MSTRUCT,不落 DB)
+// 登录消息抽象:支持多鉴权方式(密码 / 动态 Token / 二维码),不绑死单一密码
+MSTRUCT()
+enum class EAuthMethod : uint8
 {
-    MPROPERTY() MString AccountName;
-    MPROPERTY() MString Password;      // PoC 明文;真实鉴权后续单独设计
+    Password = 0,   // 账号+密码
+    Token    = 1,   // 动态会话票据
+    QrCode   = 2,   // 二维码扫码确认
 };
 
-MSTRUCT() struct FLoginResponse
+MSTRUCT()
+struct FLoginCredential
 {
-    MPROPERTY() uint64 PlayerActorId;  // 即 PlayerId(含实例)
-    MPROPERTY() FPlayerProfile Profile;
-    MPROPERTY() MString ErrorMessage;  // 空=成功
+    MPROPERTY()
+    MString Password;    // Method=Password
+
+    MPROPERTY()
+    MString Token;       // Method=Token
+
+    MPROPERTY()
+    MString QrCodeId;    // Method=QrCode
 };
 
-MSTRUCT() struct FPlayerProfile     // 存档 Schema(PersistentData 域)
+MSTRUCT()
+struct FLoginRequest
 {
-    MPROPERTY() MString AccountName;
-    MPROPERTY() MString PasswordHash;
-    MPROPERTY() MString DisplayName;
-    MPROPERTY() int64  Level;
-    MPROPERTY() int64  Exp;
-    MPROPERTY() int64  CreatedAtMs;
-    MPROPERTY() int64  UpdatedAtMs;
+    MPROPERTY()
+    EAuthMethod Method = EAuthMethod::Password;
+
+    MPROPERTY()
+    MString AccountName;
+
+    MPROPERTY()
+    FLoginCredential Credential;
 };
 
-MSTRUCT() struct FPlayerView       // 客户端可见状态(Replicated 域)
+MSTRUCT()
+struct FLoginResponse
 {
-    MPROPERTY() uint64 PlayerId;
-    MPROPERTY() MString DisplayName;
-    MPROPERTY() int64  Level;
-    MPROPERTY() float  PosX;  MPROPERTY() float  PosY;
+    MPROPERTY()
+    uint64 PlayerActorId;  // 即 PlayerId(§4.1 稳定 ID)
+
+    MPROPERTY()
+    FPlayerProfile Profile;
+
+    MPROPERTY()
+    MString SessionToken;  // 登录成功签发;后续请求携带(动态/可过期)
+
+    MPROPERTY()
+    MString ErrorMessage;  // 空=成功
 };
 ```
+
+```cpp
+// FPlayerEntity.h —— 表类型(落 DB,类型即表名)
+MSTRUCT(Meta = (DbTable))
+struct FPlayerProfile
+{
+    MPROPERTY(Meta = (DbKey, ShardKey))   // 主键 + 分桶列 = PlayerId(属主=自己)
+    uint64 PlayerId;
+
+    MPROPERTY()
+    MString AccountName;
+
+    MPROPERTY()
+    MString PasswordHash;
+
+    MPROPERTY()
+    MString DisplayName;
+
+    MPROPERTY()
+    int64 Level = 0;
+
+    MPROPERTY()
+    int64 Exp = 0;
+
+    MPROPERTY()
+    int64 CreatedAtMs = 0;
+
+    MPROPERTY()
+    int64 UpdatedAtMs = 0;
+};
+
+MSTRUCT(Meta = (DbTable))
+struct FPlayerView       // 客户端可见状态(Replicated 域)
+{
+    MPROPERTY(Meta = (DbKey))
+    uint64 PlayerId;
+
+    MPROPERTY()
+    MString DisplayName;
+
+    MPROPERTY()
+    int64 Level = 0;
+
+    MPROPERTY()
+    float PosX = 0.f;
+
+    MPROPERTY()
+    float PosY = 0.f;
+};
+```
+
+- 落库走 SDK:登录 `FindOne<FPlayerProfile>(FDbKey{{PlayerId}})` / 建号 `UpsertOne<T>`;
+  `SyncTables()` 自动建表(连接时,§3.5)。
+- 成员数据 Schema(背包/任务等)同为 `Meta=(DbTable)` 表类型,`ShardKey` = 属主 PlayerId
+  (§4.3,同玩家跨表同桶串行)。
+
+**鉴权策略(可插拔,不绑死密码)**:
+- `MLoginAuth` 按 `FLoginRequest.Method` 分派到独立认证器:`PasswordAuth` / `TokenAuth` /
+  `QrAuth`(策略可插拔,新增鉴权方式 = 加一个认证器,不改登录主流程)。
+- **会话票据**:登录成功签发 `SessionToken`(动态、可过期),后续请求携带 token 校验——
+  密码/二维码只是"首次认证"入口,长期会话走 token(降低密码 hash 的暴露面)。
+- **密码存储**:PoC 用 **PBKDF2(随机盐 + 慢哈希)**,正式用 Argon2/BCrypt;
+  裸 hash / 加盐 SHA 不够(可高速爆破);明文仅 PoC 占位注释。
 
 ### 4.3 玩家 Actor 组织(目标架构:ActorMember,协议下沉到成员)
 
@@ -682,8 +846,36 @@ MSTRUCT() struct FPlayerView       // 客户端可见状态(Replicated 域)
 - 跨实例 actor 直寻址(`MRpcChannel::CallToActor(PlayerId)`)依赖 Active gap
   "Prove cross-Echo CallToActor" → 后置(PoC 单实例)。
 
-**成员数据**:成员自带 Schema(`FInventoryData` 等 PersistentData),`Save()/Load()`
-由 actor 数据生命周期驱动(登录 Load / 登出 Save)——避免 actor 类膨胀。
+**成员数据(表类型,对齐 DBService §4.2/§3.2)**:成员数据 = `FPlayerEntity.h` 里的表类型
+(`Meta=(DbTable)` + `ShardKey=PlayerId` 属主分桶,§3.3 同玩家跨表同桶串行):
+
+```cpp
+// FPlayerEntity.h(与 Profile 同文件,表类型)
+MSTRUCT(Meta = (DbTable))
+struct FPlayerInventory
+{
+    MPROPERTY(Meta = (DbKey, ShardKey))   // 主键 + 分桶列 = PlayerId(属主)
+    uint64 PlayerId;
+
+    MPROPERTY() TVector<FItem> Items;
+    ...
+};
+
+MSTRUCT(Meta = (DbTable))
+struct FPlayerQuest
+{
+    MPROPERTY(Meta = (DbKey, ShardKey))   // 主键 + 分桶列 = PlayerId
+    uint64 PlayerId;
+
+    MPROPERTY() TMap<uint64, FQuestState> Quests;
+    ...
+};
+```
+
+- **Load/Save 走 SDK**:登录 `FindOne<FPlayerInventory>(FDbKey{{PlayerId}})`、登出
+  `UpsertOne<T>`;标脏后落库(§4.6 数据生命周期)。
+- 表名即类型名(§3.2),`SyncTables()` 自动建表;成员方法内直接 `TAwaitable<...>` 或
+  SDK 调用,不接触 DB 细节。
 
 **文件布局**(详见 player-design.md §7):
 ```
@@ -701,9 +893,12 @@ Source/Servers/Player/
 | 形态 | 实例数 | ActorId | 承载业务 |
 |---|---|---|---|
 | Per-Player actor | 在线玩家数 | PlayerId(§4.1) | 玩家私有:背包/好友/任务/属性 |
-| Global actor(仿 `MRankListActor` 先例) | 每功能 1 个 | 固定 ID(如 9001) | 跨玩家:排行榜/邮件/全服广播 |
+| Global actor(仿 `MRankListActor` 先例) | 每功能 1 个 | **`MakeGlobalActorId(Service, Domain)`**(§4.1 其他 actor 布局:`Kind:16|Service:16|Domain:32`,如排行榜 `Global|Player|1`) | 跨玩家:排行榜/邮件/全服广播 |
 
 - 判断:跨玩家 → Global actor;**不**因此拆服务(§2.2);出现拆的信号才拆。
+- **Global actor 定位**:ID 自带 Service 段(`Kind:16|Service:16|Domain:32`,§4.1)→ 路由直接
+  从 ID 解析服务进程,不依赖 Registry 查(与玩家 actor 不同);`MRankListActor.RANK_LIST_ACTOR_ID`
+  等裸固定 ID 需按 `MakeGlobalActorId` 规则迁移。
 
 **成员间通信(同 actor 同线程,零锁)**——成员是 actor 内组件,actor 单线程模型,
 不走事件总线(Event 目录已删,无消费者):
@@ -724,7 +919,7 @@ Source/Servers/Player/
 下行:成员变更 → actor 判定需同步 → Gateway 绑定表 → CallClient
 ```
 
-**跨实例(后置)**:PlayerId 编码 InstId(§4.1),登录态固定实例、重连回原实例;
+**跨实例(后置)**:PlayerId 稳定(§4.1,不编码实例),登录态固定实例、重连回原实例;
 PoC 单实例验证,跨实例 CallToActor 待 gap 解决。
 
 - 上行业务消息经框架 member 分发器到成员;下行经 Gateway(§4.5)。
@@ -737,17 +932,20 @@ PoC 单实例验证,跨实例 CallToActor 待 gap 解决。
   → 框架 member 分发器 → MLoginAuth 成员(认证,§4.3/player-design §2.1):
       0. **重复登录检查**:本账号已有在线 actor → 踢旧(§4.6):经 ServiceDiscovery
          通知旧 Player 实例 Kick + 落库注销,新登录继续
-      1. 选实例 → PlayerId(编码 InstId,§4.1;账号 hash 稳定 → 同一实例)
-      2. AWAIT DBService.FindOne<FPlayerProfile>("players", AccountKey)
-      3. 不存在 → 创建(密码 hash)→ Upsert;存在 → 校验密码
+      1. 选实例(账号 hash 稳定映射;PlayerId 稳定不编码实例,§4.1)
+      2. PlayerId = 账号 hash(§4.1);AWAIT SDK.FindOne<FPlayerProfile>(FDbKey{{PlayerId}})
+      3. 不存在 → 创建(密码 hash)→ SDK.UpsertOne<FPlayerProfile>(Key, Profile);
+         存在 → 校验密码
       4. 回包 LoginResponse{PlayerId, 目标 PlayerService 实例}
 Gateway:绑定 connId ↔ playerId + 记录 playerId→实例(仅路由)
   → [会话激活] LoginService 经 ServiceDiscovery → CallRemote(Player 实例, "EnterGame")
-  → MPlayerService:创建 MPlayerActor(成员自动挂载)+ Register + OnLogin(查 Profile/模块 Load)
+  → MPlayerService:创建 MPlayerActor(成员自动挂载)+ Register + OnLogin(查 Profile/成员 Load)
   → ① 响应回包 ② CallRemote(Gateway, "PushClientDownlink", 欢迎+View)   ← 下行闭环(§6.1)
 ```
 
-- 登出/断连:Profile 回写 DB(DBService RPC)→ 注销 actor(经 LoginService 走 ServiceDiscovery,§1.1)。
+- SDK 调用(`MDatabaseClient`):连接时 `SyncTables()` 已建表(§3.5);登录 `FindOne<T>` /
+  建号 `UpsertOne<T>` 类型即表名,无 Collection 字符串。
+- 登出/断连:Profile 回写 DB(SDK `UpsertOne<T>`)→ 注销 actor(经 LoginService 走 ServiceDiscovery,§1.1)。
 - 落库时机:登录加载、关键变更、登出;定期快照(TODO 后置)。
 
 ### 4.5 Gateway 会话绑定与下行(收束闭环)
@@ -777,12 +975,16 @@ Offline ──登录──► LoggingIn ──成功──► Online ──断�
 - **宽限期超时**:落库 → 注销 actor → Offline。
 - **重复登录(踢旧)**:同账号新登录 → 旧连接发 Kick 后断开,旧 actor 落库注销,
   新登录继续(登录流程步骤 0)。
-- **登出/踢下线**:Profile 回写 DB(DBService RPC)**同步成功后**才注销 actor(防丢档)。
+- **登出/踢下线**:Profile/成员数据回写 DB(SDK `UpsertOne<T>`)**同步成功后**才注销
+  actor(防丢档)。
 
-**数据生命周期(登出落库 + 标脏)**:
-- 登录:全量加载 Profile → 内存态。
-- 运行:变更标脏,不即时落库。
-- 落库时机:登出 / 踢下线 / 宽限期超时(同步成功后注销);定期快照(TODO 后置)。
+**数据生命周期(登出落库 + 标脏,走 SDK)**:
+- 登录:全量加载 Profile + 成员数据(SDK `SelectMany<T>` 或并行 `FindOne<T>`)→ 内存态。
+- 运行:PersistentData 字段变更标脏,不即时落库。
+- 落库:登出 / 踢下线 / 宽限期超时(**SDK `UpsertOne<T>` 同步成功后才注销**,防丢档);
+  定期快照(TODO 后置)。
+- **与 DBService 衔接**:同玩家多表(Profile/背包/任务)落库经属主分桶(§3.3)同桶串行,
+  顺序一致;标脏粒度 = 表级(整行 Upsert,§3.0),字段级后置。
 
 ## 5. 里程碑
 
@@ -804,7 +1006,7 @@ Offline ──登录──► LoggingIn ──成功──► Online ──断�
 - [ ] **实例亲和性基建**:`MEndpointCache::FindEndpointByActorId(PlayerId)` + actor 上报链路(MActorSystem Register → RegistryProtocol 更新 `FServiceEndpoint.ActorIds`)= Active gap "Registry actor metadata"(player-design §1.1/1.2)
 - [ ] **跨实例 CallToActor**(好友/组队/Global actor 协同,依赖上项)
 - [x] ~~下行目标解析:业务实例 → 玩家 connId 的查询/推送链~~ → §6.1 响应收束闭环:业务侧经 Gateway `PushClientDownlink` + Resolver 按 PlayerId 查持久注册表
-- [ ] 鉴权演进:token/会话票据(替换明文密码)
+- [x] ~~鉴权演进:token/会话票据~~ → §4.2 已定:多鉴权方式(Method+Credential)+ SessionToken + 密码 PBKDF2/Argon2;仍 TODO:QrAuth 具体流程、token 有效期/续期细节
 - [ ] EServerType::Db/Player/Login 接入 Registry + servers.py 拓扑(Registry→Login→Echo×N→Player×N→Db→Gateway)
 - [ ] 定期快照落库(宕机恢复窗口内丢档的兜底)
 - [ ] 并发写:乐观版本/版本号
@@ -821,7 +1023,7 @@ Offline ──登录──► LoggingIn ──成功──► Online ──断�
 - [x] Schema:业务定义反射 MSTRUCT;值以 JSON 传输,backend 原生落库(Mongo 文档 / MySQL 拆列,§3.4)
 - [x] 版本化铁律:字段只增不删、不改名;废弃用 Deprecated;启动校验拒绝删字段(§3.5)
 - [x] 嵌套落库:格式可配(JSON 默认 / 二进制按字段,`Meta=(Storage=Binary)`);不拆子表(§3.4)
-- [x] 玩家定位:PlayerId 编码实例(决策 A),登录时选实例,重连回原实例(§4.1)
+- [x] 玩家定位:PlayerId 稳定(§4.1 修订,不编码实例),ActorId 分段;实例映射经 Registry 查
 - [x] 服务拆分准则:拆的信号/不拆的信号/默认聚合(§2.2)
 - [x] 玩家组织:LoginService(认证,信任边界)+ MPlayerService(零业务协议)+ ActorMember(业务,§4.3)
 - [x] LoginService 同构:零业务协议 + MLoginAuth 成员挂服务实例(无 actor 容器)

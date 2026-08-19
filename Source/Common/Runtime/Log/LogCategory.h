@@ -1,19 +1,18 @@
 #pragma once
-#include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/MLib.h"
 #include <atomic>
 #include <cstring>
 
 // SLogCategory - single registered log channel (level, suppression, drop counter).
 // Registered globally via MLogRegistry; lifetime is owned by the registry.
-struct SLogCategory
-{
-    const char*            Name          = nullptr;
-    uint16                 Id            = 0;
-    ELogLevel              DefaultLevel  = ELogLevel::Info;
-    std::atomic<ELogLevel> RuntimeLevel{ ELogLevel::Info };
-    std::atomic<bool>      bSuppressed{  false };
-    std::atomic<uint64>    DropCount{    0 };
+struct SLogCategory {
+    const char*            Name         = nullptr;
+    uint16                 Id           = 0;
+    ELogLevel              DefaultLevel = ELogLevel::Info;
+    std::atomic<ELogLevel> RuntimeLevel{ELogLevel::Info};
+    std::atomic<bool>      bSuppressed{false};
+    std::atomic<uint64>    DropCount{0};
 };
 
 // DECLARE_LOG_CATEGORY_EXTERN / DEFINE_LOG_CATEGORY pair.
@@ -37,5 +36,4 @@ struct SLogCategory
 // DECLARE goes in a header (e.g. LogCategories.h), DEFINE in the matching .cpp.
 #define DECLARE_LOG_CATEGORY_EXTERN(Name) extern SLogCategory* Name;
 
-#define DEFINE_LOG_CATEGORY(Name) \
-    SLogCategory* Name = MLogRegistry::Get().RegisterCategory(#Name, ELogLevel::Info);
+#define DEFINE_LOG_CATEGORY(Name) SLogCategory* Name = MLogRegistry::Get().RegisterCategory(#Name, ELogLevel::Info);

@@ -5,8 +5,7 @@
 #include "AwaitableTest.cpp"
 #include "InnerTypeTest.cpp"
 
-int main()
-{
+int main() {
     std::printf("[ SAwaiter_ReadyPath_AwaitReadyTrueAndResumeValue ]\n");
     Test_SAwaiter_ReadyPath_AwaitReadyTrueAndResumeValue();
 

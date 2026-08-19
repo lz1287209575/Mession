@@ -6,13 +6,12 @@
 
 namespace mession::script::lua {
 
-class MLuaEngine;
+    class MLuaEngine;
 
-class MLuaHotReload
-{
-public:
-    static TResult<EReloadResult> ReloadDualVM(MLuaEngine& Engine, const MString& NewBytes);
-    static TResult<EReloadResult> ReloadAtomicSwap(MLuaEngine& Engine, const MString& NewBytes);
-};
+    class MLuaHotReload {
+        public:
+        static TResult<EReloadResult> ReloadDualVM(MLuaEngine& Engine, const MString& NewBytes);
+        static TResult<EReloadResult> ReloadAtomicSwap(MLuaEngine& Engine, const MString& NewBytes);
+    };
 
 } // namespace mession::script::lua

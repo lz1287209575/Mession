@@ -4,13 +4,12 @@
 
 namespace mession::script::lua {
 
-class MLuaEngine;
+    class MLuaEngine;
 
-class MLuaMobDebugServer
-{
-public:
-    static void Enable(MLuaEngine& Engine, uint16 Port = 9339);
-    static void Disable();
-};
+    class MLuaMobDebugServer {
+        public:
+        static void Enable(MLuaEngine& Engine, uint16 Port = 9339);
+        static void Disable();
+    };
 
 } // namespace mession::script::lua

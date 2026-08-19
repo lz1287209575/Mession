@@ -1,8 +1,8 @@
 #pragma once
-#include "Common/Runtime/MLib.h"
-#include "Common/Runtime/Log/LogLevel.h"
 #include "Common/Runtime/Log/LogCategory.h"
-#include "Common/Runtime/Log/LogSinks.h"  // ELogSinkId + MakeSinkMask live here (Task 5)
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/Log/LogSinks.h" // ELogSinkId + MakeSinkMask live here (Task 5)
+#include "Common/Runtime/MLib.h"
 #include <atomic>
 
 // ELogSinkId / MakeSinkMask were defined here in Task 4 as a temporary home.
@@ -10,8 +10,7 @@
 // ILogSink interface that consumes its bit values. Bit values 0..4 are STABLE:
 // do not reorder.
 
-struct SLogRouteRule
-{
+struct SLogRouteRule {
     const SLogCategory* Category = nullptr;
     uint32              SinkMask = 0xFFFFFFFFu;
     ELogLevel           MinLevel = ELogLevel::Trace;
@@ -25,9 +24,8 @@ struct SLogRouteRule
 // then publish the new pointers atomically. Old generations remain valid for
 // in-flight readers and are reclaimed by a generation counter (no per-call
 // delete — see .cpp for the policy).
-class MLogRouter
-{
-public:
+class MLogRouter {
+    public:
     static MLogRouter& Get();
 
     // Apply or replace the routing rule for a single category.
@@ -42,7 +40,7 @@ public:
     // sinks are configured for the category.
     uint32 ResolveSinkMask(uint16 CategoryId, ELogLevel Level) const;
 
-private:
+    private:
     MLogRouter() = default;
 
     // Lazily allocate the initial empty tables. Called from SetRule under the
@@ -52,6 +50,6 @@ private:
 
     // Each pointer is replaced as a unit; readers always see a consistent
     // pair via the same generation (see .cpp for the bump sequence).
-    std::atomic<TVector<uint32>*>    CategoryToMask{ nullptr };
-    std::atomic<TVector<ELogLevel>*> CategoryToMinLevel{ nullptr };
+    std::atomic<TVector<uint32>*>    CategoryToMask{nullptr};
+    std::atomic<TVector<ELogLevel>*> CategoryToMinLevel{nullptr};
 };

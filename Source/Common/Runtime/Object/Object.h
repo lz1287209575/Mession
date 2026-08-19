@@ -16,17 +16,14 @@
  *   auto* Profile = NewMObject<MPlayerProfile>(this, "Profile");
  *   // 块结束 RAII 释放；如已挂到 Outer，Outer 也持一份
  */
-template<typename TObject, typename... TArgs>
-TSharedPtr<TObject> NewMObject(MObject* Outer, const MString& Name = "", TArgs&&... Args)
-{
+template <typename TObject, typename... TArgs> TSharedPtr<TObject> NewMObject(MObject* Outer, const MString& Name = "", TArgs&&... Args) {
     static_assert(std::is_base_of_v<MObject, TObject>, "TObject must derive from MObject");
 
     TSharedPtr<TObject> Object = MakeShared<TObject>(std::forward<TArgs>(Args)...);
     Object->SetClass(TObject::StaticClass());
     Object->SetName(Name);
 
-    if (Outer)
-    {
+    if (Outer) {
         // Outer holds TSharedPtr; this side SetOuter uses FindChildShared.
         // NOTE: AddChildObject is private on MObject (MObject-only helper),
         // so it cannot be called from this free function. NewMObject only
@@ -34,9 +31,7 @@ TSharedPtr<TObject> NewMObject(MObject* Outer, const MString& Name = "", TArgs&&
         // use Outer->CreateDefaultSubObject<T>() which has access to the
         // private API.
         Object->SetOuter(Outer);
-    }
-    else
-    {
+    } else {
         // Outer null: parked in RootSet for process-lifetime ownership.
         Object->SetOuter(nullptr);
         MObject::AddToRootSet(Object);
@@ -48,9 +43,7 @@ TSharedPtr<TObject> NewMObject(MObject* Outer, const MString& Name = "", TArgs&&
 /**
  * CreateDefaultSubObject — UE 风格的默认子对象（生命周期跟随 Owner）。
  */
-template<typename TObject, typename... TArgs>
-TSharedPtr<TObject> CreateDefaultSubObject(MObject* Owner, const MString& Name = "", TArgs&&... Args)
-{
+template <typename TObject, typename... TArgs> TSharedPtr<TObject> CreateDefaultSubObject(MObject* Owner, const MString& Name = "", TArgs&&... Args) {
     TSharedPtr<TObject> Object = NewMObject<TObject>(Owner, Name, std::forward<TArgs>(Args)...);
     Object->MarkAsDefaultSubObject();
     return Object;
@@ -59,24 +52,18 @@ TSharedPtr<TObject> CreateDefaultSubObject(MObject* Owner, const MString& Name =
 // DestroyMObject 已删除——MObject 生命周期由 TSharedPtr 持有自动管理。
 // 业务代码改用 TSharedPtr<MObject> 持有，块结束自然释放。
 
-template<typename TVisitor>
-void ForEachObjectInSubtree(MObject* Root, TVisitor&& Visitor)
-{
-    if (!Root)
-    {
+template <typename TVisitor> void ForEachObjectInSubtree(MObject* Root, TVisitor&& Visitor) {
+    if (!Root) {
         return;
     }
 
-    TSet<uint64> Visited;
-    TFunction<void(MObject*)> Walk = [&](MObject* Object)
-    {
-        if (!Object)
-        {
+    TSet<uint64>              Visited;
+    TFunction<void(MObject*)> Walk = [&](MObject* Object) {
+        if (!Object) {
             return;
         }
 
-        if (Visited.count(Object->GetObjectId()) > 0)
-        {
+        if (Visited.count(Object->GetObjectId()) > 0) {
             return;
         }
 

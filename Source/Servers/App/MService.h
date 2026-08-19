@@ -1,9 +1,9 @@
 #pragma once
 
+#include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Reflect/Reflection.h"
-#include "Common/Runtime/Log/Log.h"
 #include <cstring>
 #include <string>
 #include <typeindex>
@@ -62,10 +62,8 @@
  * 见 Common/Runtime/Reflect/Reflection.h 的 FindStruct() 与 Registration，
  * 了解 MClass 表的填充时机。
  */
-template<typename TConfigType>
-class MService
-{
-public:
+template <typename TConfigType> class MService {
+    public:
     /**
      * LoadConfig — 反射式解析 argv 写入 TConfigType 单例。
      *
@@ -76,11 +74,9 @@ public:
      * 字段必须有 Meta=(Cli="--xxx")；未注册的字段被忽略。
      * 重复出现的 --key 覆盖（每次解析都对同一个字段 SetValueFromString）。
      */
-    static bool LoadConfig(int argc, char** argv)
-    {
+    static bool LoadConfig(int argc, char** argv) {
         MClass* ConfigClass = MObject::FindStruct(std::type_index(typeid(TConfigType)));
-        if (!ConfigClass)
-        {
+        if (!ConfigClass) {
             LOG_FATAL("MService<%s>: MSTRUCT not registered (no reflection metadata); "
                       "make sure the struct is annotated with MSTRUCT()",
                       typeid(TConfigType).name());
@@ -89,45 +85,35 @@ public:
 
         TConfigType& Storage = MutableConfig();
 
-        for (int i = 1; i < argc; ++i)
-        {
+        for (int i = 1; i < argc; ++i) {
             const MString Arg = argv[i] ? argv[i] : MString();
-            if (Arg.size() < 2 || Arg[0] != '-' || Arg[1] != '-')
-            {
+            if (Arg.size() < 2 || Arg[0] != '-' || Arg[1] != '-') {
                 continue;
             }
 
-            MString Flag;
-            MString Value;
+            MString      Flag;
+            MString      Value;
             const size_t Eq = Arg.find('=');
-            if (Eq == MString::npos)
-            {
+            if (Eq == MString::npos) {
                 Flag = Arg;
-                if (i + 1 < argc)
-                {
+                if (i + 1 < argc) {
                     Value = argv[i + 1] ? argv[i + 1] : MString();
                     ++i;
-                }
-                else
-                {
+                } else {
                     continue;
                 }
-            }
-            else
-            {
-                Flag = Arg.substr(0, Eq);
+            } else {
+                Flag  = Arg.substr(0, Eq);
                 Value = Arg.substr(Eq + 1);
             }
 
             MProperty* Prop = ConfigClass->FindPropertyByMetadata(MString("Cli"), Flag);
-            if (!Prop)
-            {
+            if (!Prop) {
                 continue;
             }
 
             MString Err;
-            if (!Prop->SetValueFromString(&Storage, Value, &Err))
-            {
+            if (!Prop->SetValueFromString(&Storage, Value, &Err)) {
                 // Fail-fast: a malformed CLI argument should abort the Service
                 // before Init() runs with a half-populated config. Continuing
                 // would silently leave the field at its default and mask the
@@ -136,27 +122,23 @@ public:
                 // (e.g. actor-not-found at first call). Loud exit now is far
                 // easier to diagnose than a misconfigured Service that "starts
                 // fine" and breaks later.
-                LOG_ERROR("MService<%s>: failed to parse %s=%s (%s); aborting",
-                          typeid(TConfigType).name(), Flag.c_str(), Value.c_str(), Err.c_str());
+                LOG_ERROR("MService<%s>: failed to parse %s=%s (%s); aborting", typeid(TConfigType).name(), Flag.c_str(), Value.c_str(), Err.c_str());
                 return false;
             }
         }
         return true;
     }
 
-    static const TConfigType& GetConfig()
-    {
+    static const TConfigType& GetConfig() {
         return Storage();
     }
 
-    static TConfigType& MutableConfig()
-    {
+    static TConfigType& MutableConfig() {
         return Storage();
     }
 
-private:
-    static TConfigType& Storage()
-    {
+    private:
+    static TConfigType& Storage() {
         static TConfigType Instance{};
         return Instance;
     }

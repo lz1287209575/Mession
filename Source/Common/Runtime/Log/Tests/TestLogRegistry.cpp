@@ -1,9 +1,8 @@
-#include "Common/Runtime/Log/Tests/TestHarness.h"
 #include "Common/Runtime/Log/LogRegistry.h"
+#include "Common/Runtime/Log/Tests/TestHarness.h"
 #include <cstring>
 
-TEST_CASE(LogRegistry_RegisterAndLookup)
-{
+TEST_CASE(LogRegistry_RegisterAndLookup) {
     // Register a fresh category and verify we get a stable pointer + assigned Id.
     // Use a name unlikely to collide with any of the project-level categories
     // (LogCore/LogNet/LogDb/LogRpc/LogAuth/LogScene) defined by LogCategories.cpp.
@@ -23,8 +22,7 @@ TEST_CASE(LogRegistry_RegisterAndLookup)
     EXPECT_EQ((int)Cat->DefaultLevel, (int)ELogLevel::Debug);
 }
 
-TEST_CASE(LogRegistry_GetById)
-{
+TEST_CASE(LogRegistry_GetById) {
     SLogCategory* Cat = MLogRegistry::Get().RegisterCategory("Test_Registry_GetById", ELogLevel::Info);
     EXPECT_TRUE(Cat != nullptr);
 
@@ -36,8 +34,7 @@ TEST_CASE(LogRegistry_GetById)
     EXPECT_TRUE(Bogus == nullptr);
 }
 
-TEST_CASE(LogRegistry_FindByNameAndCount)
-{
+TEST_CASE(LogRegistry_FindByNameAndCount) {
     // Snapshot baseline; other tests in this TU may have registered categories.
     const size_t Before = MLogRegistry::Get().NumCategories();
 

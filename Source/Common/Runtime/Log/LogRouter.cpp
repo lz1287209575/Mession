@@ -19,29 +19,23 @@
 // so a category registered after the last write still gets a sensible default
 // slot on the next read.
 
-MLogRouter& MLogRouter::Get()
-{
+MLogRouter& MLogRouter::Get() {
     static MLogRouter Inst;
     return Inst;
 }
 
-namespace
-{
+namespace {
     // SetRule is rare (operator / config-driven) so a single mutex around all
     // mutations is sufficient. Hot-path reads are still lock-free because
     // they only touch the atomic pointers.
-    std::mutex& GetRouterMutex()
-    {
+    std::mutex& GetRouterMutex() {
         static std::mutex Mutex;
         return Mutex;
     }
-}
+} // namespace
 
-void MLogRouter::EnsureTablesAllocatedLocked()
-{
-    if (CategoryToMask.load(std::memory_order_acquire) != nullptr &&
-        CategoryToMinLevel.load(std::memory_order_acquire) != nullptr)
-    {
+void MLogRouter::EnsureTablesAllocatedLocked() {
+    if (CategoryToMask.load(std::memory_order_acquire) != nullptr && CategoryToMinLevel.load(std::memory_order_acquire) != nullptr) {
         return;
     }
 
@@ -54,9 +48,9 @@ void MLogRouter::EnsureTablesAllocatedLocked()
     CategoryToMinLevel.store(NewLevels, std::memory_order_release);
 }
 
-void MLogRouter::SetRule(const SLogRouteRule& Rule)
-{
-    if (Rule.Category == nullptr) return;
+void MLogRouter::SetRule(const SLogRouteRule& Rule) {
+    if (Rule.Category == nullptr)
+        return;
     std::lock_guard<std::mutex> L(GetRouterMutex());
     EnsureTablesAllocatedLocked();
 
@@ -67,8 +61,7 @@ void MLogRouter::SetRule(const SLogRouteRule& Rule)
     auto* NewLevels = new TVector<ELogLevel>(*OldLevels);
 
     const size_t Idx = static_cast<size_t>(Rule.Category->Id);
-    if (Idx >= NewMasks->size())
-    {
+    if (Idx >= NewMasks->size()) {
         // Grow both arrays in lockstep so they always have the same length.
         // Newly appended slots keep the default values (all sinks, Trace).
         NewMasks->resize(Idx + 1, 0xFFFFFFFFu);
@@ -81,8 +74,7 @@ void MLogRouter::SetRule(const SLogRouteRule& Rule)
     CategoryToMinLevel.store(NewLevels, std::memory_order_release);
 }
 
-void MLogRouter::ClearRules()
-{
+void MLogRouter::ClearRules() {
     std::lock_guard<std::mutex> L(GetRouterMutex());
     EnsureTablesAllocatedLocked();
 
@@ -94,15 +86,16 @@ void MLogRouter::ClearRules()
 
     // Reset every configured slot to the spec default. Slots that did not
     // exist stay absent; ResolveSinkMask fills in the default on read.
-    for (auto& M : *NewMasks)  M = 0xFFFFFFFFu;
-    for (auto& Lvl : *NewLevels) Lvl = ELogLevel::Trace;
+    for (auto& M : *NewMasks)
+        M = 0xFFFFFFFFu;
+    for (auto& Lvl : *NewLevels)
+        Lvl = ELogLevel::Trace;
 
     CategoryToMask.store(NewMasks, std::memory_order_release);
     CategoryToMinLevel.store(NewLevels, std::memory_order_release);
 }
 
-uint32 MLogRouter::ResolveSinkMask(uint16 CategoryId, ELogLevel Level) const
-{
+uint32 MLogRouter::ResolveSinkMask(uint16 CategoryId, ELogLevel Level) const {
     // Read both atomics before checking sizes so the snapshot is consistent.
     // (The arrays are kept the same length by SetRule; if a SetRule is in
     // flight between the two loads we may briefly see the old Mask with the
@@ -113,16 +106,13 @@ uint32 MLogRouter::ResolveSinkMask(uint16 CategoryId, ELogLevel Level) const
     const auto* Levels = CategoryToMinLevel.load(std::memory_order_acquire);
 
     const size_t Idx = static_cast<size_t>(CategoryId);
-    if (Masks == nullptr || Levels == nullptr ||
-        Idx >= Masks->size() || Idx >= Levels->size())
-    {
+    if (Masks == nullptr || Levels == nullptr || Idx >= Masks->size() || Idx >= Levels->size()) {
         // No routing rule for this category: pass-through default.
         return 0xFFFFFFFFu;
     }
 
     const ELogLevel MinLevel = (*Levels)[Idx];
-    if (static_cast<int>(Level) < static_cast<int>(MinLevel))
-    {
+    if (static_cast<int>(Level) < static_cast<int>(MinLevel)) {
         return 0u;
     }
     return (*Masks)[Idx];

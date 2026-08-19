@@ -2,20 +2,16 @@
 
 #include "Common/Runtime/MLib.h"
 
-struct SSocketAddress
-{
+struct SSocketAddress {
     MString Ip;
-    uint16 Port = 0;
+    uint16  Port = 0;
 
     SSocketAddress() = default;
 
-    SSocketAddress(const MString& InIp, uint16 InPort)
-        : Ip(InIp), Port(InPort)
-    {
+    SSocketAddress(const MString& InIp, uint16 InPort) : Ip(InIp), Port(InPort) {
     }
 
-    bool IsValid() const
-    {
+    bool IsValid() const {
         return !Ip.empty() && Port != 0;
     }
 };

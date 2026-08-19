@@ -1,9 +1,9 @@
 #pragma once
 
-#include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Log/LogLevel.h"
 #include "Common/Runtime/Log/LogRecord.h"
 #include "Common/Runtime/Log/LogSinks.h"
+#include "Common/Runtime/MLib.h"
 
 #include <atomic>
 #include <mutex>
@@ -19,30 +19,35 @@
 // in-flight send() — sendto is *not* thread-safe across concurrent
 // callers on the same fd for TCP.
 
-class MTcpSink : public ILogSink
-{
-public:
+class MTcpSink : public ILogSink {
+    public:
     MTcpSink();
     ~MTcpSink() override;
 
     // New pipeline
-    bool Open() override;
-    void Close() override;
-    void WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<char> OutBuffer) override;
-    void Flush() override;
-    ELogLevel MinLevel() const override { return MinLevelValue; }
-    const char* Name() const override { return "tcp"; }
+    bool      Open() override;
+    void      Close() override;
+    void      WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<char> OutBuffer) override;
+    void      Flush() override;
+    ELogLevel MinLevel() const override {
+        return MinLevelValue;
+    }
+    const char* Name() const override {
+        return "tcp";
+    }
 
     // Configuration. Must be set before Open().
-    MString Target;            // "ip:port"
+    MString Target; // "ip:port"
     int     ReconnectBackoffMs = 5000;
 
-    void SetMinLevel(ELogLevel Level) { MinLevelValue = Level; }
+    void SetMinLevel(ELogLevel Level) {
+        MinLevelValue = Level;
+    }
 
-private:
+    private:
     ELogLevel MinLevelValue = ELogLevel::Trace;
-    int       SockFd         = -1;
-    bool      bOpen          = false;
+    int       SockFd        = -1;
+    bool      bOpen         = false;
 
     // Tracks when the next reconnect attempt is allowed. Held under WriteMutex.
     long long NextReconnectAtMs = 0;

@@ -40,14 +40,14 @@
 - Gateway 职责收敛:客户端进出 + connId↔playerId 绑定 + 业务消息路由,**不参与服务间业务编排**。
 - 服务间函数(EnterGame/KickPlayer/PlayerLogout)注册为服务间 RPC 入口
   (非客户端 MClientManifest 转发表条目)。
-- 实例定位:PlayerId 编码 InstId(§4.1)→ 经 MEndpointCache 拿目标实例 endpoint。
+- 实例定位:PlayerId 稳定(§4.1,不编码实例)→ 经 Registry `ActorIds` 查目标实例 endpoint。
 
 **实例亲和性(同一 Player 必须命中同一实例)**——`MEndpointCache::GetOrConnect(EServerType)`
 是 round-robin 不粘;用 Registry `FServiceEndpoint.ActorIds` 元数据做粘性路由:
 
 | 环节 | 保证 |
 |---|---|
-| 首次选实例 | 账号 hash 稳定映射(同账号同实例);PlayerId 编码 InstId(§4.1) |
+| 首次选实例 | 账号 hash 稳定映射(同账号同实例);PlayerId 稳定不编码实例(§4.1),实例经 Registry 查 |
 | 创建后 | PlayerActor Register → ActorId 上报 Registry(`ActorIds` 更新) |
 | 后续/重连 | **按 PlayerId 查 ActorIds 定位实例**(不用 round-robin)→ 原实例,宽限期复用 |
 
@@ -59,8 +59,8 @@ CallToActor under Registry actor metadata"。
 
 ### 实例间协同(同一 Service 多实例)
 - PlayerActor 按 PlayerId hash 分布到实例(§4.1);跨实例 actor 调用(好友/组队/Global
-  actor)依赖 **跨实例 CallToActor**——PlayerId 编码 InstId → 路由层解析 InstId →
-  该实例 endpoint(经 Registry `ActorIds` 元数据)。即 Active gap "Prove cross-Echo
+  actor)依赖 **跨实例 CallToActor**——按 PlayerId 查 Registry `ActorIds` 定位实例
+  → 该实例 endpoint。即 Active gap "Prove cross-Echo
   CallToActor under Registry actor metadata",是实例间协同的基建。
 - Global actor(排行榜/邮件)固定在某实例,其余实例经上述链路调用。
 
@@ -221,18 +221,38 @@ member 间 await 需 `TAwaitable` 支持成员函数指针(`TAwaitableFnTraits` 
 - 依赖方向避免环(如 Login → ItemContainer → Attribute)。
 - 成员数据:成员自带 Schema(§5),`Save()/Load()` 由 actor 数据生命周期驱动。
 
-## 5. 数据模型(Schema,DBService 集合)
+## 5. 数据模型(表类型,对齐 DBService §3.2/§4.2)
 
 ```cpp
-// Source/Protocol/Messages/Player/FPlayerDataSchemas.h
-MSTRUCT() struct FPlayerProfile { /* §4.2:Account/PasswordHash/DisplayName/Level/Exp/时间戳 */ };
-MSTRUCT() struct FInventoryData { MPROPERTY() TVector<FItem> Items; };        // inventory 集合
-MSTRUCT() struct FQuestData    { MPROPERTY() TMap<uint64, FQuestState> Quests; }; // quests 集合
+// Source/Protocol/Messages/Player/FPlayerEntity.h —— 表类型(落 DB,类型即表名)
+MSTRUCT(Meta = (DbTable))
+struct FPlayerProfile
+{
+    MPROPERTY(Meta = (DbKey, ShardKey))
+    uint64 PlayerId;
+    // AccountName/PasswordHash/DisplayName/Level/Exp/时间戳...
+};
+
+MSTRUCT(Meta = (DbTable))
+struct FPlayerInventory
+{
+    MPROPERTY(Meta = (DbKey, ShardKey))   // 主键 + 分桶列 = PlayerId
+    uint64 PlayerId;
+    MPROPERTY() TVector<FItem> Items;     // inventory 表
+};
+
+MSTRUCT(Meta = (DbTable))
+struct FPlayerQuest
+{
+    MPROPERTY(Meta = (DbKey, ShardKey))
+    uint64 PlayerId;
+    MPROPERTY() TMap<uint64, FQuestState> Quests;   // quests 表
+};
 ```
 
-- 每成员一个 Schema/集合(成员自治);登录并行 Load,登出/宽限超时 Save。
+- 每成员一张表(成员自治);登录并行 Load(`SelectMany<T>`/`FindOne<T>`),登出/宽限超时 Save(`UpsertOne<T>`)。
 - 落库格式遵循设计文档 §3.4(标量→列 / 嵌套→JSON 子列或二进制,按字段可配)。
-- 版本化铁律 §3.5(字段只增不删,Deprecated 标记)。
+- 版本化铁律 §3.5(字段只增不删);`SyncTables()` 连接时自动建表。
 
 ## 6. 生命周期时序
 
@@ -243,7 +263,7 @@ MSTRUCT() struct FQuestData    { MPROPERTY() TMap<uint64, FQuestState> Quests; }
   → MLoginAuth(认证成员,单线程):
       1. 踢旧裁决(§4.6):旧会话所在 Player 实例 → 经 MEndpointCache 发现
          → CallRemote(EServerType::Player, "KickPlayer", {PlayerId}) → 旧 actor 落库注销
-      2. 认证/建号(DBService 查/建 Profile)+ 选实例 → PlayerId(§4.1,编码 InstId)
+      2. 认证/建号(DBService 查/建 Profile)+ 选实例(PlayerId 稳定,§4.1;实例映射经 Registry)
       3. 回包 LoginResponse{PlayerId, 目标 PlayerService 实例}
 Gateway:绑定 connId↔playerId + 记录 playerId→实例(仅路由,不参与业务编排)
   → [会话激活] LoginService 经 MEndpointCache 发现目标 Player 实例
@@ -323,7 +343,7 @@ Source/Servers/Player/
     MPlayerQuest.h/.cpp     (Type=ActorMember)任务成员
 Source/Protocol/Messages/Player/
   FPlayerMessages.h         Login/Logout/在线业务消息(§4.2)
-  FPlayerDataSchemas.h      Profile/Inventory/Quest Schema
+  FPlayerEntity.h           表类型:Profile/Inventory/Quest(§4.2/§5,Meta=(DbTable))
 ```
 
 ## 8. 实现顺序

@@ -1,13 +1,13 @@
 #pragma once
-#include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Log/LogLevel.h"
 #include "Common/Runtime/Log/LogRecord.h"
 #include "Common/Runtime/Log/LogSinks.h"
+#include "Common/Runtime/MLib.h"
 
 #include <atomic>
-#include <thread>
-#include <mutex>
 #include <condition_variable>
+#include <mutex>
+#include <thread>
 
 // MLogSinkWriter — one writer thread per ILogSink (spec §5.7).
 //
@@ -26,11 +26,9 @@
 // Lifecycle: Start() launches the thread; Stop() sets bRunning=false,
 // notifies the cv, and joins. After Stop() returns, the inbox is empty
 // and no further Sink->* calls will happen on this writer thread.
-class MLogSinkWriter
-{
-public:
-    struct SSinkBatch
-    {
+class MLogSinkWriter {
+    public:
+    struct SSinkBatch {
         TVector<SLogRecord> Records;
     };
 
@@ -49,33 +47,37 @@ public:
     void Start();
     void Stop();
 
-    void SetFlushIntervalMs(int Ms)   { FlushIntervalMs = Ms; }
-    void SetFlushSizeThreshold(int B) { FlushSizeThreshold = B; }
+    void SetFlushIntervalMs(int Ms) {
+        FlushIntervalMs = Ms;
+    }
+    void SetFlushSizeThreshold(int B) {
+        FlushSizeThreshold = B;
+    }
 
     // Drain the inbox synchronously and run the sink until empty. Used by
     // MLog::Shutdown() so that critical-path records make it to the wire
     // before the writer thread exits.
     void FlushSync();
 
-private:
+    private:
     // Maximum number of batches the inbox holds before EnqueueBatch blocks.
     // Sized so we balance wake-up latency against writer-thread pressure.
     static constexpr size_t kMaxBatches = 16;
 
-    ILogSink* Sink = nullptr;
-    EFlushPolicy Policy = EFlushPolicy::IntervalOrSize;
-    int FlushIntervalMs = 10;
-    int FlushSizeThreshold = 64 * 1024;
+    ILogSink*    Sink               = nullptr;
+    EFlushPolicy Policy             = EFlushPolicy::IntervalOrSize;
+    int          FlushIntervalMs    = 10;
+    int          FlushSizeThreshold = 64 * 1024;
 
-    std::thread Worker;
-    std::mutex  InboxMutex;
-    std::condition_variable InboxCv;
+    std::thread                    Worker;
+    std::mutex                     InboxMutex;
+    std::condition_variable        InboxCv;
     TQueue<TSharedPtr<SSinkBatch>> Inbox;
-    std::atomic<bool> bRunning{false};
+    std::atomic<bool>              bRunning{false};
 
     // Bytes accumulated since last Flush(); used by SizeThreshold / IntervalOrSize.
-    int BufferedBytes = 0;
-    long long LastFlushMs = 0;
+    int       BufferedBytes = 0;
+    long long LastFlushMs   = 0;
 
     void RunLoop();
     void MaybeFlush(bool bForce);

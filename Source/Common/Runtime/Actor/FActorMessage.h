@@ -40,7 +40,7 @@ struct FActorMessage {
     // MActorSystem::SendActor 分配,写入 wire (FActorMessageWire.SequenceId);
     // 客户端 outbox 也带这个 id,server 回 MT_ServerPush ack → 删 outbox entry。
     // 进程内仅用于跟踪;wire 序列化走 FActorMessageWire 自己的字段。
-    uint64                                             SequenceId = 0;
+    uint64 SequenceId = 0;
 
     /**
      * @brief MakePost - 构造异步消息.

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Common/Runtime/MLib.h"
 #include "Common/IO/Socket/Socket.h"
+#include "Common/Runtime/MLib.h"
 
 #include <mutex>
 
@@ -20,9 +20,8 @@
 //   - 注册/注销由业务 SDK 在玩家上线/下线时驱动；绑定/解绑由「知道当前玩家
 //     连接」的请求处理代码驱动。
 //   - 解析线程安全：内部用 std::mutex 保护。
-class MClientTargetResolver
-{
-public:
+class MClientTargetResolver {
+    public:
     static MClientTargetResolver& Get();
 
     // 注册一个已连接客户端。传 nullptr 安全（no-op）。
@@ -48,10 +47,10 @@ public:
     // 供 Broadcast 的 CallClient 调用使用。
     TVector<TSharedPtr<INetConnection>> ResolveBroadcast();
 
-private:
+    private:
     MClientTargetResolver() = default;
 
-    mutable std::mutex Mutex;
+    mutable std::mutex                       Mutex;
     TMap<uint64, TSharedPtr<INetConnection>> Connections;
-    TSharedPtr<INetConnection> CurrentContext;
+    TSharedPtr<INetConnection>               CurrentContext;
 };

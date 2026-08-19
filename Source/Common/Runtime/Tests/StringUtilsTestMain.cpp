@@ -8,12 +8,11 @@
 // StringUtilsTest add_executable source list — it would cause ODR-multiple-
 // definition of TEST_CASE funcs.
 
-#include "Common/Runtime/Tests/TestHarness.h"
-#include "Common/Runtime/Tests/TestStringUtilsFormat.cpp"
 #include "Common/Runtime/Tests/TestStringUtilsBuilder.cpp"
+#include "Common/Runtime/Tests/TestStringUtilsFormat.cpp"
+#include "Common/Runtime/Tests/TestHarness.h"
 
-int main()
-{
+int main() {
     std::printf("Running StringUtilsTest...\n");
 
     std::printf("[ MFormat_Format_IntegerSubstitution ]\n");

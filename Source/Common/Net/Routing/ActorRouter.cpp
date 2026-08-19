@@ -6,20 +6,18 @@
 #include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Time.h"
 
-MActorRouter& MActorRouter::Get()
-{
+MActorRouter& MActorRouter::Get() {
     static MActorRouter Instance;
     return Instance;
 }
 
-void MActorRouter::RegisterActor(uint64 ActorId, EServerType ServerType, uint64 ConnectionId)
-{
+void MActorRouter::RegisterActor(uint64 ActorId, EServerType ServerType, uint64 ConnectionId) {
     std::lock_guard<std::mutex> Lock(RoutesMutex);
-    auto& Routes = ActorRoutes[ActorId];
+    auto&                       Routes = ActorRoutes[ActorId];
     // 1:N fan-out:同 ActorId 重复注册追加（一般不会发生,防御性）
     for (const auto& R : Routes) {
         if (R.ServerType == ServerType && R.ConnectionId == ConnectionId) {
-            return;  // 已存在,跳过
+            return; // 已存在,跳过
         }
     }
     SActorRoute Route;
@@ -30,13 +28,13 @@ void MActorRouter::RegisterActor(uint64 ActorId, EServerType ServerType, uint64 
     Routes.push_back(Route);
 }
 
-void MActorRouter::UnregisterRoute(uint64 ActorId, EServerType ServerType, uint64 ConnectionId)
-{
+void MActorRouter::UnregisterRoute(uint64 ActorId, EServerType ServerType, uint64 ConnectionId) {
     std::lock_guard<std::mutex> Lock(RoutesMutex);
-    auto It = ActorRoutes.find(ActorId);
-    if (It == ActorRoutes.end()) return;
+    auto                        It = ActorRoutes.find(ActorId);
+    if (It == ActorRoutes.end())
+        return;
     auto& Routes = It->second;
-    for (auto Rit = Routes.begin(); Rit != Routes.end(); ) {
+    for (auto Rit = Routes.begin(); Rit != Routes.end();) {
         if (Rit->ServerType == ServerType && Rit->ConnectionId == ConnectionId) {
             Rit = Routes.erase(Rit);
         } else {
@@ -48,55 +46,49 @@ void MActorRouter::UnregisterRoute(uint64 ActorId, EServerType ServerType, uint6
     }
 }
 
-void MActorRouter::UnregisterActor(uint64 ActorId)
-{
+void MActorRouter::UnregisterActor(uint64 ActorId) {
     std::lock_guard<std::mutex> Lock(RoutesMutex);
     ActorRoutes.erase(ActorId);
 }
 
-void MActorRouter::UpdateActorRoute(uint64 ActorId, EServerType ServerType, uint64 ConnectionId)
-{
+void MActorRouter::UpdateActorRoute(uint64 ActorId, EServerType ServerType, uint64 ConnectionId) {
     RegisterActor(ActorId, ServerType, ConnectionId);
 }
 
-SActorRoute MActorRouter::FindActor(uint64 ActorId) const
-{
+SActorRoute MActorRouter::FindActor(uint64 ActorId) const {
     TVector<SActorRoute> All = FindAllActorRoutes(ActorId);
-    if (All.empty()) return {};
-    return All[0];  // 第一个 route（向后兼容）
+    if (All.empty())
+        return {};
+    return All[0]; // 第一个 route（向后兼容）
 }
 
-TVector<SActorRoute> MActorRouter::FindAllActorRoutes(uint64 ActorId) const
-{
+TVector<SActorRoute> MActorRouter::FindAllActorRoutes(uint64 ActorId) const {
     std::lock_guard<std::mutex> Lock(RoutesMutex);
-    auto It = ActorRoutes.find(ActorId);
+    auto                        It = ActorRoutes.find(ActorId);
     if (It != ActorRoutes.end()) {
         return It->second;
     }
     return {};
 }
 
-bool MActorRouter::IsActorLocal(uint64 ActorId) const
-{
+bool MActorRouter::IsActorLocal(uint64 ActorId) const {
     SActorRoute Route = FindActor(ActorId);
     return Route.ActorId != 0 && Route.ServerType == EServerType::Unknown;
 }
 
-SFutureResult<FLocateActorResult> MActorRouter::LocateActor(uint64 ActorId) const
-{
+SFutureResult<FLocateActorResult> MActorRouter::LocateActor(uint64 ActorId) const {
     SActorRoute Route = FindActor(ActorId);
 
     FLocateActorResult Result;
-    if (!Route.ActorId)
-    {
+    if (!Route.ActorId) {
         Result.bFound = false;
         MPromise<TResult<FLocateActorResult, FAppError>> Promise;
         Promise.SetValue(TResult<FLocateActorResult, FAppError>::Ok(Result));
         return Promise.GetFuture();
     }
 
-    Result.bFound = true;
-    Result.ServerType = Route.ServerType;
+    Result.bFound       = true;
+    Result.ServerType   = Route.ServerType;
     Result.ConnectionId = Route.ConnectionId;
     MPromise<TResult<FLocateActorResult, FAppError>> Promise;
     Promise.SetValue(TResult<FLocateActorResult, FAppError>::Ok(Result));
@@ -115,27 +107,27 @@ void MActorRouter::RegisterActor(TSharedPtr<IActor> InActor, MSubReactorPool* In
         return;
     }
 
-    const uint64 ActorId = InActor->GetActorId();
+    const uint64 ActorId  = InActor->GetActorId();
     const uint32 SubCount = (InSubPool != nullptr) ? InSubPool->GetSubCount() : 0;
-    const uint32 SubId = SubCount > 0 ? static_cast<uint32>(ActorId % SubCount) : 0;
+    const uint32 SubId    = SubCount > 0 ? static_cast<uint32>(ActorId % SubCount) : 0;
 
     // 1) 填 SActorRoute:本地 actor 用 ServerType=Unknown 标记,ConnectionId=SubId
     //    —— SendToActor 的 IsActorLocal 分支依据 ServerType==Unknown 判定
     //    (见 ActorRouter.cpp:47-51 IsActorLocal)。
     {
         std::lock_guard<std::mutex> Lock(RoutesMutex);
-        auto& Routes = ActorRoutes[ActorId];
+        auto&                       Routes = ActorRoutes[ActorId];
         // 本地 route 一般只有 1 条（ServerType=Unknown, ConnId=SubId）
         for (const auto& R : Routes) {
             if (R.ServerType == EServerType::Unknown && R.ConnectionId == SubId) {
-                return;  // 已存在,跳过
+                return; // 已存在,跳过
             }
         }
         SActorRoute Route;
-        Route.ActorId         = ActorId;
-        Route.ServerType      = EServerType::Unknown;
-        Route.ConnectionId    = SubId;
-        Route.LastUpdateTime  = static_cast<uint64>(MTime::GetTimeSeconds() * 1000);
+        Route.ActorId        = ActorId;
+        Route.ServerType     = EServerType::Unknown;
+        Route.ConnectionId   = SubId;
+        Route.LastUpdateTime = static_cast<uint64>(MTime::GetTimeSeconds() * 1000);
         Routes.push_back(Route);
     }
 

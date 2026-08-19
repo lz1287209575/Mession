@@ -1,9 +1,9 @@
-#include "Common/Script/Lua/LuaTypeBridge.h"
-#include "Common/Script/Lua/LuaScriptState.h"
 #include "Common/Runtime/MLib.h"
+#include "Common/Script/Lua/LuaScriptState.h"
+#include "Common/Script/Lua/LuaTypeBridge.h"
 
-#include <cstdio>
 #include <cassert>
+#include <cstdio>
 
 static void TestPushPopInteger() {
     mession::script::lua::MLuaScriptState State;
@@ -16,7 +16,7 @@ static void TestPushPopInteger() {
 
 static void TestPushPopString() {
     mession::script::lua::MLuaScriptState State;
-    MString S = "hello";
+    MString                               S = "hello";
     mession::script::lua::PushString(State.GetLuaState(), S);
     auto Got = mession::script::lua::PopString(State.GetLuaState(), -1);
     assert(Got.IsOk());

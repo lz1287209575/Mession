@@ -23,22 +23,22 @@
  *   - 标志位使用 std::atomic<bool>，编译器/CPU 保证原子读
  *   - 不需要 self-pipe / eventfd
  */
-class MSignalHandler
-{
-public:
+class MSignalHandler {
+    public:
     /** 注册 SIGINT/SIGTERM → 设置 bShutdownRequested；SIGPIPE → 忽略。*/
     static void Install();
 
     /** 复位标志位（用于测试 / 重入场景）。*/
-    static void Reset() { sShutdownRequested.store(false, std::memory_order_release); }
+    static void Reset() {
+        sShutdownRequested.store(false, std::memory_order_release);
+    }
 
     /** 查询是否有未处理的退出信号。线程安全。*/
-    static bool IsShutdownRequested()
-    {
+    static bool IsShutdownRequested() {
         return sShutdownRequested.load(std::memory_order_acquire);
     }
 
-private:
+    private:
     static std::atomic<bool> sShutdownRequested;
-    static void HandleSignal(int Signum);
+    static void              HandleSignal(int Signum);
 };

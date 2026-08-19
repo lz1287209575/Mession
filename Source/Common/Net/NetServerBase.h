@@ -68,19 +68,19 @@ class MNetServerBase {
     }
 
     protected:
-    MEventLoopGroup     MasterLoop;
-    MTaskEventLoop TaskLoop;
-    MNetEventLoop  EventLoop; // 单 Reactor 模式用;多 Reactor 模式由 SubPool 持有 N 个独立的
-    uint64         ListenerId       = 0;
-    bool           bRunning         = false;
-    bool           bShutdownDone    = false;
-    bool           bStepsRegistered = false;
+    MEventLoopGroup MasterLoop;
+    MTaskEventLoop  TaskLoop;
+    MNetEventLoop   EventLoop; // 单 Reactor 模式用;多 Reactor 模式由 SubPool 持有 N 个独立的
+    uint64          ListenerId       = 0;
+    bool            bRunning         = false;
+    bool            bShutdownDone    = false;
+    bool            bStepsRegistered = false;
 
     /** P1: ambient MAsyncContext bound to TaskLoop; installed in Run(), cleared at exit. */
     TSharedPtr<MAsync::MLoopAsyncContext> LoopContext;
 
     // P5: 多 Reactor 扩展 — N>0 时启用
-    uint32                SubCount = 0;
+    uint32                      SubCount = 0;
     TUniquePtr<MSubReactorPool> SubPool;
 
     /** 监听端口，由子类从配置返回 */

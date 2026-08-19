@@ -1,5 +1,5 @@
-#include "Common/Runtime/Log/LogRegistry.h"
 #include "Common/Runtime/Log/LogCategories.h"
+#include "Common/Runtime/Log/LogRegistry.h"
 DEFINE_LOG_CATEGORY(LogCore);
 DEFINE_LOG_CATEGORY(LogNet);
 DEFINE_LOG_CATEGORY(LogDb);

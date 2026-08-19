@@ -1,18 +1,17 @@
-#include "Common/Runtime/Log/Tests/TestHarness.h"
 #include "Common/Runtime/Log/LogMetrics.h"
+#include "Common/Runtime/Log/Tests/TestHarness.h"
 
-TEST_CASE(LogMetrics_CountersAccumulate)
-{
+TEST_CASE(LogMetrics_CountersAccumulate) {
     // Snapshot baseline; other tests in this TU may have touched these counters.
-    SLogMetricsSnapshot Before = MLogMetrics::Snapshot();
-    const uint64 BaseEnqueued = Before.Enqueued;
-    const uint64 BaseDroppedEvicted = Before.DroppedEvicted;
-    const uint64 BaseDroppedOverflow = Before.DroppedOverflow;
-    const uint64 BaseBlocked = Before.BlockedEnqueues;
-    const uint64 BaseDispatched = Before.DispatchedBatches;
-    const uint64 BaseConsole = Before.WrittenBytesConsole;
-    const uint64 BaseFile = Before.WrittenBytesFile;
-    const uint64 BaseSuppressed = Before.TotalSuppressed;
+    SLogMetricsSnapshot Before              = MLogMetrics::Snapshot();
+    const uint64        BaseEnqueued        = Before.Enqueued;
+    const uint64        BaseDroppedEvicted  = Before.DroppedEvicted;
+    const uint64        BaseDroppedOverflow = Before.DroppedOverflow;
+    const uint64        BaseBlocked         = Before.BlockedEnqueues;
+    const uint64        BaseDispatched      = Before.DispatchedBatches;
+    const uint64        BaseConsole         = Before.WrittenBytesConsole;
+    const uint64        BaseFile            = Before.WrittenBytesFile;
+    const uint64        BaseSuppressed      = Before.TotalSuppressed;
 
     MLogMetrics::IncEnqueued();
     MLogMetrics::IncEnqueued();
@@ -44,14 +43,12 @@ TEST_CASE(LogMetrics_CountersAccumulate)
     EXPECT_EQ(After.TotalSuppressed, BaseSuppressed + 1);
 }
 
-TEST_CASE(LogMetrics_SnapshotIsConsistent)
-{
+TEST_CASE(LogMetrics_SnapshotIsConsistent) {
     // After many increments, the snapshot should reflect the cumulative state.
     // Each call writes a known delta and then re-snapshots to confirm.
     SLogMetricsSnapshot S0 = MLogMetrics::Snapshot();
 
-    for (int i = 0; i < 1000; ++i)
-    {
+    for (int i = 0; i < 1000; ++i) {
         MLogMetrics::IncEnqueued();
     }
     MLogMetrics::AddWrittenBytesFile(4096);

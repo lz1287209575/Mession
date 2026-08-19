@@ -1,10 +1,10 @@
 #include "Common/Net/ServiceDiscovery/EndpointCache.h"
 
 #include "Common/Net/Routing/ActorRouter.h"
-#include "Common/Net/ServerConnection.h"
 #include "Common/Net/Rpc/RpcManifest.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Net/Rpc/RpcTransport.h"
+#include "Common/Net/ServerConnection.h"
 #include "Common/Runtime/Actor/FActorMessage.h"
 #include "Common/Runtime/Actor/MActorSystem.h"
 #include "Common/Runtime/EventLoop/EventLoopGroup.h"
@@ -66,10 +66,10 @@ namespace {
                 //   （fan-out 场景：只删这一条,其他 route 还在等 ack）
                 //   同时 fire 所有注册的 listener（业务订阅）
                 if (Data.size() >= 1 + 8 + 8) {
-                    const uint8 Status = Data[0];
-                    uint64 ActorId = 0, SequenceId = 0;
+                    const uint8 Status  = Data[0];
+                    uint64      ActorId = 0, SequenceId = 0;
                     for (int i = 0; i < 8; ++i) {
-                        ActorId    |= static_cast<uint64>(Data[1 + i]) << (i * 8);
+                        ActorId |= static_cast<uint64>(Data[1 + i]) << (i * 8);
                         SequenceId |= static_cast<uint64>(Data[9 + i]) << (i * 8);
                     }
                     if (Status == 0 /* Delivered */ && Sender) {
@@ -77,10 +77,7 @@ namespace {
                         const EServerType Route = Sender->GetConfig().ServerType;
                         MActorSystem::Get().AckOutboxByRoute(ActorId, SequenceId, Route);
                     } else if (Status != 0) {
-                        LOG_DEBUG("MT_ServerPush: negative ack status=%u actor=%llu seq=%llu",
-                                  static_cast<unsigned>(Status),
-                                  static_cast<unsigned long long>(ActorId),
-                                  static_cast<unsigned long long>(SequenceId));
+                        LOG_DEBUG("MT_ServerPush: negative ack status=%u actor=%llu seq=%llu", static_cast<unsigned>(Status), static_cast<unsigned long long>(ActorId), static_cast<unsigned long long>(SequenceId));
                     }
                     // fire 业务 listener（投递状态可观测 / 业务自定义 server push 通知）
                     MActorSystem::Get().FireServerPushListeners(Status, ActorId, SequenceId);
@@ -114,19 +111,19 @@ namespace {
      *   SequenceId 是 Envelope.SequenceId（让 client 在 outbox 找到对应 entry 删）
      */
     void DispatchActorPostMessage(MObject* Service, TSharedPtr<MServerConnection> Sender, const TByteArray& Data) {
-        if (!Service || Data.size() < 2) return;
+        if (!Service || Data.size() < 2)
+            return;
 
         // 1) FunctionId:2B little-endian
         const uint16 FunctionId = static_cast<uint16>(Data[0]) | (static_cast<uint16>(Data[1]) << 8);
 
         // 2) find function by ID, 限定为 "OnActorMessage"（actor Post 入口）
         const MClass* Cls = Service->GetClass();
-        if (!Cls) return;
+        if (!Cls)
+            return;
         const MFunction* Function = Cls->FindFunctionById(FunctionId);
         if (!Function || Function->Name != "OnActorMessage") {
-            LOG_WARN("DispatchActorPostMessage: unexpected function id=%u name=%s",
-                     static_cast<unsigned>(FunctionId),
-                     Function ? Function->Name.c_str() : "(none)");
+            LOG_WARN("DispatchActorPostMessage: unexpected function id=%u name=%s", static_cast<unsigned>(FunctionId), Function ? Function->Name.c_str() : "(none)");
             // 投递失败 → 仍然回 ServerPush 让 client 知道
             if (Sender && Sender->IsConnected()) {
                 TByteArray ErrAck(1 + 8 + 8, 0);
@@ -137,9 +134,8 @@ namespace {
         }
 
         // 3) parse FActorMessageWire from payload
-        FActorMessageWire Envelope;
-        TResult<void, MString> ParseResult = ParsePayload(
-            TByteArray(Data.begin() + 2, Data.end()), Envelope, "OnActorMessage");
+        FActorMessageWire      Envelope;
+        TResult<void, MString> ParseResult = ParsePayload(TByteArray(Data.begin() + 2, Data.end()), Envelope, "OnActorMessage");
         if (!ParseResult.IsOk()) {
             LOG_WARN("DispatchActorPostMessage: ParsePayload failed: %s", ParseResult.GetError().c_str());
             if (Sender && Sender->IsConnected()) {
@@ -165,13 +161,13 @@ namespace {
         // 让 client 端通过 AckOutbox(ActorId, Seq) 找到对应 outbox entry 删除。
         if (Sender && Sender->IsConnected()) {
             const uint8 Status = bDispatched ? 0 /* Delivered */ : 3 /* QueueFull */;
-            TByteArray AckPayload;
+            TByteArray  AckPayload;
             AckPayload.resize(1 + 8 + 8, 0);
-            AckPayload[0] = Status;
-            const uint64 ActorIdLE = Envelope.TargetId;
+            AckPayload[0]             = Status;
+            const uint64 ActorIdLE    = Envelope.TargetId;
             const uint64 SequenceIdLE = Envelope.SequenceId;
             for (int i = 0; i < 8; ++i) {
-                AckPayload[1 + i]     = static_cast<uint8>((ActorIdLE    >> (i * 8)) & 0xFFu);
+                AckPayload[1 + i]     = static_cast<uint8>((ActorIdLE >> (i * 8)) & 0xFFu);
                 AckPayload[1 + 8 + i] = static_cast<uint8>((SequenceIdLE >> (i * 8)) & 0xFFu);
             }
             Sender->SendServerPush(Status, std::move(AckPayload));

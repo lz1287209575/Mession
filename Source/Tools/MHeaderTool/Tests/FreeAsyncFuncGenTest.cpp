@@ -1,7 +1,7 @@
 #include "Core/Types.h"
 #include "Generation/CodeGenerator.h"
-#include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Log/Tests/TestHarness.h"
+#include "Common/Runtime/MLib.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -11,62 +11,50 @@
 #include <vector>
 
 namespace MHT = MHeaderTool;
-namespace fs = std::filesystem;
+namespace fs  = std::filesystem;
 
 // Defined in MHeaderToolLib.cpp (extracted from MHeaderTool.cpp so tests can
 // link the function without colliding with MHeaderTool.cpp's main()).
-TVector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(
-    const TMap<fs::path, MString>& FileContents);
+TVector<MHT::SFreeAsyncFunc> ProcessFreeFunctions(const TMap<fs::path, MString>& FileContents);
 
-static TMap<fs::path, MString> OneHeader(
-    const MString& HeaderName,
-    const MString& Body)
-{
+static TMap<fs::path, MString> OneHeader(const MString& HeaderName, const MString& Body) {
     TMap<fs::path, MString> Map;
     Map[fs::path("/tmp/") / HeaderName] = Body;
     return Map;
 }
 
-TEST_CASE(FreeAsyncFunc_PlainAsync_Accepted)
-{
-    const MString Header =
-        "#pragma once\n"
-        "namespace myns {\n"
-        "MFUNCTION(Async)\n"
-        "SFutureResult<int> ComputeAsync(int Seed);\n"
-        "}\n";
-    auto Contents = OneHeader("ComputeAsync.h", Header);
-    auto Funcs = ProcessFreeFunctions(Contents);
+TEST_CASE(FreeAsyncFunc_PlainAsync_Accepted) {
+    const MString Header   = "#pragma once\n"
+                             "namespace myns {\n"
+                             "MFUNCTION(Async)\n"
+                             "SFutureResult<int> ComputeAsync(int Seed);\n"
+                             "}\n";
+    auto          Contents = OneHeader("ComputeAsync.h", Header);
+    auto          Funcs    = ProcessFreeFunctions(Contents);
     EXPECT_TRUE(Funcs.size() == 1);
     EXPECT_TRUE(Funcs[0].Name == "ComputeAsync");
     EXPECT_TRUE(Funcs[0].ResponseType == "int");
 
     // Round-trip: feed into the generator and verify the Frame struct name.
     MHT::MCodeGenerator Gen(MHT::SOptions{});
-    MString Out = Gen.EmitFreeAsyncFramesHeader(
-        Funcs, fs::path("/tmp/ComputeAsync.h"));
+    MString             Out = Gen.EmitFreeAsyncFramesHeader(Funcs, fs::path("/tmp/ComputeAsync.h"));
     EXPECT_TRUE(Out.find("MHeaderTool_AsyncFrame_Free_ComputeAsync") != MString::npos);
     EXPECT_TRUE(Out.find("SFutureResult<int> AwaitedSlot;") != MString::npos);
     EXPECT_TRUE(Out.find("int StoredValue") != MString::npos);
 }
 
-TEST_CASE(FreeAsyncFunc_ServerCallAsync_Rejected)
-{
-    const MString Header =
-        "#pragma once\n"
-        "namespace myns {\n"
-        "MFUNCTION(ServerCall, Async)\n"
-        "SFutureResult<int> BadAsync(int Seed);\n"
-        "}\n";
-    auto Contents = OneHeader("BadAsync.h", Header);
-    bool bThrew = false;
-    try
-    {
+TEST_CASE(FreeAsyncFunc_ServerCallAsync_Rejected) {
+    const MString Header   = "#pragma once\n"
+                             "namespace myns {\n"
+                             "MFUNCTION(ServerCall, Async)\n"
+                             "SFutureResult<int> BadAsync(int Seed);\n"
+                             "}\n";
+    auto          Contents = OneHeader("BadAsync.h", Header);
+    bool          bThrew   = false;
+    try {
         ProcessFreeFunctions(Contents);
-    }
-    catch (const std::runtime_error& ex)
-    {
-        bThrew = true;
+    } catch (const std::runtime_error& ex) {
+        bThrew            = true;
         const MString Msg = ex.what();
         EXPECT_TRUE(Msg.find("ServerCall") != MString::npos);
         EXPECT_TRUE(Msg.find("2026-07-24") != MString::npos);
@@ -75,29 +63,26 @@ TEST_CASE(FreeAsyncFunc_ServerCallAsync_Rejected)
     EXPECT_TRUE(bThrew);
 }
 
-TEST_CASE(FreeAsyncFuncGenTest_HeaderWithMFUNCTIONInComment_Ignored)
-{
+TEST_CASE(FreeAsyncFuncGenTest_HeaderWithMFUNCTIONInComment_Ignored) {
     // P4 wrap regression: the doc comment line below mentions
     // `MFUNCTION(Async)` purely as documentation, not as a real marker.
     // ProcessFreeFunctions must ignore it and only pick up the real marker
     // further down. Without the comment-skip pre-pass in MHeaderToolLib.cpp,
     // a fake `future`/`whatever` entry used to appear because comment bytes
     // were scanned by the literal `MFUNCTION(` substring search.
-    const MString Header =
-        "#pragma once\n"
-        "// see MFUNCTION(Async) markers below\n"
-        "namespace myns {\n"
-        "MFUNCTION(Async)\n"
-        "SFutureResult<int> RealAsync(int Seed);\n"
-        "}\n";
-    auto Contents = OneHeader("RealAsync.h", Header);
-    auto Funcs = ProcessFreeFunctions(Contents);
+    const MString Header   = "#pragma once\n"
+                             "// see MFUNCTION(Async) markers below\n"
+                             "namespace myns {\n"
+                             "MFUNCTION(Async)\n"
+                             "SFutureResult<int> RealAsync(int Seed);\n"
+                             "}\n";
+    auto          Contents = OneHeader("RealAsync.h", Header);
+    auto          Funcs    = ProcessFreeFunctions(Contents);
     EXPECT_TRUE(Funcs.size() == 1);
     EXPECT_TRUE(Funcs[0].Name == "RealAsync");
 }
 
-int main()
-{
+int main() {
     std::printf("Running FreeAsyncFuncGenTest (P4)\n");
 
     std::printf("[ FreeAsyncFunc_PlainAsync_Accepted ]\n");

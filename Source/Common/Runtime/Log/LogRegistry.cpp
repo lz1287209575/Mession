@@ -1,25 +1,21 @@
 #include "Common/Runtime/Log/LogRegistry.h"
 #include <cstring>
 
-MLogRegistry& MLogRegistry::Get()
-{
+MLogRegistry& MLogRegistry::Get() {
     static MLogRegistry Inst;
     return Inst;
 }
 
-SLogCategory* MLogRegistry::RegisterCategory(const char* Name, ELogLevel DefaultLevel)
-{
+SLogCategory* MLogRegistry::RegisterCategory(const char* Name, ELogLevel DefaultLevel) {
     std::lock_guard<std::mutex> L(Mutex);
-    for (const auto& Up : Categories)
-    {
-        if (Up->Name != nullptr && std::strcmp(Up->Name, Name) == 0)
-        {
-            return Up.get();  // already registered, return existing
+    for (const auto& Up : Categories) {
+        if (Up->Name != nullptr && std::strcmp(Up->Name, Name) == 0) {
+            return Up.get(); // already registered, return existing
         }
     }
-    auto NewCat = TUniquePtr<SLogCategory>(new SLogCategory());
-    NewCat->Name = Name;
-    NewCat->Id = static_cast<uint16>(Categories.size());
+    auto NewCat          = TUniquePtr<SLogCategory>(new SLogCategory());
+    NewCat->Name         = Name;
+    NewCat->Id           = static_cast<uint16>(Categories.size());
     NewCat->DefaultLevel = DefaultLevel;
     NewCat->RuntimeLevel.store(DefaultLevel);
     NewCat->bSuppressed.store(false);
@@ -29,24 +25,23 @@ SLogCategory* MLogRegistry::RegisterCategory(const char* Name, ELogLevel Default
     return Raw;
 }
 
-const SLogCategory* MLogRegistry::GetById(uint16 Id) const
-{
-    if (Id < Categories.size()) return Categories[Id].get();
+const SLogCategory* MLogRegistry::GetById(uint16 Id) const {
+    if (Id < Categories.size())
+        return Categories[Id].get();
     return nullptr;
 }
 
-SLogCategory* MLogRegistry::GetById(uint16 Id)
-{
-    if (Id < Categories.size()) return Categories[Id].get();
+SLogCategory* MLogRegistry::GetById(uint16 Id) {
+    if (Id < Categories.size())
+        return Categories[Id].get();
     return nullptr;
 }
 
-const SLogCategory* MLogRegistry::FindByName(const MString& Name) const
-{
+const SLogCategory* MLogRegistry::FindByName(const MString& Name) const {
     std::lock_guard<std::mutex> L(Mutex);
-    for (const auto& Up : Categories)
-    {
-        if (Up->Name == Name) return Up.get();
+    for (const auto& Up : Categories) {
+        if (Up->Name == Name)
+            return Up.get();
     }
     return nullptr;
 }

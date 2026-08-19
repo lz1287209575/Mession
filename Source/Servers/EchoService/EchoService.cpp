@@ -289,7 +289,7 @@ SFutureResult<FActorMessageWire> MEchoService::OnActorCall(const FActorMessageWi
     // 本进程内的 actor 回复 Promise。actor->SetValue 后这个 Promise resolve,
     // 由 .Then bridge 到外层 OuterPromise(->ServerCall response ->caller)。
     auto ReplyPromise = MakeShared<MPromise<TResult<TByteArray, FAppError>>>();
-    Msg.ReplyPromise = ReplyPromise;
+    Msg.ReplyPromise  = ReplyPromise;
 
     // 外层 Promise:onActorCall 返回的 SFutureResult<FActorMessageWire> 等这个 resolve。
     auto OuterPromise = MakeShared<MPromise<TResult<FActorMessageWire, FAppError>>>();

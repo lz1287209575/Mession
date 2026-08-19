@@ -1,8 +1,7 @@
-#include "Common/Runtime/Log/Tests/TestHarness.h"
 #include "Common/Runtime/Log/LogContext.h"
+#include "Common/Runtime/Log/Tests/TestHarness.h"
 
-TEST_CASE(LogContext_SetAndUnset)
-{
+TEST_CASE(LogContext_SetAndUnset) {
     auto& Ctx = MLogContext::GetTLS();
     // Ensure clean starting slate across prior tests sharing this TLS.
     Ctx.Unset("key1");
@@ -20,8 +19,7 @@ TEST_CASE(LogContext_SetAndUnset)
     EXPECT_EQ(Ctx.Size(), size_t{1});
 }
 
-TEST_CASE(LogContext_NestedScope)
-{
+TEST_CASE(LogContext_NestedScope) {
     // TLS context is shared across tests on the same thread; clear any keys
     // we know could be lingering so the assertions see only what this test set.
     auto& Ctx = MLogContext::GetTLS();

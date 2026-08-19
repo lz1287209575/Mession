@@ -69,16 +69,14 @@ SFutureResult<TByteArray> MActorHandle::Call(FActorMessage InMsg) const {
         // 远端 Call —— 不靠 Msg.ReplyPromise 跨进程(共享指针不上 wire),
         // 走 MRpcChannel::CallActorAndWait:对端 OnActorCall 等 actor 处理完后
         // 通过 ServerCall response 通道回字节给本进程,这里 bridge 到 Promise。
-        MRpcChannel::Get()
-            .CallActorAndWait(ActorId, InMsg)
-            .Then([Promise](MFuture<TResult<TByteArray, FAppError>> F) mutable {
-                TResult<TByteArray, FAppError> R = F.Get();
-                if (R.IsErr()) {
-                    Promise->SetValue(TResult<TByteArray, FAppError>::Err(R.GetError()));
-                    return;
-                }
-                Promise->SetValue(TResult<TByteArray, FAppError>::Ok(R.GetValue()));
-            });
+        MRpcChannel::Get().CallActorAndWait(ActorId, InMsg).Then([Promise](MFuture<TResult<TByteArray, FAppError>> F) mutable {
+            TResult<TByteArray, FAppError> R = F.Get();
+            if (R.IsErr()) {
+                Promise->SetValue(TResult<TByteArray, FAppError>::Err(R.GetError()));
+                return;
+            }
+            Promise->SetValue(TResult<TByteArray, FAppError>::Ok(R.GetValue()));
+        });
         return Future;
     }
 

@@ -92,13 +92,13 @@ class MActorSystem {
      * AckOutbox 会按 (SequenceId, Target) 匹配删除。
      */
     struct SOutboxEntry {
-        EServerType    Target;
-        uint64         SequenceId;
-        FActorMessage  Msg;
+        EServerType   Target;
+        uint64        SequenceId;
+        FActorMessage Msg;
     };
 
     struct SActorEntry {
-        TSharedPtr<IActor>  Actor;
+        TSharedPtr<IActor> Actor;
         uint32             SubId = 0;
         // Per-actor pending count: Sub ambient.Post 时 ++,OnMessage 完成时 --。
         // 当 actor 处理慢于 Post 频率,计数累积;超过 kMaxPendingPerActor 时
@@ -124,7 +124,7 @@ class MActorSystem {
     mutable std::mutex        ActorsMutex;
     TMap<uint64, SActorEntry> LocalActors;
 
-public:
+    public:
     /** @brief Per-actor pending message count threshold (drop policy). */
     static constexpr uint32_t kMaxPendingPerActor = 1024;
 
@@ -258,9 +258,9 @@ public:
     // 与 MActorSystem::AckOutbox 互补:AckOutbox 是 actor 内部 outbox 维护;
     // listener 是业务可观测性 + 业务自定义 server-push 通知。
     using FServerPushListener = TFunction<void(uint8 StatusCode, uint64 ActorId, uint64 SequenceId)>;
-    using HServerPushListener = uint64;  // 0 = 无效 handle
+    using HServerPushListener = uint64; // 0 = 无效 handle
 
     HServerPushListener RegisterServerPushListener(FServerPushListener InListener);
-    void UnregisterServerPushListener(HServerPushListener InHandle);
-    void FireServerPushListeners(uint8 InStatusCode, uint64 InActorId, uint64 InSequenceId);
+    void                UnregisterServerPushListener(HServerPushListener InHandle);
+    void                FireServerPushListeners(uint8 InStatusCode, uint64 InActorId, uint64 InSequenceId);
 };

@@ -18,21 +18,18 @@
 //     guard while another is alive will overwrite the previous binding (last
 //     writer wins). For nested scopes, prefer scoping the guards explicitly.
 //   - The guard does not own the connection — it only holds a reference.
-class MClientTargetContextGuard
-{
-public:
-    explicit MClientTargetContextGuard(TSharedPtr<INetConnection> Conn)
-    {
+class MClientTargetContextGuard {
+    public:
+    explicit MClientTargetContextGuard(TSharedPtr<INetConnection> Conn) {
         MClientTargetResolver::Get().BindContext(std::move(Conn));
     }
 
-    ~MClientTargetContextGuard()
-    {
+    ~MClientTargetContextGuard() {
         MClientTargetResolver::Get().ClearContext();
     }
 
-    MClientTargetContextGuard(const MClientTargetContextGuard&) = delete;
+    MClientTargetContextGuard(const MClientTargetContextGuard&)            = delete;
     MClientTargetContextGuard& operator=(const MClientTargetContextGuard&) = delete;
-    MClientTargetContextGuard(MClientTargetContextGuard&&) = delete;
-    MClientTargetContextGuard& operator=(MClientTargetContextGuard&&) = delete;
+    MClientTargetContextGuard(MClientTargetContextGuard&&)                 = delete;
+    MClientTargetContextGuard& operator=(MClientTargetContextGuard&&)      = delete;
 };

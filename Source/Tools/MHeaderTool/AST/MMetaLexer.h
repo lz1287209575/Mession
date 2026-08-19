@@ -23,10 +23,8 @@
 
 #include "Common/Runtime/MLib.h"
 
-namespace mession::headercodegen::metaarg
-{
-    enum class ETok : uint8
-    {
+namespace mession::headercodegen::metaarg {
+    enum class ETok : uint8 {
         End,
         Ident,
         String,
@@ -36,51 +34,56 @@ namespace mession::headercodegen::metaarg
         Comma,
     };
 
-    struct SToken
-    {
-        ETok   Kind = ETok::End;
+    struct SToken {
+        ETok    Kind = ETok::End;
         MString Text; // Ident 名称 / String 解码后内容
     };
     using ST = SToken;
 
-    class FLexer
-    {
-    public:
-        explicit FLexer(const MString& In) : Src(In) {}
+    class FLexer {
+        public:
+        explicit FLexer(const MString& In) : Src(In) {
+        }
 
         // Next 优先返回 Peek 缓存的 token（一次消耗），否则真扫下一 token。
-        SToken Next()
-        {
-            if (bPeekCached)
-            {
+        SToken Next() {
+            if (bPeekCached) {
                 bPeekCached = false;
                 return PeekBuf;
             }
 
             SkipWs();
-            if (Pos >= Src.size())
-            {
+            if (Pos >= Src.size()) {
                 return {ETok::End, {}};
             }
 
             const char C = Src[Pos];
 
-            if (C == '=') { ++Pos; return {ETok::Eq, {}}; }
-            if (C == '(') { ++Pos; return {ETok::LParen, {}}; }
-            if (C == ')') { ++Pos; return {ETok::RParen, {}}; }
-            if (C == ',') { ++Pos; return {ETok::Comma, {}}; }
+            if (C == '=') {
+                ++Pos;
+                return {ETok::Eq, {}};
+            }
+            if (C == '(') {
+                ++Pos;
+                return {ETok::LParen, {}};
+            }
+            if (C == ')') {
+                ++Pos;
+                return {ETok::RParen, {}};
+            }
+            if (C == ',') {
+                ++Pos;
+                return {ETok::Comma, {}};
+            }
 
-            if (C == '"' || C == '\'')
-            {
+            if (C == '"' || C == '\'') {
                 return ReadString();
             }
 
-            if (IsIdentStart(C))
-            {
+            if (IsIdentStart(C)) {
                 const size_t Begin = Pos;
                 ++Pos;
-                while (Pos < Src.size() && IsIdentCont(Src[Pos]))
-                {
+                while (Pos < Src.size() && IsIdentCont(Src[Pos])) {
                     ++Pos;
                 }
                 return {ETok::Ident, Src.substr(Begin, Pos - Begin)};
@@ -92,75 +95,75 @@ namespace mession::headercodegen::metaarg
         }
 
         // Peek 不消耗：缓存 token，Next 一次性返回。
-        ETok Peek()
-        {
-            if (!bPeekCached)
-            {
-                PeekBuf    = Next();
+        ETok Peek() {
+            if (!bPeekCached) {
+                PeekBuf     = Next();
                 bPeekCached = true;
             }
             return PeekBuf.Kind;
         }
 
-    private:
-        void SkipWs()
-        {
-            while (Pos < Src.size()
-                && (Src[Pos] == ' ' || Src[Pos] == '\t' || Src[Pos] == '\n' || Src[Pos] == '\r'))
-            {
+        private:
+        void SkipWs() {
+            while (Pos < Src.size() && (Src[Pos] == ' ' || Src[Pos] == '\t' || Src[Pos] == '\n' || Src[Pos] == '\r')) {
                 ++Pos;
             }
         }
 
-        static bool IsIdentStart(char C)
-        {
+        static bool IsIdentStart(char C) {
             return (C >= 'A' && C <= 'Z') || (C >= 'a' && C <= 'z') || C == '_';
         }
 
-        static bool IsIdentCont(char C)
-        {
+        static bool IsIdentCont(char C) {
             return IsIdentStart(C) || (C >= '0' && C <= '9');
         }
 
-        SToken ReadString()
-        {
+        SToken ReadString() {
             const char Quote = Src[Pos++]; // '"' or '\''
-            MString Out;
+            MString    Out;
             Out.reserve(32);
-            while (Pos < Src.size() && Src[Pos] != Quote)
-            {
-                if (Src[Pos] == '\\' && Pos + 1 < Src.size())
-                {
+            while (Pos < Src.size() && Src[Pos] != Quote) {
+                if (Src[Pos] == '\\' && Pos + 1 < Src.size()) {
                     const char Esc = Src[Pos + 1];
-                    switch (Esc)
-                    {
-                    case 'n':  Out.push_back('\n'); break;
-                    case 't':  Out.push_back('\t'); break;
-                    case 'r':  Out.push_back('\r'); break;
-                    case '\\': Out.push_back('\\'); break;
-                    case '\'': Out.push_back('\''); break;
-                    case '"':  Out.push_back('"');  break;
-                    default:   Out.push_back(Esc);  break;
+                    switch (Esc) {
+                    case 'n':
+                        Out.push_back('\n');
+                        break;
+                    case 't':
+                        Out.push_back('\t');
+                        break;
+                    case 'r':
+                        Out.push_back('\r');
+                        break;
+                    case '\\':
+                        Out.push_back('\\');
+                        break;
+                    case '\'':
+                        Out.push_back('\'');
+                        break;
+                    case '"':
+                        Out.push_back('"');
+                        break;
+                    default:
+                        Out.push_back(Esc);
+                        break;
                     }
                     Pos += 2;
-                }
-                else
-                {
+                } else {
                     Out.push_back(Src[Pos]);
                     ++Pos;
                 }
             }
-            if (Pos < Src.size())
-            {
+            if (Pos < Src.size()) {
                 ++Pos; // 吞闭引号
             }
             return {ETok::String, std::move(Out)};
         }
 
         const MString& Src;
-        size_t          Pos = 0;
-        SToken          PeekBuf;
-        bool            bPeekCached = false;
+        size_t         Pos = 0;
+        SToken         PeekBuf;
+        bool           bPeekCached = false;
     };
 
     // 语法（BNF）：
@@ -171,59 +174,46 @@ namespace mession::headercodegen::metaarg
     // 容错：ident 后没 "=" → 默认 value="true"（裸标记）。
     // 任何语法错误返回 std::nullopt（不抛）。
 
-    inline std::optional<TVector<TPair<MString, MString>>> ParseMetaBlock(const MString& Args)
-    {
+    inline std::optional<TVector<TPair<MString, MString>>> ParseMetaBlock(const MString& Args) {
         TVector<TPair<MString, MString>> Out;
-        FLexer Lex(Args);
+        FLexer                           Lex(Args);
 
         // 必须以 "Meta" 开头（可有前导空白）
         ST Tok = Lex.Next();
-        if (Tok.Kind != ETok::Ident || Tok.Text != "Meta")
-        {
+        if (Tok.Kind != ETok::Ident || Tok.Text != "Meta") {
             return std::nullopt;
         }
 
-        if (Lex.Next().Kind != ETok::Eq)
-        {
+        if (Lex.Next().Kind != ETok::Eq) {
             return std::nullopt;
         }
 
-        if (Lex.Next().Kind != ETok::LParen)
-        {
+        if (Lex.Next().Kind != ETok::LParen) {
             return std::nullopt;
         }
 
         // Items：循环到 ')' 或 End
         // 设计：循环里读一项 + 项间的分隔符；break 留给 ','
-        while (true)
-        {
-            if (Lex.Peek() == ETok::RParen || Lex.Peek() == ETok::End)
-            {
+        while (true) {
+            if (Lex.Peek() == ETok::RParen || Lex.Peek() == ETok::End) {
                 break;
             }
 
             ST Key = Lex.Next();
-            if (Key.Kind != ETok::Ident)
-            {
+            if (Key.Kind != ETok::Ident) {
                 return std::nullopt;
             }
 
             MString Value;
-            if (Lex.Peek() == ETok::Eq)
-            {
+            if (Lex.Peek() == ETok::Eq) {
                 Lex.Next(); // 吞 '='
                 ST V = Lex.Next();
-                if (V.Kind == ETok::String || V.Kind == ETok::Ident)
-                {
+                if (V.Kind == ETok::String || V.Kind == ETok::Ident) {
                     Value = std::move(V.Text);
-                }
-                else
-                {
+                } else {
                     return std::nullopt;
                 }
-            }
-            else
-            {
+            } else {
                 // 裸标记（Meta=(NonZero, ...)）→ 默认 "true"
                 Value = "true";
             }
@@ -232,20 +222,17 @@ namespace mession::headercodegen::metaarg
 
             // 项间分隔符：','（继续）或 ')'（结束）
             const ETok NextKind = Lex.Next().Kind;
-            if (NextKind == ETok::Comma)
-            {
+            if (NextKind == ETok::Comma) {
                 continue;
             }
-            if (NextKind == ETok::RParen)
-            {
+            if (NextKind == ETok::RParen) {
                 return Out;
             }
             return std::nullopt;
         }
 
         // Loop 退出（Peek == RParen or End），消耗 ')'
-        if (Lex.Peek() == ETok::RParen)
-        {
+        if (Lex.Peek() == ETok::RParen) {
             Lex.Next();
             return Out;
         }

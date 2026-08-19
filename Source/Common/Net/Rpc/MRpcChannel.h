@@ -1,13 +1,13 @@
 #pragma once
 
-#include "Common/Net/Rpc/RpcServerCall.h"
-#include "Common/Net/Rpc/RpcClientCall.h"
 #include "Common/Net/Routing/ActorRouter.h"
+#include "Common/Net/Rpc/RpcClientCall.h"
+#include "Common/Net/Rpc/RpcServerCall.h"
 #include "Common/Net/ServiceDiscovery/EndpointCache.h"
 #include "Common/Runtime/Actor/FActorMessage.h"
 #include "Common/Runtime/Async/MAsync.h"
-#include "Common/Runtime/Reflect/Reflection.h"
 #include "Common/Runtime/Log/Log.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 
 #include <utility>
 
@@ -35,9 +35,8 @@
  * // CallClient: 发送到客户端
  * MRpcChannel::Get().SendToClient(connection, "MPlayerController", "OnNotify", response);
  */
-class MRpcChannel
-{
-public:
+class MRpcChannel {
+    public:
     static MRpcChannel& Get();
 
     /**
@@ -96,22 +95,14 @@ public:
     // ServerCall: 调用远程服务器
     // ============================================
 
-    template<typename TResponse, typename TRequest>
-    SFutureResult<TResponse> Call(
-        EServerType TargetServer,
-        const char* ClassName,
-        const char* MethodName,
-        const TRequest& Request) const
-    {
+    template <typename TResponse, typename TRequest> SFutureResult<TResponse> Call(EServerType TargetServer, const char* ClassName, const char* MethodName, const TRequest& Request) const {
         TSharedPtr<MServerConnection> Connection = MEndpointCache::Get().GetOrConnect(TargetServer);
-        if (!Connection || !Connection->IsConnected())
-        {
+        if (!Connection || !Connection->IsConnected()) {
             return MakeRpcErrorFuture<TResponse>("connection_unavailable", TargetServer == EServerType::Unknown ? "server_type_invalid" : "");
         }
 
         const MClass* TargetClass = MObject::FindClass(ClassName);
-        if (!TargetClass)
-        {
+        if (!TargetClass) {
             return MakeRpcErrorFuture<TResponse>("class_not_found", ClassName);
         }
 
@@ -119,39 +110,23 @@ public:
     }
 
     // 带 Actor 路由
-    template<typename TResponse, typename TRequest>
-    SFutureResult<TResponse> CallToActor(
-        uint64 ActorId,
-        const char* ClassName,
-        const char* MethodName,
-        const TRequest& Request,
-        EServerType DefaultServer = EServerType::Unknown) const
-    {
-        return MActorRouter::Get().SendToActor<TResponse>(
-            ActorId, ClassName, MethodName, Request, DefaultServer);
+    template <typename TResponse, typename TRequest> SFutureResult<TResponse> CallToActor(uint64 ActorId, const char* ClassName, const char* MethodName, const TRequest& Request, EServerType DefaultServer = EServerType::Unknown) const {
+        return MActorRouter::Get().SendToActor<TResponse>(ActorId, ClassName, MethodName, Request, DefaultServer);
     }
 
     // ============================================
     // CallClient: 发送到客户端
     // ============================================
 
-    template<typename TResponse, typename TConnection>
-    bool SendToClient(
-        const TConnection& Connection,
-        const char* ClassName,
-        const char* MethodName,
-        const TResponse& Response) const
-    {
+    template <typename TResponse, typename TConnection> bool SendToClient(const TConnection& Connection, const char* ClassName, const char* MethodName, const TResponse& Response) const {
         const MClass* TargetClass = MObject::FindClass(ClassName);
-        if (!TargetClass)
-        {
+        if (!TargetClass) {
             LOG_ERROR("MRpcChannel::SendToClient - class not found: %s", ClassName);
             return false;
         }
 
         const MFunction* Function = TargetClass->FindFunction(MethodName);
-        if (!Function)
-        {
+        if (!Function) {
             LOG_ERROR("MRpcChannel::SendToClient - function not found: %s::%s", ClassName, MethodName);
             return false;
         }

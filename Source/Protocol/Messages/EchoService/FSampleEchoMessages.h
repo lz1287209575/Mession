@@ -4,20 +4,18 @@
 #include "Common/Runtime/Reflect/Reflection.h"
 
 MSTRUCT()
-struct FSampleEchoRequest
-{
+struct FSampleEchoRequest {
     MPROPERTY()
     MString Message;
 
     // 目标 ActorId（64-bit 位布局：[ServiceId: high 32][InstId: low 32]）。
     // 客户端传过来时是 raw uint64；本进程用 MServiceId::Make/Get* 拆解。
-    MPROPERTY(Meta=(NonZero, ErrorCode="actor_id_required", ErrorContext="SampleEcho"))
+    MPROPERTY(Meta = (NonZero, ErrorCode = "actor_id_required", ErrorContext = "SampleEcho"))
     uint64 TargetActorId = 0;
 };
 
 MSTRUCT()
-struct FSampleEchoResponse
-{
+struct FSampleEchoResponse {
     MPROPERTY()
     MString Echo;
 

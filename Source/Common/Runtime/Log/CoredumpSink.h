@@ -1,8 +1,8 @@
 #pragma once
-#include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Log/LogLevel.h"
 #include "Common/Runtime/Log/LogRecord.h"
 #include "Common/Runtime/Log/LogSinks.h"
+#include "Common/Runtime/MLib.h"
 
 #include <cstdarg>
 #include <functional>
@@ -22,19 +22,14 @@
 // SConfig::UploadHook is reserved (spec §6.2). When set, OnDumpComplete
 // fires the hook on a detached std::thread so the main path stays
 // synchronous. If the upload fails the error is written to stderr only.
-class MCoredumpSink
-{
-public:
-    struct SConfig
-    {
-        MString DumpDir = "Logs/coredump";
-        size_t  RecentRecords = 1000;
-        bool    bForceCoreDump = true;
+class MCoredumpSink {
+    public:
+    struct SConfig {
+        MString                                      DumpDir        = "Logs/coredump";
+        size_t                                       RecentRecords  = 1000;
+        bool                                         bForceCoreDump = true;
         std::function<void(const MString& DumpPath)> UploadHook;
     };
 
-    static void HandleFatal(const SConfig& Config,
-                            const SLogRecord& TriggeringRecord,
-                            const TVector<SLogRecord>& TailRecords,
-                            const MString& TriggeringMessage);
+    static void HandleFatal(const SConfig& Config, const SLogRecord& TriggeringRecord, const TVector<SLogRecord>& TailRecords, const MString& TriggeringMessage);
 };

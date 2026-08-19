@@ -9,14 +9,12 @@
 // 类本身在 Source/Common/Net/Rpc/MClientManifest.cpp 里 hook（保证符号在
 // mession_common 静态库里能找到）。
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
-struct MClientManifest
-{
-    struct SEntry
-    {
-        uint16_t FunctionId;
+struct MClientManifest {
+    struct SEntry {
+        uint16_t    FunctionId;
         const char* OwnerType;
         const char* FunctionName;
         const char* ResponseTypeName;
@@ -29,4 +27,3 @@ struct MClientManifest
     static const SEntry GClientManifestEntries[];
     static const size_t GClientManifestEntryCount;
 };
-

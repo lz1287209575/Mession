@@ -1,8 +1,7 @@
 #include "Common/Runtime/StringUtils.h"
 #include "Common/Runtime/Tests/TestHarness.h"
 
-TEST_CASE(MStringBuilder_Append_AllOverloads)
-{
+TEST_CASE(MStringBuilder_Append_AllOverloads) {
     MStringBuilder B;
 
     MStringBuilder::Append(B, MStringView("view"));
@@ -15,15 +14,13 @@ TEST_CASE(MStringBuilder_Append_AllOverloads)
     EXPECT_TRUE(MStringBuilder::ToString(B) == MString("view+cstrmstr\n"));
 }
 
-TEST_CASE(MStringBuilder_AppendFormat_MatchesFormat)
-{
+TEST_CASE(MStringBuilder_AppendFormat_MatchesFormat) {
     MStringBuilder B;
     MStringBuilder::AppendFormat(B, "x={} y={:.1f}", 7, 3.14);
     EXPECT_TRUE(MStringBuilder::ToString(B) == MFormat::Format("x={} y={:.1f}", 7, 3.14));
 }
 
-TEST_CASE(MStringBuilder_AppendFormat_Streaming)
-{
+TEST_CASE(MStringBuilder_AppendFormat_Streaming) {
     MStringBuilder B(8); // 预 reserve
     MStringBuilder::Append(B, "id=");
     MStringBuilder::AppendFormat(B, "{}", 42);

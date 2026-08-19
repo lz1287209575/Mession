@@ -7,6 +7,9 @@ add_executable(LuaCoroutineTest
 add_executable(LuaInstanceHandleTest
     TestLuaInstanceHandle.cpp
 )
+add_executable(LuaVectorTest
+    TestLuaVector.cpp
+)
 
 target_include_directories(LuaTypeBridgeTest
     PRIVATE
@@ -21,6 +24,12 @@ target_include_directories(LuaCoroutineTest
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_include_directories(LuaInstanceHandleTest
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/Source
+        ${CMAKE_SOURCE_DIR}/Source/Common/Script/lua/src
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_include_directories(LuaVectorTest
     PRIVATE
         ${CMAKE_SOURCE_DIR}/Source
         ${CMAKE_SOURCE_DIR}/Source/Common/Script/lua/src
@@ -46,7 +55,14 @@ target_link_libraries(LuaInstanceHandleTest
         mession_common
         mession_script_abstract
 )
+target_link_libraries(LuaVectorTest
+    PRIVATE
+        mession_lua
+        mession_lua_vendor
+        mession_common
+)
 
 configure_mession_compile_options(LuaTypeBridgeTest)
 configure_mession_compile_options(LuaCoroutineTest)
 configure_mession_compile_options(LuaInstanceHandleTest)
+configure_mession_compile_options(LuaVectorTest)

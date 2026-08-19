@@ -22,7 +22,7 @@ namespace mession::headercodegen {
 
     class MASTDumpAction : public clang::ASTFrontendAction {
         public:
-        static void                         SetIR(SParseIR* InIR);
+        static void                    SetIR(SParseIR* InIR);
         TUniquePtr<clang::ASTConsumer> CreateASTConsumer(clang::CompilerInstance& CI, llvm::StringRef File) override;
     };
 

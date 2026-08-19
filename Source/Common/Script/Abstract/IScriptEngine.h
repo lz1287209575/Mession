@@ -7,8 +7,8 @@
 #include "Common/Script/Abstract/EReloadResult.h"
 #include "Common/Script/Abstract/EScriptLanguage.h"
 #include "Common/Script/Abstract/IScriptModule.h"
-#include "Common/Script/Abstract/TScriptInstanceHandle.h"
 #include "Common/Script/Abstract/SScriptEngineConfig.h"
+#include "Common/Script/Abstract/TScriptInstanceHandle.h"
 #include "Common/Script/Abstract/TVariant.h"
 
 namespace mession::script {
@@ -52,12 +52,9 @@ namespace mession::script {
         // ====== C++ 持有脚本侧 class 实例(跨 VM 通用) ======
         // 业务侧通过类名字符串创建实例;VM 内部用 registry ref / PyObject* / JSValue
         // / GCHandle 映射到自己的对象;返回的 handle 在 Lua GC 释放后失效
-        virtual TResult<TScriptInstanceHandle> CreateInstanceByClassName(
-            const MString& ClassName, const TScriptArgs& Args) = 0;
+        virtual TResult<TScriptInstanceHandle> CreateInstanceByClassName(const MString& ClassName, const TScriptArgs& Args) = 0;
 
-        virtual TResult<TVariant> InvokeInstanceMethod(
-            TScriptInstanceHandle Handle, const MString& MethodName,
-            const TScriptArgs& Args) = 0;
+        virtual TResult<TVariant> InvokeInstanceMethod(TScriptInstanceHandle Handle, const MString& MethodName, const TScriptArgs& Args) = 0;
 
         virtual void ReleaseInstance(TScriptInstanceHandle Handle) = 0;
 

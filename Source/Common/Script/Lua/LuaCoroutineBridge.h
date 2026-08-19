@@ -10,12 +10,11 @@ extern "C" {
 
 namespace mession::script::lua {
 
-class MLuaCoroutineBridge
-{
-public:
-    static bool IsCoroutineYielded(lua_State* L);
-    static void ResumeFromStack(lua_State* L, int32 NResults);
-    static void ThrowError(lua_State* L, const MString& Msg);
-};
+    class MLuaCoroutineBridge {
+        public:
+        static bool IsCoroutineYielded(lua_State* L);
+        static void ResumeFromStack(lua_State* L, int32 NResults);
+        static void ThrowError(lua_State* L, const MString& Msg);
+    };
 
 } // namespace mession::script::lua

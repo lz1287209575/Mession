@@ -16,20 +16,17 @@ std::atomic<uint64> MLogMetrics::TotalSuppressed{0};
 // Per-category counters live in a small vector protected by a mutex.
 // Sized lazily on first IncSuppressedByCategory call. Index = CategoryId.
 static TVector<uint64> GSuppressedByCategory;
-static std::mutex GSuppressedByCategoryMutex;
+static std::mutex      GSuppressedByCategoryMutex;
 
-void MLogMetrics::IncSuppressedByCategory(uint16 CategoryId)
-{
+void MLogMetrics::IncSuppressedByCategory(uint16 CategoryId) {
     std::lock_guard<std::mutex> L(GSuppressedByCategoryMutex);
-    if (GSuppressedByCategory.size() <= CategoryId)
-    {
+    if (GSuppressedByCategory.size() <= CategoryId) {
         GSuppressedByCategory.resize(static_cast<size_t>(CategoryId) + 1, 0);
     }
     GSuppressedByCategory[CategoryId] += 1;
 }
 
-SLogMetricsSnapshot MLogMetrics::Snapshot()
-{
+SLogMetricsSnapshot MLogMetrics::Snapshot() {
     SLogMetricsSnapshot S;
     S.Enqueued            = Enqueued.load();
     S.DroppedEvicted      = DroppedEvicted.load();

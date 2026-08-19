@@ -9,6 +9,4 @@
  * 如果未来需要重新引入，再加独立 .h 文件。
  */
 MSTRUCT()
-struct SEmptyServerMessage
-{
-};
+struct SEmptyServerMessage {};

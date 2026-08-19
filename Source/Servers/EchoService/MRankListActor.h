@@ -36,7 +36,6 @@ class MRankListActor : public IActor, public MObject {
     public:
     MGENERATED_BODY(MRankListActor, MObject, 0)
     public: // MGENERATED_BODY 展开以 private: 结尾,恢复 public 访问(与 MEchoService 一致)
-
     /** @brief 全服唯一 actor id(PoC 固定;真生产由 MServiceId::Make 派生). */
     static constexpr uint64 RANK_LIST_ACTOR_ID = 9001;
 
@@ -55,7 +54,7 @@ class MRankListActor : public IActor, public MObject {
     // 持久化:SerializeState/RestoreState 由 MActorSystem 在 actor Sub 线程调,
     // 业务只需重写 2 个方法把 SState 序列化/反序列化（PoC 阶段用简单二进制格式）。
     TByteArray SerializeState() const override;
-    bool        RestoreState(const TByteArray& InStateBytes) override;
+    bool       RestoreState(const TByteArray& InStateBytes) override;
 
     private:
     /**

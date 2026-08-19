@@ -4,32 +4,26 @@
 
 #include <mutex>
 
-namespace
-{
-struct SRpcUnsupportedKey
-{
-    EServerType ServerType = EServerType::Unknown;
-    MString FunctionName;
+namespace {
+    struct SRpcUnsupportedKey {
+        EServerType ServerType = EServerType::Unknown;
+        MString     FunctionName;
 
-    bool operator<(const SRpcUnsupportedKey& Other) const
-    {
-        if (ServerType != Other.ServerType)
-        {
-            return static_cast<uint8>(ServerType) < static_cast<uint8>(Other.ServerType);
+        bool operator<(const SRpcUnsupportedKey& Other) const {
+            if (ServerType != Other.ServerType) {
+                return static_cast<uint8>(ServerType) < static_cast<uint8>(Other.ServerType);
+            }
+
+            return FunctionName < Other.FunctionName;
         }
+    };
 
-        return FunctionName < Other.FunctionName;
-    }
-};
+    std::mutex                       GRpcUnsupportedMutex;
+    TMap<SRpcUnsupportedKey, uint64> GRpcUnsupportedCounts;
+} // namespace
 
-std::mutex GRpcUnsupportedMutex;
-TMap<SRpcUnsupportedKey, uint64> GRpcUnsupportedCounts;
-}
-
-const char* GetServerTypeDisplayName(EServerType ServerType)
-{
-    switch (ServerType)
-    {
+const char* GetServerTypeDisplayName(EServerType ServerType) {
+    switch (ServerType) {
     case EServerType::Gateway:
         return "Gateway";
     case EServerType::Echo:
@@ -39,10 +33,8 @@ const char* GetServerTypeDisplayName(EServerType ServerType)
     }
 }
 
-const char* GetServerEndpointClassName(EServerType ServerType)
-{
-    switch (ServerType)
-    {
+const char* GetServerEndpointClassName(EServerType ServerType) {
+    switch (ServerType) {
     case EServerType::Gateway:
         return "MGatewayServer";
     case EServerType::Echo:
@@ -52,38 +44,30 @@ const char* GetServerEndpointClassName(EServerType ServerType)
     }
 }
 
-bool FindRpcEndpoint(EServerType ServerType, const char* FunctionName, SRpcEndpointBinding& OutBinding)
-{
-    if (!FunctionName)
-    {
+bool FindRpcEndpoint(EServerType ServerType, const char* FunctionName, SRpcEndpointBinding& OutBinding) {
+    if (!FunctionName) {
         return false;
     }
 
     const TVector<MClass*> Classes = MObject::GetAllClasses();
-    for (MClass* Class : Classes)
-    {
-        if (!Class)
-        {
+    for (MClass* Class : Classes) {
+        if (!Class) {
             continue;
         }
 
-        for (MFunction* Function : Class->GetFunctions())
-        {
-            if (!Function)
-            {
+        for (MFunction* Function : Class->GetFunctions()) {
+            if (!Function) {
                 continue;
             }
-            if (Function->EndpointServerType != ServerType)
-            {
+            if (Function->EndpointServerType != ServerType) {
                 continue;
             }
-            if (Function->Name != FunctionName)
-            {
+            if (Function->Name != FunctionName) {
                 continue;
             }
 
-            OutBinding.ServerType = ServerType;
-            OutBinding.ClassName = Class->GetName().c_str();
+            OutBinding.ServerType   = ServerType;
+            OutBinding.ClassName    = Class->GetName().c_str();
             OutBinding.FunctionName = Function->Name.c_str();
             return true;
         }
@@ -92,11 +76,9 @@ bool FindRpcEndpoint(EServerType ServerType, const char* FunctionName, SRpcEndpo
     return false;
 }
 
-void ReportUnsupportedRpcEndpoint(EServerType ServerType, const char* FunctionName)
-{
+void ReportUnsupportedRpcEndpoint(EServerType ServerType, const char* FunctionName) {
     const MString Name = FunctionName ? MString(FunctionName) : MString();
-    if (Name.empty())
-    {
+    if (Name.empty()) {
         return;
     }
 
@@ -106,11 +88,7 @@ void ReportUnsupportedRpcEndpoint(EServerType ServerType, const char* FunctionNa
         Count = ++GRpcUnsupportedCounts[{ServerType, Name}];
     }
 
-    if (Count == 1 || Count == 10 || Count == 100)
-    {
-        LOG_WARN("RPC endpoint unsupported: target=%s function=%s count=%llu",
-                 GetServerTypeDisplayName(ServerType),
-                 Name.c_str(),
-                 static_cast<unsigned long long>(Count));
+    if (Count == 1 || Count == 10 || Count == 100) {
+        LOG_WARN("RPC endpoint unsupported: target=%s function=%s count=%llu", GetServerTypeDisplayName(ServerType), Name.c_str(), static_cast<unsigned long long>(Count));
     }
 }

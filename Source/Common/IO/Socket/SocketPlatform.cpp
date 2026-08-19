@@ -1,30 +1,25 @@
 #include "Common/IO/Socket/SocketPlatform.h"
 #include <cstring>
 
-namespace
-{
-bool IsValidSocket(TSocketFd SocketFd)
-{
+namespace {
+    bool IsValidSocket(TSocketFd SocketFd) {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    return SocketFd != INVALID_SOCKET;
+        return SocketFd != INVALID_SOCKET;
 #else
-    return SocketFd >= 0;
+        return SocketFd >= 0;
 #endif
-}
-}
+    }
+} // namespace
 
-bool MSocketPlatform::EnsureInit()
-{
+bool MSocketPlatform::EnsureInit() {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     static bool bInitialized = false;
-    if (bInitialized)
-    {
+    if (bInitialized) {
         return true;
     }
 
     WSADATA WsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &WsaData) != 0)
-    {
+    if (WSAStartup(MAKEWORD(2, 2), &WsaData) != 0) {
         return false;
     }
 
@@ -35,64 +30,51 @@ bool MSocketPlatform::EnsureInit()
 #endif
 }
 
-TSocketFd MSocketPlatform::CreateTcpSocket()
-{
-    if (!EnsureInit())
-    {
+TSocketFd MSocketPlatform::CreateTcpSocket() {
+    if (!EnsureInit()) {
         return INVALID_SOCKET_FD;
     }
 
     return socket(AF_INET, SOCK_STREAM, 0);
 }
 
-void MSocketPlatform::ShutdownSocket(TSocketFd SocketFd)
-{
+void MSocketPlatform::ShutdownSocket(TSocketFd SocketFd) {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    if (IsValidSocket(SocketFd))
-    {
+    if (IsValidSocket(SocketFd)) {
         shutdown(SocketFd, SD_BOTH);
     }
 #else
-    if (IsValidSocket(SocketFd))
-    {
+    if (IsValidSocket(SocketFd)) {
         shutdown(SocketFd, SHUT_RDWR);
     }
 #endif
 }
 
-void MSocketPlatform::CloseSocket(TSocketFd SocketFd)
-{
+void MSocketPlatform::CloseSocket(TSocketFd SocketFd) {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    if (IsValidSocket(SocketFd))
-    {
+    if (IsValidSocket(SocketFd)) {
         closesocket(SocketFd);
     }
 #else
-    if (IsValidSocket(SocketFd))
-    {
+    if (IsValidSocket(SocketFd)) {
         close(SocketFd);
     }
 #endif
 }
 
-bool MSocketPlatform::SetNonBlocking(TSocketFd SocketFd, bool bNonBlocking)
-{
+bool MSocketPlatform::SetNonBlocking(TSocketFd SocketFd, bool bNonBlocking) {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     u_long Mode = bNonBlocking ? 1 : 0;
     return ioctlsocket(SocketFd, FIONBIO, &Mode) == 0;
 #else
     int32 Flags = fcntl(SocketFd, F_GETFL, 0);
-    if (Flags < 0)
-    {
+    if (Flags < 0) {
         return false;
     }
 
-    if (bNonBlocking)
-    {
+    if (bNonBlocking) {
         Flags |= O_NONBLOCK;
-    }
-    else
-    {
+    } else {
         Flags &= ~O_NONBLOCK;
     }
 
@@ -100,20 +82,17 @@ bool MSocketPlatform::SetNonBlocking(TSocketFd SocketFd, bool bNonBlocking)
 #endif
 }
 
-bool MSocketPlatform::SetNoDelay(TSocketFd SocketFd, bool bNoDelay)
-{
+bool MSocketPlatform::SetNoDelay(TSocketFd SocketFd, bool bNoDelay) {
     int32 NoDelay = bNoDelay ? 1 : 0;
     return setsockopt(SocketFd, IPPROTO_TCP, TCP_NODELAY, (const char*)&NoDelay, sizeof(NoDelay)) == 0;
 }
 
-bool MSocketPlatform::SetReuseAddress(TSocketFd SocketFd, bool bReuseAddress)
-{
+bool MSocketPlatform::SetReuseAddress(TSocketFd SocketFd, bool bReuseAddress) {
     int32 ReuseAddress = bReuseAddress ? 1 : 0;
     return setsockopt(SocketFd, SOL_SOCKET, SO_REUSEADDR, (const char*)&ReuseAddress, sizeof(ReuseAddress)) == 0;
 }
 
-TSocketFd MSocketPlatform::Accept(TSocketFd ListenFd, sockaddr_in& OutAddress)
-{
+TSocketFd MSocketPlatform::Accept(TSocketFd ListenFd, sockaddr_in& OutAddress) {
     OutAddress = {};
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     int AddressLen = sizeof(sockaddr_in);
@@ -123,8 +102,7 @@ TSocketFd MSocketPlatform::Accept(TSocketFd ListenFd, sockaddr_in& OutAddress)
     return accept(ListenFd, (sockaddr*)&OutAddress, &AddressLen);
 }
 
-bool MSocketPlatform::GetPeerAddress(TSocketFd SocketFd, MString& OutAddress, uint16& OutPort)
-{
+bool MSocketPlatform::GetPeerAddress(TSocketFd SocketFd, MString& OutAddress, uint16& OutPort) {
     sockaddr_in PeerAddress = {};
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     int AddressLen = sizeof(PeerAddress);
@@ -132,29 +110,25 @@ bool MSocketPlatform::GetPeerAddress(TSocketFd SocketFd, MString& OutAddress, ui
     socklen_t AddressLen = sizeof(PeerAddress);
 #endif
 
-    if (getpeername(SocketFd, (sockaddr*)&PeerAddress, &AddressLen) != 0)
-    {
+    if (getpeername(SocketFd, (sockaddr*)&PeerAddress, &AddressLen) != 0) {
         OutAddress = "unknown";
-        OutPort = 0;
+        OutPort    = 0;
         return false;
     }
 
     return DescribeAddress(PeerAddress, OutAddress, OutPort);
 }
 
-bool MSocketPlatform::DescribeAddress(const sockaddr_in& Address, MString& OutAddress, uint16& OutPort)
-{
+bool MSocketPlatform::DescribeAddress(const sockaddr_in& Address, MString& OutAddress, uint16& OutPort) {
     char AddressBuffer[64] = {};
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
-    if (InetNtopA(AF_INET, (void*)&Address.sin_addr, AddressBuffer, sizeof(AddressBuffer)) == nullptr)
-    {
+    if (InetNtopA(AF_INET, (void*)&Address.sin_addr, AddressBuffer, sizeof(AddressBuffer)) == nullptr) {
         OutAddress = "unknown";
-        OutPort = ntohs(Address.sin_port);
+        OutPort    = ntohs(Address.sin_port);
         return false;
     }
 #else
-    if (inet_ntop(AF_INET, (void*)&Address.sin_addr, AddressBuffer, sizeof(AddressBuffer)) == nullptr)
-    {
+    if (inet_ntop(AF_INET, (void*)&Address.sin_addr, AddressBuffer, sizeof(AddressBuffer)) == nullptr) {
         OutAddress = "unknown";
         OutPort = ntohs(Address.sin_port);
         return false;
@@ -162,15 +136,14 @@ bool MSocketPlatform::DescribeAddress(const sockaddr_in& Address, MString& OutAd
 #endif
 
     OutAddress = AddressBuffer;
-    OutPort = ntohs(Address.sin_port);
+    OutPort    = ntohs(Address.sin_port);
     return true;
 }
 
-bool MSocketPlatform::ParseIPv4Address(const SSocketAddress& Address, sockaddr_in& OutSockAddr)
-{
-    OutSockAddr = {};
+bool MSocketPlatform::ParseIPv4Address(const SSocketAddress& Address, sockaddr_in& OutSockAddr) {
+    OutSockAddr            = {};
     OutSockAddr.sin_family = AF_INET;
-    OutSockAddr.sin_port = htons(Address.Port);
+    OutSockAddr.sin_port   = htons(Address.Port);
 
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     return InetPtonA(AF_INET, Address.Ip.c_str(), &OutSockAddr.sin_addr) == 1;
@@ -179,13 +152,11 @@ bool MSocketPlatform::ParseIPv4Address(const SSocketAddress& Address, sockaddr_i
 #endif
 }
 
-int MSocketPlatform::Connect(TSocketFd SocketFd, const sockaddr_in& Address)
-{
+int MSocketPlatform::Connect(TSocketFd SocketFd, const sockaddr_in& Address) {
     return connect(SocketFd, (const sockaddr*)&Address, sizeof(Address));
 }
 
-int32 MSocketPlatform::Send(TSocketFd SocketFd, const void* Data, uint32 Size)
-{
+int32 MSocketPlatform::Send(TSocketFd SocketFd, const void* Data, uint32 Size) {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     return send(SocketFd, (const char*)Data, (int)Size, 0);
 #else
@@ -193,8 +164,7 @@ int32 MSocketPlatform::Send(TSocketFd SocketFd, const void* Data, uint32 Size)
 #endif
 }
 
-int32 MSocketPlatform::Recv(TSocketFd SocketFd, void* Buffer, uint32 Size)
-{
+int32 MSocketPlatform::Recv(TSocketFd SocketFd, void* Buffer, uint32 Size) {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     return recv(SocketFd, (char*)Buffer, (int)Size, 0);
 #else
@@ -202,8 +172,7 @@ int32 MSocketPlatform::Recv(TSocketFd SocketFd, void* Buffer, uint32 Size)
 #endif
 }
 
-int MSocketPlatform::GetLastError()
-{
+int MSocketPlatform::GetLastError() {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     return WSAGetLastError();
 #else
@@ -211,8 +180,7 @@ int MSocketPlatform::GetLastError()
 #endif
 }
 
-MString MSocketPlatform::GetLastErrorMessage()
-{
+MString MSocketPlatform::GetLastErrorMessage() {
     const int Error = GetLastError();
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     return std::to_string(static_cast<uint32>(Error));
@@ -221,8 +189,7 @@ MString MSocketPlatform::GetLastErrorMessage()
 #endif
 }
 
-bool MSocketPlatform::IsWouldBlock(int Error)
-{
+bool MSocketPlatform::IsWouldBlock(int Error) {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     return Error == WSAEWOULDBLOCK;
 #else
@@ -230,8 +197,7 @@ bool MSocketPlatform::IsWouldBlock(int Error)
 #endif
 }
 
-bool MSocketPlatform::IsConnectInProgress(int Error)
-{
+bool MSocketPlatform::IsConnectInProgress(int Error) {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     return Error == WSAEWOULDBLOCK || Error == WSAEINPROGRESS;
 #else
@@ -239,8 +205,7 @@ bool MSocketPlatform::IsConnectInProgress(int Error)
 #endif
 }
 
-bool MSocketPlatform::IsConnectionReset(int Error)
-{
+bool MSocketPlatform::IsConnectionReset(int Error) {
 #if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
     return Error == WSAECONNRESET;
 #else

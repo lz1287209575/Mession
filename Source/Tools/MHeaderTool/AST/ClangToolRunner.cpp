@@ -46,9 +46,7 @@ namespace mession::headercodegen {
             // -I<SourceRoot> 让相对 include("Common/Runtime/MLib.h" 形式)可被解析,
             // 否则 Clang 静默丢弃 TU,业务类型不会进入 IR。
             const MString IncludeArg = MString("-I") + fs::absolute(InOptions.SourceRoot).generic_string();
-            CDB                       = std::make_unique<clang::tooling::FixedCompilationDatabase>(
-                InOptions.SourceRoot.generic_string(),
-                TVector<MString>{"-fsyntax-only", IncludeArg});
+            CDB                      = std::make_unique<clang::tooling::FixedCompilationDatabase>(InOptions.SourceRoot.generic_string(), TVector<MString>{"-fsyntax-only", IncludeArg});
             CollectHeaders(InOptions.SourceRoot, SourceFiles);
         }
 
