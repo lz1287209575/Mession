@@ -88,6 +88,8 @@ class MActorSystem {
      * SequenceId 用于 ack-based 删除:server 回 MT_ServerPush ack 带 SequenceId,
      * 客户端按 Seq 在 outbox 里找到对应 entry 删掉。
      * Target 记的是原始目标 ServerType,drain 时按此过滤（只重发到该 target）。
+     * 同 ActorId 多个 endpoint（fan-out）每个 endpoint 一条 entry;
+     * AckOutbox 会按 (SequenceId, Target) 匹配删除。
      */
     struct SOutboxEntry {
         EServerType    Target;
@@ -158,6 +160,16 @@ public:
      * ≤ 一次性删到 ack 之前所有 entry,后续 ack 命中时 outbox 应该已空。
      */
     void AckOutbox(uint64 InActorId, uint64 InAckedSeqId);
+
+    /**
+     * @brief AckOutboxByRoute - fan-out 场景专用:仅删 outbox 里特定 (Seq, Target) 的 entry.
+     *
+     * 区别于 AckOutbox:那个按 Seq 全删;这个按 (Seq, Target) 精确删 1:N fan-out 中
+     * 某一 route 的 ack 确认。MT_ServerPush handler 应从 Sender 拿到连接 ServerType
+     * 调本方法,而不是 AckOutbox —— 避免「一个 route 还没处理就被另一个 route 的
+     * ack 删掉」的 at-most-once violation。
+     */
+    void AckOutboxByRoute(uint64 InActorId, uint64 InAckedSeqId, EServerType InTargetRoute);
 
     /**
      * @brief DrainActorOutbox - 把 outbox 里的消息按序重发.
@@ -236,4 +248,19 @@ public:
      * @return true 成功;false actor 不存在 / 文件不存在 / RestoreState 失败
      */
     bool LoadActorState(uint64 InActorId, const MString& InFilePath);
+
+    // === MT_ServerPush listener 机制（业务订阅投递状态 / 自定义 server push）===
+    //
+    // 注册的 listener 会在每次收到 MT_ServerPush 包时调,参数是解析后的
+    // (StatusCode, ActorId, SequenceId)。listener 在 EndpointCache 收到包时
+    // 同步调,业务方负责 listener 的线程安全（典型用法:加 metric、写 log、ack 业务等）。
+    //
+    // 与 MActorSystem::AckOutbox 互补:AckOutbox 是 actor 内部 outbox 维护;
+    // listener 是业务可观测性 + 业务自定义 server-push 通知。
+    using FServerPushListener = TFunction<void(uint8 StatusCode, uint64 ActorId, uint64 SequenceId)>;
+    using HServerPushListener = uint64;  // 0 = 无效 handle
+
+    HServerPushListener RegisterServerPushListener(FServerPushListener InListener);
+    void UnregisterServerPushListener(HServerPushListener InHandle);
+    void FireServerPushListeners(uint8 InStatusCode, uint64 InActorId, uint64 InSequenceId);
 };

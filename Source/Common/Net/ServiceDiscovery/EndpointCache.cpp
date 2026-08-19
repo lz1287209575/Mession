@@ -62,7 +62,9 @@ namespace {
                 break;
             case EServerMessageType::MT_ServerPush:
                 // 投递 ack 格式:[StatusCode:1B][ActorId:8B][SequenceId:8B] little-endian
-                // → 解析后调 MActorSystem::AckOutbox 删 outbox 对应 entry
+                // → 解析后调 MActorSystem::AckOutboxByRoute 删该 route 的 outbox entry
+                //   （fan-out 场景：只删这一条,其他 route 还在等 ack）
+                //   同时 fire 所有注册的 listener（业务订阅）
                 if (Data.size() >= 1 + 8 + 8) {
                     const uint8 Status = Data[0];
                     uint64 ActorId = 0, SequenceId = 0;
@@ -70,14 +72,18 @@ namespace {
                         ActorId    |= static_cast<uint64>(Data[1 + i]) << (i * 8);
                         SequenceId |= static_cast<uint64>(Data[9 + i]) << (i * 8);
                     }
-                    if (Status == 0 /* Delivered */) {
-                        MActorSystem::Get().AckOutbox(ActorId, SequenceId);
-                    } else {
+                    if (Status == 0 /* Delivered */ && Sender) {
+                        // 1:N fan-out:按连接 ServerType 精确删该 route 的 outbox entry
+                        const EServerType Route = Sender->GetConfig().ServerType;
+                        MActorSystem::Get().AckOutboxByRoute(ActorId, SequenceId, Route);
+                    } else if (Status != 0) {
                         LOG_DEBUG("MT_ServerPush: negative ack status=%u actor=%llu seq=%llu",
                                   static_cast<unsigned>(Status),
                                   static_cast<unsigned long long>(ActorId),
                                   static_cast<unsigned long long>(SequenceId));
                     }
+                    // fire 业务 listener（投递状态可观测 / 业务自定义 server push 通知）
+                    MActorSystem::Get().FireServerPushListeners(Status, ActorId, SequenceId);
                 } else {
                     LOG_DEBUG("MT_ServerPush: short payload (%zu bytes), ignoring", Data.size());
                 }

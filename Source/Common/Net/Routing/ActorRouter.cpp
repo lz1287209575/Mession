@@ -15,11 +15,37 @@ MActorRouter& MActorRouter::Get()
 void MActorRouter::RegisterActor(uint64 ActorId, EServerType ServerType, uint64 ConnectionId)
 {
     std::lock_guard<std::mutex> Lock(RoutesMutex);
-    SActorRoute& Route = ActorRoutes[ActorId];
-    Route.ActorId = ActorId;
-    Route.ServerType = ServerType;
-    Route.ConnectionId = ConnectionId;
+    auto& Routes = ActorRoutes[ActorId];
+    // 1:N fan-out:同 ActorId 重复注册追加（一般不会发生,防御性）
+    for (const auto& R : Routes) {
+        if (R.ServerType == ServerType && R.ConnectionId == ConnectionId) {
+            return;  // 已存在,跳过
+        }
+    }
+    SActorRoute Route;
+    Route.ActorId        = ActorId;
+    Route.ServerType     = ServerType;
+    Route.ConnectionId   = ConnectionId;
     Route.LastUpdateTime = static_cast<uint64>(MTime::GetTimeSeconds() * 1000);
+    Routes.push_back(Route);
+}
+
+void MActorRouter::UnregisterRoute(uint64 ActorId, EServerType ServerType, uint64 ConnectionId)
+{
+    std::lock_guard<std::mutex> Lock(RoutesMutex);
+    auto It = ActorRoutes.find(ActorId);
+    if (It == ActorRoutes.end()) return;
+    auto& Routes = It->second;
+    for (auto Rit = Routes.begin(); Rit != Routes.end(); ) {
+        if (Rit->ServerType == ServerType && Rit->ConnectionId == ConnectionId) {
+            Rit = Routes.erase(Rit);
+        } else {
+            ++Rit;
+        }
+    }
+    if (Routes.empty()) {
+        ActorRoutes.erase(It);
+    }
 }
 
 void MActorRouter::UnregisterActor(uint64 ActorId)
@@ -35,10 +61,16 @@ void MActorRouter::UpdateActorRoute(uint64 ActorId, EServerType ServerType, uint
 
 SActorRoute MActorRouter::FindActor(uint64 ActorId) const
 {
+    TVector<SActorRoute> All = FindAllActorRoutes(ActorId);
+    if (All.empty()) return {};
+    return All[0];  // 第一个 route（向后兼容）
+}
+
+TVector<SActorRoute> MActorRouter::FindAllActorRoutes(uint64 ActorId) const
+{
     std::lock_guard<std::mutex> Lock(RoutesMutex);
     auto It = ActorRoutes.find(ActorId);
-    if (It != ActorRoutes.end())
-    {
+    if (It != ActorRoutes.end()) {
         return It->second;
     }
     return {};
@@ -92,11 +124,19 @@ void MActorRouter::RegisterActor(TSharedPtr<IActor> InActor, MSubReactorPool* In
     //    (见 ActorRouter.cpp:47-51 IsActorLocal)。
     {
         std::lock_guard<std::mutex> Lock(RoutesMutex);
-        SActorRoute& Route = ActorRoutes[ActorId];
+        auto& Routes = ActorRoutes[ActorId];
+        // 本地 route 一般只有 1 条（ServerType=Unknown, ConnId=SubId）
+        for (const auto& R : Routes) {
+            if (R.ServerType == EServerType::Unknown && R.ConnectionId == SubId) {
+                return;  // 已存在,跳过
+            }
+        }
+        SActorRoute Route;
         Route.ActorId         = ActorId;
         Route.ServerType      = EServerType::Unknown;
         Route.ConnectionId    = SubId;
         Route.LastUpdateTime  = static_cast<uint64>(MTime::GetTimeSeconds() * 1000);
+        Routes.push_back(Route);
     }
 
     // 2) 委托给 MActorSystem:actor 对象存储 + 在 Sub 线程 Post OnCreated

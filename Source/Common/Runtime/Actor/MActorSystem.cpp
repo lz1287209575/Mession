@@ -259,6 +259,39 @@ void MActorSystem::AckOutbox(uint64 InActorId, uint64 InAckedSeqId) {
     }
 }
 
+void MActorSystem::AckOutboxByRoute(uint64 InActorId, uint64 InAckedSeqId, EServerType InTargetRoute) {
+    // fan-out 场景专用:仅删 outbox 里特定 (Seq, TargetRoute) 的 entry,不影响其他 route。
+    // 这是 at-least-once 的关键 —— 一个 route 的 ack 不应让另一个 route 的 entry
+    // 被删除,否则另一个 route 重启后漏消息。
+    if (InAckedSeqId == 0) return;
+
+    std::lock_guard<std::mutex> Lock(ActorsMutex);
+    auto It = LocalActors.find(InActorId);
+    if (It == LocalActors.end()) return;
+    auto& Outbox = It->second.Outbox;
+
+    TVector<SOutboxEntry> ToKeep;
+    uint32 AckedCount = 0;
+    while (!Outbox.empty()) {
+        SOutboxEntry E = std::move(Outbox.front());
+        Outbox.pop();
+        if (E.SequenceId == InAckedSeqId && E.Target == InTargetRoute) {
+            ++AckedCount;  // 该 route 该 seq 已确认
+        } else {
+            ToKeep.push_back(std::move(E));
+        }
+    }
+    for (auto& E : ToKeep) {
+        Outbox.push(std::move(E));
+    }
+    if (AckedCount > 0) {
+        LOG_DEBUG("MActorSystem::AckOutboxByRoute: actor %llu seq %llu target %u acked",
+                  static_cast<unsigned long long>(InActorId),
+                  static_cast<unsigned long long>(InAckedSeqId),
+                  static_cast<unsigned>(InTargetRoute));
+    }
+}
+
 void MActorSystem::DrainActorOutbox(uint64 InActorId, EServerType InTarget) {
     // 把 outbox 里所有匹配 InTarget 的消息按序重发。
     // 失败的消息（对方 actor 已 Unregister / 路由失效）继续留在 outbox,等下次重试。
@@ -304,17 +337,36 @@ bool MActorSystem::SendActor(uint64 InActorId, FActorMessage InMsg) {
         return false;
     }
 
-    // 2) try send
-    if (MRpcChannel::Get().SendActor(InActorId, InMsg)) {
-        return true;  // 成功
+    // 2) 1:N fan-out — 取 actor 全部 route（本地 + 远程），本地由 MActorHandle::Post
+    // 在更上层处理（直接 Sub ambient 派发），这里只处理远端
+    TVector<SActorRoute> AllRoutes = MActorRouter::Get().FindAllActorRoutes(InActorId);
+
+    // 3) 每个远端 route 独立 send。失败 → 该 route 的 outbox entry 独立存（per-route at-least-once）。
+    bool bAnySucceeded = false;
+    MActorSystem& Sys = MActorSystem::Get();
+    for (const SActorRoute& Route : AllRoutes) {
+        if (Route.ServerType == EServerType::Unknown) {
+            // 本地 route → MActorHandle::Post 走 ProcessLocal,这里跳过
+            continue;
+        }
+        auto Connection = MEndpointCache::Get().GetOrConnect(Route.ServerType);
+        if (!Connection || !Connection->IsConnected()) {
+            // 失败 → outbox（每个失败 route 独立 entry;需要 Msg copy,因为后续 route 还要用）
+            FActorMessage MsgCopy = InMsg;
+            Sys.EnqueueActorOutbox(InActorId, Route.ServerType, std::move(MsgCopy));
+            continue;
+        }
+        // 尝试 send（复用底层 wire 构造）
+        if (MRpcChannel::Get().SendActor(InActorId, InMsg)) {
+            bAnySucceeded = true;
+        } else {
+            FActorMessage MsgCopy = InMsg;
+            Sys.EnqueueActorOutbox(InActorId, Route.ServerType, std::move(MsgCopy));
+        }
     }
 
-    // 3) 失败 → 入 outbox（带 SequenceId 等 ack）
-    // 寻址（拿 ServerType 用于 drain 时过滤）
-    SActorRoute Route = MActorRouter::Get().FindActor(InActorId);
-    EServerType Target = Route.ActorId ? Route.ServerType : EServerType::Unknown;
-    MActorSystem::Get().EnqueueActorOutbox(InActorId, Target, std::move(InMsg));
-    return false;
+    // 没有 route（actor 全是 local 或全未注册）→ 算 fail
+    return bAnySucceeded;
 }
 
 // =====================================================================
@@ -434,4 +486,58 @@ uint64 MActorSystem::AllocateSequenceId(uint64 InActorId) {
         return 0;  // actor 未注册
     }
     return It->second.NextSequenceId->fetch_add(1) + 1;
+}
+
+// =====================================================================
+// MT_ServerPush listener 机制
+// =====================================================================
+
+namespace {
+    // listener 存储（独立 mutex,避免与 actors 锁竞争）
+    struct SListenerRegistry {
+        std::mutex                                     Mutex;
+        TMap<uint64, MActorSystem::FServerPushListener> Listeners;
+        uint64                                          NextHandle = 1;  // 0 = 无效
+    };
+    SListenerRegistry& ListenerRegistry() {
+        static SListenerRegistry R;
+        return R;
+    }
+}
+
+MActorSystem::HServerPushListener MActorSystem::RegisterServerPushListener(FServerPushListener InListener) {
+    if (!InListener) {
+        return 0;  // 无效 callback
+    }
+    auto& Reg = ListenerRegistry();
+    std::lock_guard<std::mutex> Lock(Reg.Mutex);
+    const HServerPushListener Handle = Reg.NextHandle++;
+    Reg.Listeners[Handle] = std::move(InListener);
+    return Handle;
+}
+
+void MActorSystem::UnregisterServerPushListener(HServerPushListener InHandle) {
+    if (InHandle == 0) return;
+    auto& Reg = ListenerRegistry();
+    std::lock_guard<std::mutex> Lock(Reg.Mutex);
+    Reg.Listeners.erase(InHandle);
+}
+
+void MActorSystem::FireServerPushListeners(uint8 InStatusCode, uint64 InActorId, uint64 InSequenceId) {
+    // 拷贝 listener 列表到本地（避免持锁调业务代码 —— 业务 listener 可能回调
+    // RegisterServerPushListener 形成死锁）
+    TVector<FServerPushListener> Snapshot;
+    {
+        auto& Reg = ListenerRegistry();
+        std::lock_guard<std::mutex> Lock(Reg.Mutex);
+        Snapshot.reserve(Reg.Listeners.size());
+        for (auto& KV : Reg.Listeners) {
+            Snapshot.push_back(KV.second);
+        }
+    }
+    for (auto& L : Snapshot) {
+        if (L) {
+            L(InStatusCode, InActorId, InSequenceId);
+        }
+    }
 }

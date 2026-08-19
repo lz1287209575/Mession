@@ -20,9 +20,20 @@ public:
 
     void RegisterActor(uint64 ActorId, EServerType ServerType, uint64 ConnectionId = 0);
     void UnregisterActor(uint64 ActorId);
+    void UnregisterRoute(uint64 ActorId, EServerType ServerType, uint64 ConnectionId);
     void UpdateActorRoute(uint64 ActorId, EServerType ServerType, uint64 ConnectionId = 0);
 
     SActorRoute FindActor(uint64 ActorId) const;
+
+    /**
+     * @brief FindAllActorRoutes - 取 actor 全部 route（用于 1:N fan-out）.
+     *
+     * 一个 ActorId 可对应多个 endpoint（不同 ServerType 各自的连接）—— 这是
+     * 1:N fan-out 的基础。SendActor 会遍历此列表,每个 route 独立 send;
+     * 任一失败 → 该 route 的 outbox entry 独立存,drain 时只重发失败的。
+     */
+    TVector<SActorRoute> FindAllActorRoutes(uint64 ActorId) const;
+
     bool IsActorLocal(uint64 ActorId) const;
 
     SFutureResult<FLocateActorResult> LocateActor(uint64 ActorId) const;
@@ -55,7 +66,10 @@ public:
         -> decltype(Call(std::declval<TSharedPtr<MServerConnection>>()));
 
 private:
-    TMap<uint64, SActorRoute> ActorRoutes;
+    // 1:N fan-out:一个 ActorId 对应多个 endpoint(route)。同一个 ActorId 可能在
+    // 多个 ServerType 上都有连接(MRankListActor 可能在多台 EchoService 上跑),
+    // SendActor 遍历此列表逐个 send。
+    TMap<uint64, TVector<SActorRoute>> ActorRoutes;
     mutable std::mutex RoutesMutex;
 };
 
