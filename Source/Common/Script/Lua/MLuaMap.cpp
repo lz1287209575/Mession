@@ -85,6 +85,10 @@ int MetaPairs(lua_State* L)
     return 3;
 }
 
+/// @lua-stdlib Map.get
+/// @lua-self MMap
+/// @lua-param k MScalar
+/// @lua-return MScalar|nil
 int MethodGet(lua_State* L)
 {
     FMap* M = GetMap(L, 1);
@@ -101,6 +105,11 @@ int MethodGet(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Map.set
+/// @lua-self MMap
+/// @lua-param k MScalar
+/// @lua-param v MScalar
+/// @lua-return nil
 int MethodSet(lua_State* L)
 {
     FMap* M = GetMap(L, 1);
@@ -116,6 +125,10 @@ int MethodSet(lua_State* L)
     return 0;
 }
 
+/// @lua-stdlib Map.has
+/// @lua-self MMap
+/// @lua-param k MScalar
+/// @lua-return boolean
 int MethodHas(lua_State* L)
 {
     FMap* M = GetMap(L, 1);
@@ -127,6 +140,10 @@ int MethodHas(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Map.remove
+/// @lua-self MMap
+/// @lua-param k MScalar
+/// @lua-return MScalar|nil
 int MethodRemove(lua_State* L)
 {
     FMap* M = GetMap(L, 1);
@@ -144,6 +161,9 @@ int MethodRemove(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Map.size
+/// @lua-self MMap
+/// @lua-return integer
 int MethodSize(lua_State* L)
 {
     FMap* M = GetMap(L, 1);
@@ -151,6 +171,9 @@ int MethodSize(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Map.clear
+/// @lua-self MMap
+/// @lua-return nil
 int MethodClear(lua_State* L)
 {
     FMap* M = GetMap(L, 1);
@@ -158,6 +181,9 @@ int MethodClear(lua_State* L)
     return 0;
 }
 
+/// @lua-stdlib Map.keys
+/// @lua-self MMap
+/// @lua-return {MScalar}
 int MethodKeys(lua_State* L)
 {
     FMap* M = GetMap(L, 1);
@@ -170,6 +196,9 @@ int MethodKeys(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Map.values
+/// @lua-self MMap
+/// @lua-return {MScalar}
 int MethodValues(lua_State* L)
 {
     FMap* M = GetMap(L, 1);
@@ -182,6 +211,8 @@ int MethodValues(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Map.new
+/// @lua-return MMap
 int FactoryNew(lua_State* L)
 {
     void* Ud = lua_newuserdata(L, sizeof(FMap));

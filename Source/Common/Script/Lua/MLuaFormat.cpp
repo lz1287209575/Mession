@@ -43,6 +43,10 @@ struct FArgCollector {
     }
 };
 
+/// @lua-stdlib Format.fmt
+/// @lua-param tpl string
+/// @lua-param ... any
+/// @lua-return string
 int FmtFmt(lua_State* L)
 {
     if (!lua_isstring(L, 1)) {
@@ -66,6 +70,9 @@ int FmtFmt(lua_State* L)
     }
 }
 
+/// @lua-stdlib Format.concat
+/// @lua-param ... any
+/// @lua-return string
 int FmtConcat(lua_State* L)
 {
     int Top = lua_gettop(L);
@@ -102,6 +109,10 @@ int FmtConcat(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Format.split
+/// @lua-param s string
+/// @lua-param sep string
+/// @lua-return {string}
 int FmtSplit(lua_State* L)
 {
     if (!lua_isstring(L, 1)) {
@@ -125,6 +136,9 @@ int FmtSplit(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Format.trim
+/// @lua-param s string
+/// @lua-return string
 int FmtTrim(lua_State* L)
 {
     if (!lua_isstring(L, 1)) {
@@ -138,6 +152,9 @@ int FmtTrim(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Format.tostring
+/// @lua-param v any
+/// @lua-return string
 int FmtToString(lua_State* L)
 {
     // 委托 Lua 的 tostring 全局,避免重复实现

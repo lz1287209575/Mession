@@ -112,6 +112,10 @@ int MetaPairs(lua_State* L)
     return 3;
 }
 
+/// @lua-stdlib Vector.get
+/// @lua-self MVector
+/// @lua-param i integer
+/// @lua-return MScalar
 int MethodGet(lua_State* L)
 {
     TVector<MScalarValue>* V = GetVector(L, 1);
@@ -124,6 +128,11 @@ int MethodGet(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Vector.set
+/// @lua-self MVector
+/// @lua-param i integer
+/// @lua-param v MScalar
+/// @lua-return nil
 int MethodSet(lua_State* L)
 {
     TVector<MScalarValue>* V = GetVector(L, 1);
@@ -141,6 +150,10 @@ int MethodSet(lua_State* L)
     return 0;
 }
 
+/// @lua-stdlib Vector.push
+/// @lua-self MVector
+/// @lua-param v MScalar
+/// @lua-return nil
 int MethodPush(lua_State* L)
 {
     TVector<MScalarValue>* V = GetVector(L, 1);
@@ -153,6 +166,9 @@ int MethodPush(lua_State* L)
     return 0;
 }
 
+/// @lua-stdlib Vector.pop
+/// @lua-self MVector
+/// @lua-return MScalar|nil
 int MethodPop(lua_State* L)
 {
     TVector<MScalarValue>* V = GetVector(L, 1);
@@ -167,6 +183,9 @@ int MethodPop(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Vector.size
+/// @lua-self MVector
+/// @lua-return integer
 int MethodSize(lua_State* L)
 {
     TVector<MScalarValue>* V = GetVector(L, 1);
@@ -174,6 +193,11 @@ int MethodSize(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Vector.insert
+/// @lua-self MVector
+/// @lua-param i integer
+/// @lua-param v MScalar
+/// @lua-return nil
 int MethodInsert(lua_State* L)
 {
     TVector<MScalarValue>* V = GetVector(L, 1);
@@ -191,6 +215,10 @@ int MethodInsert(lua_State* L)
     return 0;
 }
 
+/// @lua-stdlib Vector.remove
+/// @lua-self MVector
+/// @lua-param i integer
+/// @lua-return MScalar
 int MethodRemove(lua_State* L)
 {
     TVector<MScalarValue>* V = GetVector(L, 1);
@@ -205,6 +233,9 @@ int MethodRemove(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Vector.clear
+/// @lua-self MVector
+/// @lua-return nil
 int MethodClear(lua_State* L)
 {
     TVector<MScalarValue>* V = GetVector(L, 1);
@@ -212,6 +243,9 @@ int MethodClear(lua_State* L)
     return 0;
 }
 
+/// @lua-stdlib Vector.clone
+/// @lua-self MVector
+/// @lua-return MVector
 int MethodClone(lua_State* L)
 {
     TVector<MScalarValue>* V = GetVector(L, 1);
@@ -228,6 +262,10 @@ int MetaGC(lua_State* L)
     return 0;
 }
 
+/// @lua-stdlib Vector.new
+/// @lua-param size? integer
+/// @lua-param init? MScalar
+/// @lua-return MVector
 int FactoryNew(lua_State* L)
 {
     int32 Size = 0;

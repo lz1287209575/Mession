@@ -17,10 +17,29 @@ int LogAt(lua_State* L, ELogLevel Level)
     return 0;
 }
 
+/// @lua-stdlib Log.info
+/// @lua-param msg string
+/// @lua-return nil
 int LogInfo(lua_State* L)  { return LogAt(L, ELogLevel::Info); }
+
+/// @lua-stdlib Log.warn
+/// @lua-param msg string
+/// @lua-return nil
 int LogWarn(lua_State* L)  { return LogAt(L, ELogLevel::Warn); }
+
+/// @lua-stdlib Log.error
+/// @lua-param msg string
+/// @lua-return nil
 int LogError(lua_State* L) { return LogAt(L, ELogLevel::Error); }
+
+/// @lua-stdlib Log.debug
+/// @lua-param msg string
+/// @lua-return nil
 int LogDebug(lua_State* L) { return LogAt(L, ELogLevel::Debug); }
+
+/// @lua-stdlib Log.fatal
+/// @lua-param msg string
+/// @lua-return nil
 int LogFatal(lua_State* L) { return LogAt(L, ELogLevel::Critical); }
 
 } // namespace

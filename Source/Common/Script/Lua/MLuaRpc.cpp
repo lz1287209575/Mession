@@ -10,6 +10,11 @@ namespace {
 
 IScriptRpcBridge* GBridge = nullptr;
 
+/// @lua-stdlib RPC.call
+/// @lua-param name string
+/// @lua-param ... any
+/// @lua-return any
+/// @lua-return string
 int RpcCall(lua_State* L)
 {
     if (!lua_isstring(L, 1)) {
@@ -23,12 +28,16 @@ int RpcCall(lua_State* L)
     return GBridge->CallGlobal(L, Name, 2, Top);
 }
 
+/// @lua-stdlib Time.now
+/// @lua-return number
 int TimeNow(lua_State* L)
 {
     lua_pushnumber(L, MTime::GetTimeSeconds());
     return 1;
 }
 
+/// @lua-stdlib Time.nowMs
+/// @lua-return integer
 int TimeNowMs(lua_State* L)
 {
     auto Seconds = MTime::GetTimeSeconds();
@@ -36,6 +45,9 @@ int TimeNowMs(lua_State* L)
     return 1;
 }
 
+/// @lua-stdlib Time.sleepMs
+/// @lua-param ms integer
+/// @lua-return nil
 int TimeSleepMs(lua_State* L)
 {
     if (!lua_isnumber(L, 1)) {
@@ -48,6 +60,8 @@ int TimeSleepMs(lua_State* L)
     return 0;
 }
 
+/// @lua-stdlib Id.new
+/// @lua-return integer
 int IdNew(lua_State* L)
 {
     lua_pushinteger(L, static_cast<lua_Integer>(MUniqueIdGenerator::Generate()));
