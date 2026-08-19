@@ -17,6 +17,7 @@ add_library(mht_lib STATIC
     AST/ASTReflectionVisitor.cpp
     AST/ASTPipeline.cpp
     Generation/CodeGenerator.cpp
+    Generation/LuaStdlibHintEmitter.cpp
 )
 target_link_libraries(mht_lib PUBLIC
     mession_core
