@@ -14,7 +14,7 @@ from build_systems import add_build_system_arguments
 #   - chain_remote_async:  Client → Gateway → EchoService_A.EchoAwait(Frame/await)
 #                          → EchoService_B.Echo → Actor 2001(P2)
 #   - error_unknown:      Client → Gateway → 不存在的 ActorId → 错误回包
-ALL_TEST_IDS = {1, 2, 3, 4, 5}
+ALL_TEST_IDS = {1, 2, 3, 4, 5, 6}
 SUITE_TESTS = {
     "all": ALL_TEST_IDS,
     "chain_local": {1},
@@ -22,6 +22,7 @@ SUITE_TESTS = {
     "chain_remote_async": {1, 2, 4},   # needs 1 + 2 setup + the new async test
     "error_unknown": {1, 3},
     "downlink": {1, 5},                # 下行通知端到端(MFUNCTION(CallClient))
+    "dynamic_actor": {1, 6},           # 动态 actor 注册 → Registry 上报 → 路由命中
 }
 
 

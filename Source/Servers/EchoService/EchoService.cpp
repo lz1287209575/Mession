@@ -104,12 +104,15 @@ bool MEchoService::Init(int InPort) {
     RegisterLocalActors();
 
     // 阶段 5.7:注册第一个业务 actor —— 排行榜。放在 RegisterLocal /
-    // RegisterLocalActors 之后:MActorSystem::Register 会触发进程级 ActorIds
-    // 全量上报(MActorSystem ∪ MActorRouter 本地),此时 LocalServerId 已设、
-    // 静态 actor 已进 MActorRouter——并集上报不会覆盖丢失。
+    // RegisterLocalActors 之后:MActorSystem::Register(经 MActorRouter::RegisterActor
+    // 封装)会触发进程级 ActorIds 全量上报(MActorSystem ∪ MActorRouter 本地),
+    // 此时 LocalServerId 已设、静态 actor 已进 MActorRouter——并集上报不会覆盖丢失。
     // 所有权转给 MActorSystem(Unregister/Shutdown 时 delete)。
+    // 用 MActorRouter::RegisterActor(actor 版):同时填本地路由(ServerType=Unknown,
+    // IsActorLocal 命中)与 actor 对象存储——动态 actor 注册后本进程 CallToActor
+    // 能本地命中,不必走跨进程。
     if (SubCount > 0) {
-        MActorSystem::Get().Register(NewMObject<MRankListActor>(nullptr, "RankList"));
+        MActorRouter::Get().RegisterActor(NewMObject<MRankListActor>(nullptr, "RankList"), GetSubPool());
     }
 
     return true;
@@ -375,4 +378,14 @@ SFutureResult<SEmptyServerMessage> MEchoService::TriggerNotify(const FTriggerNot
     }
 
     return CallServerFunction<SEmptyServerMessage>(GatewayConn, EServerType::Gateway, "PushClientDownlink", Push);
+}
+
+// 运行时动态注册 actor:MDynamicTestActor 进入 MActorSystem + MActorRouter 本地
+// 路由(IsActorLocal 命中),并触发进程级 ActorIds 上报 Registry——对端收到
+// EndpointChange 后 MActorRouter 注册该远端 actor,跨实例 CallToActor 可路由。
+SFutureResult<SEmptyServerMessage> MEchoService::RegisterDynamicActor(uint32 ActorId) {
+    const uint64 FullId = MServiceId::Make(Config.LocalServerType, ActorId);
+    MActorRouter::Get().RegisterActor(MakeShared<MDynamicTestActor>(FullId), GetSubPool());
+    LOG_INFO("%s: RegisterDynamicActor ActorId=%llu", Config.ServiceName.c_str(), static_cast<unsigned long long>(FullId));
+    return MServerCallAsyncSupport::MakeSuccessFuture(SEmptyServerMessage{});
 }

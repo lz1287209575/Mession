@@ -3,6 +3,7 @@
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/NetServerBase.h"
 #include "Common/Net/Routing/ActorRouter.h"
+#include "Common/Runtime/Actor/IActor.h"
 #include "Common/Net/Rpc/MRpcChannel.h"
 #include "Common/Runtime/Actor/FActorMessage.h"
 #include "Common/Runtime/Async/AwaitMacros.h"
@@ -89,6 +90,28 @@ struct SEchoServiceConfig {
     MString LogConfigPath = "";
 };
 
+// 动态 actor 测试目标(可变 ActorId,Call 回显响应)——验证运行时注册
+// (RegisterDynamicActor)后本进程/跨实例 actor 路由命中。
+class MDynamicTestActor : public IActor {
+    public:
+    explicit MDynamicTestActor(uint64 InActorId) : ActorId(InActorId) {
+    }
+
+    uint64 GetActorId() const override {
+        return ActorId;
+    }
+
+    void OnMessage(const FActorMessage& InMsg) override {
+        // Call 路径:把收到的 payload 原样回给调用方(ReplyPromise 非空时)。
+        if (InMsg.ReplyPromise != nullptr) {
+            InMsg.ReplyPromise->SetValue(TResult<TByteArray, FAppError>::Ok(InMsg.Payload));
+        }
+    }
+
+    private:
+    uint64 ActorId = 0;
+};
+
 MCLASS(Type = Service)
 class MEchoService : public MNetServerBase, public MObject {
     public:
@@ -144,6 +167,11 @@ class MEchoService : public MNetServerBase, public MObject {
     // 测试入口：客户端调用它触发一次下行广播（NotifyEvent 发给全部在线客户端）。
     MFUNCTION(ServerCall)
     SFutureResult<SEmptyServerMessage> TriggerNotify(const FTriggerNotifyRequest& Req);
+
+    // 测试入口：运行时动态注册 actor（MDynamicTestActor）——验证动态 actor
+    // 上报 Registry 后本进程/跨实例路由命中。
+    MFUNCTION(ServerCall)
+    SFutureResult<SEmptyServerMessage> RegisterDynamicActor(uint32 ActorId);
 
     // 传输层握手 / 心跳桩——MServerConnection::SendHandshake / SendHeartbeat 会通过
     // MRpc::CallRemote 调 Rpc_OnServerHandshake / Rpc_OnHeartbeat。

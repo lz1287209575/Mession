@@ -410,6 +410,52 @@ def run_test_error_unknown(sock: socket.socket) -> bool:
 TRIGGER_NOTIFY_FUNCTION_ID = compute_stable_id("MEchoService", "TriggerNotify")
 # MDownlink_MEchoService_NotifyEvent —— 生成器 ComputeStableReflectIdCpp 算出（与 C++ 侧一致）
 NOTIFY_EVENT_FUNCTION_ID = compute_stable_id("MEchoService", "NotifyEvent")
+REGISTER_DYNAMIC_FUNCTION_ID = compute_stable_id("MEchoService", "RegisterDynamicActor")
+
+
+def call_raw(sock: socket.socket, function_id: int, call_id: int, payload: bytes, timeout: float = 5.0) -> Optional[dict]:
+    """发一个请求并等待同 FunctionId 的响应（不判定 b_success）。"""
+    sock.sendall(build_client_call_packet(function_id, call_id, payload))
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        body = recv_one_packet(sock, timeout=min(1.0, max(0.1, deadline - time.time())))
+        if not body:
+            continue
+        env = parse_client_response(body)
+        if env is None or env["function_id"] != function_id:
+            continue
+        return env
+    return None
+
+
+def run_test_dynamic_actor(sock: socket.socket) -> bool:
+    """Test 6: 运行时动态注册 actor → 上报 Registry → 本进程/跨实例路由命中
+    Client → Gateway → EchoService.RegisterDynamicActor(1003)（MActorSystem +
+    MActorRouter 本地路由 + ActorIds 上报 Registry → EndpointChange 推送对端）
+    → Echo(1003) 不再 actor_route_invalid（本地 IsActorLocal 或远端推送路由命中）
+    """
+    log("Test 6 (dynamic_actor): RegisterDynamicActor(1003) -> Registry 上报 -> Echo(1003) 路由命中")
+    # 1. 注册动态 actor 1003（ActorId 打包 uint32）
+    reg = call_raw(sock, REGISTER_DYNAMIC_FUNCTION_ID, call_id=6, payload=struct.pack("<I", 1003))
+    if reg is None:
+        log("  FAIL: RegisterDynamicActor 无响应")
+        return False
+    log("  OK: RegisterDynamicActor 响应（动态 actor 已注册 + 上报）")
+    time.sleep(1.0)  # 等 Registry EndpointChange 推送到对端
+
+    # 2. Echo 到动态 actor：路由命中（本地 IsActorLocal 或对端推送路由），不得 actor_route_invalid
+    request = make_echo_request(target_actor_id=make_actor_id("Echo", 1003), message="dyn-actor")
+    try:
+        response = call_echo(sock, ECHO_FUNCTION_ID, call_id=7, payload=request)
+    except TimeoutError:
+        log("  FAIL: Echo(1003) 超时")
+        return False
+    err = parse_fapp_error(response["payload"])
+    if err is not None and err["code"] == "actor_route_invalid":
+        log("  FAIL: Echo(1003) actor_route_invalid（动态 actor 未路由）")
+        return False
+    log("  OK: Echo(1003) 路由命中（未 actor_route_invalid）")
+    return True
 
 
 def run_test_downlink_notify(sock: socket.socket) -> bool:
@@ -553,6 +599,8 @@ def run_validation(
             if ok and 3 in enabled_tests and not run_test_error_unknown(sock):
                 ok = False
             if ok and 5 in enabled_tests and not run_test_downlink_notify(sock):
+                ok = False
+            if ok and 6 in enabled_tests and not run_test_dynamic_actor(sock):
                 ok = False
 
             return ok
