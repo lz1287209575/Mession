@@ -62,9 +62,68 @@ namespace mession::script::lua {
     }
 
     TUniquePtr<MLuaScriptState> MLuaEngine::ReplaceState(TUniquePtr<MLuaScriptState> NewState) {
+        TUniqueLock Lock(StateMutex);
         TUniquePtr<MLuaScriptState> Old = std::move(State);
         State                           = std::move(NewState);
+        ++VmGeneration;
+        // 触发 modules 重 bind (Task 3 后续 hook)
+        for (auto& Kv : Modules) {
+            if (auto* LM = dynamic_cast<MLuaModule*>(Kv.second.Get())) {
+                LM->Rebind(*State);
+            }
+        }
         return Old;
+    }
+
+    TUniquePtr<MLuaScriptState> MLuaEngine::BeginSwap(TUniquePtr<MLuaScriptState> NewState) {
+        TUniqueLock Lock(StateMutex);
+        // 旧 VM 保留在 PendingOldState 直到 EndSwap 由 caller 主动释放
+        PendingOldState = std::move(State);
+        State           = std::move(NewState);
+        ++VmGeneration;
+        // Rebind 所有 modules — 每个 module 重新 luaL_ref + 重放 reflection
+        for (auto& Kv : Modules) {
+            if (auto* LM = dynamic_cast<MLuaModule*>(Kv.second.Get())) {
+                LM->Rebind(*State);
+            }
+        }
+        // 返回旧 VM ptr(caller 用于读 actor state);caller 读完调 EndSwap 释放
+        if (PendingOldState) {
+            // 转移所有权给 caller(避免 BeginSwap 返回值与 PendingOldState 同时持同一 ptr)
+            return TUniquePtr<MLuaScriptState>(PendingOldState.release());
+        }
+        return nullptr;
+    }
+
+    void MLuaEngine::EndSwap() {
+        TUniqueLock Lock(StateMutex);
+        // PendingOldState 此时可能已被 caller 释放(从 BeginSwap 拿走的 ptr)
+        // 如果还在,这里释放并触发 lua_close
+        if (PendingOldState) {
+            PendingOldState.reset();  // → MLuaScriptState 析构 → lua_close
+        }
+    }
+
+    TSharedLock<MSharedMutex> MLuaEngine::AcquireReadLock() {
+        return TSharedLock<MSharedMutex>(StateMutex);
+    }
+    TUniqueLock<MSharedMutex> MLuaEngine::AcquireWriteLock() {
+        return TUniqueLock<MSharedMutex>(StateMutex);
+    }
+
+    uint32 MLuaEngine::CountPendingCalls() const {
+        // 暂未实现 FLuaPendingCall registry(T4);返回 0 让 ReloadAtomicSwap 路径可走
+        return 0;
+    }
+
+    TResult<uint32> MLuaEngine::DrainPendingCalls(uint32 /*TimeoutSeconds*/) {
+        // Stub:T4 完成后实做;目前始终返回 0 pending(无 drain)
+        return TResult<uint32>::Ok(0);
+    }
+
+    void MLuaEngine::InstallStandardLibraries(MLuaScriptState& /*State*/) {
+        // Stub:T12 完成后实做;按序调 5 个 stdlib Install
+        // 每个 Install 都是 idempotent get-or-create,所以多次调用安全
     }
 
     TResult<EReloadResult> MLuaEngine::Reload(EReloadMode /*Mode*/) {

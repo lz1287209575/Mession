@@ -13,6 +13,8 @@ class MProperty;
 
 namespace mession::script::lua {
 
+    class MLuaScriptState;
+
     class MLuaModule : public mession::script::IScriptModule {
         public:
         MLuaModule(lua_State* InL, MClass* InCls);
@@ -27,6 +29,11 @@ namespace mession::script::lua {
         }
 
         void InstallIntoGlobal(const MString& GlobalName);
+
+        // DualVM 热重载:T2 调用,T3 实现完整语义。
+        // 当前是 no-op stub,只为了解除编译循环。
+        void Rebind(MLuaScriptState& /*NewState*/) {
+        }
 
         private:
         lua_State* L              = nullptr;

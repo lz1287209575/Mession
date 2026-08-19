@@ -11,6 +11,8 @@
 #include "Common/Script/Abstract/TVariant.h"
 #include "Common/Script/Lua/LuaScriptState.h"
 
+#include <shared_mutex>
+
 namespace mession::script::lua {
 
     // 前向声明(避免在 header 引入 FLuaPendingCall/MLuaProxyActor 全定义)
@@ -28,9 +30,29 @@ namespace mession::script::lua {
         void          StepCoroutines() override;
         TResult<void> Shutdown() override;
 
-        // 内部:Hot reload 替换 State(Replace Old State with New State)
+        // Legacy:Hot reload 替换 State(Replace Old State with New State)
         // 旧 State 由调用方持有,负责 lua_close
+        // 保留向后兼容;新代码用 BeginSwap / EndSwap 两阶段协议
         TUniquePtr<MLuaScriptState> ReplaceState(TUniquePtr<MLuaScriptState> NewState);
+
+        // DualVM 两阶段 swap:
+        //   Phase A: caller 调 BeginSwap(NewState) → installs NewState as live,
+        //            bumps VmGeneration, re-binds Modules;returns old state ptr
+        //   caller 此时读旧 VM 的 actor state
+        //   Phase B: caller 调 EndSwap() → releases PendingOldState (lua_close)
+        TUniquePtr<MLuaScriptState> BeginSwap(TUniquePtr<MLuaScriptState> NewState);
+        void                        EndSwap();
+
+        // 读路径 RAII 锁(callers 在 lua_pcall 期间持 shared lock)
+        TSharedLock<MSharedMutex> AcquireReadLock();
+        TUniqueLock<MSharedMutex> AcquireWriteLock();
+
+        // Drain:tick coroutines 直到 pending==0 或 timeout
+        TResult<uint32> DrainPendingCalls(uint32 TimeoutSeconds);
+        uint32          CountPendingCalls() const;
+
+        // VM_B bootstrap:把 5 个 stdlib 装到新 VM(调用方在 BeginSwap 前先 InstallStandardLibraries)
+        void InstallStandardLibraries(MLuaScriptState& State);
 
         // Hot reload 内部 helper:暴露旧 State 引用供 Drain / CountPendingCalls
         MLuaScriptState& GetStateForReload() {
@@ -81,8 +103,10 @@ namespace mession::script::lua {
 
         private:
         TUniquePtr<MLuaScriptState>                               State;
+        TUniquePtr<MLuaScriptState>                               PendingOldState;
         TMap<MClass*, TSharedPtr<mession::script::IScriptModule>> Modules;
         uint32                                                    VmGeneration = 1;
+        MSharedMutex                                              StateMutex;
     };
 
 } // namespace mession::script::lua
