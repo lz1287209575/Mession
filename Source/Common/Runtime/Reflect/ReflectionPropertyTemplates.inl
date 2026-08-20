@@ -334,7 +334,19 @@ public:
 
     virtual void WriteValue(void* Object, MReflectArchive& Ar) const override
     {
-        TPropertySnapshotOps<T>::Apply(this, Object, Ar);
+        // 统一递归序列化(替代 TPropertySnapshotOps→基类 WriteBytes 浅拷贝):
+        // 嵌套 MSTRUCT/vector/MString 字段按内容序列化,而非拷贝内部指针
+        // (浅拷贝曾导致读回后与源对象共享 vector 缓冲 → 析构 double free)。
+        if (!Object)
+        {
+            return;
+        }
+        T* ValuePtr = GetValuePtr<T>(Object);
+        if (!ValuePtr)
+        {
+            return;
+        }
+        SerializeArchiveValue(Ar, *ValuePtr);
     }
 
     virtual MString ExportValueToString(const void* Object) const override

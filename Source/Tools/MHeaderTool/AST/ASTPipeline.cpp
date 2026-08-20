@@ -303,7 +303,9 @@ namespace mession::headercodegen {
                 const MString F = fs::path(File).generic_string();
                 if (F.find("/Build/") != MString::npos)
                     continue;
-                if (F.find("/Tests/") != MString::npos)
+                // Protocol 测试 TU include 业务消息头(MSTRUCT 定义在其中)——需要
+                // 解析才能为消息生成反射注册,故豁免 /Protocol/Tests/。
+                if (F.find("/Tests/") != MString::npos && F.find("/Protocol/") == MString::npos)
                     continue;
                 if (F.find("/Tools/") != MString::npos)
                     continue;

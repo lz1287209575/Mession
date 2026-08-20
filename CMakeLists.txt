@@ -369,6 +369,22 @@ foreach(GroupName IN LISTS MESSION_GENERATED_GROUPS)
     mession_define_generated_group("${GroupName}")
 endforeach()
 
+# Protocol 消息 round-trip 测试(#5 协议样例)——消息注册单元经 shared 组
+# (OBJECT 库全量链接),静态库用 --start-group 解决循环引用。
+add_executable(ProtocolMessagesTest
+    Source/Protocol/Tests/ProtocolMessagesTest.cpp
+)
+target_include_directories(ProtocolMessagesTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Source
+    ${MESSION_GENERATED_DIR}
+)
+target_link_libraries(ProtocolMessagesTest PRIVATE
+    mession_generated_shared
+    -Wl,--start-group mession_netdriver mession_common mession_core -Wl,--end-group
+)
+configure_mession_compile_options(ProtocolMessagesTest)
+add_dependencies(ProtocolMessagesTest mession_reflection_codegen)
+
 add_custom_target(mession_reflection_codegen
     COMMAND ${MESSION_HEADERTOOL_CMD}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
