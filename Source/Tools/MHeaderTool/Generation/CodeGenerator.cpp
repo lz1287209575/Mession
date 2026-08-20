@@ -271,6 +271,18 @@ namespace MHeaderTool {
         Out << "#include \"Common/Net/Rpc/RpcClientCall.h\"\n";
         // 与 legacy GenerateHeader 一致：include 用户头前不额外空行
         Out << "#include \"" << MakeIncludePathFromHeader(Record.HeaderPath) << "\"\n";
+        // F0 actor-member-framework §5:继承请求链的 SetParent 需要父类注册函数
+        // 声明——MSTRUCT 父类的 MHeaderTool_Generated_RegisterStruct_<P> 在父类
+        // 的 .mgenerated.h,这里显式 include(父类是反射 struct 时)。
+        {
+            const SParsedClass& ParentProbe = ToLegacyClass(Record);
+            if (ParentProbe.Kind == EParsedTypeKind::Struct) {
+                auto ParentIt = ReflectedClassKinds.find(ParentProbe.ParentClass);
+                if (ParentIt != ReflectedClassKinds.end() && ParentIt->second) {
+                    Out << "#include \"" << SanitizeIdentifier(ParentProbe.ParentClass) << ".mgenerated.h\"\n";
+                }
+            }
+        }
         Out << "\n";
 
         SParsedClass Legacy = ToLegacyClass(Record);

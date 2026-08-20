@@ -175,6 +175,8 @@ set(MESSION_COMMON_SOURCES
     Source/Common/Net/Rpc/MClientManifest.cpp
     Source/Common/Net/Rpc/MClientDownlinkManifest.cpp
     Source/Common/Net/Rpc/MRpcChannel.cpp
+    Source/Common/Runtime/Actor/ActorMember.cpp
+    Source/Common/Runtime/Actor/MemberRpcManifest.cpp
 )
 
 add_library(mession_common STATIC
@@ -294,6 +296,7 @@ set(MESSION_HEADERTOOL_CMD
     "--client-manifest=${MESSION_GENERATED_DIR}/MClientManifest.mgenerated.cpp"
     "--client-downlink-manifest=${MESSION_GENERATED_DIR}/MClientDownlinkManifest.mgenerated.cpp"
     "--client-downlink-header=${MESSION_GENERATED_DIR}/MClientDownlinkManifest.mgenerated.h"
+    "--member-rpc-manifest=${MESSION_GENERATED_DIR}/MemberRpcManifest.mgenerated.cpp"
     "--lua-stdlib-hint-lua=${MESSION_GENERATED_DIR}/Mession.lua"
     "--lua-stdlib-hint-teal=${MESSION_GENERATED_DIR}/Mession.d.tl"
 )
@@ -322,6 +325,10 @@ endif()
 # 注册引导(MHeaderTool 生成)——configure 时文件已存在才加(首次 codegen 前不存在)
 if(TARGET mession_common AND EXISTS "${MESSION_GENERATED_DIR}/MEnumRegistration.mgenerated.cpp")
     target_sources(mession_common PRIVATE ${MESSION_GENERATED_DIR}/MEnumRegistration.mgenerated.cpp)
+endif()
+# 成员 RPC 注册表(MHeaderTool 生成)——框架成员分发器查表用,编进 common
+if(TARGET mession_common AND EXISTS "${MESSION_GENERATED_DIR}/MemberRpcManifest.mgenerated.cpp")
+    target_sources(mession_common PRIVATE ${MESSION_GENERATED_DIR}/MemberRpcManifest.mgenerated.cpp)
 endif()
 
 if(NOT MESSION_GENERATED_GROUPS)
@@ -384,6 +391,31 @@ target_link_libraries(ProtocolMessagesTest PRIVATE
 )
 configure_mession_compile_options(ProtocolMessagesTest)
 add_dependencies(ProtocolMessagesTest mession_reflection_codegen)
+
+# MemberFrameworkTest — F0 ActorMember 框架单测(继承序列化 / GMemberRpcEntries
+# 查表 / 成员挂载+GetActorMember / 框架成员分发 round-trip / FindActorMember)。
+# 注意:不链接整个 mession_generated_echoservice 组——那会带入
+# MEchoService.mgenerated.cpp(其 handler 引用 EchoService 服务实现符号,
+# 服务实现只在 mession_echo 可执行里)。这里显式编入需要的生成单元
+# (MPlayerItemContainer/MEchoPlayerActor/FMemberDispatchRequest)与成员实现
+# MPlayerItemContainer.cpp;协议消息 FPlayer* 在 shared 组。
+add_executable(MemberFrameworkTest
+    Source/Common/Runtime/Actor/Tests/MemberFrameworkTest.cpp
+    Source/Servers/EchoService/Members/MPlayerItemContainer.cpp
+    ${MESSION_GENERATED_DIR}/MPlayerItemContainer.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/MEchoPlayerActor.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/FMemberDispatchRequest.mgenerated.cpp
+)
+target_include_directories(MemberFrameworkTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Source
+    ${MESSION_GENERATED_DIR}
+)
+target_link_libraries(MemberFrameworkTest PRIVATE
+    mession_generated_shared
+    -Wl,--start-group mession_netdriver mession_common mession_core -Wl,--end-group
+)
+configure_mession_compile_options(MemberFrameworkTest)
+add_dependencies(MemberFrameworkTest mession_reflection_codegen)
 
 add_custom_target(mession_reflection_codegen
     COMMAND ${MESSION_HEADERTOOL_CMD}
@@ -519,6 +551,7 @@ mession_add_service(EchoService MEchoService SEchoServiceConfig Source/Servers/E
     SOURCES
         Source/Servers/EchoService/EchoService.cpp
         Source/Servers/EchoService/MRankListActor.cpp
+        Source/Servers/EchoService/Members/MPlayerItemContainer.cpp
     GENERATED_GROUPS shared sample
     GENERATED_SOURCES
         ${MESSION_GENERATED_DIR}/FSampleEchoRequest.mgenerated.cpp

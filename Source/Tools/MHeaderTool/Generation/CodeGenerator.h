@@ -68,6 +68,14 @@ namespace MHeaderTool {
         MString GenerateEnumHeaderFromIR(const mession::headercodegen::SParsedEnum& InEnum) const;
         MString GenerateEnumSourceFromIR(const mession::headercodegen::SParsedEnum& InEnum) const;
 
+        // F0 actor-member-framework §5:设置"全反射类名 → 是否 MSTRUCT"表。
+        // 生成 SetParent 时据此选父类注册表达式(struct → 注册函数,
+        // class → StaticClass);不在表的父类(非反射基类,如 MObject/
+        // IActorMember)跳过——无反射父类字段,继承序列化递归无收益。
+        void SetReflectedClassKinds(const TMap<MString, bool>& InReflectedClassKinds) {
+            ReflectedClassKinds = InReflectedClassKinds;
+        }
+
         // 生成头文件内容
         //
         // AsyncFrame-classes: classes from the same header that have at least
@@ -101,6 +109,17 @@ namespace MHeaderTool {
 
             out << "#include \"" << MakeIncludePathFromHeader(parsedClass.HeaderPath) << "\"\n";
             out << "\n";
+
+            // F0 actor-member-framework §5:继承请求链(FPlayerRequestBase ← ...)
+            // 的 SetParent 需要父类注册函数声明。MSTRUCT 父类的注册函数
+            // (MHeaderTool_Generated_RegisterStruct_<P>)声明在父类的
+            // .mgenerated.h,这里显式 include(父类是反射 struct 时)。
+            if (parsedClass.Kind == EParsedTypeKind::Struct) {
+                auto ParentIt = ReflectedClassKinds.find(parsedClass.ParentClass);
+                if (ParentIt != ReflectedClassKinds.end() && ParentIt->second) {
+                    out << "#include \"" << SanitizeIdentifier(parsedClass.ParentClass) << ".mgenerated.h\"\n";
+                }
+            }
 
             if (parsedClass.Kind == EParsedTypeKind::Enum) {
                 GenerateEnumHeader(out, parsedClass);
@@ -326,6 +345,12 @@ namespace MHeaderTool {
             out << "        Struct = new MClass();\n";
             out << "        Struct->SetMeta(\"" << parsedClass.Name << "\", \"" << parsedClass.HeaderPath.generic_string() << "\", nullptr, static_cast<uint32>(" << BuildClassKindExpr(parsedClass) << "));\n";
             out << "        Struct->SetKind(" << BuildClassKindExpr(parsedClass) << ");\n";
+            {
+                const MString ParentLine = BuildSetParentLine(parsedClass);
+                if (!ParentLine.empty()) {
+                    out << "        Struct->" << ParentLine << "\n";
+                }
+            }
             out << "        Struct->SetCppTypeIndex(std::type_index(typeid(" << parsedClass.Name << ")));\n";
             out << "        Struct->SetConstructor<" << parsedClass.Name << ">();\n";
             out << "        using ThisClass = " << parsedClass.Name << ";\n";
@@ -470,6 +495,12 @@ namespace MHeaderTool {
             out << "        Class = new MClass();\n";
             out << "        Class->SetMeta(\"" << parsedClass.Name << "\", \"" << parsedClass.HeaderPath.generic_string() << "\", nullptr, static_cast<uint32>(" << BuildClassKindExpr(parsedClass) << "));\n";
             out << "        Class->SetKind(" << BuildClassKindExpr(parsedClass) << ");\n";
+            {
+                const MString ParentLine = BuildSetParentLine(parsedClass);
+                if (!ParentLine.empty()) {
+                    out << "        Class->" << ParentLine << "\n";
+                }
+            }
             out << "        Class->SetConstructor<" << parsedClass.Name << ">();\n";
             out << "        " << parsedClass.Name << "::RegisterAllProperties(Class);\n";
             out << "        " << parsedClass.Name << "::RegisterAllFunctions(Class);\n";
@@ -561,6 +592,12 @@ namespace MHeaderTool {
 
             // Extract raw response type from `SFutureResult<FResp>` (CodeGenerator.h:766 ExtractResponseType).
             const MString responseType = ExtractResponseType(func.ReturnStorageType);
+            // TByteArray 响应(如框架成员分发入口 FrameworkMemberDispatch)是
+            // 原始字节流,不是 MSTRUCT——BuildPayload(TByteArray) 会因
+            // FindStruct(typeid(TByteArray)) 不命中返回空(2026-08 修复),
+            // 这里直接透传 R.GetValue()。
+            const bool bRawBytesResponse = (responseType == "TByteArray");
+            const MString okExpr = bRawBytesResponse ? "R.GetValue()" : "BuildPayload(R.GetValue())";
 
             out << "inline SFutureResult<TByteArray> " << handlerName << "(MObject* Object, const TByteArray& Payload)\n";
             out << "{\n";
@@ -589,14 +626,14 @@ namespace MHeaderTool {
             out << "    {\n";
             out << "        TResult<" << responseType << ", FAppError> R = Inner.GetResult();\n";
             out << "        if (R.IsErr()) OutPromise.SetValue(TResult<TByteArray, FAppError>::Err(R.GetError()));\n";
-            out << "        else OutPromise.SetValue(TResult<TByteArray, FAppError>::Ok(BuildPayload(R.GetValue())));\n";
+            out << "        else OutPromise.SetValue(TResult<TByteArray, FAppError>::Ok(" << okExpr << "));\n";
             out << "        return SFutureResult<TByteArray>(OutFuture);\n";
             out << "    }\n";
             out << "    Inner.Then([OutPromise](MFuture<TResult<" << responseType << ", FAppError>> F) mutable\n";
             out << "    {\n";
             out << "        TResult<" << responseType << ", FAppError> R = F.Get();\n";
             out << "        if (R.IsErr()) OutPromise.SetValue(TResult<TByteArray, FAppError>::Err(R.GetError()));\n";
-            out << "        else OutPromise.SetValue(TResult<TByteArray, FAppError>::Ok(BuildPayload(R.GetValue())));\n";
+            out << "        else OutPromise.SetValue(TResult<TByteArray, FAppError>::Ok(" << okExpr << "));\n";
             out << "    });\n";
             out << "    return SFutureResult<TByteArray>(OutFuture);\n";
             out << "}\n";
@@ -850,7 +887,33 @@ namespace MHeaderTool {
                 return "EClassKind::Service";
             if (parsedClass.ReflectionType == "Rpc")
                 return "EClassKind::Rpc";
+            // F0 actor-member-framework §2.1:Type=Actor(actor 容器)/
+            // Type=ActorMember(业务成员,协议下沉至此)
+            if (parsedClass.ReflectionType == "Actor")
+                return "EClassKind::Actor";
+            if (parsedClass.ReflectionType == "ActorMember")
+                return "EClassKind::ActorMember";
             return "EClassKind::Object";
+        }
+
+        // F0 actor-member-framework §5:反射父类接线。
+        // 父类必须是本工具扫描到的反射类才生成 SetParent(否则父类无
+        // MPROPERTY,继承序列化递归无收益,如 MObject/IActorMember):
+        //   - MSTRUCT 父类:MHeaderTool_Generated_RegisterStruct_<P>()(惰性注册)
+        //   - MCLASS 父类:<P>::StaticClass()(惰性注册)
+        // 返回 "SetParent(<Expr>);" 语句(无反射父类时返回空串);
+        // 调用方拼上接收者(Struct-> / Class->)。
+        MString BuildSetParentLine(const SParsedClass& parsedClass) const {
+            const MString& Parent = parsedClass.ParentClass;
+            if (Parent.empty() || Parent == "MObject") {
+                return {};
+            }
+            auto It = ReflectedClassKinds.find(Parent);
+            if (It == ReflectedClassKinds.end()) {
+                return {};
+            }
+            const MString Expr = It->second ? "MHeaderTool_Generated_RegisterStruct_" + Parent + "()" : Parent + "::StaticClass()";
+            return "SetParent(" + Expr + ");";
         }
 
         MString InferPropertyKind(const MString& typeName) const {
@@ -2481,6 +2544,10 @@ namespace MHeaderTool {
         }
 
         SOptions Options_;
+
+        // F0:全反射类名 → 是否 MSTRUCT(SetReflectedClassKinds 注入)。
+        // BuildSetParentLine 据此为反射父类生成 SetParent 注册表达式。
+        TMap<MString, bool> ReflectedClassKinds;
     };
 
 } // namespace MHeaderTool

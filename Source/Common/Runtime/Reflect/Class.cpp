@@ -139,6 +139,13 @@ void MClass::WriteSnapshot(void* Object, MReflectArchive& Ar) const {
         return;
     }
 
+    // 继承序列化(2026-08-14 actor-member-framework §6):先父后子递归——
+    // 与 C++ 单继承对象布局一致(基类子对象在前),保证基类字段(如
+    // FPlayerRequestBase::PlayerId)落盘、反序列化往返一致。
+    if (ParentClass) {
+        ParentClass->WriteSnapshot(Object, Ar);
+    }
+
     for (MProperty* Prop : Properties) {
         if (!Prop) {
             continue;
@@ -150,6 +157,10 @@ void MClass::WriteSnapshot(void* Object, MReflectArchive& Ar) const {
 void MClass::WriteSnapshotByDomain(void* Object, MReflectArchive& Ar, uint64 InDomainMask) const {
     if (!Object || InDomainMask == 0) {
         return;
+    }
+
+    if (ParentClass) {
+        ParentClass->WriteSnapshotByDomain(Object, Ar, InDomainMask);
     }
 
     for (MProperty* Prop : Properties) {
@@ -166,6 +177,20 @@ void MClass::ReadSnapshot(void* Object, const TByteArray& Data) const {
     }
 
     MReflectArchive Ar(Data);
+    ReadSnapshotFields(Object, Ar);
+}
+
+// 读侧辅助:父类与本类共享同一个 MReflectArchive 游标(先父后子,与
+// WriteSnapshot 的递归顺序对称)。不能用 ReadSnapshot(Object, Data)
+// 递归——那会重建 Ar,游标归零导致字段错位。
+void MClass::ReadSnapshotFields(void* Object, MReflectArchive& Ar) const {
+    if (!Object) {
+        return;
+    }
+
+    if (ParentClass) {
+        ParentClass->ReadSnapshotFields(Object, Ar);
+    }
 
     for (MProperty* Prop : Properties) {
         if (!Prop) {
@@ -181,6 +206,27 @@ void MClass::ReadSnapshotByDomain(void* Object, const TByteArray& Data, uint64 I
     }
 
     MReflectArchive Ar(Data);
+
+    if (ParentClass) {
+        ParentClass->ReadSnapshotFieldsByDomain(Object, Ar, InDomainMask);
+    }
+
+    for (MProperty* Prop : Properties) {
+        if (!Prop || (Prop->DomainFlags & InDomainMask) == 0) {
+            continue;
+        }
+        Prop->WriteValue(Object, Ar);
+    }
+}
+
+void MClass::ReadSnapshotFieldsByDomain(void* Object, MReflectArchive& Ar, uint64 InDomainMask) const {
+    if (!Object || InDomainMask == 0) {
+        return;
+    }
+
+    if (ParentClass) {
+        ParentClass->ReadSnapshotFieldsByDomain(Object, Ar, InDomainMask);
+    }
 
     for (MProperty* Prop : Properties) {
         if (!Prop || (Prop->DomainFlags & InDomainMask) == 0) {

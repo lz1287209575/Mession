@@ -6,6 +6,7 @@
 #include "Common/Net/ServiceDiscovery/EndpointCache.h"
 #include "MClientDownlinkManifest.mgenerated.h"
 #include "Protocol/Messages/Common/ClientDownlinkMessages.h"
+#include "Common/Runtime/Actor/ActorMember.h"
 #include "Common/Runtime/Actor/FActorMessage.h"
 #include "Common/Runtime/Actor/MActorSystem.h"
 #include "Common/Runtime/Async/MAsync.h"
@@ -113,6 +114,19 @@ bool MEchoService::Init(int InPort) {
     // 能本地命中,不必走跨进程。
     if (SubCount > 0) {
         MActorRouter::Get().RegisterActor(NewMObject<MRankListActor>(nullptr, "RankList"), GetSubPool());
+    }
+
+    // F0 ActorMember 框架验证:创建 demo 玩家 actor(容器)+ 挂载背包成员,
+    // 注册进 MActorSystem(PlayerId 寻址)。客户端经 FrameworkMemberDispatch
+    // 调成员 UseItem——验证"协议下沉到成员 + 成员分发器"全链路。
+    // PoC 固定 PlayerId=10001(动态创建/DB 加载为 F1 业务项)。
+    {
+        const uint64 DemoPlayerId = 10001;
+        TSharedPtr<MEchoPlayerActor> DemoPlayer = NewMObject<MEchoPlayerActor>(nullptr, "DemoPlayer", DemoPlayerId);
+        DemoPlayer->AddMember("MPlayerItemContainer", CreateDefaultSubObject<MPlayerItemContainer>(DemoPlayer.Get(), "ItemContainer"));
+        MActorRouter::Get().RegisterActor(DemoPlayer, GetSubPool());
+        LOG_INFO("MEchoService: demo player actor registered player=%llu (members: MPlayerItemContainer)",
+                 static_cast<unsigned long long>(DemoPlayerId));
     }
 
     return true;
@@ -378,4 +392,12 @@ SFutureResult<SEmptyServerMessage> MEchoService::RegisterDynamicActor(uint32 Act
     MActorRouter::Get().RegisterActor(MakeShared<MDynamicTestActor>(FullId), GetSubPool());
     LOG_INFO("%s: RegisterDynamicActor ActorId=%llu", Config.ServiceName.c_str(), static_cast<unsigned long long>(FullId));
     return MServerCallAsyncSupport::MakeSuccessFuture(SEmptyServerMessage{});
+}
+
+// F0 ActorMember 框架成员分发入口:直接转交框架分发器(Common/Runtime/Actor/
+// ActorMember.cpp)——查 GMemberRpcEntries → 请求反序列化取 PlayerId →
+// MActorSystem::Find(PlayerId) → actor 宿主成员表 → 成员反射调用。
+// 这里是框架机制,不是业务协议;业务逻辑在成员(MPlayerItemContainer)上。
+SFutureResult<TByteArray> MEchoService::FrameworkMemberDispatch(const FMemberDispatchRequest& Req) {
+    return DispatchFrameworkMemberCall(Req.FunctionId, Req.Payload);
 }

@@ -21,6 +21,8 @@
 #include "Servers/App/ServerCallAsyncSupport.h"
 #include "Servers/App/ServiceId.h"
 #include "Servers/App/ServiceMain.h"
+#include "Servers/EchoService/Members/MEchoPlayerActor.h"
+#include "Servers/EchoService/Members/MPlayerItemContainer.h"
 
 // P3 v1 inline-body design: the generated Frame struct
 // (`MHeaderTool_AsyncFrame_MEchoService_EchoAwait`) lives in a separate
@@ -112,6 +114,22 @@ class MDynamicTestActor : public IActor {
     uint64 ActorId = 0;
 };
 
+// F0 ActorMember 框架验证入口请求:FunctionId(成员方法稳定 id)+ Payload
+// (成员请求反射字节流,如 FPlayerUseItemRequest)。生成器 ServerCall handler
+// 只支持单参数,所以 FunctionId/Payload 打包进一个 MSTRUCT。
+// 客户端经 Gateway 按 FunctionId 路由到本服务进程 → FrameworkMemberDispatch
+// → 框架成员分发器(DispatchFrameworkMemberCall, Common/Runtime/Actor/
+// ActorMember.cpp):查 GMemberRpcEntries → 反序列化取 PlayerId →
+// MActorSystem::Find(PlayerId) → actor 宿主 → 成员 → 反射调用。
+MSTRUCT()
+struct FMemberDispatchRequest {
+    MPROPERTY()
+    uint16 FunctionId = 0;
+
+    MPROPERTY()
+    TByteArray Payload;
+};
+
 MCLASS(Type = Service)
 class MEchoService : public MNetServerBase, public MObject {
     public:
@@ -172,6 +190,13 @@ class MEchoService : public MNetServerBase, public MObject {
     // 上报 Registry 后本进程/跨实例路由命中。
     MFUNCTION(ServerCall)
     SFutureResult<SEmptyServerMessage> RegisterDynamicActor(uint32 ActorId);
+
+    // F0 ActorMember 框架成员分发入口（PoC 验证载体）——框架内部机制，
+    // 业务类零业务协议：FunctionId → GMemberRpcEntries → 请求取 PlayerId
+    // → actor 宿主 → 成员反射调用。未来 MPlayerService 等业务进程同样
+    // 继承 MNetServerBase + MObject 声明这一个入口即可获得成员分发能力。
+    MFUNCTION(ServerCall)
+    SFutureResult<TByteArray> FrameworkMemberDispatch(const FMemberDispatchRequest& Req);
 
     // 传输层握手 / 心跳桩——MServerConnection::SendHandshake / SendHeartbeat 会通过
     // MRpc::CallRemote 调 Rpc_OnServerHandshake / Rpc_OnHeartbeat。

@@ -28,6 +28,7 @@ namespace {
         std::cerr << "  --client-manifest=<path>  Client manifest output path (.cpp)\n";
         std::cerr << "  --client-downlink-manifest=<path>  Client downlink manifest output path\n";
         std::cerr << "  --client-downlink-header=<path>   Client downlink header output path\n";
+        std::cerr << "  --member-rpc-manifest=<path>      Member RPC manifest output path (.cpp)\n";
         std::cerr << "  --lua-stdlib-hint-lua=<path>       Mession.lua output path (lua-language-server hint)\n";
         std::cerr << "  --lua-stdlib-hint-teal=<path>      Mession.d.tl output path (Teal type-checker hint)\n";
         std::cerr << "  --verbose                 Verbose output\n";
@@ -74,6 +75,8 @@ namespace {
                 options.ClientDownlinkManifestPath = arg.substr(27);
             } else if (arg.rfind("--client-downlink-header=", 0) == 0) {
                 options.ClientDownlinkHeaderPath = arg.substr(25);
+            } else if (arg.rfind("--member-rpc-manifest=", 0) == 0) {
+                options.MemberRpcManifestPath = arg.substr(22);
             } else if (arg.rfind("--lua-stdlib-hint-lua=", 0) == 0) {
                 options.LuaStdlibHintLuaPath = arg.substr(22);
             } else if (arg.rfind("--lua-stdlib-hint-teal=", 0) == 0) {
@@ -118,10 +121,25 @@ int main(int argc, char** argv) {
     Options.ClientManifestPath = fs::absolute(Options.ClientManifestPath);
     Options.ClientDownlinkManifestPath = fs::absolute(Options.ClientDownlinkManifestPath);
     Options.ClientDownlinkHeaderPath = fs::absolute(Options.ClientDownlinkHeaderPath);
+    Options.MemberRpcManifestPath = fs::absolute(Options.MemberRpcManifestPath);
 
     SParseIR IR = MASTPipeline::Run(Options);
 
     MCodeGenerator CodeGen(Options);
+
+    // F0 actor-member-framework §5:注入"全反射类名 → 是否 MSTRUCT"表,
+    // 供 BuildSetParentLine 为继承请求链(FPlayerRequestBase ← ...)生成
+    // SetParent 注册(继承序列化先父后子,见 Class.cpp)。
+    {
+        TMap<MString, bool> ReflectedClassKinds;
+        for (const auto& Record : IR.Records) {
+            if (ReflectedClassKinds.find(Record.Name) == ReflectedClassKinds.end()) {
+                ReflectedClassKinds[Record.Name] = (Record.Kind == mession::headercodegen::ERecordKind::Struct);
+            }
+        }
+        CodeGen.SetReflectedClassKinds(ReflectedClassKinds);
+    }
+
     TSet<MString>  WrittenTypeNames;
     for (const auto& Record : IR.Records) {
         // 同名类型（不同 TU 的重复 Record / 同名不同类）只生成一次，
@@ -293,6 +311,10 @@ int main(int argc, char** argv) {
     if (!Options.ClientDownlinkHeaderPath.empty()) {
         ManifestGenerators ManifestGen(Options);
         WriteFile(Options.ClientDownlinkHeaderPath, ManifestGen.GenerateClientDownlinkHeader(LegacyClasses));
+    }
+    if (!Options.MemberRpcManifestPath.empty()) {
+        ManifestGenerators ManifestGen(Options);
+        WriteFile(Options.MemberRpcManifestPath, ManifestGen.GenerateMemberRpcManifest(LegacyClasses));
     }
 
     // LuaBind — emit <Class>.lua / <Class>.d.tl（await merge 接线；

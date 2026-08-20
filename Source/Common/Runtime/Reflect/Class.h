@@ -77,11 +77,13 @@ enum class EFunctionFlags : uint32 {
 enum class ERpcType : uint8 { None = 0, Server = 1, Client = 2, Multicast = 3, ServerToServer = 4 };
 
 enum class EClassKind : uint8 {
-    Object  = 0,
-    Server  = 1,
-    Service = 2,
-    Rpc     = 3,
-    Struct  = 4,
+    Object      = 0,
+    Server      = 1,
+    Service     = 2,
+    Rpc         = 3,
+    Struct      = 4,
+    Actor       = 5, // Type = Actor:actor 容器(IActor + MObject,成员挂载点)
+    ActorMember = 6, // Type = ActorMember:业务成员(IActorMember,协议下沉至此)
 };
 
 class MEnumValue {
@@ -258,6 +260,12 @@ class MClass {
     virtual void WriteSnapshotByDomain(void* Object, class MReflectArchive& Ar, uint64 InDomainMask) const;
     virtual void ReadSnapshot(void* Object, const TByteArray& Data) const;
     virtual void ReadSnapshotByDomain(void* Object, const TByteArray& Data, uint64 InDomainMask) const;
+
+    // 继承序列化辅助:父类与本类共享同一 MReflectArchive 游标(先父后子,
+    // 对称于 WriteSnapshot 的递归顺序)。读入口 ReadSnapshot/ByDomain 建
+    // Ar 后转调这里,避免递归重建 Ar 导致游标归零、字段错位。
+    void ReadSnapshotFields(void* Object, class MReflectArchive& Ar) const;
+    void ReadSnapshotFieldsByDomain(void* Object, class MReflectArchive& Ar, uint64 InDomainMask) const;
     MString      ExportObjectToString(const void* Object) const;
 
     void CopyProperties(void* Dest, const void* Src) const;
@@ -290,6 +298,14 @@ class MClass {
         ParentClass = InParent;
         ClassFlags  = InFlags;
         AssetTypeId = ComputeStableAssetTypeId(ClassName.c_str());
+    }
+
+    // 继承序列化支持:生成器在 SetMeta 之后单独设置反射父类(MSTRUCT 继承
+    // 链如 FPlayerRequestBase ← FPlayerUseItemRequest;WriteSnapshot/ReadSnapshot
+    // 先父后子递归,见 Class.cpp)。SetMeta 的 InParent 恒传 nullptr 的历史
+    // 行为保留——父类由生成器这里显式接线。
+    void SetParent(MClass* InParent) {
+        ParentClass = InParent;
     }
 
     void SetKind(EClassKind InKind) {

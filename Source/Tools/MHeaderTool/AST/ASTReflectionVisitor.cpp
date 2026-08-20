@@ -1,5 +1,6 @@
 #include "AST/ASTReflectionVisitor.h"
 #include "AST/MMetaLexer.h"
+#include "Util/StringUtil.h"
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
@@ -77,6 +78,15 @@ namespace mession::headercodegen {
 
         for (const auto& Base : RD->bases()) {
             Record.AllParentClasses.push_back(Base.getType().getAsString());
+        }
+
+        // 父类解析:MCLASS 类从 MGENERATED_BODY(Class, Parent, Flags) 第 2 段拿
+        // (C++ 基类名,上面 Near(MGeneratedArgs) 分支已填);MSTRUCT 没有
+        // MGENERATED_BODY,真实基类只出现在 RD->bases()——取第一个作为反射父类
+        // (业务请求继承链:FPlayerUseItemRequest : FPlayerRequestBase)。生成端
+        // 会查"反射类表"决定是否 SetParent(非反射基类如 MObject 跳过)。
+        if (Record.ParentClass.empty() && !Record.AllParentClasses.empty()) {
+            Record.ParentClass = Record.AllParentClasses[0];
         }
 
         // 同一头文件会被多个 TU include（compile_commands 有 160 个源文件），
@@ -597,16 +607,23 @@ namespace mession::headercodegen {
     }
 
     TOptional<MString> MASTReflectionVisitor::ExtractMacroValue(const MString& MacroArgs, const MString& Key) const {
-        const MString Needle = Key + "=";
-        const size_t  Pos    = MacroArgs.find(Needle);
-        if (Pos == MString::npos)
-            return {};
-
-        const size_t End = MacroArgs.find_first_of(",)", Pos + Needle.size());
-        if (End == MString::npos)
-            return MacroArgs.substr(Pos + Needle.size());
-
-        return MacroArgs.substr(Pos + Needle.size(), End - Pos - Needle.size());
+        // 支持 "Key = Value"(带空格)与 "Key=Value" 两种写法:按顶层段拆分
+        // (SplitMacroArgs 处理嵌套括号),'=' 拆 Key/Value 后各自 trim。
+        // 旧实现用 "Key=" 精确子串匹配——遇到仓库通行的 "Type = Service"
+        // 带空格写法必然失败,ReflectionType 恒为默认("Object"),
+        // Service/Actor/ActorMember 的 Type 映射从未真正生效(2026-08 修复)。
+        for (const MString& Part : SplitMacroArgs(MacroArgs)) {
+            const size_t EqPos = Part.find('=');
+            if (EqPos == MString::npos) {
+                continue;
+            }
+            const MString PartKey = MHeaderTool::Trim(Part.substr(0, EqPos));
+            if (PartKey != Key) {
+                continue;
+            }
+            return MHeaderTool::Trim(Part.substr(EqPos + 1));
+        }
+        return {};
     }
 
     TVector<MString> MASTReflectionVisitor::SplitMacroArgs(const MString& Args) const {
