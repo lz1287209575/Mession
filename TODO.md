@@ -74,8 +74,10 @@
 
 ### 6. Coding-style C2–C5
 
-见 `Docs/CodingStyle.md` §落地进度：Common / Servers / Tools+Protocol 全量 format + CLAUDE 快查收口。  
-**单独 PR**，勿与功能改动混提。
+~~见 `Docs/CodingStyle.md` §落地进度：Common / Servers / Tools+Protocol 全量 format + CLAUDE 快查收口。
+**单独 PR**，勿与功能改动混提。~~
+
+**已决定跳过(2026-08-20)**：全量 format 与功能开发冲突且收益低，不再安排。
 
 ### 7. 运行时基础 / C++17 异步（设计已定）
 
