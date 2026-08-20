@@ -14,6 +14,7 @@
 #include "Common/Script/Lua/MLuaMap.h"
 #include "Common/Script/Lua/MLuaRpc.h"
 #include "Common/Script/Lua/MLuaVector.h"
+#include "Common/Script/Lua/MLuaBridge.h"
 #include "Common/Script/Lua/LuaHotReload.h"
 
 #include <chrono>
@@ -163,6 +164,10 @@ namespace mession::script::lua {
         MLuaLog::Install(L);
         MLuaMap::Install(L);
         MLuaVector::Install(L);
+
+        // Bridge:暴露 M.InvokeStatic / M.GetObject 给 LuaBindEmitter 生成的代码用
+        // Phase 1: 静态 dispatch + 4 primitive args/return
+        MLuaBridge::Install(L, this);
     }
 
     TResult<EReloadResult> MLuaEngine::Reload(EReloadMode Mode) {

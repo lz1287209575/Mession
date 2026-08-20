@@ -14,6 +14,7 @@ add_library(mession_lua STATIC
     MLuaRpc.cpp
     MLuaProxyActor.cpp
     FPendingCall.cpp
+    MLuaBridge.cpp
 )
 target_include_directories(mession_lua
     PUBLIC

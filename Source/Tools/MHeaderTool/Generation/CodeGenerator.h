@@ -792,6 +792,11 @@ namespace MHeaderTool {
                     out << "        Func->Params.push_back(CreateOffsetProperty<" << param.StorageType << ">(\"" << param.Name << "\", EPropertyType::" << param.PropertyKind << ", offsetof(" << paramStructName << ", " << param.Name
                         << ")));\n";
                 }
+                // Return property:void 返回设 nullptr;非 void emit TReturn-typed property
+                // 供 Lua runtime 端(MLuaBridge)按 CppTypeIndex 反查 deserializer
+                if (func.ReturnStorageType != "void" && !func.ReturnStorageType.empty()) {
+                    out << "        Func->ReturnProperty = CreateOffsetProperty<" << func.ReturnStorageType << ">(\"__return__\", EPropertyType::None, 0);\n";
+                }
                 out << "        InClass->RegisterFunction(Func);\n";
             }
 
