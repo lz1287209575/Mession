@@ -92,6 +92,7 @@ namespace MHeaderTool {
         MString                  ClassFlagsExpr = "0";
         MString                  ReflectionType = "Object";
         MString                  Owner;
+        MString                  QualifiedName; // namespace 全名(enum/类;namespace 级 scoped enum 用)
         TVector<MString>         AllParentClasses; // 所有基类，用于检查是否继承自 MServerCallProxyBase
         bool                     bScopedEnum        = false;
         MString                  EnumUnderlyingType = "int32";

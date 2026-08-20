@@ -59,6 +59,8 @@ namespace MHeaderTool {
         // 复用 MCodeGenerator.cpp 内的 ToLegacyClass shim，保证与逐 Record
         // 生成路径（GenerateHeaderFromIR 等）字节一致。
         TVector<SParsedClass> ToLegacyClasses(const mession::headercodegen::SParseIR& IR) const;
+        // Records + namespace enum（CMake manifest 用——enum 注册单元需编译）
+        TVector<SParsedClass> ToLegacyClassesWithEnums(const mession::headercodegen::SParseIR& IR) const;
 
         // A2 follow-up (AST 重构 merge) — enum 生成。AST 路径的 SParseIR::Enums 走
         // legacy GenerateHeader/GenerateSource（经 ToLegacyEnum shim），与
@@ -253,33 +255,31 @@ namespace MHeaderTool {
 
         public:
         void GenerateEnumHeader(std::ostringstream& out, const SParsedClass& parsedClass) const {
-            // For nested scoped enums (inside classes), we can't generate registration code
-            // because the enum is private and can't be accessed externally
-            if (parsedClass.bScopedEnum && parsedClass.Owner.empty()) {
-                // Generate a no-op stub that returns nullptr
-                out << "// Nested scoped enum - cannot generate registration\n";
+            // 类内 enum(Owner 非空,如 MJsonWriter::EScopeType)通常 private——
+            // 类型/值外部不可访问,无法生成可编译注册,保持 no-op。
+            if (parsedClass.bScopedEnum && !parsedClass.Owner.empty()) {
+                out << "// Nested class-scoped enum - cannot generate registration\n";
                 out << "inline MEnum* MHeaderTool_Generated_RegisterEnum_" << parsedClass.Name << "()\n";
                 out << "{\n";
                 out << "    return nullptr;\n";
                 out << "}\n";
                 return;
             }
+            // namespace 级 scoped enum(Owner 空)用 QualifiedName 生成真实注册——
+            // typeid / 值引用需完整限定名(如 mession::script::EScriptLanguage::Value),
+            // 而不是裸名字(全局作用域引用不到)。
+            const MString TypeRef = parsedClass.QualifiedName.empty() ? parsedClass.Name : parsedClass.QualifiedName;
 
             out << "inline MEnum* MHeaderTool_Generated_RegisterEnum_" << parsedClass.Name << "()\n";
             out << "{\n";
             out << "    static MEnum* Enum = nullptr;\n";
             out << "    if (!Enum)\n";
             out << "    {\n";
-            out << "        Enum = new MEnum(\"" << parsedClass.Name << "\", \"" << parsedClass.HeaderPath.generic_string() << "\", std::type_index(typeid(" << parsedClass.Name << ")));\n";
+            out << "        Enum = new MEnum(\"" << parsedClass.Name << "\", \"" << parsedClass.HeaderPath.generic_string() << "\", std::type_index(typeid(" << TypeRef << ")));\n";
             for (size_t i = 0; i < parsedClass.EnumValues.size(); ++i) {
                 MString value = parsedClass.EnumValues[i];
-                if (parsedClass.bScopedEnum && !parsedClass.Owner.empty()) {
-                    // For scoped enums in namespaces, try EnumName::Value
-                    out << "        Enum->AddValue(\"" << value << "\", static_cast<int64>(" << parsedClass.Name << "::" << value << "));\n";
-                } else if (parsedClass.bScopedEnum && parsedClass.Owner.empty()) {
-                    // Nested scoped enum inside a class - skip value registration
-                    // The enum type is registered but values can't be accessed externally
-                    continue;
+                if (parsedClass.bScopedEnum) {
+                    out << "        Enum->AddValue(\"" << value << "\", static_cast<int64>(" << TypeRef << "::" << value << "));\n";
                 } else {
                     out << "        Enum->AddValue(\"" << value << "\", static_cast<int64>(" << value << "));\n";
                 }

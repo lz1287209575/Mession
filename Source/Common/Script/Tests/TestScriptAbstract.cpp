@@ -7,6 +7,7 @@
 #include "Common/Script/Abstract/SScriptEngineConfig.h"
 #include "Common/Script/Abstract/ScriptErrorCodes.h"
 #include "Common/Script/Abstract/TVariant.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 
 #include <cassert>
 #include <cstdio>
@@ -60,11 +61,20 @@ static void TestScriptErrorCodes() {
     std::printf("ok: TestScriptErrorCodes\n");
 }
 
+static void TestEnumReflection() {
+    // namespace 级 scoped enum 反射注册(A3 修复前是 no-op nullptr)
+    MEnum* Enum = MObject::FindEnum("EScriptLanguage");
+    assert(Enum != nullptr);
+    assert(Enum->GetValues().size() >= 4);
+    std::printf("ok: TestEnumReflection (FindEnum EScriptLanguage, %zu values)\n", Enum->GetValues().size());
+}
+
 int main() {
     TestEScriptLanguageNames();
     TestTVariantRoundtrip();
     TestSScriptArgsCtor();
     TestScriptErrorCodes();
+    TestEnumReflection();
     std::printf("ALL OK\n");
     return 0;
 }

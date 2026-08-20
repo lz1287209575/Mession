@@ -262,18 +262,34 @@ class MObject {
     }
 
     static MEnum* FindEnum(const MString& InName) {
+        EnsureEnumsRegistered();
         auto It = GetEnumMap().find(InName);
         return (It != GetEnumMap().end()) ? It->second : nullptr;
     }
 
     static MEnum* FindEnum(uint16 InId) {
+        EnsureEnumsRegistered();
         auto It = GetEnumIdMap().find(InId);
         return (It != GetEnumIdMap().end()) ? It->second : nullptr;
     }
 
     static MEnum* FindEnum(const std::type_index& InCppTypeIndex) {
+        EnsureEnumsRegistered();
         auto It = GetEnumTypeMap().find(InCppTypeIndex);
         return (It != GetEnumTypeMap().end()) ? It->second : nullptr;
+    }
+
+    // namespace enum 注册引导——MHeaderTool_RegisterAllEnums() 由生成器
+    // (MEnumRegistration.mgenerated.cpp)定义;惰性调用保证静态库链接时
+    // 该符号被引用 → 注册单元被拉取(否则匿名静态对象会被链接器 GC)。
+    static void EnsureEnumsRegistered() {
+        static bool bDone = false;
+        if (bDone) {
+            return;
+        }
+        bDone = true;
+        extern void MHeaderTool_RegisterAllEnums();
+        MHeaderTool_RegisterAllEnums();
     }
 
     static void RegisterEnum(MEnum* InEnum) {

@@ -66,6 +66,8 @@ namespace mession::headercodegen {
     struct SParsedEnum {
         EEnumKind                 EnumKind = EEnumKind::Plain;
         MString                   Name;
+        MString                   QualifiedName; // namespace 全名(如 mession::script::EScriptLanguage)
+        MString                   Owner;         // 类内 enum 的所属类名(私有 enum 值不可外部引用)
         fs::path                  HeaderPath;
         MString                   UnderlyingType;
         TVector<MString>          Values;

@@ -370,16 +370,20 @@ namespace MHeaderTool {
     // 复用 anonymous namespace 里的 ToLegacyClass（同一 TU 可见），逐 Record
     // 转换，与 GenerateHeaderFromIR 内部的单 Record 转换完全一致。
     TVector<SParsedClass> MCodeGenerator::ToLegacyClasses(const mession::headercodegen::SParseIR& IR) const {
-        // 只含 Records（类/结构）。enum 不进 manifest/构建组：
-        //  - legacy 的 enum 生成本就是 no-op 注册 stub（namespace 级 scoped enum
-        //    无法在全局作用域引用），编译与否无功能差异；
-        //  - AST 版会扫描到所有 Source/ 内 scoped enum（含用户内部实现 enum，
-        //    如 MLuaVector.h 的 MScalarType）——若进 shared 组编译，其 .mgenerated.cpp
-        //    include 用户头（可能带 <lua.h> 等外部依赖）会破坏构建。
+        // 只含 Records（类/结构）。enum 走 ToLegacyClassesWithEnums（CMake manifest
+        // 需要 namespace enum 的注册单元编译；其它 manifest 消费仍只用 Records）。
         TVector<SParsedClass> Out;
         Out.reserve(IR.Records.size());
         for (const auto& Record : IR.Records) {
             Out.push_back(ToLegacyClass(Record));
+        }
+        return Out;
+    }
+
+    TVector<SParsedClass> MCodeGenerator::ToLegacyClassesWithEnums(const mession::headercodegen::SParseIR& IR) const {
+        TVector<SParsedClass> Out = ToLegacyClasses(IR);
+        for (const auto& Enum : IR.Enums) {
+            Out.push_back(ToLegacyEnum(Enum));
         }
         return Out;
     }
@@ -395,14 +399,16 @@ namespace MHeaderTool {
     SParsedClass ToLegacyEnum(const mession::headercodegen::SParsedEnum& In) {
         SParsedClass Out;
         Out.Name           = In.Name;
+        Out.QualifiedName  = In.QualifiedName;
+        Out.Owner          = In.Owner;
         Out.HeaderPath     = In.HeaderPath;
         Out.Kind           = EParsedTypeKind::Enum;
         Out.bScopedEnum    = In.bScopedEnum;
         Out.ReflectionType = "Enum";
         Out.EnumValues     = In.Values;
-        // Owner 保持空：对齐旧 EnumParser（不设 Owner）——legacy
-        // GenerateEnumHeader 对 `bScopedEnum && Owner.empty()` 生成 no-op 注册
-        // stub（namespace 级 scoped enum 在全局作用域无法引用，如 mession::script::EReloadMode）。
+        // Owner 保持空:namespace 级 scoped enum。GenerateEnumHeader 对
+        // `bScopedEnum && Owner.empty()` 用 QualifiedName 生成真实注册
+        // (如 mession::script::EScriptLanguage::Value),不再 no-op。
         return Out;
     }
 

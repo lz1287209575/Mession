@@ -314,6 +314,16 @@ message(STATUS "Including manifest: ${MESSION_HEADERTOOL_MANIFEST}")
 include("${MESSION_HEADERTOOL_MANIFEST}" OPTIONAL)
 message(STATUS "MESSION_GENERATED_GROUPS = ${MESSION_GENERATED_GROUPS}")
 
+# namespace enum 注册单元编进 mession_common——所有链接 mession_common 的
+# 目标(服务/测试)都能用反射查 enum(FindEnum 非空)。
+if(TARGET mession_common AND MESSION_GENERATED_ENUM_SOURCES)
+    target_sources(mession_common PRIVATE ${MESSION_GENERATED_ENUM_SOURCES})
+endif()
+# 注册引导(MHeaderTool 生成)——configure 时文件已存在才加(首次 codegen 前不存在)
+if(TARGET mession_common AND EXISTS "${MESSION_GENERATED_DIR}/MEnumRegistration.mgenerated.cpp")
+    target_sources(mession_common PRIVATE ${MESSION_GENERATED_DIR}/MEnumRegistration.mgenerated.cpp)
+endif()
+
 if(NOT MESSION_GENERATED_GROUPS)
     message(WARNING "No generated groups found, using stub")
     set(MESSION_GENERATED_GROUPS shared)

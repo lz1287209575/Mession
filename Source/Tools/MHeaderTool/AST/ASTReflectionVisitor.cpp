@@ -266,6 +266,10 @@ namespace mession::headercodegen {
             return true;
         if (HeaderStr.find("/Tools/") != MString::npos)
             return true;
+        // Lua 内部实现 enum(如 MScalarType/ECoroutineResumeStatus):include 用户头
+        // 带 <lua.h> 等外部依赖,生成物无法在 mession_common 编译——不反射。
+        if (HeaderStr.find("/Script/Lua/") != MString::npos)
+            return true;
         if (!ED->isScoped())
             return true;
         if (ED->getNameAsString().empty())
@@ -273,7 +277,13 @@ namespace mession::headercodegen {
 
         SParsedEnum E;
         E.Name           = ED->getNameAsString();
+        E.QualifiedName  = ED->getQualifiedNameAsString();
         E.HeaderPath     = EnumHeader;
+        // 类内 enum(如 MJsonWriter::EScopeType):记录 Owner——生成时私有 enum
+        // 的值/类型外部不可访问,跳过值注册(只 namespace 级 enum 做真实注册)。
+        if (const auto* ParentRecord = llvm::dyn_cast<clang::CXXRecordDecl>(ED->getDeclContext())) {
+            E.Owner = ParentRecord->getNameAsString();
+        }
         E.UnderlyingType = ED->getIntegerType().getAsString();
 
         if (ED->isScoped()) {
