@@ -15,6 +15,7 @@ add_library(mession_lua STATIC
     MLuaProxyActor.cpp
     FPendingCall.cpp
     MLuaBridge.cpp
+    MTestScriptBindClass.cpp
 )
 target_include_directories(mession_lua
     PUBLIC

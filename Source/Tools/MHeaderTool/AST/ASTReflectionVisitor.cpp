@@ -556,8 +556,15 @@ namespace mession::headercodegen {
         for (const MString& Part : Parts) {
             const size_t EqPos = Part.find('=');
             if (EqPos != MString::npos) {
-                const MString Key = Part.substr(0, EqPos);
-                const MString Val = Part.substr(EqPos + 1);
+                // Key/Value 各自 trim:仓库通行写法 "Target = Player"(带空格),
+                // 不 trim 则 "Target " != "Target" 导致 Target/Endpoint/Api 等
+                // 带等号参数全部解析失败(2026-08-20 与 ExtractMacroValue 同源修复)。
+                const MString Key = MHeaderTool::Trim(Part.substr(0, EqPos));
+                MString       Val = MHeaderTool::Trim(Part.substr(EqPos + 1));
+                // 剥掉包裹引号:"Target = \"Player\"" → Player(宏参数里的 C 字符串字面量)
+                if (Val.size() >= 2 && Val.front() == '"' && Val.back() == '"') {
+                    Val = Val.substr(1, Val.size() - 2);
+                }
                 if (Key == "Endpoint")
                     OutFunc.Endpoint = Val;
                 else if (Key == "Message")
@@ -585,8 +592,8 @@ namespace mession::headercodegen {
                     OutFunc.bIsRpc    = true;
                 } else if (Part == "Client") {
                     OutFunc.Transport = EFunctionTransport::Client;
-                } else if (Part == "LuaBind") {
-                    OutFunc.Transport = EFunctionTransport::LuaBind;
+                } else if (Part == "ScriptBind") {
+                    OutFunc.Transport = EFunctionTransport::ScriptBind;
                 } else if (Part == "NetServer") {
                     OutFunc.RpcKind = ERpcKind::Server;
                     OutFunc.bIsRpc  = true;

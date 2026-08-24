@@ -13,7 +13,7 @@
 # in CodeGenerator.h; A3 cleanup removes them.
 add_library(mht_lib STATIC
     MHeaderToolLib.cpp
-    Generation/LuaBindEmitter.cpp
+    Generation/ScriptBindEmitter.cpp
     AST/ASTReflectionVisitor.cpp
     AST/ASTPipeline.cpp
     Generation/CodeGenerator.cpp

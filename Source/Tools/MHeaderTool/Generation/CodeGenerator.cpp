@@ -179,8 +179,8 @@ namespace MHeaderTool {
             case mession::headercodegen::EFunctionTransport::Client:
                 Out.Transport = "Client";
                 break;
-            case mession::headercodegen::EFunctionTransport::LuaBind:
-                Out.Transport = "LuaBind";
+            case mession::headercodegen::EFunctionTransport::ScriptBind:
+                Out.Transport = "ScriptBind";
                 break;
             case mession::headercodegen::EFunctionTransport::None:
             default:

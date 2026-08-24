@@ -5,7 +5,7 @@
 #include "AST/ASTPipeline.h"
 #include "Core/Types.h"
 #include "Generation/CodeGenerator.h"
-#include "Generation/LuaBindEmitter.h"
+#include "Generation/ScriptBindEmitter.h"
 #include "Generation/LuaStdlibHintEmitter.h"
 #include "Generation/ManifestGenerators.h"
 #include "Util/FileUtil.h"
@@ -317,9 +317,9 @@ int main(int argc, char** argv) {
         WriteFile(Options.MemberRpcManifestPath, ManifestGen.GenerateMemberRpcManifest(LegacyClasses));
     }
 
-    // LuaBind — emit <Class>.lua / <Class>.d.tl（await merge 接线；
-    // main 侧 LuaModule.cpp 原为 "LuaBindEmitter not yet wired"）。
-    LuaBindEmitter::Run(Options.OutputDir, LegacyClasses);
+    // ScriptBind — emit <Class>.lua / <Class>.d.tl（generates from MHeaderTool;
+    // 后续可加 PythonBindEmitter / TsBindEmitter 同 Transport 入口）。
+    ScriptBindEmitter::Run(Options.OutputDir, LegacyClasses);
 
     // Lua stdlib hint — emit Mession.lua + Mession.d.tl 到 Build/Generated/。
     // 从 MLuaVector/Map/Log/Format/Rpc.cpp 的 /// @lua-* 注解提取。

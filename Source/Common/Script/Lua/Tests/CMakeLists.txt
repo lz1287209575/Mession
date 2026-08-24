@@ -169,6 +169,7 @@ target_link_libraries(LuaBindTest
         mession_lua_vendor
         mession_common
         mession_netdriver
+        mession_generated_shared
 )
 
 configure_mession_compile_options(LuaTypeBridgeTest)
