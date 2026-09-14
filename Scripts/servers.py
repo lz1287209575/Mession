@@ -23,6 +23,7 @@ from typing import Optional, Sequence, Tuple
 # PoC 拓扑端口
 ECHO_PORT_A = 7001
 ECHO_PORT_B = 7002
+PLAYER_PORT = 7100
 GATEWAY_PORT = 8001
 REGISTRY_PORT = 18000
 
@@ -60,6 +61,18 @@ SERVER_ORDER: Sequence[Tuple[str, int, Sequence[str]]] = [
             "--inst=2",
             "--actors=2001,2002",
             "--service=MEchoService",
+            f"--registry={REGISTRY_ADDR}",
+        ],
+    ),
+    (
+        "PlayerService",
+        PLAYER_PORT,
+        [
+            f"--listen={PLAYER_PORT}",
+            "--server-id=4",
+            "--inst=1",
+            "--service=MPlayerService",
+            "--local-type=Player",
             f"--registry={REGISTRY_ADDR}",
         ],
     ),

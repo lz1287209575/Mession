@@ -14,8 +14,8 @@
 #include "Common/Runtime/Object/Object.h"
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Protocol/Messages/Player/FPlayerMessages.h"
-#include "Servers/EchoService/Members/MEchoPlayerActor.h"
-#include "Servers/EchoService/Members/MPlayerItemContainer.h"
+#include "Servers/Player/MPlayerActor.h"
+#include "Servers/Player/Members/MPlayerItemContainer.h"
 
 #include <cassert>
 #include <cstdio>
@@ -55,7 +55,7 @@ static void TestMemberRpcEntryTable() {
 
 // ---- 3. 成员挂载 + GetActorMember ----
 static void TestMemberMountAndLookup() {
-    TSharedPtr<MEchoPlayerActor> Player = NewMObject<MEchoPlayerActor>(nullptr, "DemoPlayer", 10001);
+    TSharedPtr<MPlayerActor> Player = NewMObject<MPlayerActor>(nullptr, "DemoPlayer", 10001);
     Player->AddMember("MPlayerItemContainer", CreateDefaultSubObject<MPlayerItemContainer>(Player.Get(), "ItemContainer"));
 
     // 宿主侧:IMemberHost::FindMember 按类型名查成员
@@ -88,7 +88,7 @@ static void TestFrameworkMemberDispatch() {
     SubPool.Start();
     MActorSystem::Get().Init(&SubPool);
 
-    TSharedPtr<MEchoPlayerActor> Player = NewMObject<MEchoPlayerActor>(nullptr, "DemoPlayer", 10001);
+    TSharedPtr<MPlayerActor> Player = NewMObject<MPlayerActor>(nullptr, "DemoPlayer", 10001);
     Player->AddMember("MPlayerItemContainer", CreateDefaultSubObject<MPlayerItemContainer>(Player.Get(), "ItemContainer"));
     MActorSystem::Get().Register(Player);
 

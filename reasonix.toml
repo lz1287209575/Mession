@@ -1,2 +1,5 @@
 [permissions]
-allow = ["Bash=cd /root/Mession && git status && echo \"=== branch ===\" && git branch -v"]
+allow = ["Bash=cd /root/Mession && git status && echo \"=== branch ===\" && git branch -v", "Bash=cd /root/Mession && git log --oneline -15 && echo \"---BRANCH---\" && git branch --show-current && echo \"---STATUS---\" && git status --short | head -30", "Bash=rm --version | head -1; echo ok", "Bash=ls -la ~/.reasonix/ 2>/dev/null; echo \"---\"; ls -la ~/.config/reasonix/ 2>/dev/null; echo \"---HOME---\"; echo $HOME"]
+
+[sandbox]
+bash = "off"

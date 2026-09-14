@@ -26,6 +26,9 @@ namespace MServiceMain {
             return EServerType::Gateway;
         if (Name == "Echo")
             return EServerType::Echo;
+        // F0→PlayerService 落地(2026-08-20):Player 业务进程类型
+        if (Name == "Player")
+            return EServerType::Player;
         return EServerType::Unknown;
     }
 

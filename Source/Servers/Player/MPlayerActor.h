@@ -1,28 +1,25 @@
 #pragma once
 
-// F0 ActorMember 框架验证 actor(方案 A):per-player actor 容器。
-// 设计:2026-08-14-actor-member-framework.md §3.1 / §4.2(Component 模型)。
+// MPlayerActor — 每玩家 actor 容器(2026-08-14 player-design §3)。
 //
 // actor 自身无业务协议;成员(MPlayerItemContainer 等)由宿主挂载:
-//   DemoPlayer->AddMember("MPlayerItemContainer", CreateDefaultSubObject<...>)
+//   Player->AddMember("MPlayerItemContainer", CreateDefaultSubObject<...>)
 // 成员表 = TMemberHostImpl(IMemberHost 默认实现),GetActorMember<T>() 经它查表。
-//
-// 双继承说明:IActor(actor 消息模型)+ MObject(反射身份/NewMObject 构造),
-// 仿 MRankListActor 先例;TMemberHostImpl 提供成员表能力。
+// GetActorId = PlayerId:框架成员分发器按请求里的 PlayerId 路由命中本 actor。
 
 #include "Common/Runtime/Actor/ActorMember.h"
 #include "Common/Runtime/Actor/IActor.h"
 
 MCLASS(Type = Actor)
-class MEchoPlayerActor : public IActor, public MObject, public TMemberHostImpl {
+class MPlayerActor : public IActor, public MObject, public TMemberHostImpl {
     public:
-    MGENERATED_BODY(MEchoPlayerActor, MObject, 0)
+    MGENERATED_BODY(MPlayerActor, MObject, 0)
     public: // MGENERATED_BODY 展开以 private: 结尾,恢复 public 访问
-    explicit MEchoPlayerActor(uint64 InPlayerId) : PlayerId(InPlayerId) {
+    explicit MPlayerActor(uint64 InPlayerId) : PlayerId(InPlayerId) {
     }
 
-    // 生成器 SetConstructor<MEchoPlayerActor>() 需要默认构造(反射注册用)。
-    MEchoPlayerActor() = default;
+    // 生成器 SetConstructor<MPlayerActor>() 需要默认构造(反射注册用)。
+    MPlayerActor() = default;
 
     // IActor 接口:GetActorId = PlayerId(成员分发器按 PlayerId 路由命中本 actor)
     uint64 GetActorId() const override {

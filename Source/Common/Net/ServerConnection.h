@@ -19,6 +19,9 @@ enum class EServerType : uint32 {
     Echo = 7, // PoC 第 1 步
     // ↓ v2 PoC 第 2 步扩展：再加 1 个 Service 类型
     // SampleB = 8,
+    // F0→PlayerService 落地(2026-08-20,player-design §2.2):Player 业务进程
+    // (per-player actor 容器,协议下沉到 ActorMember)
+    Player = 8,
 };
 
 // 服务器间消息类型

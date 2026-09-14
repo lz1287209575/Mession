@@ -394,16 +394,15 @@ add_dependencies(ProtocolMessagesTest mession_reflection_codegen)
 
 # MemberFrameworkTest — F0 ActorMember 框架单测(继承序列化 / GMemberRpcEntries
 # 查表 / 成员挂载+GetActorMember / 框架成员分发 round-trip / FindActorMember)。
-# 注意:不链接整个 mession_generated_echoservice 组——那会带入
-# MEchoService.mgenerated.cpp(其 handler 引用 EchoService 服务实现符号,
-# 服务实现只在 mession_echo 可执行里)。这里显式编入需要的生成单元
-# (MPlayerItemContainer/MEchoPlayerActor/FMemberDispatchRequest)与成员实现
-# MPlayerItemContainer.cpp;协议消息 FPlayer* 在 shared 组。
+# 注意:不链接整个 mession_generated_echo/player 组(会带入服务实现符号)。
+# 这里显式编入需要的生成单元(MPlayerItemContainer/MPlayerActor/
+# FMemberDispatchRequest)与成员实现 MPlayerItemContainer.cpp;协议消息
+# FPlayer* 在 shared 组。
 add_executable(MemberFrameworkTest
     Source/Common/Runtime/Actor/Tests/MemberFrameworkTest.cpp
-    Source/Servers/EchoService/Members/MPlayerItemContainer.cpp
+    Source/Servers/Player/Members/MPlayerItemContainer.cpp
     ${MESSION_GENERATED_DIR}/MPlayerItemContainer.mgenerated.cpp
-    ${MESSION_GENERATED_DIR}/MEchoPlayerActor.mgenerated.cpp
+    ${MESSION_GENERATED_DIR}/MPlayerActor.mgenerated.cpp
     ${MESSION_GENERATED_DIR}/FMemberDispatchRequest.mgenerated.cpp
 )
 target_include_directories(MemberFrameworkTest PRIVATE
@@ -551,13 +550,22 @@ mession_add_service(EchoService MEchoService SEchoServiceConfig Source/Servers/E
     SOURCES
         Source/Servers/EchoService/EchoService.cpp
         Source/Servers/EchoService/MRankListActor.cpp
-        Source/Servers/EchoService/Members/MPlayerItemContainer.cpp
     GENERATED_GROUPS shared sample
     GENERATED_SOURCES
         ${MESSION_GENERATED_DIR}/FSampleEchoRequest.mgenerated.cpp
         ${MESSION_GENERATED_DIR}/FSampleEchoResponse.mgenerated.cpp
         ${MESSION_GENERATED_DIR}/MEchoService_AwaitImpl.mgenerated.cpp
     EXTRA_GROUPS echoservice
+)
+
+# 7b. PlayerService - Player 业务进程(2026-08-14 player-design §2):
+#     零业务协议 + actor 集合;业务在 ActorMember 上,进程接收走框架成员分发器。
+mession_add_service(PlayerService MPlayerService SPlayerServiceConfig Source/Servers/Player/PlayerService.h
+    SOURCES
+        Source/Servers/Player/PlayerService.cpp
+        Source/Servers/Player/Members/MPlayerItemContainer.cpp
+    GENERATED_GROUPS shared
+    EXTRA_GROUPS player
 )
 
 # 8. MServiceRegistry - 服务发现集中管理进程（PoC 阶段纯内存）

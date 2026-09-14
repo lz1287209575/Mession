@@ -28,6 +28,8 @@ const char* GetServerTypeDisplayName(EServerType ServerType) {
         return "Gateway";
     case EServerType::Echo:
         return "Echo";
+    case EServerType::Player:
+        return "Player";
     default:
         return "Unknown";
     }
@@ -39,6 +41,8 @@ const char* GetServerEndpointClassName(EServerType ServerType) {
         return "MGatewayServer";
     case EServerType::Echo:
         return "MEchoService";
+    case EServerType::Player:
+        return "MPlayerService";
     default:
         return nullptr;
     }

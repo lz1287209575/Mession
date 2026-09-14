@@ -205,9 +205,11 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
         return;
     }
 
-    // step-3: 转发到 EchoService（服务器间原始调用——Gateway 无 MEchoService
-    // 反射，直接转发 FunctionId + 原始 Payload；Echo 收到后 DispatchBackendServerCallPacket
-    // 按 FunctionId 分发到 Echo/EchoAwait，响应经 HandleServerCallResponse 回调回来）。
+    // step-3: 按 manifest 条目 TargetName 路由到目标服务进程(Gateway 无业务
+    // 反射,直接转发 FunctionId + 原始 Payload;目标进程 DispatchBackendServerCallPacket
+    // 按 FunctionId 分发,响应经 HandleServerCallResponse 回调回来)。
+    // F0→PlayerService(2026-08-20):MFUNCTION(Target=...) 给条目带 TargetName
+    // (如 FrameworkMemberDispatch→"Player");为空时兜底 Echo(兼容既有 Echo 链路)。
     auto SendClientError = [&](const char* Code) {
         TByteArray ErrorPacket;
         if (BuildClientEnvelopePacket(FunctionId, RequestId, TByteArray{}, ErrorPacket)) {
@@ -219,13 +221,23 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
         LOG_WARN("Gateway: forward failed code=%s function_id=%u", Code, static_cast<unsigned>(FunctionId));
     };
 
-    TSharedPtr<MServerConnection> EchoConn = MEndpointCache::Get().GetOrConnect(EServerType::Echo);
-    if (!EchoConn || !EchoConn->IsConnected()) {
-        SendClientError("echo_connection_unavailable");
+    EServerType TargetType = EServerType::Echo;
+    if (Entry->TargetName && Entry->TargetName[0] != '\0') {
+        TargetType = MServiceMain::ParseLocalServerType(Entry->TargetName);
+        if (TargetType == EServerType::Unknown) {
+            LOG_WARN("Gateway: unknown manifest target_name=%s function_id=%u", Entry->TargetName, static_cast<unsigned>(FunctionId));
+            SendClientError("unknown_target_name");
+            return;
+        }
+    }
+
+    TSharedPtr<MServerConnection> TargetConn = MEndpointCache::Get().GetOrConnect(TargetType);
+    if (!TargetConn || !TargetConn->IsConnected()) {
+        SendClientError("target_connection_unavailable");
         return;
     }
 
-    // 注册服务器调用（响应回调：把 Echo 的响应 Payload 原样回客户端 envelope）
+    // 注册服务器调用（响应回调：把目标服务的响应 Payload 原样回客户端 envelope）
     const uint64 CallId = RegisterServerCall(
         [this, ConnectionId, RequestId, FunctionId](const SServerCallResponse& Response) {
             TByteArray ClientPacket;
@@ -236,7 +248,7 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
                 }
             }
         },
-        5.0, BuildServerCallLivenessProbe(EchoConn));
+        5.0, BuildServerCallLivenessProbe(TargetConn));
 
     if (CallId == 0) {
         SendClientError("server_call_register_failed");
@@ -244,7 +256,7 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
     }
 
     TByteArray ServerPacket;
-    const bool bSent = BuildServerCallPacket(FunctionId, CallId, Payload, ServerPacket) && SendServerCallMessage(EchoConn, ServerPacket);
+    const bool bSent = BuildServerCallPacket(FunctionId, CallId, Payload, ServerPacket) && SendServerCallMessage(TargetConn, ServerPacket);
     if (!bSent) {
         CancelServerCall(CallId);
         SendClientError("server_call_send_failed");

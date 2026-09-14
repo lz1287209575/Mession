@@ -1,10 +1,10 @@
 #pragma once
 
-// F0 ActorMember 框架验证成员(方案 A:在 EchoService 拓扑上验证)。
+// F0→PlayerService 落地业务成员(方案 B):背包成员挂在 MPlayerActor 上。
 // 设计:2026-08-14-actor-member-framework.md §1 / §4.1。
 //
-// 协议下沉到成员:Service 类(EchoService)不再声明背包业务协议,客户端经
-// Gateway → EchoService.FrameworkMemberDispatch(FunctionId, Payload) →
+// 协议下沉到成员:Service 类(MPlayerService)零业务协议,客户端经
+// Gateway → PlayerService.FrameworkMemberDispatch(FunctionId, Payload) →
 // 框架成员分发器(DispatchFrameworkMemberCall)→ 本成员 UseItem。
 
 #include "Common/Net/Rpc/RpcPayload.h"
