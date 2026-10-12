@@ -12,14 +12,14 @@ default_language_version:
 
 repos:
   - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: v18.1.8
+    rev: v19.1.7
     hooks:
       - id: clang-format
         name: clang-format (C++)
         types_or: [c, c++]
         files: '^(Source|Protocol|Tests)/.*\.(h|hpp|c|cc|cpp)$'
-        # 排除自动生成
-        exclude: '^Build/.*'
+        # 排除自动生成 + vendored 第三方(对齐 CodingStyle.md §11)
+        exclude: "^(Build|Source/ThirdParty)/.*"
         args: ['--style=file', '-i']
         # pre-commit 默认在工具缺失时失败;我们改为警告:
         require_serial: false

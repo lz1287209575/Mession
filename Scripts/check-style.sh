@@ -70,17 +70,29 @@ fi
 rm -f /tmp/abi-diff-$$.txt
 # --- ABI guard END ---
 
-if ! command -v clang-format >/dev/null 2>&1; then
+# Debian/Ubuntu 只提供版本化名字(clang-format-19),macOS/Homebrew 提供无版本号名字。
+# 统一探测,优先无版本号,再按版本从高到低回退。
+CLANG_FORMAT=""
+for CANDIDATE in clang-format clang-format-19 clang-format-18 clang-format-17 clang-format-16; do
+    if command -v "$CANDIDATE" >/dev/null 2>&1; then
+        CLANG_FORMAT="$CANDIDATE"
+        break
+    fi
+done
+if [ -z "$CLANG_FORMAT" ]; then
     echo "[check-style] clang-format not found. Install with:" >&2
-    echo "  apt-get install clang-format   # Debian/Ubuntu" >&2
-    echo "  brew install clang-format     # macOS" >&2
-    echo "  pip install clang-format      # via pip" >&2
+    echo "  apt-get install clang-format-19   # Debian/Ubuntu (对齐项目 LLVM 19 pin)" >&2
+    echo "  brew install clang-format         # macOS" >&2
     exit 1
 fi
+echo "[check-style] using $CLANG_FORMAT ($("$CLANG_FORMAT" --version 2>/dev/null))"
 
 # 只检查 Source/Protocol/Tests,跳过 Build/Generated
+# Source/ThirdParty/ 是 vendored 上游代码 —— Docs/CodingStyle.md §11 明确豁免。
+# -not -path 是过滤条件,必须用 \( ... \) 包裹整个 find 表达式。
 FILES=$(find Source Protocol Tests \
     -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' -o -name '*.cc' -o -name '*.c' \) \
+    -not -path 'Source/ThirdParty/*' \
     2>/dev/null | sort)
 
 if [ -z "$FILES" ]; then
@@ -91,7 +103,7 @@ fi
 echo "[check-style] checking $(echo "$FILES" | wc -l) files with clang-format..."
 
 # --dry-run --Werror - 有违规就把退出码拉成非零;xargs 把大量文件分批
-echo "$FILES" | xargs -n 50 clang-format --dry-run --Werror --style=file
+echo "$FILES" | xargs -n 50 "$CLANG_FORMAT" --dry-run --Werror --style=file
 
 STATUS=$?
 
@@ -101,7 +113,8 @@ if [ $STATUS -ne 0 ]; then
     echo "[check-style] fix locally with:" >&2
     echo "  find Source Protocol Tests \\" >&2
     echo "      -type f \\( -name '*.h' -o -name '*.cpp' \\) \\" >&2
-    echo "      -exec clang-format -i {} \;" >&2
+    echo "      -not -path 'Source/ThirdParty/*' \\" >&2
+    echo "      -exec \"$CLANG_FORMAT\" -i {} \;" >&2
     exit $STATUS
 fi
 

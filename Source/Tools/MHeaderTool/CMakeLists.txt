@@ -48,7 +48,7 @@ target_compile_options(MHeaderTool PRIVATE
 )
 
 # A1 — libtooling 集成
-find_package(Clang 17 REQUIRED CONFIG)
+find_package(Clang 19.1.7 REQUIRED CONFIG)
 
 target_include_directories(mht_lib PUBLIC ${CLANG_INCLUDE_DIRS})
 target_link_libraries(mht_lib PUBLIC ${CLANG_LIBRARIES})
