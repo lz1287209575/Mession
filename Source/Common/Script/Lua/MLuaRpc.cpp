@@ -76,9 +76,13 @@ void MLuaRpc::Install(lua_State* L, IScriptRpcBridge* pEngine)
 
     lua_getglobal(L, "Mession");
     if (lua_isnil(L, -1)) {
+        // 弹掉 getglobal 压入的 nil,再重建 Mession 表并复制引用:
+        // setglobal 弹副本,栈上留下真表 —— 与表已存在分支栈净变化一致(+1),
+        // 修复原实现残留 nil 导致的调用方栈索引错位。
+        lua_pop(L, 1);
         lua_newtable(L);
+        lua_pushvalue(L, -1);
         lua_setglobal(L, "Mession");
-        lua_getglobal(L, "Mession");
     }
 
     // RPC namespace

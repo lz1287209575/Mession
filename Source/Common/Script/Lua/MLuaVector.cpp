@@ -91,24 +91,45 @@ int MetaEq(lua_State* L)
     return 1;
 }
 
+namespace {
+// pairs 迭代的 state: vec 指针 + 下一个 1-based 下标
+struct FVecIterState
+{
+    TVector<MScalarValue>* Vec;
+    int                    Next;  // 1-based
+};
+} // namespace
+
 int MetaPairs(lua_State* L)
 {
+    // Lua 5.4 for 契约: __pairs 返回 (next_fn, state, control),
+    // 每步调 next_fn(state, control)。旧实现 pushcfunction 注册 0 个
+    // upvalue 却读 upvalueindex(1/2)(无效指针),且返回顺序错误。
     TVector<MScalarValue>* V = GetVector(L, 1);
-    int* Idx = static_cast<int*>(lua_newuserdata(L, sizeof(int)));
-    *Idx = 0;
+
+    // state userdata: 持 vec 指针 + 游标。vec 的 TVector 本体在 vec userdata
+    // 里,for 循环期间 m 一定存活(循环变量被 Lua 持有),裸指针安全。
+    auto* St = static_cast<FVecIterState*>(lua_newuserdata(L, sizeof(FVecIterState)));
+    St->Vec = V;
+    St->Next = 1;
     luaL_newmetatable(L, "MVectorIter");
-    lua_setmetatable(L, -2);
-    lua_pushvalue(L, 1);
+    lua_setmetatable(L, -2);   // 栈: [vec, state_ud]
+
     lua_pushcfunction(L, [](lua_State* L) -> int {
-        TVector<MScalarValue>* V2 = static_cast<TVector<MScalarValue>*>(lua_touserdata(L, lua_upvalueindex(1)));
-        int* I2 = static_cast<int*>(lua_touserdata(L, lua_upvalueindex(2)));
-        if (*I2 >= static_cast<int>(V2->size())) return 0;
-        lua_pushinteger(L, (*I2) + 1);
-        (*V2)[*I2].PushToLua(L);
-        (*I2)++;
+        auto* St2 = static_cast<FVecIterState*>(lua_touserdata(L, 1));  // state
+        if (!St2 || St2->Next > static_cast<int>(St2->Vec->size()))
+        {
+            return 0;  // 迭代结束
+        }
+        lua_pushinteger(L, St2->Next);        // key(1-based)
+        (*St2->Vec)[St2->Next - 1].PushToLua(L);  // value
+        St2->Next++;
         return 2;
     });
-    lua_insert(L, -3);
+    // 栈: [vec, state_ud, next_fn] → 调整为 (next_fn, state_ud, nil)
+    lua_remove(L, 1);      // 删 vec   → [state_ud, next_fn]
+    lua_insert(L, 1);      // next 提前 → [next_fn, state_ud]
+    lua_pushnil(L);        // control  → [next_fn, state_ud, nil]
     return 3;
 }
 
@@ -331,9 +352,13 @@ void MLuaVector::Install(lua_State* L)
     lua_getglobal(L, "Mession");
     if (lua_isnil(L, -1))
     {
+        // 弹掉 getglobal 压入的 nil,再重建 Mession 表并复制引用:
+        // setglobal 弹副本,栈上留下真表 —— 与表已存在分支栈净变化一致(+1),
+        // 修复原实现残留 nil 导致的调用方栈索引错位。
+        lua_pop(L, 1);
         lua_newtable(L);
+        lua_pushvalue(L, -1);
         lua_setglobal(L, "Mession");
-        lua_getglobal(L, "Mession");
     }
     lua_newtable(L);
     lua_pushcfunction(L, FactoryNew);

@@ -450,6 +450,21 @@ LOG_INFO("Server started on port " << Port << ", inst=" << InstId);
 
 ## 7. 注释与文件头
 
+### 7.0 注释语言基准(2026-10-12 起生效,统一为中文为主)
+
+历史上中英混杂(172 个文件两种都有),本节确立规则,**重构期间逐步收敛**:
+
+| 注释类型 | 语言 | 说明 |
+|----------|------|------|
+| 文件头 `@brief`/`@detail` | **中文**(可保留英文术语) | 描述模块用途,团队阅读成本最低 |
+| 类/结构/函数 Doxygen 块 | **中文** | 术语(`Actor`/`RPC`/`Reflection` 等)保留英文 |
+| 行内"为什么"注释 | **中文** | 解释陷阱/决策依据 |
+| 标记注释(`TODO`/`FIXME`/`NOTE`) | 标记词英文 + 正文中文 | `TODO(名字): 说明` 格式 |
+| 上游协议/ABI 引用注释 | 保留原文 | 引用 UE/clang 上游语义时不强翻 |
+
+**不强制回改存量注释**;修改某文件时顺手把该文件内注释统一为中文,新代码一律中文。
+**禁止**同一文件内同一函数中英交替(当前混乱的主要来源)。
+
 ### 7.1 文件头 Doxygen 块
 
 每个 `.h`/`.cpp` 顶部必须有:
@@ -637,17 +652,25 @@ MHeaderTool 生成的代码在 `Build/Generated/`,**不参与**风格检查。
 
 本文件与工具链（`.clang-format` / `.pre-commit-config.yaml` / `Scripts/check-style.sh` / `Scripts/install-hooks.sh` / design spec）为 **C1：规范 + 工具**，已先合入 `main`。
 
-**尚未做（后续单独 PR，避免与功能改动抢 diff）：**
+**2026-08-20 曾决定跳过 C2–C5;2026-10-12 重构重启,恢复执行并扩展:**
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| **C1** | 文档 + clang-format + pre-commit + check-style（含反射 ABI 黑名单） | **已合入** |
-| **C2** | 全量 format `Source/Common/**` | TODO |
-| **C3** | 全量 format `Source/Servers/**` | TODO |
-| **C4** | 全量 format `Source/Tools/**` + `Source/Protocol/**` | TODO |
-| **C5** | `CLAUDE.md` 快查表收口 + 全量 `check-style.sh` / build / validate 验收 | TODO |
+| **C1** | 文档 + clang-format + pre-commit + check-style（含反射 ABI 黑名单） | **已合入**;工具链修复见 §12.1 |
+| **C2** | 全量 format `Source/Common/**` | 进行中(2026-10-12) |
+| **C3** | 全量 format `Source/Servers/**` | 进行中(2026-10-12) |
+| **C4** | 全量 format `Source/Tools/**` + `Source/Protocol/**` | 进行中(2026-10-12) |
+| **C5** | `CLAUDE.md` 快查表收口 + 全量 `check-style.sh` / build / validate 验收 | 进行中(2026-10-12) |
+| **R1** | 注释规范化: 296 文件补 `@file` 头 + 中文统一(§7.0) + 清理 legacy/临时注释 | 排队 |
+| **R2** | 结构拆分: CodeGenerator.h(2553 行)等超大文件 | 排队 |
 
 约束：C2–C5 期间 **禁止改反射字段名/顺序**（`Scripts/check-style.sh` ABI 黑名单）；纯格式变更，不改 runtime 行为。
+
+### 12.1 工具链修复记录(2026-10-12)
+
+- `check-style.sh`: clang-format 版本感知探测(Debian 版本化命名) + `Source/ThirdParty/` 豁免
+- `.pre-commit-config.yaml`: hook v18.1.8 → v19.1.7(与本机 llvm-19 对齐) + ThirdParty exclude
+- 本机依赖: `apt-get install clang-format-19`;MHeaderTool pin `Clang 19.1.7`
 
 实施计划见 worktree / 后续补档：`Docs/superpowers/plans/2026-07-14-coding-style-implementation.md`。
 

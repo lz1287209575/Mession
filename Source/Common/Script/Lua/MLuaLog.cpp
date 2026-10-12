@@ -7,7 +7,9 @@ namespace {
 
 int LogAt(lua_State* L, ELogLevel Level)
 {
-    if (!lua_isstring(L, 1)) {
+    // 契约: msg 必须是真 string(number 可隐式转 string,lua_isstring 会放行,
+    // 但测试 TestLogTypeError 明确要求数字报错) —— 用 lua_type 严格判定。
+    if (lua_type(L, 1) != LUA_TSTRING) {
         return luaL_error(L, "log: msg must be string");
     }
     size_t      Len = 0;
@@ -48,9 +50,13 @@ void MLuaLog::Install(lua_State* L)
 {
     lua_getglobal(L, "Mession");
     if (lua_isnil(L, -1)) {
+        // 弹掉 getglobal 压入的 nil,再重建 Mession 表并复制引用:
+        // setglobal 弹副本,栈上留下真表 —— 与表已存在分支栈净变化一致(+1),
+        // 修复原实现残留 nil 导致的调用方栈索引错位。
+        lua_pop(L, 1);
         lua_newtable(L);
+        lua_pushvalue(L, -1);
         lua_setglobal(L, "Mession");
-        lua_getglobal(L, "Mession");
     }
     lua_newtable(L);
     lua_pushcfunction(L, LogInfo);  lua_setfield(L, -2, "info");

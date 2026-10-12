@@ -68,11 +68,14 @@ int MetaPairs(lua_State* L)
     //
     // 设计:C closure 的 upvalue = map 指针(iter 状态随 next_fn 自维护 — 但跨调用不持久)
     // 为保证 persistence:把 iter 状态放在 userdata,作为第二个 upvalue。
-    lua_pushvalue(L, 1); // push map
-    // next_fn upvalue:1=iter userdata, 2=map
+    lua_pushvalue(L, 1); // push map(仅作为 pairs 返回栈的一部分,见下方重排)
+    // next_fn 不用 upvalue(pushcfunction = pushcclosure 0 upvalue,原代码注释
+    // 声称 upvalue 1=iter 但从未注册,导致 upvalueindex(1) 读到无效指针 → SIGSEGV)。
+    // Lua for 循环契约: next(state, control),state 作为第一参数传入,
+    // 我们把 state 设为 iter userdata,这里直接从参数 1 取。
     lua_pushcfunction(L, [](lua_State* L) -> int {
-        FMapIter* It2 = static_cast<FMapIter*>(lua_touserdata(L, lua_upvalueindex(1)));
-        if (It2->Cur == It2->End) return 0;
+        FMapIter* It2 = static_cast<FMapIter*>(lua_touserdata(L, 1));
+        if (!It2 || It2->Cur == It2->End) return 0;
         MScalarValue K = It2->Cur->first;
         MScalarValue V = It2->Cur->second;
         ++(It2->Cur);
@@ -80,8 +83,16 @@ int MetaPairs(lua_State* L)
         V.PushToLua(L);
         return 2;
     });
-    // stack: iter_ud, map, next_fn
-    // Lua pairs expects: (iter_ud, state, next_fn)
+    // Lua 5.4 pairs 语义: __pairs 返回 (next_fn, state, control),
+    // for 循环每步调 next_fn(state, control)。旧实现返回顺序 (iter_ud, map, next_fn)
+    // 是错的 —— for 会把 iter_ud 当函数调,报 attempt to call a MMapIter value。
+    // 进入时栈=[m];此后 newuserdata + pushvalue(map) + pushcfunction(next)
+    // → 栈=[m, iter_ud, map, next_fn](共 4 个,注意 m 也在)。
+    // pairs 契约: 返回 (next_fn, state=iter_ud, control=nil)。
+    lua_remove(L, 1);          // 删 m   → [iter_ud, map, next_fn]
+    lua_remove(L, 2);          // 删 map → [iter_ud, next_fn]
+    lua_insert(L, 1);          // next 提前 → [next_fn, iter_ud]
+    lua_pushnil(L);            // control → [next_fn, iter_ud, nil]
     return 3;
 }
 
@@ -255,9 +266,13 @@ void MLuaMap::Install(lua_State* L)
 
     lua_getglobal(L, "Mession");
     if (lua_isnil(L, -1)) {
+        // 弹掉 getglobal 压入的 nil,再重建 Mession 表并复制引用:
+        // setglobal 弹副本,栈上留下真表 —— 与表已存在分支栈净变化一致(+1),
+        // 修复原实现残留 nil 导致的调用方栈索引错位。
+        lua_pop(L, 1);
         lua_newtable(L);
+        lua_pushvalue(L, -1);
         lua_setglobal(L, "Mession");
-        lua_getglobal(L, "Mession");
     }
     lua_newtable(L);
     lua_pushcfunction(L, FactoryNew);

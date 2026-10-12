@@ -23,12 +23,15 @@ public:
         for (int i = ArgStart; i <= ArgEnd; ++i) {
             lua_pushvalue(L, i);
         }
-        if (lua_pcall(L, NumArgs, 0, 0) != LUA_OK) {
+        // RPC.call 的契约: 成功时转发被调函数的返回值(1 个),失败时 (nil, errmsg)。
+        // 旧实现 lua_pcall 请求 0 个返回值,把结果丢弃且成功时 return 0,
+        // 调用方永远拿不到返回值(TestRpcCall 断言失败的根因)。
+        if (lua_pcall(L, NumArgs, 1, 0) != LUA_OK) {
             lua_pushnil(L);
             lua_pushvalue(L, -2); // err msg
             return 2;
         }
-        return 0;
+        return 1;
     }
 };
 
@@ -40,7 +43,9 @@ static void TestRpcCall()
     MLuaRpc::Install(L, &Mock);
 
     int RC = luaL_dostring(L,
-        "local function greet(name) return 'hello ' .. name end\n"
+        // greet 必须是全局函数: RPC.call 经 bridge 用 lua_getglobal 按名查找,
+        // local 函数不在全局表里,查不到(会返回 not_a_function)。
+        "function greet(name) return 'hello ' .. name end\n"
         "return Mession.RPC.call('greet', 'lua')");
     assert(RC == 0);
     size_t      Len = 0;

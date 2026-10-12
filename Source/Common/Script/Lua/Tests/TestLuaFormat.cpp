@@ -6,17 +6,22 @@
 
 using namespace mession::script::lua;
 
+// 把 Idx 槽位复制到栈顶,读副本后 pop —— 保证 pop 掉的正是读过的值。
+// 旧实现 lua_pop(L, 1) 永远弹栈顶: 当 Idx != -1 时(如 -2)会弹掉别的槽位,
+// 导致后续 PeekString(L, -1) 读到错误值(TestFmtBasic 断言失败的根因)。
 static int PeekInt(lua_State* L, int Idx)
 {
-    int V = (int)lua_tointeger(L, Idx);
+    lua_pushvalue(L, Idx);
+    int V = (int)lua_tointeger(L, -1);
     lua_pop(L, 1);
     return V;
 }
 
 static MString PeekString(lua_State* L, int Idx)
 {
+    lua_pushvalue(L, Idx);
     size_t      Len = 0;
-    const char* P   = lua_tolstring(L, Idx, &Len);
+    const char* P   = lua_tolstring(L, -1, &Len);
     MString S(P, Len);
     lua_pop(L, 1);
     return S;
@@ -102,12 +107,13 @@ static void TestFmtError()
         "local ok, err = pcall(Mession.Format.fmt, '{:bad}', 'x')\n"
         "return ok, type(err)");
     assert(RC == 0);
+    // 栈: [-2]=pcall ok(false) [-1]=type(err)("string")
+    // 先读 -2 再读 -1,最后一次性 pop(2) —— 旧写法中途 pop(1) 会弹掉未读的值。
     assert(lua_toboolean(L, -2) == 0);
-    lua_pop(L, 1);
     size_t      Len = 0;
     const char* P   = lua_tolstring(L, -1, &Len);
     assert(P && MString(P, Len) == MString("string"));
-    lua_pop(L, 1);
+    lua_pop(L, 2);
     std::printf("ok: TestFmtError\n");
 }
 

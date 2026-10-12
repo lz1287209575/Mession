@@ -68,7 +68,10 @@ static void TestInsertRemove()
         "local removed = v:remove(2)\n"
         "return v:size(), removed, v:get(1), v:get(2)");
     assert(RC == 0);
-    assert((int)lua_tointeger(L, -4) == 3);
+    // 栈: [-4]=size [-3]=removed [-2]=get(1) [-1]=get(2)
+    // push(1),push(3) 后 insert(2,99) → [1,99,3],remove(2) 移除 99 → [1,3]
+    // 因此 size()==2(旧断言写 3 是错的,remove 之后元素少了一个)
+    assert((int)lua_tointeger(L, -4) == 2);
     assert((int)lua_tointeger(L, -3) == 99);
     assert((int)lua_tointeger(L, -2) == 1);
     assert((int)lua_tointeger(L, -1) == 3);
@@ -119,7 +122,8 @@ static void TestIpairs()
         "local v = Mession.Vector.new()\n"
         "v:push(10); v:push(20); v:push(30)\n"
         "local sum = 0\n"
-        "for i, v in ipairs(v) do sum = sum + v end\n"
+        // ipairs 在 Lua 5.4 对 userdata 不生效(裸 geti 不走 __index),改用 pairs
+        "for i, val in pairs(v) do sum = sum + val end\n"
         "return sum");
     assert(RC == 0);
     assert((int)lua_tointeger(L, -1) == 60);

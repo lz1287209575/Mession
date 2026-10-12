@@ -185,11 +185,27 @@ namespace mession::script::lua {
                 return 0;
             }
 
+            // 两种传参形态都支持:
+            //   M.InvokeStatic("Cls", "Fn", 2, 3)        — 变参展开
+            //   M.InvokeStatic("Cls", "Fn", {2, 3})      — 单个 args 表(约定见 MLuaBridge.h)
+            if (NArgs == 3 && lua_istable(L, 3)) {
+                int TLen = static_cast<int>(lua_rawlen(L, 3));
+                for (int T = 1; T <= TLen; ++T) {
+                    lua_geti(L, 3, T);  // 依次压入 elem1..elemN,保持原顺序
+                }
+                lua_remove(L, 3);  // 移除表本身,元素整体前移到槽 3..2+TLen
+                NArgs = 2 + TLen;
+            }
+
             // 校验 args 数量
             size_t Provided = (NArgs >= 2) ? (NArgs - 2) : 0;
             if (Provided != Fn->Params.size()) {
-                luaL_error(L, "arg_count_mismatch: %s.%s expected=%zu got=%zu",
-                           ClassName, MethodName, Fn->Params.size(), Provided);
+                // lua_pushfstring 仅支持 s/c/d/f/p 等有限格式,
+                // 计数值很小,用 %d + int 强转安全。
+                luaL_error(L, "arg_count_mismatch: %s.%s expected=%d got=%d",
+                           ClassName, MethodName,
+                           static_cast<int>(Fn->Params.size()),
+                           static_cast<int>(Provided));
                 return 0;
             }
 
@@ -198,8 +214,8 @@ namespace mession::script::lua {
             for (size_t i = 0; i < Fn->Params.size(); ++i) {
                 const MProperty* P = Fn->Params[i];
                 if (!P) {
-                    luaL_error(L, "null_param_descriptor: %s.%s[%zu]",
-                               ClassName, MethodName, i);
+                    luaL_error(L, "null_param_descriptor: %s.%s[%d]",
+                               ClassName, MethodName, static_cast<int>(i));
                     return 0;
                 }
                 int StackIdx = 3 + static_cast<int>(i);
@@ -210,9 +226,23 @@ namespace mession::script::lua {
                 }
             }
 
-            // 2) NativeInvoke — Phase 1 走 static(self=nullptr)
+            // 1.5) In 切到读模式:NativeInvoke 内部用 Ar << Arg 做
+            //      读写一体反序列化,写模式的 In 会把参数当新数据追加,
+            //      导致方法收到全 0 参数(契约见 MReflectArchive 构造)。
+            In.bWriting = false;
+            In.bReading = true;
+            In.ReadPos  = 0;
+
+            // 2) NativeInvoke — ScriptBind 方法注册为成员函数指针,
+            //    需要一个实例:每次调用经反射构造临时对象(self 生命周期
+            //    仅覆盖本次调用),Phase 2 的 M.GetObject 再引入常驻实例。
+            void*          SelfObj = Cls->CreateInstance();
             MReflectArchive Out;
-            if (!Fn->NativeInvoke(/*self=*/nullptr, &In, &Out)) {
+            bool bInvoked = SelfObj && Fn->NativeInvoke(static_cast<MObject*>(SelfObj), &In, &Out);
+            if (SelfObj) {
+                Cls->DestroyInstance(SelfObj);
+            }
+            if (!bInvoked) {
                 luaL_error(L, "native_invoke_failed: %s.%s", ClassName, MethodName);
                 return 0;
             }
