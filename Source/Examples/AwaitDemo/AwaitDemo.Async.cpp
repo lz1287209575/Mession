@@ -7,9 +7,8 @@
 #include "AwaitDemo.h"
 
 MFUNCTION(Async)
-SFutureResult<int> AwaitDemoCompute(int Seed)
-{
-    int Mid = Seed * 3;                                             // 正常业务逻辑 1
-    int R = TAwaitable<AwaitDemoHelper>(Mid);  // await 点
-    return SFutureResult<int>(TResult<int, FAppError>::Ok(R + 1));  // 正常业务逻辑 2
+SFutureResult<int> AwaitDemoCompute(int Seed) {
+    int Mid = Seed * 3;                                            // 正常业务逻辑 1
+    int R   = TAwaitable<AwaitDemoHelper>(Mid);                    // await 点
+    return SFutureResult<int>(TResult<int, FAppError>::Ok(R + 1)); // 正常业务逻辑 2
 }

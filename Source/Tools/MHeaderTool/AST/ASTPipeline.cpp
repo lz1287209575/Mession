@@ -151,8 +151,7 @@ namespace mession::headercodegen {
     // 内层 CDB 查不到命令时,给 fallback 命令(-fsyntax-only + 宏 + include)。
     class MCodegenSourceCompilationDatabase : public clang::tooling::CompilationDatabase {
         public:
-        MCodegenSourceCompilationDatabase(TUniquePtr<clang::tooling::CompilationDatabase> InBase, const MString& InSourceRoot)
-            : Base(std::move(InBase)), SourceRoot(InSourceRoot) {
+        MCodegenSourceCompilationDatabase(TUniquePtr<clang::tooling::CompilationDatabase> InBase, const MString& InSourceRoot) : Base(std::move(InBase)), SourceRoot(InSourceRoot) {
             // 取一条业务 TU 命令作参照——include 根/-std/宏/-f 选项与业务编译
             // 完全一致。手工拼 fallback 极易缺参数(如 -I Build/_deps/... 或
             // TAwaitable 的 template <auto F> 需要 -std=c++17),导致 .Async.cpp
@@ -214,8 +213,8 @@ namespace mession::headercodegen {
 
         private:
         TUniquePtr<clang::tooling::CompilationDatabase> Base;
-        MString SourceRoot;
-        TVector<MString> ReferenceArgs;
+        MString                                         SourceRoot;
+        TVector<MString>                                ReferenceArgs;
     };
 
     class MFactory : public clang::tooling::FrontendActionFactory {

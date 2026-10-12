@@ -23,9 +23,7 @@ void IActorMember::DetachFromHost() {
 SFutureResult<TByteArray> DispatchFrameworkMemberCall(uint16_t InFunctionId, const TByteArray& InPayload) {
     using TResultType = TResult<TByteArray, FAppError>;
 
-    auto MakeError = [](const char* InCode) {
-        return SFutureResult<TByteArray>(TResultType::Err(FAppError::Make(InCode, InCode)));
-    };
+    auto MakeError = [](const char* InCode) { return SFutureResult<TByteArray>(TResultType::Err(FAppError::Make(InCode, InCode))); };
 
     // 1. 查 GMemberRpcEntries → (MemberClass, MethodName, RequestType)
     const SMemberRpcEntry* Entry = FindMemberRpcEntryByFunctionId(InFunctionId);

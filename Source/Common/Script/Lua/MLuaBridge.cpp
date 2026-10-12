@@ -1,8 +1,8 @@
 #include "Common/Script/Lua/MLuaBridge.h"
-#include "Common/Runtime/Reflect/Class.h"
-#include "Common/Runtime/Reflect/Reflection.h"
-#include "Common/Runtime/Reflect/Property.h"
 #include "Common/Runtime/Log/Log.h"
+#include "Common/Runtime/Reflect/Class.h"
+#include "Common/Runtime/Reflect/Property.h"
+#include "Common/Runtime/Reflect/Reflection.h"
 #include "Common/Script/Lua/LuaEngine.h"
 #include "Common/Script/Lua/LuaTypeBridge.h"
 
@@ -40,14 +40,13 @@ namespace mession::script::lua {
             return Map;
         }
 
-        template <typename T>
-        void RegisterDeserializerOnce() {
-            auto& Map = GetDeserializerMap();
+        template <typename T> void RegisterDeserializerOnce() {
+            auto&           Map = GetDeserializerMap();
             std::type_index Id(typeid(T));
             if (Map.find(Id) == Map.end()) {
                 Map[Id] = [](const TByteArray& Data, void* OutValue) {
-                    MReflectArchive Ar(Data);  // read mode
-                    T Val;
+                    MReflectArchive Ar(Data); // read mode
+                    T               Val;
                     Ar << Val;
                     *static_cast<T*>(OutValue) = Val;
                 };
@@ -70,39 +69,44 @@ namespace mession::script::lua {
         bool MarshalOne(lua_State* L, int StackIdx, const std::type_index& TypeIdx, MReflectArchive& Out) {
             if (TypeIdx == std::type_index(typeid(int32_t))) {
                 auto R = PopInteger(L, StackIdx);
-                if (R.IsErr()) return false;
+                if (R.IsErr())
+                    return false;
                 int32_t V = static_cast<int32_t>(R.GetValue());
                 Out << V;
                 return true;
             }
             if (TypeIdx == std::type_index(typeid(int64_t))) {
                 auto R = PopInteger(L, StackIdx);
-                if (R.IsErr()) return false;
+                if (R.IsErr())
+                    return false;
                 int64_t V = R.GetValue();
                 Out << V;
                 return true;
             }
             if (TypeIdx == std::type_index(typeid(double))) {
                 auto R = PopNumber(L, StackIdx);
-                if (R.IsErr()) return false;
+                if (R.IsErr())
+                    return false;
                 Out << R.GetValue();
                 return true;
             }
             if (TypeIdx == std::type_index(typeid(bool))) {
                 auto R = PopBoolean(L, StackIdx);
-                if (R.IsErr()) return false;
+                if (R.IsErr())
+                    return false;
                 Out << R.GetValue();
                 return true;
             }
             if (TypeIdx == std::type_index(typeid(MString))) {
-                if (!IsString(L, StackIdx)) return false;
+                if (!IsString(L, StackIdx))
+                    return false;
                 size_t      Len = 0;
-                const char* P = lua_tolstring(L, StackIdx, &Len);
-                MString S(P, Len);
+                const char* P   = lua_tolstring(L, StackIdx, &Len);
+                MString     S(P, Len);
                 Out << S;
                 return true;
             }
-            return false;  // 不支持的类型
+            return false; // 不支持的类型
         }
 
         // ====================================================================
@@ -112,9 +116,9 @@ namespace mession::script::lua {
         // 返回 push 的值个数(0 = void,1 = 1 个值);-1 表示错误
         int PushReturnOne(lua_State* L, const TByteArray& Data, const std::type_index& TypeIdx) {
             auto& Map = GetDeserializerMap();
-            auto It = Map.find(TypeIdx);
+            auto  It  = Map.find(TypeIdx);
             if (It == Map.end()) {
-                return -1;  // 不支持
+                return -1; // 不支持
             }
 
             // 4 个 primitive 都小 — 直接 stack alloc
@@ -127,7 +131,7 @@ namespace mession::script::lua {
             if (TypeIdx == std::type_index(typeid(int64_t))) {
                 int64_t Val = 0;
                 It->second(Data, &Val);
-                PushInteger(L, static_cast<int32_t>(Val));  // Lua 5.4 默认 integer
+                PushInteger(L, static_cast<int32_t>(Val)); // Lua 5.4 默认 integer
                 return 1;
             }
             if (TypeIdx == std::type_index(typeid(double))) {
@@ -191,9 +195,9 @@ namespace mession::script::lua {
             if (NArgs == 3 && lua_istable(L, 3)) {
                 int TLen = static_cast<int>(lua_rawlen(L, 3));
                 for (int T = 1; T <= TLen; ++T) {
-                    lua_geti(L, 3, T);  // 依次压入 elem1..elemN,保持原顺序
+                    lua_geti(L, 3, T); // 依次压入 elem1..elemN,保持原顺序
                 }
-                lua_remove(L, 3);  // 移除表本身,元素整体前移到槽 3..2+TLen
+                lua_remove(L, 3); // 移除表本身,元素整体前移到槽 3..2+TLen
                 NArgs = 2 + TLen;
             }
 
@@ -202,10 +206,7 @@ namespace mession::script::lua {
             if (Provided != Fn->Params.size()) {
                 // lua_pushfstring 仅支持 s/c/d/f/p 等有限格式,
                 // 计数值很小,用 %d + int 强转安全。
-                luaL_error(L, "arg_count_mismatch: %s.%s expected=%d got=%d",
-                           ClassName, MethodName,
-                           static_cast<int>(Fn->Params.size()),
-                           static_cast<int>(Provided));
+                luaL_error(L, "arg_count_mismatch: %s.%s expected=%d got=%d", ClassName, MethodName, static_cast<int>(Fn->Params.size()), static_cast<int>(Provided));
                 return 0;
             }
 
@@ -214,14 +215,12 @@ namespace mession::script::lua {
             for (size_t i = 0; i < Fn->Params.size(); ++i) {
                 const MProperty* P = Fn->Params[i];
                 if (!P) {
-                    luaL_error(L, "null_param_descriptor: %s.%s[%d]",
-                               ClassName, MethodName, static_cast<int>(i));
+                    luaL_error(L, "null_param_descriptor: %s.%s[%d]", ClassName, MethodName, static_cast<int>(i));
                     return 0;
                 }
                 int StackIdx = 3 + static_cast<int>(i);
                 if (!MarshalOne(L, StackIdx, P->CppTypeIndex, In)) {
-                    luaL_error(L, "arg_type_mismatch: %s.%s arg=%s",
-                               ClassName, MethodName, P->Name.c_str());
+                    luaL_error(L, "arg_type_mismatch: %s.%s arg=%s", ClassName, MethodName, P->Name.c_str());
                     return 0;
                 }
             }
@@ -236,9 +235,9 @@ namespace mession::script::lua {
             // 2) NativeInvoke — ScriptBind 方法注册为成员函数指针,
             //    需要一个实例:每次调用经反射构造临时对象(self 生命周期
             //    仅覆盖本次调用),Phase 2 的 M.GetObject 再引入常驻实例。
-            void*          SelfObj = Cls->CreateInstance();
+            void*           SelfObj = Cls->CreateInstance();
             MReflectArchive Out;
-            bool bInvoked = SelfObj && Fn->NativeInvoke(static_cast<MObject*>(SelfObj), &In, &Out);
+            bool            bInvoked = SelfObj && Fn->NativeInvoke(static_cast<MObject*>(SelfObj), &In, &Out);
             if (SelfObj) {
                 Cls->DestroyInstance(SelfObj);
             }
@@ -251,13 +250,12 @@ namespace mession::script::lua {
             if (Fn->ReturnProperty) {
                 int RC = PushReturnOne(L, Out.Data, Fn->ReturnProperty->CppTypeIndex);
                 if (RC < 0) {
-                    luaL_error(L, "unsupported_return_type: %s.%s",
-                               ClassName, MethodName);
+                    luaL_error(L, "unsupported_return_type: %s.%s", ClassName, MethodName);
                     return 0;
                 }
                 return RC;
             }
-            return 0;  // void
+            return 0; // void
         }
 
     } // namespace

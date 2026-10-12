@@ -9,7 +9,8 @@ extern "C" {
 namespace mession::script::lua {
 
     bool MLuaCoroutineBridge::IsCoroutineYielded(lua_State* L) {
-        if (!L) return false;
+        if (!L)
+            return false;
         return lua_status(L) == LUA_YIELD;
     }
 
@@ -38,7 +39,7 @@ namespace mession::script::lua {
             MString Err;
             if (lua_gettop(L) > 0 && lua_isstring(L, -1)) {
                 const char* P = lua_tostring(L, -1);
-                Err            = P ? MString(P) : MString("lua_resume_failed");
+                Err           = P ? MString(P) : MString("lua_resume_failed");
             } else {
                 Err = MString("lua_resume_failed");
             }

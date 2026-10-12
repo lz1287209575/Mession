@@ -29,9 +29,7 @@ SFutureResult<FPlayerUseItemResponse> MPlayerItemContainer::UseItem(const FPlaye
     if (It == Items.end() || It->second <= 0) {
         Response.bOk       = false;
         Response.Remaining = (It != Items.end()) ? It->second : 0;
-        LOG_INFO("MPlayerItemContainer::UseItem player=%llu item=%llu -> fail (not found/empty)",
-                 static_cast<unsigned long long>(InRequest.PlayerId),
-                 static_cast<unsigned long long>(InRequest.ItemId));
+        LOG_INFO("MPlayerItemContainer::UseItem player=%llu item=%llu -> fail (not found/empty)", static_cast<unsigned long long>(InRequest.PlayerId), static_cast<unsigned long long>(InRequest.ItemId));
         return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
     }
 
@@ -40,10 +38,7 @@ SFutureResult<FPlayerUseItemResponse> MPlayerItemContainer::UseItem(const FPlaye
 
     Response.bOk       = true;
     Response.Remaining = It->second;
-    LOG_INFO("MPlayerItemContainer::UseItem player=%llu item=%llu count=%d -> ok remaining=%d",
-             static_cast<unsigned long long>(InRequest.PlayerId),
-             static_cast<unsigned long long>(InRequest.ItemId),
-             static_cast<int>(InRequest.Count),
+    LOG_INFO("MPlayerItemContainer::UseItem player=%llu item=%llu count=%d -> ok remaining=%d", static_cast<unsigned long long>(InRequest.PlayerId), static_cast<unsigned long long>(InRequest.ItemId), static_cast<int>(InRequest.Count),
              static_cast<int>(Response.Remaining));
     return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Response));
 }

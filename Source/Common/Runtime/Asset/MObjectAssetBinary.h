@@ -10,9 +10,13 @@ class MClass;
 namespace MObjectAssetBinary {
     constexpr uint16 FileVersion = 1;
 
-    template <typename TValue, bool = std::is_enum_v<TValue>> struct TBinaryRawType { using Type = TValue; };
+    template <typename TValue, bool = std::is_enum_v<TValue>> struct TBinaryRawType {
+        using Type = TValue;
+    };
 
-    template <typename TValue> struct TBinaryRawType<TValue, true> { using Type = std::underlying_type_t<TValue>; };
+    template <typename TValue> struct TBinaryRawType<TValue, true> {
+        using Type = std::underlying_type_t<TValue>;
+    };
 
     enum class EPayloadEncoding : uint32 {
         None         = 0,

@@ -35,9 +35,9 @@ namespace mession::script {
         inline constexpr const char* kMethodNotFound   = "method_not_found";
 
         // DualVM 热重载专用
-        inline constexpr const char* kVmSwapped       = "vm_swapped";
+        inline constexpr const char* kVmSwapped      = "vm_swapped";
         inline constexpr const char* kVmDrainTimeout = "vm_drain_timeout";
-        inline constexpr const char* kActorNotFound   = "actor_not_found";
+        inline constexpr const char* kActorNotFound  = "actor_not_found";
     } // namespace ScriptErrorCodes
 
     // FScriptError:VM 抛出的错误描述

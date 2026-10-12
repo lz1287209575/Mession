@@ -1,12 +1,12 @@
-#include "Common/Script/Lua/LuaEngine.h"
-#include "Common/Script/Lua/LuaScriptState.h"
-#include "Common/Script/Lua/FPendingCall.h"
-#include "Common/Script/Abstract/ScriptErrorCodes.h"
 #include "Common/Script/Abstract/EReloadMode.h"
 #include "Common/Script/Abstract/SScriptEngineConfig.h"
+#include "Common/Script/Abstract/ScriptErrorCodes.h"
+#include "Common/Script/Lua/FPendingCall.h"
+#include "Common/Script/Lua/LuaEngine.h"
+#include "Common/Script/Lua/LuaScriptState.h"
 
-#include <cstdio>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 
 using namespace mession::script;
@@ -27,19 +27,17 @@ namespace {
     void TestDualVmBasicSwap() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
-        RunLua(Engine.GetStateForReload(),
-               "Counter = { count = 0 }\nfunction Counter:set(n) self.count = n end\n");
-        Engine.HotReloadNewBytes =
-            "Counter = { count = 0 }\nfunction Counter:set(n) self.count = n end\n"
-            "Counter:set(99)\n";
+        RunLua(Engine.GetStateForReload(), "Counter = { count = 0 }\nfunction Counter:set(n) self.count = n end\n");
+        Engine.HotReloadNewBytes = "Counter = { count = 0 }\nfunction Counter:set(n) self.count = n end\n"
+                                   "Counter:set(99)\n";
         Engine.Reload(EReloadMode::DualVM);
 
         // 验证 VmGeneration 已 bump
         assert(Engine.GetVmGeneration() == 2);
 
         // 验证新 Counter.count = 99
-        lua_State* L = Engine.GetStateForReload().GetLuaState();
-        int RC = luaL_dostring(L, "return Counter.count");
+        lua_State* L  = Engine.GetStateForReload().GetLuaState();
+        int        RC = luaL_dostring(L, "return Counter.count");
         assert(RC == 0);
         assert((int)lua_tointeger(L, -1) == 99);
         lua_pop(L, 1);
@@ -51,9 +49,8 @@ namespace {
     void TestStaleHandleReturnsErr() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
-        RunLua(Engine.GetStateForReload(),
-               "Monster = {}\nfunction Monster:new() return setmetatable({hp=10}, self) end\n"
-               "function Monster:heal() self.hp = self.hp + 1 end\n");
+        RunLua(Engine.GetStateForReload(), "Monster = {}\nfunction Monster:new() return setmetatable({hp=10}, self) end\n"
+                                           "function Monster:heal() self.hp = self.hp + 1 end\n");
 
         // 拿 instance handle
         TResult<TScriptInstanceHandle> H = Engine.CreateInstanceByClassName("Monster", TScriptArgs(nullptr, 0));
@@ -111,12 +108,11 @@ namespace {
     void TestActorSaveRestoreRoundtripsState() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
-        RunLua(Engine.GetStateForReload(),
-               "Echo = {}\n"
-               "function Echo:new(n) return setmetatable({name=n, count=0}, self) end\n"
-               "function Echo:tick() self.count = self.count + 1 end\n"
-               "function Echo:__dualvm_save() return self.name .. ':' .. tostring(self.count) end\n"
-               "function Echo:__dualvm_restore(s) local n,c = s:match('([^:]+):(%d+)'); self.name=n; self.count=tonumber(c) end\n");
+        RunLua(Engine.GetStateForReload(), "Echo = {}\n"
+                                           "function Echo:new(n) return setmetatable({name=n, count=0}, self) end\n"
+                                           "function Echo:tick() self.count = self.count + 1 end\n"
+                                           "function Echo:__dualvm_save() return self.name .. ':' .. tostring(self.count) end\n"
+                                           "function Echo:__dualvm_restore(s) local n,c = s:match('([^:]+):(%d+)'); self.name=n; self.count=tonumber(c) end\n");
 
         // 1. 创建 actor
         TResult<uint64> ActorId = Engine.CreateActor(nullptr, TScriptArgs(nullptr, 0));
@@ -156,8 +152,7 @@ namespace {
 
 } // namespace
 
-int main()
-{
+int main() {
     TestDualVmBasicSwap();
     TestStaleHandleReturnsErr();
     TestPendingCallRegistryTracksCount();

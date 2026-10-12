@@ -33,12 +33,10 @@ namespace mession::script::lua {
             lua_getfield(L, -1, Field);
             return !lua_isnil(L, -1);
         }
-    }
+    } // namespace
 
-    MLuaProxyActor::MLuaProxyActor(MLuaEngine& InEngine, MClass* InCls, uint64 InActorId,
-                                   TScriptInstanceHandle InHandle, MString InClassName)
-        : Engine(InEngine), Cls(InCls), ActorId(InActorId), Handle(InHandle),
-          ClassName(std::move(InClassName)) {
+    MLuaProxyActor::MLuaProxyActor(MLuaEngine& InEngine, MClass* InCls, uint64 InActorId, TScriptInstanceHandle InHandle, MString InClassName)
+        : Engine(InEngine), Cls(InCls), ActorId(InActorId), Handle(InHandle), ClassName(std::move(InClassName)) {
     }
 
     MLuaProxyActor::~MLuaProxyActor() = default;
@@ -100,8 +98,7 @@ namespace mession::script::lua {
         }
     }
 
-    void MLuaProxyActor::OnVmSwapped(const TScriptInstanceHandle& /*OldHandle*/,
-                                    const TScriptInstanceHandle& NewHandle) {
+    void MLuaProxyActor::OnVmSwapped(const TScriptInstanceHandle& /*OldHandle*/, const TScriptInstanceHandle& NewHandle) {
         // ReplaceState 已经把 Handle 改成了新 handle(rebind 时已经在 LuaEngine 侧替换)
         // 这里只用于业务层缓存的句柄更新
         Handle = NewHandle;
@@ -125,7 +122,7 @@ namespace mession::script::lua {
             MString Err;
             if (lua_isstring(L, -1)) {
                 const char* P = lua_tostring(L, -1);
-                Err            = P ? MString(P) : MString("dualvm_save_failed");
+                Err           = P ? MString(P) : MString("dualvm_save_failed");
             } else {
                 Err = MString("dualvm_save_failed");
             }
@@ -138,7 +135,7 @@ namespace mession::script::lua {
         }
         size_t      Len = 0;
         const char* P   = lua_tolstring(L, -1, &Len);
-        MString S(P, Len);
+        MString     S(P, Len);
         lua_pop(L, 1);
         return TResult<MString>::Ok(S);
     }
@@ -161,7 +158,7 @@ namespace mession::script::lua {
             MString Err;
             if (lua_isstring(L, -1)) {
                 const char* P = lua_tostring(L, -1);
-                Err            = P ? MString(P) : MString("dualvm_restore_failed");
+                Err           = P ? MString(P) : MString("dualvm_restore_failed");
             } else {
                 Err = MString("dualvm_restore_failed");
             }
@@ -174,7 +171,7 @@ namespace mession::script::lua {
     void MLuaProxyActor::RebindHandleOnCurrentVm() {
         // 在当前 active VM 上重新 :new(args) — args 暂时传空(后续 plan 支持 ctor args 缓存)
         MString ClassName = this->ClassName;
-        auto R = Engine.CreateInstanceByClassName(ClassName, mession::script::TScriptArgs(nullptr, 0));
+        auto    R         = Engine.CreateInstanceByClassName(ClassName, mession::script::TScriptArgs(nullptr, 0));
         if (R.IsOk()) {
             Handle = R.GetValue();
         }

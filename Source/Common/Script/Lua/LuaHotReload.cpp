@@ -12,7 +12,7 @@ namespace mession::script::lua {
     namespace {
         // Drain 阶段超时 — 30s 默认,可后续做成 SOption
         constexpr uint32 kDrainTimeoutSec = 30;
-    }
+    } // namespace
 
     // ReloadDualVM_Real — 真 DualVM 热重载(9 阶段)
     //   1. drain in-flight 协程(StepCoroutines until PendingCalls==0 或 30s timeout)

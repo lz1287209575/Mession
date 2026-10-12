@@ -19,19 +19,19 @@ static void TestBattleDamageRoundTrip() {
     In.Attacker.MaxHp  = 120;
     In.Attacker.Effects.push_back(FStatusEffect{EEffectType::Burn, 3.5f, 2});
     In.Attacker.Effects.push_back(FStatusEffect{EEffectType::Shield, 10.0f, 1});
-    In.Defender.UnitId   = 202;
-    In.Defender.Name     = "Mage";
-    In.Defender.Hp       = 60;
-    In.Defender.MaxHp    = 80;
+    In.Defender.UnitId = 202;
+    In.Defender.Name   = "Mage";
+    In.Defender.Hp     = 60;
+    In.Defender.MaxHp  = 80;
     In.Defender.Effects.push_back(FStatusEffect{EEffectType::Poison, 5.0f, 3});
-    In.Damage     = 12345;
-    In.bCritical  = true;
+    In.Damage    = 12345;
+    In.bCritical = true;
 
     const TByteArray Bytes = BuildPayload(In);
     assert(!Bytes.empty());
 
     FBattleDamageNotify Out;
-    const auto Result = ParsePayload(Bytes, Out);
+    const auto          Result = ParsePayload(Bytes, Out);
     assert(Result.IsOk());
     assert(Out.BattleId == 9001);
     assert(Out.Attacker.UnitId == 101);
@@ -72,7 +72,7 @@ static void TestSceneEnterRoundTrip() {
     assert(!Bytes.empty());
 
     FSceneEnterMsg Out;
-    const auto Result = ParsePayload(Bytes, Out);
+    const auto     Result = ParsePayload(Bytes, Out);
     assert(Result.IsOk());
     assert(Out.PlayerId == 555);
     assert(Out.SceneId == "scene_001");

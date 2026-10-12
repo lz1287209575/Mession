@@ -1,17 +1,16 @@
-#include "Common/Script/Lua/MLuaRpc.h"
 #include "Common/Script/Lua/LuaScriptState.h"
+#include "Common/Script/Lua/MLuaRpc.h"
 
-#include <cstdio>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 
 using namespace mession::script::lua;
 
 // 测试用的 mock bridge — 简单地取 Lua 全局函数并调用
 class FMockBridge : public IScriptRpcBridge {
-public:
-    int CallGlobal(lua_State* L, const char* GlobalName, int ArgStart, int ArgEnd) override
-    {
+    public:
+    int CallGlobal(lua_State* L, const char* GlobalName, int ArgStart, int ArgEnd) override {
         lua_getglobal(L, GlobalName);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
@@ -35,18 +34,17 @@ public:
     }
 };
 
-static void TestRpcCall()
-{
+static void TestRpcCall() {
     MLuaScriptState State;
-    lua_State* L = State.GetLuaState();
-    FMockBridge Mock;
+    lua_State*      L = State.GetLuaState();
+    FMockBridge     Mock;
     MLuaRpc::Install(L, &Mock);
 
     int RC = luaL_dostring(L,
-        // greet 必须是全局函数: RPC.call 经 bridge 用 lua_getglobal 按名查找,
-        // local 函数不在全局表里,查不到(会返回 not_a_function)。
-        "function greet(name) return 'hello ' .. name end\n"
-        "return Mession.RPC.call('greet', 'lua')");
+                           // greet 必须是全局函数: RPC.call 经 bridge 用 lua_getglobal 按名查找,
+                           // local 函数不在全局表里,查不到(会返回 not_a_function)。
+                           "function greet(name) return 'hello ' .. name end\n"
+                           "return Mession.RPC.call('greet', 'lua')");
     assert(RC == 0);
     size_t      Len = 0;
     const char* P   = lua_tolstring(L, -1, &Len);
@@ -55,16 +53,14 @@ static void TestRpcCall()
     std::printf("ok: TestRpcCall\n");
 }
 
-static void TestRpcNotFound()
-{
+static void TestRpcNotFound() {
     MLuaScriptState State;
-    lua_State* L = State.GetLuaState();
-    FMockBridge Mock;
+    lua_State*      L = State.GetLuaState();
+    FMockBridge     Mock;
     MLuaRpc::Install(L, &Mock);
 
-    int RC = luaL_dostring(L,
-        "local v, err = Mession.RPC.call('does_not_exist', 1, 2)\n"
-        "return v, err");
+    int RC = luaL_dostring(L, "local v, err = Mession.RPC.call('does_not_exist', 1, 2)\n"
+                              "return v, err");
     assert(RC == 0);
     assert(lua_isnil(L, -2));
     size_t      Len = 0;
@@ -74,21 +70,19 @@ static void TestRpcNotFound()
     std::printf("ok: TestRpcNotFound\n");
 }
 
-static void TestTimeNow()
-{
+static void TestTimeNow() {
     MLuaScriptState State;
-    lua_State* L = State.GetLuaState();
-    FMockBridge Mock;
+    lua_State*      L = State.GetLuaState();
+    FMockBridge     Mock;
     MLuaRpc::Install(L, &Mock);
 
-    int RC = luaL_dostring(L,
-        "local s = Mession.Time.now()\n"
-        "local ms = Mession.Time.nowMs()\n"
-        "return type(s), type(ms), ms > 0");
+    int RC = luaL_dostring(L, "local s = Mession.Time.now()\n"
+                              "local ms = Mession.Time.nowMs()\n"
+                              "return type(s), type(ms), ms > 0");
     assert(RC == 0);
     size_t      Len = 0;
-    const char* T1 = lua_tolstring(L, -3, &Len);
-    const char* T2 = lua_tolstring(L, -2, &Len);
+    const char* T1  = lua_tolstring(L, -3, &Len);
+    const char* T2  = lua_tolstring(L, -2, &Len);
     assert(T1 && MString(T1, std::strlen(T1)) == MString("number"));
     assert(T2 && MString(T2, std::strlen(T2)) == MString("number"));
     assert(lua_toboolean(L, -1) == 1);
@@ -96,17 +90,15 @@ static void TestTimeNow()
     std::printf("ok: TestTimeNow\n");
 }
 
-static void TestIdUniqueness()
-{
+static void TestIdUniqueness() {
     MLuaScriptState State;
-    lua_State* L = State.GetLuaState();
-    FMockBridge Mock;
+    lua_State*      L = State.GetLuaState();
+    FMockBridge     Mock;
     MLuaRpc::Install(L, &Mock);
 
-    int RC = luaL_dostring(L,
-        "local a = Mession.Id.new()\n"
-        "local b = Mession.Id.new()\n"
-        "return a, b, a < b");
+    int RC = luaL_dostring(L, "local a = Mession.Id.new()\n"
+                              "local b = Mession.Id.new()\n"
+                              "return a, b, a < b");
     assert(RC == 0);
     int64 A = (int64)lua_tointeger(L, -3);
     int64 B = (int64)lua_tointeger(L, -2);
@@ -116,25 +108,22 @@ static void TestIdUniqueness()
     std::printf("ok: TestIdUniqueness\n");
 }
 
-static void TestSleep()
-{
+static void TestSleep() {
     MLuaScriptState State;
-    lua_State* L = State.GetLuaState();
-    FMockBridge Mock;
+    lua_State*      L = State.GetLuaState();
+    FMockBridge     Mock;
     MLuaRpc::Install(L, &Mock);
 
     // 1ms sleep 应该能跑通(不验证时间精确)
-    int RC = luaL_dostring(L,
-        "Mession.Time.sleepMs(1)\n"
-        "return 1");
+    int RC = luaL_dostring(L, "Mession.Time.sleepMs(1)\n"
+                              "return 1");
     assert(RC == 0);
     assert((int)lua_tointeger(L, -1) == 1);
     lua_pop(L, 1);
     std::printf("ok: TestSleep\n");
 }
 
-int main()
-{
+int main() {
     TestRpcCall();
     TestRpcNotFound();
     TestTimeNow();

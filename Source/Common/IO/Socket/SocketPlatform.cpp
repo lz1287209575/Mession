@@ -130,7 +130,7 @@ bool MSocketPlatform::DescribeAddress(const sockaddr_in& Address, MString& OutAd
 #else
     if (inet_ntop(AF_INET, (void*)&Address.sin_addr, AddressBuffer, sizeof(AddressBuffer)) == nullptr) {
         OutAddress = "unknown";
-        OutPort = ntohs(Address.sin_port);
+        OutPort    = ntohs(Address.sin_port);
         return false;
     }
 #endif

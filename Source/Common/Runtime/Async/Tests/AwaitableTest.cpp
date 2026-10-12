@@ -75,7 +75,7 @@ namespace {
         // R 从函数指针返回类型（SFutureResult<R>::InnerType）推导。
         // AsAwaiter 由 codegen 注入（KD-6），类型层只验证构造/占位转换可编译。
         TAwaitable<ComputeAsync> Awaitable(5);
-        const int Placeholder = Awaitable.operator int();
+        const int                Placeholder = Awaitable.operator int();
         EXPECT_TRUE(Placeholder == 0);
     }
 

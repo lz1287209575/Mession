@@ -24,19 +24,17 @@ namespace mession::script::lua {
     // OnVmSwapped 在 DualVM swap 后替换 handle(由 MLuaEngine::RebindCrossInstanceRefs 调)
     class MLuaProxyActor : public IActor {
         public:
-        MLuaProxyActor(MLuaEngine& InEngine, MClass* InCls, uint64 InActorId,
-                       TScriptInstanceHandle InHandle, MString InClassName);
+        MLuaProxyActor(MLuaEngine& InEngine, MClass* InCls, uint64 InActorId, TScriptInstanceHandle InHandle, MString InClassName);
         ~MLuaProxyActor() override;
 
         // IActor
         uint64 GetActorId() const override {
             return ActorId;
         }
-        void   OnMessage(const struct FActorMessage& InMsg) override;
-        void   OnCreated() override;
-        void   OnDestroyed() override;
-        void   OnVmSwapped(const mession::script::TScriptInstanceHandle& OldHandle,
-                            const mession::script::TScriptInstanceHandle& NewHandle) override;
+        void OnMessage(const struct FActorMessage& InMsg) override;
+        void OnCreated() override;
+        void OnDestroyed() override;
+        void OnVmSwapped(const mession::script::TScriptInstanceHandle& OldHandle, const mession::script::TScriptInstanceHandle& NewHandle) override;
 
         // Lua state 序列化(供 SaveAllActorStates 调用)
         // 优先调 Lua 端 __dualvm_save() 钩子;无钩子走 C++ 反射 fallback
@@ -50,16 +48,16 @@ namespace mession::script::lua {
         void RebindHandleOnCurrentVm();
 
         // accessors
-        MClass*                GetClass() const {
+        MClass* GetClass() const {
             return Cls;
         }
-        const MString&         GetClassName() const {
+        const MString& GetClassName() const {
             return ClassName;
         }
-        TScriptInstanceHandle  GetHandle() const {
+        TScriptInstanceHandle GetHandle() const {
             return Handle;
         }
-        void                   SetHandle(TScriptInstanceHandle H) {
+        void SetHandle(TScriptInstanceHandle H) {
             Handle = H;
         }
 

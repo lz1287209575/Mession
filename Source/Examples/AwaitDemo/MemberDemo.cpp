@@ -2,16 +2,14 @@
 #include "MemberDemo.h"
 
 // await 目标实现（模拟远端异步 I/O：ready future，V*2）
-SFutureResult<int> RemoteFetch(int V)
-{
+SFutureResult<int> RemoteFetch(int V) {
     MPromise<TResult<int, FAppError>> P;
     P.SetValue(TResult<int, FAppError>::Ok(V * 2));
     return SFutureResult<int>(P.GetFuture());
 }
 
 // await 目标成员方法实现（模拟异步 I/O：V*2）——被 TAwaitable<&MAwaitTarget::Fetch> 调用
-SFutureResult<int> MAwaitTarget::Fetch(int V)
-{
+SFutureResult<int> MAwaitTarget::Fetch(int V) {
     MPromise<TResult<int, FAppError>> P;
     P.SetValue(TResult<int, FAppError>::Ok(V * 2));
     return SFutureResult<int>(P.GetFuture());

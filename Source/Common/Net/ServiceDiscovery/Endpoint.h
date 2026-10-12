@@ -1,19 +1,18 @@
 #pragma once
 
+#include "Common/Net/ServerConnection.h" // EServerType
 #include "Common/Runtime/MLib.h"
-#include "Common/Net/ServerConnection.h"  // EServerType
 #include "Common/Runtime/Reflect/Reflection.h"
 #include "Servers/App/ServiceId.h"
 
 MSTRUCT()
-struct FServiceEndpoint
-{
+struct FServiceEndpoint {
     MPROPERTY() EServerType ServerType = EServerType::Unknown;
-    MPROPERTY() uint32 ServerId = 0;
-    MPROPERTY() MString Address = "0.0.0.0";
-    MPROPERTY() uint16 Port = 0;
+    MPROPERTY() uint32 ServerId        = 0;
+    MPROPERTY() MString Address        = "0.0.0.0";
+    MPROPERTY() uint16 Port            = 0;
     MPROPERTY() uint64 LastHeartbeatMs = 0;
-    MPROPERTY() bool bHealthy = true;
+    MPROPERTY() bool bHealthy          = true;
     MPROPERTY() TVector<uint64> ActorIds;
 };
 
@@ -23,8 +22,7 @@ struct FServiceEndpoint
 // Common/Net/ServerConnection.h:26-31). Base 200 is well clear of those.
 // Client↔Gateway envelope 由 RpcTransport.cpp::BuildClientEnvelopePacket 编/解码,
 // 此处不涉及(2026-07 step-1/2 协议族重构后 EClientMessageType 整个 enum 已删)。
-enum class EServiceRegistryMessageType : uint8_t
-{
+enum class EServiceRegistryMessageType : uint8_t {
     Register       = 200,
     Deregister     = 201,
     Heartbeat      = 202,
@@ -34,8 +32,7 @@ enum class EServiceRegistryMessageType : uint8_t
     Ack            = 206,
 };
 
-enum class EServiceRegistryResult : uint8_t
-{
+enum class EServiceRegistryResult : uint8_t {
     Ok             = 0,
     AlreadyExists  = 1,
     NotFound       = 2,
@@ -55,17 +52,14 @@ bool DecodeEndpoint(const TByteArray& In, size_t& Off, FServiceEndpoint& Ep);
  * LocalActorIds 是 InstId 列表（CLI 输入形式）→ 在这里转成 64-bit ActorId
  * （高 32 位 = ServiceId = EServerType 数值）。
  */
-template<typename TConfig>
-FServiceEndpoint MakeLocalEndpoint(const TConfig& Config)
-{
+template <typename TConfig> FServiceEndpoint MakeLocalEndpoint(const TConfig& Config) {
     FServiceEndpoint Ep;
     Ep.ServerType = Config.LocalServerType;
-    Ep.ServerId = Config.LocalServerId;
-    Ep.Address = "0.0.0.0";
-    Ep.Port = Config.ListenPort;
+    Ep.ServerId   = Config.LocalServerId;
+    Ep.Address    = "0.0.0.0";
+    Ep.Port       = Config.ListenPort;
     Ep.ActorIds.reserve(Config.LocalActorIds.size());
-    for (uint32 InstId : Config.LocalActorIds)
-    {
+    for (uint32 InstId : Config.LocalActorIds) {
         Ep.ActorIds.push_back(MServiceId::Make(Config.LocalServerType, InstId));
     }
     return Ep;
@@ -76,25 +70,19 @@ FServiceEndpoint MakeLocalEndpoint(const TConfig& Config)
  *
  * 给 BindRegistry 用：CLI --registry=127.0.0.1:18000 → 这里拆出来。
  */
-inline bool ParseAddrPort(const MString& In, MString& OutAddr, uint16& OutPort)
-{
+inline bool ParseAddrPort(const MString& In, MString& OutAddr, uint16& OutPort) {
     const size_t ColonPos = In.rfind(':');
-    if (ColonPos == MString::npos || ColonPos == 0 || ColonPos + 1 >= In.size())
-    {
+    if (ColonPos == MString::npos || ColonPos == 0 || ColonPos + 1 >= In.size()) {
         return false;
     }
     const MString PortStr = In.substr(ColonPos + 1);
-    int PortInt = 0;
-    try
-    {
+    int           PortInt = 0;
+    try {
         PortInt = std::stoi(PortStr.c_str());
-    }
-    catch (const std::exception&)
-    {
+    } catch (const std::exception&) {
         return false;
     }
-    if (PortInt <= 0 || PortInt > 65535)
-    {
+    if (PortInt <= 0 || PortInt > 65535) {
         return false;
     }
     OutAddr = In.substr(0, ColonPos);

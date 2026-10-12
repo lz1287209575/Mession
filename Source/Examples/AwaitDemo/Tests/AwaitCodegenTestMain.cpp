@@ -1,8 +1,7 @@
 // AwaitCodegenTest main — 汇总运行（测试 TU 合并共享计数）
 #include "AwaitCodegenTest.cpp"
 
-int main()
-{
+int main() {
     std::printf("[ Await_Single_BranchIfAndEarly ]\n");
     Test_Await_Single_BranchIfAndEarly();
     std::printf("[ Await_ElseBranchAwait ]\n");

@@ -92,7 +92,7 @@ namespace MHeaderTool {
         MString                  ClassFlagsExpr = "0";
         MString                  ReflectionType = "Object";
         MString                  Owner;
-        MString                  QualifiedName; // namespace 全名(enum/类;namespace 级 scoped enum 用)
+        MString                  QualifiedName;    // namespace 全名(enum/类;namespace 级 scoped enum 用)
         TVector<MString>         AllParentClasses; // 所有基类，用于检查是否继承自 MServerCallProxyBase
         bool                     bScopedEnum        = false;
         MString                  EnumUnderlyingType = "int32";
@@ -137,23 +137,23 @@ namespace MHeaderTool {
     // ============================================================================
 
     struct SOptions {
-        fs::path SourceRoot           = "Source";
-        fs::path OutputDir            = "Build/Generated";
-        fs::path CacheDir             = "Build/.mheadertool_cache";
-        fs::path CMakeManifestPath    = "Build/Generated/MHeaderToolTargets.cmake";
-        fs::path ValidationSchemaPath = "Build/Generated/ValidationProtocolSchema.json";
-        fs::path ClientManifestPath   = "Build/Generated/MClientManifest.mgenerated.cpp";
+        fs::path SourceRoot                 = "Source";
+        fs::path OutputDir                  = "Build/Generated";
+        fs::path CacheDir                   = "Build/.mheadertool_cache";
+        fs::path CMakeManifestPath          = "Build/Generated/MHeaderToolTargets.cmake";
+        fs::path ValidationSchemaPath       = "Build/Generated/ValidationProtocolSchema.json";
+        fs::path ClientManifestPath         = "Build/Generated/MClientManifest.mgenerated.cpp";
         fs::path ClientDownlinkManifestPath = "Build/Generated/MClientDownlinkManifest.mgenerated.cpp";
         fs::path ClientDownlinkHeaderPath   = "Build/Generated/MClientDownlinkManifest.mgenerated.h";
         fs::path MemberRpcManifestPath      = "Build/Generated/MemberRpcManifest.mgenerated.cpp";
         fs::path LuaStdlibHintLuaPath       = "Build/Generated/Mession.lua";
         fs::path LuaStdlibHintTealPath      = "Build/Generated/Mession.d.tl";
-        bool     bVerbose             = false;
-        bool     bIncremental         = true;
-        bool     bForceFull           = false;
-        bool     bBenchmark           = false;
-        bool     bDryRun              = false;
-        int      NumThreads           = 0; // 0 = auto (CPU cores)
+        bool     bVerbose                   = false;
+        bool     bIncremental               = true;
+        bool     bForceFull                 = false;
+        bool     bBenchmark                 = false;
+        bool     bDryRun                    = false;
+        int      NumThreads                 = 0; // 0 = auto (CPU cores)
     };
 
     // ============================================================================

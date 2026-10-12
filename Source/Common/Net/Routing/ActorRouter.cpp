@@ -83,7 +83,8 @@ void MActorRouter::CollectLocalActorIds(TVector<uint64>& OutActorIds) const {
     }
 }
 
-bool MActorRouter::IsActorLocal(uint64 ActorId) const {    SActorRoute Route = FindActor(ActorId);
+bool MActorRouter::IsActorLocal(uint64 ActorId) const {
+    SActorRoute Route = FindActor(ActorId);
     return Route.ActorId != 0 && Route.ServerType == EServerType::Unknown;
 }
 

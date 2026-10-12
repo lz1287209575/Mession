@@ -264,9 +264,9 @@ class MClass {
     // 继承序列化辅助:父类与本类共享同一 MReflectArchive 游标(先父后子,
     // 对称于 WriteSnapshot 的递归顺序)。读入口 ReadSnapshot/ByDomain 建
     // Ar 后转调这里,避免递归重建 Ar 导致游标归零、字段错位。
-    void ReadSnapshotFields(void* Object, class MReflectArchive& Ar) const;
-    void ReadSnapshotFieldsByDomain(void* Object, class MReflectArchive& Ar, uint64 InDomainMask) const;
-    MString      ExportObjectToString(const void* Object) const;
+    void    ReadSnapshotFields(void* Object, class MReflectArchive& Ar) const;
+    void    ReadSnapshotFieldsByDomain(void* Object, class MReflectArchive& Ar, uint64 InDomainMask) const;
+    MString ExportObjectToString(const void* Object) const;
 
     void CopyProperties(void* Dest, const void* Src) const;
 

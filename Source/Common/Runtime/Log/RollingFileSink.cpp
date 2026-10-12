@@ -55,7 +55,7 @@ namespace {
     // Return the on-disk size of `Path`, or 0 on error. Cheaper than stat()
     // for the typical case because we don't need most of struct stat.
     size_t FileSizeOrZero(const MString& Path) {
-        struct stat St {};
+        struct stat St{};
         if (::stat(Path.c_str(), &St) != 0)
             return 0;
         return static_cast<size_t>(St.st_size);

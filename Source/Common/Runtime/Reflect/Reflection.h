@@ -355,7 +355,7 @@ class MObject {
     void        AddToRoot();
     void        RemoveFromRoot();
     void        MarkAsDefaultSubObject() {
-               AddObjectFlags(ObjectFlag_DefaultSubObject);
+        AddObjectFlags(ObjectFlag_DefaultSubObject);
     }
     void SetObjectFlags(uint64 InFlags) {
         ObjectFlags = InFlags;

@@ -1,10 +1,10 @@
-#include "Common/Script/Lua/LuaEngine.h"
-#include "Common/Script/Lua/MobDebugServer.h"
-#include "Common/Script/Lua/LuaScriptState.h"
 #include "Common/Script/Abstract/SScriptEngineConfig.h"
+#include "Common/Script/Lua/LuaEngine.h"
+#include "Common/Script/Lua/LuaScriptState.h"
+#include "Common/Script/Lua/MobDebugServer.h"
 
-#include <cstdio>
 #include <cassert>
+#include <cstdio>
 
 using namespace mession::script;
 using namespace mession::script::lua;
@@ -20,8 +20,7 @@ namespace {
         MLuaMobDebugServer::Enable(Engine);
 
         // 跑 N 个 for 迭代(每迭代 >= 1 指令)
-        int RC = luaL_dostring(Engine.GetStateForReload().GetLuaState(),
-                               "for i=1,5000 do local x = i * 2 end");
+        int RC = luaL_dostring(Engine.GetStateForReload().GetLuaState(), "for i=1,5000 do local x = i * 2 end");
         assert(RC == 0);
 
         // 验证 InstructionCount 增长
@@ -43,15 +42,13 @@ namespace {
         MLuaMobDebugServer::Enable(Engine);
 
         // 跑一些指令
-        int RC = luaL_dostring(Engine.GetStateForReload().GetLuaState(),
-                               "for i=1,2000 do end");
+        int RC = luaL_dostring(Engine.GetStateForReload().GetLuaState(), "for i=1,2000 do end");
         assert(RC == 0);
         uint32 CountBefore = Engine.GetDebugStatePtr()->InstructionCount.load();
 
         // Disable 后再次运行
         DisableForEngine(Engine);
-        RC = luaL_dostring(Engine.GetStateForReload().GetLuaState(),
-                           "for i=1,2000 do end");
+        RC = luaL_dostring(Engine.GetStateForReload().GetLuaState(), "for i=1,2000 do end");
         assert(RC == 0);
 
         // Count 不应该再增长(bRunning=false → hook 解绑)
@@ -86,8 +83,7 @@ namespace {
         // EngineB 不 Enable
 
         // EngineA 跑指令
-        luaL_dostring(EngineA.GetStateForReload().GetLuaState(),
-                      "for i=1,2000 do end");
+        luaL_dostring(EngineA.GetStateForReload().GetLuaState(), "for i=1,2000 do end");
         uint32 CountA = EngineA.GetDebugStatePtr()->InstructionCount.load();
         uint32 CountB = EngineB.GetDebugStatePtr()->InstructionCount.load();
 
@@ -112,8 +108,7 @@ namespace {
 
 } // namespace
 
-int main()
-{
+int main() {
     TestHookCountsInstructions();
     TestDisableStopsHook();
     TestEnableDisableSafe();

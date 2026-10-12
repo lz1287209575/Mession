@@ -19,10 +19,10 @@ namespace mession::script::lua {
 
     void FLuaPendingCall::InitYield(lua_State* InMainL, lua_State* InCoThread, int32 InNArgs) {
         assert(InMainL && InCoThread);
-        MainL      = InMainL;
-        CoThread   = InCoThread;
-        NArgs      = InNArgs;
-        bPending   = true;
+        MainL    = InMainL;
+        CoThread = InCoThread;
+        NArgs    = InNArgs;
+        bPending = true;
 
         // 锚 CoThread 到主 VM 的 registry,防 GC
         // 调用方已经把 CoThread push 在栈顶(通过 lua_newthread / lua_pushthread)
@@ -30,16 +30,13 @@ namespace mession::script::lua {
         ThreadRef = luaL_ref(MainL, LUA_REGISTRYINDEX);
     }
 
-    void FLuaPendingCall::EnqueueResume(const MString* OutVals, size_t OutCount,
-                                       const MString* OutErrs, size_t ErrCount) {
+    void FLuaPendingCall::EnqueueResume(const MString* OutVals, size_t OutCount, const MString* OutErrs, size_t ErrCount) {
         if (!bPending) {
-            return;  // 已经完成或被 cancel,丢弃 resume
+            return; // 已经完成或被 cancel,丢弃 resume
         }
         // 把待 push 的参数 copy 到 Pending* 等 tick 时用
-        PendingVals.assign(OutVals ? OutVals : nullptr,
-                          OutVals ? OutVals + OutCount : nullptr);
-        PendingErrs.assign(OutErrs ? OutErrs : nullptr,
-                          OutErrs ? OutErrs + ErrCount : nullptr);
+        PendingVals.assign(OutVals ? OutVals : nullptr, OutVals ? OutVals + OutCount : nullptr);
+        PendingErrs.assign(OutErrs ? OutErrs : nullptr, OutErrs ? OutErrs + ErrCount : nullptr);
         bResumePending = true;
     }
 
@@ -73,7 +70,7 @@ namespace mession::script::lua {
         bResumePending = false;
 
         if (RC == LUA_OK) {
-            bPending = false;  // 协程已正常结束
+            bPending = false; // 协程已正常结束
             // CoThread 可能已死,但 registry ref 还在;析构 unref 即可
         } else if (RC == LUA_YIELD) {
             // 再次 yield;仍 pending,等待下次 resume
@@ -96,8 +93,8 @@ namespace mession::script::lua {
             return 0;
         }
         std::lock_guard<std::mutex> Lock(Mutex);
-        uint32 Id = NextLocalId.fetch_add(1, std::memory_order_relaxed);
-        Calls[Id] = std::move(Call);
+        uint32                      Id = NextLocalId.fetch_add(1, std::memory_order_relaxed);
+        Calls[Id]                      = std::move(Call);
         return Id;
     }
 
@@ -108,7 +105,7 @@ namespace mession::script::lua {
 
     TSharedPtr<FLuaPendingCall> FLuaPendingCallRegistry::Get(uint32 LocalId) const {
         std::lock_guard<std::mutex> Lock(Mutex);
-        auto It = Calls.find(LocalId);
+        auto                        It = Calls.find(LocalId);
         if (It != Calls.end()) {
             return It->second;
         }
@@ -117,7 +114,7 @@ namespace mession::script::lua {
 
     uint32 FLuaPendingCallRegistry::CountPending() const {
         std::lock_guard<std::mutex> Lock(Mutex);
-        uint32 N = 0;
+        uint32                      N = 0;
         for (const auto& Kv : Calls) {
             if (Kv.second && Kv.second->IsPending()) {
                 ++N;

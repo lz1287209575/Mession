@@ -114,7 +114,7 @@ namespace mession::headercodegen {
         if (!MacroArgs.has_value())
             return true;
         // MPROPERTY 必须紧邻字段（≤2 行），防止匹配到同文件里更早的 MPROPERTY
-        //（无宏的字段如 EchoService.h 的 Config 会误配到 SEchoServiceConfig 的宏）。
+        // （无宏的字段如 EchoService.h 的 Config 会误配到 SEchoServiceConfig 的宏）。
         if ((SM.getSpellingLineNumber(FD->getBeginLoc()) - MacroArgs->CloseLine) > 2)
             return true;
 
@@ -286,9 +286,9 @@ namespace mession::headercodegen {
             return true;
 
         SParsedEnum E;
-        E.Name           = ED->getNameAsString();
-        E.QualifiedName  = ED->getQualifiedNameAsString();
-        E.HeaderPath     = EnumHeader;
+        E.Name          = ED->getNameAsString();
+        E.QualifiedName = ED->getQualifiedNameAsString();
+        E.HeaderPath    = EnumHeader;
         // 类内 enum(如 MJsonWriter::EScopeType):记录 Owner——生成时私有 enum
         // 的值/类型外部不可访问,跳过值注册(只 namespace 级 enum 做真实注册)。
         if (const auto* ParentRecord = llvm::dyn_cast<clang::CXXRecordDecl>(ED->getDeclContext())) {
@@ -346,7 +346,7 @@ namespace mession::headercodegen {
             }
 
             // await：TAwaitable<F, R, Args...>(...) 是类构造。表达式形态是临时对象
-            //（CXXTemporaryObjectExpr，独立回调）；变量声明形态是 CXXConstructExpr。
+            // （CXXTemporaryObjectExpr，独立回调）；变量声明形态是 CXXConstructExpr。
             // 都不是 CallExpr——VisitCallExpr 收集不到，这里补两处。
             bool CollectTAwaitable(clang::Expr* E) {
                 const MString Text = GetSourceTextImpl(E->getSourceRange(), SM);

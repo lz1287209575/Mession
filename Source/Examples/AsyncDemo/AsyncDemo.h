@@ -8,8 +8,8 @@
  */
 #pragma once
 
-#include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Async/AwaitMacros.h"
+#include "Common/Runtime/Async/MAsync.h"
 
 // AsyncDemo_FreeAsyncFrames.mgenerated.h is produced by MHeaderTool's P4
 // free-function pass from the MFUNCTION(Async) markers below. It declares
@@ -18,16 +18,15 @@
 // macro expansion in either function body can resolve the local `Frame`.
 #include "AsyncDemo_FreeAsyncFrames.mgenerated.h"
 
-namespace AsyncDemoNS
-{
+namespace AsyncDemoNS {
 
-// Inner async — simulates an I/O-style future (here: synchronously ready).
-// P4 v1 limitation: the Frame is a pass-through AwaitOk; no state machine.
-MFUNCTION(Async)
-SFutureResult<int> ComputeAsync(int Seed);
+    // Inner async — simulates an I/O-style future (here: synchronously ready).
+    // P4 v1 limitation: the Frame is a pass-through AwaitOk; no state machine.
+    MFUNCTION(Async)
+    SFutureResult<int> ComputeAsync(int Seed);
 
-// Outer async — chains the inner one via AWAIT_OK, returns a derived value.
-MFUNCTION(Async)
-SFutureResult<int> ChainAsync(int Seed);
+    // Outer async — chains the inner one via AWAIT_OK, returns a derived value.
+    MFUNCTION(Async)
+    SFutureResult<int> ChainAsync(int Seed);
 
 } // namespace AsyncDemoNS

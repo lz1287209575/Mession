@@ -53,8 +53,11 @@ if git rev-parse --verify HEAD >/dev/null 2>&1; then
     ABIPATTERN='\b('"$(IFS='|'; echo "${ABI_FIELDS[*]}")"')\b'
     for HDR in "${ABI_HEADERS[@]}"; do
         if [ -f "$HDR" ]; then
-            git diff --unified=0 HEAD -- "$HDR" 2>/dev/null \
-            | grep -E '^[-+]\s*[A-Za-z]' \
+            # --ignore-all-space: 对齐类格式化只改空白,不改字段名/类型/顺序。
+            # ABI guard 只关心声明级变更,限定 MPROPERTY 行,避免 for 循环
+            # 花括号合并(-{ / +{)拆行造成假阳性。
+            git diff --unified=0 --ignore-all-space HEAD -- "$HDR" 2>/dev/null \
+            | grep -E '^[-+]\s*MPROPERTY' \
             | grep -E "$ABIPATTERN" \
             | grep -v '^[-+]{3}' \
             | grep -vE '^[-+]\s*//' > /tmp/abi-diff-$$.txt || true

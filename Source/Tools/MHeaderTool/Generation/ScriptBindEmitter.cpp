@@ -10,12 +10,18 @@ namespace MHeaderTool {
 
         // 把 SParsedType 字符串("int32_t", "double" 等)转成 lua-language-server/Teal 类型名
         MString MapTealType(const MString& CppType) {
-            if (CppType == "int8_t" || CppType == "int16_t" || CppType == "int32_t" || CppType == "int64_t") return "integer";
-            if (CppType == "uint8_t" || CppType == "uint16_t" || CppType == "uint32_t" || CppType == "uint64_t") return "integer";
-            if (CppType == "float" || CppType == "double") return "number";
-            if (CppType == "bool") return "boolean";
-            if (CppType == "MString") return "string";
-            if (CppType == "void") return "nil";
+            if (CppType == "int8_t" || CppType == "int16_t" || CppType == "int32_t" || CppType == "int64_t")
+                return "integer";
+            if (CppType == "uint8_t" || CppType == "uint16_t" || CppType == "uint32_t" || CppType == "uint64_t")
+                return "integer";
+            if (CppType == "float" || CppType == "double")
+                return "number";
+            if (CppType == "bool")
+                return "boolean";
+            if (CppType == "MString")
+                return "string";
+            if (CppType == "void")
+                return "nil";
             return "any";
         }
 
@@ -77,7 +83,8 @@ namespace MHeaderTool {
                     Teal << "...";
                 } else {
                     for (const auto& P : Fn.Params) {
-                        if (!bFirst) Teal << ", ";
+                        if (!bFirst)
+                            Teal << ", ";
                         Teal << P.Name << ": " << MapTealType(P.Type);
                         bFirst = false;
                     }

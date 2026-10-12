@@ -6,8 +6,8 @@
 #include <chrono>
 
 extern "C" {
-#include <lua.h>
 #include <lauxlib.h>
+#include <lua.h>
 }
 
 namespace mession::script::lua {
@@ -23,15 +23,17 @@ namespace mession::script::lua {
         constexpr uint64 kWatchdogMs = 60000;
 
         void DebugHook(lua_State* L, lua_Debug* /*Ar*/) {
-            if (!L) return;
+            if (!L)
+                return;
 
             // 通过 extraspace 拿 engine
-            MLuaEngine* Engine = nullptr;
-            void**       Extraspace = static_cast<void**>(lua_getextraspace(L));
+            MLuaEngine* Engine     = nullptr;
+            void**      Extraspace = static_cast<void**>(lua_getextraspace(L));
             // 防 version mismatch:第一个 void* 是我们写入的 opaque
             // (Lua 5.4.7 LUA_EXTRASPACE = 20,前 sizeof(void*) 字节足够)
             Engine = static_cast<MLuaEngine*>(Extraspace[0]);
-            if (!Engine) return;
+            if (!Engine)
+                return;
 
             // 拿 per-engine debug state(指针)
             // 简化:MobDebug state 通过 Engine 内部的 DebugStatePtr 拿
@@ -46,8 +48,7 @@ namespace mession::script::lua {
             }
 
             // Watchdog 检查
-            auto Now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
+            auto   Now  = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             uint64 Last = StatePtr->LastHookTimestamp.load();
             if (Last != 0 && (Now - Last) > kWatchdogMs) {
                 LOG_WARN("MobDebugServer: 60s watchdog triggered, disabling hook");
@@ -77,9 +78,7 @@ namespace mession::script::lua {
             return;
         }
         StatePtr->InstructionCount.store(0);
-        StatePtr->LastHookTimestamp.store(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
+        StatePtr->LastHookTimestamp.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
         StatePtr->bRunning.store(true);
 
         // 注册 hook(粗粒度 LUA_MASKCOUNT 1000)

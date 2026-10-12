@@ -24,5 +24,5 @@ struct MClientDownlinkManifest {
     static const SDownlinkEntry* FindByFunctionId(uint16_t FunctionId);
 
     static const SDownlinkEntry GDownlinkEntries[];
-    static const size_t GDownlinkEntryCount;
+    static const size_t         GDownlinkEntryCount;
 };

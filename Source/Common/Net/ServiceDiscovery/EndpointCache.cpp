@@ -274,7 +274,7 @@ TSharedPtr<MServerConnection> MEndpointCache::GetOrConnect(EServerType TargetSer
         if (!Ep.bHealthy)
             continue;
         // 跳过本进程自己的端点——否则 round-robin 可能选中自己造成自连循环
-        //（EchoA 转发 2001 时连回自己的 7001 → 再转发 → 连接不稳定）。
+        // （EchoA 转发 2001 时连回自己的 7001 → 再转发 → 连接不稳定）。
         if (Ep.ServerId == Registry.LocalServerId)
             continue;
         auto PoolIt = ConnectionPool.find(Ep.ServerId);

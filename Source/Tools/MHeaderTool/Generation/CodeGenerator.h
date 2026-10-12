@@ -596,8 +596,8 @@ namespace MHeaderTool {
             // 原始字节流,不是 MSTRUCT——BuildPayload(TByteArray) 会因
             // FindStruct(typeid(TByteArray)) 不命中返回空(2026-08 修复),
             // 这里直接透传 R.GetValue()。
-            const bool bRawBytesResponse = (responseType == "TByteArray");
-            const MString okExpr = bRawBytesResponse ? "R.GetValue()" : "BuildPayload(R.GetValue())";
+            const bool    bRawBytesResponse = (responseType == "TByteArray");
+            const MString okExpr            = bRawBytesResponse ? "R.GetValue()" : "BuildPayload(R.GetValue())";
 
             out << "inline SFutureResult<TByteArray> " << handlerName << "(MObject* Object, const TByteArray& Payload)\n";
             out << "{\n";
@@ -1265,7 +1265,7 @@ namespace MHeaderTool {
         //   Resume() 挂起完成后恢复（awaiter 已 ready → AwaitResume 取值）
         //   GetFuture() 返回 SFutureResult<R>（Promise 驱动）
         // 控制流：单 await / 多 await 串行 / if-else 分支 / for 循环 / 嵌套均以实现
-        //（简单串行走本函数；含 if/for 的走 EmitAwaitCFrame 递归控制流；
+        // （简单串行走本函数；含 if/for 的走 EmitAwaitCFrame 递归控制流；
         //  验证见 AwaitCodegenTest 32 用例）。不替换 P4 生成器（KD-16 共存期
         //  = 0 前，P5 产物独立输出）。
 
@@ -1651,7 +1651,7 @@ namespace MHeaderTool {
                         return false;
                     const MString RetExpr = TrimText(Code.substr(B + 6, Semi - B - 6));
                     // return await：`return TAwaitable<F>(args)` 作为最后 await 展开
-                    //（语义 = await 目标结果直接作为函数返回值，与普通 return 区分）。
+                    // （语义 = await 目标结果直接作为函数返回值，与普通 return 区分）。
                     if (RetExpr.find("TAwaitable<") != MString::npos) {
                         if (InOutSiteIndex >= Sites.size())
                             return false;
@@ -2024,7 +2024,7 @@ namespace MHeaderTool {
                 Out << "    " << L.Type.CanonicalName << " " << L.Name << "{};\n";
             }
             // await 结果变量 / 累加变量 / 循环变量：跨挂起需要 Frame 槽
-            //（await 结果即使不"跨多个 await"——Start 挂起后 Resume 也要用）
+            // （await 结果即使不"跨多个 await"——Start 挂起后 Resume 也要用）
             {
                 TVector<MString>                               ExtraVars;
                 std::function<void(const TVector<CFlowNode>&)> CollectVars = [&](const TVector<CFlowNode>& Ns) {
@@ -2219,7 +2219,7 @@ namespace MHeaderTool {
             if (Sites.empty())
                 return {};
             // 通用递归控制流（N 层嵌套/循环/组合）——含 if/for 时的唯一路径
-            //（分支/循环特化已被通用接管；解析失败宁缺毋滥——不生成坏产物）。
+            // （分支/循环特化已被通用接管；解析失败宁缺毋滥——不生成坏产物）。
             if (Func.AsyncBody.find("if (") != MString::npos || Func.AsyncBody.find("for (") != MString::npos) {
                 return EmitAwaitCFrame(NamePrefix, HeaderPath, Func);
             }

@@ -45,10 +45,10 @@ namespace mession::script::lua {
         // 解 L — 优先用 Engine->GetStateForReload().GetLuaState() 拿当前活跃 VM
         lua_State* CurrentLuaState() const;
 
-        MLuaEngine* Engine       = nullptr;
-        lua_State*  L             = nullptr; // fallback(无 Engine 时直接用)
-        MClass*     OwningClass   = nullptr;
-        MString     GlobalName;            // 在 Mession 下的 namespace key(例 "Vector")
+        MLuaEngine* Engine      = nullptr;
+        lua_State*  L           = nullptr; // fallback(无 Engine 时直接用)
+        MClass*     OwningClass = nullptr;
+        MString     GlobalName; // 在 Mession 下的 namespace key(例 "Vector")
         int32       ModuleTableRef = -1;
 
         // Rebind replay 用的累积列表

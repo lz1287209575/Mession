@@ -8,10 +8,10 @@
 #include "Common/Script/Abstract/IScriptEngine.h"
 #include "Common/Script/Abstract/IScriptModule.h"
 #include "Common/Script/Abstract/SScriptEngineConfig.h"
-#include "Common/Script/Abstract/TVariant.h"
 #include "Common/Script/Abstract/ScriptErrorCodes.h"
-#include "Common/Script/Lua/LuaScriptState.h"
+#include "Common/Script/Abstract/TVariant.h"
 #include "Common/Script/Lua/FPendingCall.h"
+#include "Common/Script/Lua/LuaScriptState.h"
 #include "Common/Script/Lua/MobDebugServer.h"
 
 #include <shared_mutex>
@@ -135,7 +135,7 @@ namespace mession::script::lua {
         MSharedMutex                                              StateMutex;
         FMobDebugState                                            DebugState;
         // Raw ptr 给 DebugHook 通过 extraspace 反查(避免 include 循环)
-        FMobDebugState*                                           DebugStatePtr = nullptr;
+        FMobDebugState* DebugStatePtr = nullptr;
     };
 
 } // namespace mession::script::lua

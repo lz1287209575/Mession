@@ -31,7 +31,7 @@ static void TestInheritedRequestRoundTrip() {
     assert(!Bytes.empty());
 
     FPlayerUseItemRequest Out;
-    const auto Result = ParsePayload(Bytes, Out);
+    const auto            Result = ParsePayload(Bytes, Out);
     assert(Result.IsOk());
     assert(Out.PlayerId == 10001); // 基类字段(继承序列化先父后子)
     assert(Out.ItemId == 1001);
@@ -41,8 +41,8 @@ static void TestInheritedRequestRoundTrip() {
 
 // ---- 2. GMemberRpcEntries 查表 ----
 static void TestMemberRpcEntryTable() {
-    const uint16 FunctionId = ComputeStableReflectId("MPlayerItemContainer", "UseItem");
-    const SMemberRpcEntry* Entry = FindMemberRpcEntryByFunctionId(FunctionId);
+    const uint16           FunctionId = ComputeStableReflectId("MPlayerItemContainer", "UseItem");
+    const SMemberRpcEntry* Entry      = FindMemberRpcEntryByFunctionId(FunctionId);
     assert(Entry != nullptr);
     assert(MString(Entry->MemberClass) == "MPlayerItemContainer");
     assert(MString(Entry->MethodName) == "UseItem");
@@ -105,7 +105,7 @@ static void TestFrameworkMemberDispatch() {
     assert(RespFuture.IsOk());
 
     FPlayerUseItemResponse Resp;
-    const auto ParseResult = ParsePayload(RespFuture.Get(), Resp);
+    const auto             ParseResult = ParsePayload(RespFuture.Get(), Resp);
     assert(ParseResult.IsOk());
     assert(Resp.bOk);
     assert(Resp.ItemId == 1001);
@@ -117,7 +117,7 @@ static void TestFrameworkMemberDispatch() {
     assert(Container->GetItemCount(1001) == 3);
 
     // 超用:count 超过剩余 → 扣到 0,remaining 0
-    Req.Count = 10;
+    Req.Count  = 10;
     RespFuture = DispatchFrameworkMemberCall(FunctionId, BuildPayload(Req));
     assert(RespFuture.IsReady() && RespFuture.IsOk());
     ParsePayload(RespFuture.Get(), Resp);
@@ -129,7 +129,7 @@ static void TestFrameworkMemberDispatch() {
     assert(Unknown.IsReady() && Unknown.IsErr());
 
     // 不存在的 PlayerId → host not found err
-    Req.PlayerId = 99999;
+    Req.PlayerId                     = 99999;
     SFutureResult<TByteArray> NoHost = DispatchFrameworkMemberCall(FunctionId, BuildPayload(Req));
     assert(NoHost.IsReady() && NoHost.IsErr());
 

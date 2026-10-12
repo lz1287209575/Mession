@@ -24,11 +24,10 @@ namespace mession::script::lua {
         ModuleTableRef = luaL_ref(Use, LUA_REGISTRYINDEX);
     }
 
-    MLuaModule::MLuaModule(MLuaEngine* InEngine, MString InGlobalName, MClass* InCls)
-        : Engine(InEngine), OwningClass(InCls), GlobalName(std::move(InGlobalName)) {
+    MLuaModule::MLuaModule(MLuaEngine* InEngine, MString InGlobalName, MClass* InCls) : Engine(InEngine), OwningClass(InCls), GlobalName(std::move(InGlobalName)) {
         if (Engine) {
             lua_State* Use = Engine->GetStateForReload().GetLuaState();
-            L             = Use;
+            L              = Use;
             lua_newtable(Use);
             ModuleTableRef = luaL_ref(Use, LUA_REGISTRYINDEX);
         }
@@ -65,8 +64,7 @@ namespace mession::script::lua {
         MString FnName = Fn->Name;
         lua_geti(Use, LUA_REGISTRYINDEX, ModuleTableRef);
         lua_pushlstring(Use, FnName.c_str(), FnName.size());
-        lua_pushcfunction(
-            Use, +[](lua_State* L) -> int { return luaL_error(L, "LuaBindEmitter not yet wired"); });
+        lua_pushcfunction(Use, +[](lua_State* L) -> int { return luaL_error(L, "LuaBindEmitter not yet wired"); });
         lua_settable(Use, -3);
         lua_pop(Use, 1);
         RegisteredFunctions.push_back(FnName);
@@ -128,8 +126,7 @@ namespace mession::script::lua {
         for (const MString& FnName : RegisteredFunctions) {
             lua_geti(NewL, LUA_REGISTRYINDEX, ModuleTableRef);
             lua_pushlstring(NewL, FnName.c_str(), FnName.size());
-            lua_pushcfunction(
-                NewL, +[](lua_State* L) -> int { return luaL_error(L, "LuaBindEmitter not yet wired"); });
+            lua_pushcfunction(NewL, +[](lua_State* L) -> int { return luaL_error(L, "LuaBindEmitter not yet wired"); });
             lua_settable(NewL, -3);
             lua_pop(NewL, 1);
         }

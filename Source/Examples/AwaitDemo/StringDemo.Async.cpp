@@ -7,8 +7,7 @@
 #include "StringDemo.h"
 
 MFUNCTION(Async)
-SFutureResult<MString> StringAsync(int V)
-{
-    MString S = TAwaitable<StringFetch>(V);                 // await 返回 MString
-    return SFutureResult<MString>(TResult<MString, FAppError>::Ok(S + "!"));  // 业务逻辑
+SFutureResult<MString> StringAsync(int V) {
+    MString S = TAwaitable<StringFetch>(V);                                  // await 返回 MString
+    return SFutureResult<MString>(TResult<MString, FAppError>::Ok(S + "!")); // 业务逻辑
 }

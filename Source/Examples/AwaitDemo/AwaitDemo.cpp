@@ -5,17 +5,16 @@
 // await 目标实现 + main 调用（真实场景由 ServerCall/RPC 自动分发）。
 
 #include "AwaitDemo.h"
+#include "BranchDemo.h"
 #include "ComplexDemo.h"
 #include "MemberDemo.h"
 #include "StringDemo.h"
-#include "BranchDemo.h"
 
 #include <chrono>
 #include <cstdio>
 
 // await 目标实现（模拟异步 I/O：ready future，V*2）
-SFutureResult<int> AwaitDemoHelper(int V)
-{
+SFutureResult<int> AwaitDemoHelper(int V) {
     MPromise<TResult<int, FAppError>> P;
     P.SetValue(TResult<int, FAppError>::Ok(V * 2));
     return SFutureResult<int>(P.GetFuture());
@@ -23,8 +22,7 @@ SFutureResult<int> AwaitDemoHelper(int V)
 
 // MFUNCTION(Async) 业务逻辑体（codegen 输入：正常业务逻辑 + await 点）
 
-int main()
-{
+int main() {
     // 单 await：Mid = 5*3 = 15 → await Helper(15) = 30 → 返回 30+1 = 31
     const int R = AwaitDemoCompute(5).GetResult().GetValue();
     std::printf("AwaitDemo:     compute=%d\n", R);
@@ -39,9 +37,9 @@ int main()
 
     // ① 函数内多次挂起/恢复（两个异步 await 串行：~100ms，状态机切换两次）
     {
-        const auto T0 = std::chrono::steady_clock::now();
-        const int D = ComplexDualAsync(10).GetResult().GetValue();
-        const auto T1 = std::chrono::steady_clock::now();
+        const auto      T0 = std::chrono::steady_clock::now();
+        const int       D  = ComplexDualAsync(10).GetResult().GetValue();
+        const auto      T1 = std::chrono::steady_clock::now();
         const long long Ms = std::chrono::duration_cast<std::chrono::milliseconds>(T1 - T0).count();
         std::printf("[DualAsync] 两次挂起/恢复: 20+40 = %d（耗时 %lldms ≈ 2×50ms）\n", D, Ms);
     }
@@ -50,21 +48,20 @@ int main()
     //    总耗时 ≈ 50ms（而非串行 100ms）——证明 await 不卡调用方（真正异步切换）
     {
         const auto T0 = std::chrono::steady_clock::now();
-        auto F1 = ComplexAsync(10);          // 挂起，立即返回 future（不阻塞）
-        auto F2 = ComplexAsync(20);          // 第二个也挂起（两个异步并行）
+        auto       F1 = ComplexAsync(10); // 挂起，立即返回 future（不阻塞）
+        auto       F2 = ComplexAsync(20); // 第二个也挂起（两个异步并行）
         std::printf("[Concurrent] 两个异步已挂起（不阻塞），主线程继续做事...\n");
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));  // 模拟主线程做别的事
-        const int A1 = F1.GetResult().GetValue();   // 等待（此时两个都快完成）
-        const int A2 = F2.GetResult().GetValue();
-        const auto T1 = std::chrono::steady_clock::now();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 模拟主线程做别的事
+        const int       A1 = F1.GetResult().GetValue();             // 等待（此时两个都快完成）
+        const int       A2 = F2.GetResult().GetValue();
+        const auto      T1 = std::chrono::steady_clock::now();
         const long long Ms = std::chrono::duration_cast<std::chrono::milliseconds>(T1 - T0).count();
-        std::printf("[Concurrent] F1=%d F2=%d 总耗时 %lldms（≈50ms 而非 100ms → 并发异步切换）\n",
-            A1, A2, Ms);
+        std::printf("[Concurrent] F1=%d F2=%d 总耗时 %lldms（≈50ms 而非 100ms → 并发异步切换）\n", A1, A2, Ms);
     }
 
     // MCLASS 类成员 async：MemberService::MemberAsync(5) → await RemoteFetch(5)=10 → 11
     MemberService Service;
-    const int M = Service.MemberAsync(5).GetResult().GetValue();
+    const int     M = Service.MemberAsync(5).GetResult().GetValue();
     std::printf("MemberAsync(5):  %d\n", M);
 
     // 分支控制流：N>0 → if 内 await（5+1=6 → *2=12）；N<=0 → early return 0
@@ -131,12 +128,8 @@ int main()
     std::printf("FallThroughAsync(5):  %d（if 内 await 后继续外层）\n", FT1);
     std::printf("FallThroughAsync(-3): %d（if 跳过）\n", FT2);
 
-    return (R == 31 && C == 44 && L == 4 && M == 11 && B1 == 12 && B2 == 0
-        && E1 == 6 && E2 == 7 && M1 == 14 && M2 == 0
-        && CH1 == 21 && CH2 == 7 && CH3 == 0
-        && N1 == 42 && N2 == 5 && N3 == 0
-        && BL1 == 4 && BL2 == 0
-        && D1 == 201 && D2 == 52 && D3 == 5 && D4 == 0
-        && LI == 4 && S1 == "v=7!"
-        && FT1 == 7 && FT2 == 1) ? 0 : 1;
+    return (R == 31 && C == 44 && L == 4 && M == 11 && B1 == 12 && B2 == 0 && E1 == 6 && E2 == 7 && M1 == 14 && M2 == 0 && CH1 == 21 && CH2 == 7 && CH3 == 0 && N1 == 42 && N2 == 5 && N3 == 0 && BL1 == 4 && BL2 == 0 && D1 == 201 &&
+            D2 == 52 && D3 == 5 && D4 == 0 && LI == 4 && S1 == "v=7!" && FT1 == 7 && FT2 == 1)
+               ? 0
+               : 1;
 }

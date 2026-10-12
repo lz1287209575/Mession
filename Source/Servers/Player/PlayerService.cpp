@@ -53,7 +53,7 @@ bool MPlayerService::Init(int InPort) {
         Config.LocalServerId = static_cast<uint32>(MUniqueIdGenerator::Generate());
     }
 
-    bRunning           = true;
+    bRunning             = true;
     GGlobalPlayerService = this;
 
     CORE_LOG(Info, ":: Mession Game Server :: PlayerService (v%s)", "1.0.0");
@@ -89,13 +89,12 @@ bool MPlayerService::Init(int InPort) {
     // 验证:demo 玩家 actor(PlayerId=10001)+ 挂载背包成员,注册进 MActorSystem。
     // 正式形态由 RegisterPlayer(登录/会话激活)驱动创建——PoC 固定一个演示。
     if (SubCount > 0) {
-        const uint64 DemoPlayerId = 10001;
-        TSharedPtr<MPlayerActor> DemoPlayer = NewMObject<MPlayerActor>(nullptr, "DemoPlayer", DemoPlayerId);
+        const uint64             DemoPlayerId = 10001;
+        TSharedPtr<MPlayerActor> DemoPlayer   = NewMObject<MPlayerActor>(nullptr, "DemoPlayer", DemoPlayerId);
         DemoPlayer->AddMember("MPlayerItemContainer", CreateDefaultSubObject<MPlayerItemContainer>(DemoPlayer.Get(), "ItemContainer"));
         MActorRouter::Get().RegisterActor(DemoPlayer, GetSubPool());
         PlayerActors.push_back(DemoPlayer);
-        LOG_INFO("MPlayerService: demo player actor registered player=%llu (members: MPlayerItemContainer)",
-                 static_cast<unsigned long long>(DemoPlayerId));
+        LOG_INFO("MPlayerService: demo player actor registered player=%llu (members: MPlayerItemContainer)", static_cast<unsigned long long>(DemoPlayerId));
     }
 
     return true;
@@ -144,8 +143,7 @@ void MPlayerService::RegisterLocalActors() {
     for (uint32 InstId : Config.LocalActorIds) {
         const uint64 ActorId = MServiceId::Make(Config.LocalServerType, InstId);
         MActorRouter::Get().RegisterActor(ActorId, EServerType::Unknown);
-        LOG_INFO("%s: registered local actor ServiceId=%u InstId=%u (ActorId=%llu)", Config.ServiceName.c_str(),
-                 static_cast<unsigned>(MServiceId::GetServiceId(ActorId)), static_cast<unsigned>(MServiceId::GetInstId(ActorId)),
+        LOG_INFO("%s: registered local actor ServiceId=%u InstId=%u (ActorId=%llu)", Config.ServiceName.c_str(), static_cast<unsigned>(MServiceId::GetServiceId(ActorId)), static_cast<unsigned>(MServiceId::GetInstId(ActorId)),
                  static_cast<unsigned long long>(ActorId));
     }
 }
@@ -169,7 +167,6 @@ SFutureResult<SEmptyServerMessage> MPlayerService::RegisterPlayer(uint64 PlayerI
     Player->AddMember("MPlayerItemContainer", CreateDefaultSubObject<MPlayerItemContainer>(Player.Get(), "ItemContainer"));
     MActorRouter::Get().RegisterActor(Player, GetSubPool());
     PlayerActors.push_back(Player);
-    LOG_INFO("MPlayerService: player registered player=%llu (members: MPlayerItemContainer)",
-             static_cast<unsigned long long>(PlayerId));
+    LOG_INFO("MPlayerService: player registered player=%llu (members: MPlayerItemContainer)", static_cast<unsigned long long>(PlayerId));
     return MServerCallAsyncSupport::MakeSuccessFuture(SEmptyServerMessage{});
 }

@@ -32,8 +32,7 @@ namespace mession::script::lua {
 
         // Resume:用 OutVals/OutErrs 当 resume args 唤醒协程,设 bPending=false
         // 后续 tick 时通过 LuaCoroutineBridge::ResumeFromStack 真正 resume
-        void EnqueueResume(const MString* OutVals, size_t OutCount,
-                          const MString* OutErrs, size_t ErrCount);
+        void EnqueueResume(const MString* OutVals, size_t OutCount, const MString* OutErrs, size_t ErrCount);
 
         // 实际 resume:在 tick 时调(主 VM 线程)
         // 返回 ECoroutineResumeStatus
@@ -46,7 +45,7 @@ namespace mession::script::lua {
             return bResumePending;
         }
         void Cancel() {
-            bPending      = false;
+            bPending       = false;
             bResumePending = false;
         }
 
@@ -55,13 +54,13 @@ namespace mession::script::lua {
         }
 
         private:
-        lua_State* MainL      = nullptr; // 主 VM 的 lua_State*(用来 lua_pushvalue + luaL_ref)
-        lua_State* CoThread   = nullptr; // 协程 lua_State*(lua_newthread 结果,锚在 MainL 上)
-        int32      ThreadRef  = -1;     // MainL 上 CoThread 锚的 ref
-        int32      NArgs      = 0;
+        lua_State* MainL     = nullptr; // 主 VM 的 lua_State*(用来 lua_pushvalue + luaL_ref)
+        lua_State* CoThread  = nullptr; // 协程 lua_State*(lua_newthread 结果,锚在 MainL 上)
+        int32      ThreadRef = -1;      // MainL 上 CoThread 锚的 ref
+        int32      NArgs     = 0;
 
-        bool bPending      = false;
-        bool bResumePending = false;    // EnqueueResume 后待 tick 时真正 resume
+        bool bPending       = false;
+        bool bResumePending = false; // EnqueueResume 后待 tick 时真正 resume
 
         // 待 push 到协程栈上的 resume 参数
         TVector<MString> PendingVals;
@@ -75,7 +74,7 @@ namespace mession::script::lua {
     //   - CountPending 给 DrainPendingCalls 用
     class FLuaPendingCallRegistry {
         public:
-        FLuaPendingCallRegistry() = default;
+        FLuaPendingCallRegistry()  = default;
         ~FLuaPendingCallRegistry() = default;
 
         // 注册一个新 pending call;返回 local id(后续可通过 Get 找回)
@@ -98,9 +97,9 @@ namespace mession::script::lua {
         uint32 StepAll();
 
         private:
-        mutable std::mutex                                       Mutex;
-        TMap<uint32, TSharedPtr<FLuaPendingCall>>                 Calls;
-        std::atomic<uint32>                                       NextLocalId{1};
+        mutable std::mutex                        Mutex;
+        TMap<uint32, TSharedPtr<FLuaPendingCall>> Calls;
+        std::atomic<uint32>                       NextLocalId{1};
     };
 
 } // namespace mession::script::lua

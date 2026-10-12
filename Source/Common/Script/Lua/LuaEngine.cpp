@@ -7,18 +7,18 @@
 #include "Common/Script/Abstract/ScriptErrorCodes.h"
 #include "Common/Script/Abstract/TScriptInstanceHandle.h"
 #include "Common/Script/Lua/LuaCoroutineBridge.h"
+#include "Common/Script/Lua/LuaHotReload.h"
 #include "Common/Script/Lua/LuaModule.h"
-#include "Common/Script/Lua/MLuaProxyActor.h"
+#include "Common/Script/Lua/MLuaBridge.h"
 #include "Common/Script/Lua/MLuaFormat.h"
 #include "Common/Script/Lua/MLuaLog.h"
 #include "Common/Script/Lua/MLuaMap.h"
+#include "Common/Script/Lua/MLuaProxyActor.h"
 #include "Common/Script/Lua/MLuaRpc.h"
 #include "Common/Script/Lua/MLuaVector.h"
-#include "Common/Script/Lua/MLuaBridge.h"
-#include "Common/Script/Lua/LuaHotReload.h"
 
-#include <chrono>
 #include "Common/Script/Lua/LuaTypeBridge.h"
+#include <chrono>
 
 extern "C" {
 #include <lauxlib.h>
@@ -79,7 +79,7 @@ namespace mession::script::lua {
     }
 
     TUniquePtr<MLuaScriptState> MLuaEngine::ReplaceState(TUniquePtr<MLuaScriptState> NewState) {
-        TUniqueLock Lock(StateMutex);
+        TUniqueLock                 Lock(StateMutex);
         TUniquePtr<MLuaScriptState> Old = std::move(State);
         State                           = std::move(NewState);
         ++VmGeneration;
@@ -123,7 +123,7 @@ namespace mession::script::lua {
         // PendingOldState 此时可能已被 caller 释放(从 BeginSwap 拿走的 ptr)
         // 如果还在,这里释放并触发 lua_close
         if (PendingOldState) {
-            PendingOldState.reset();  // → MLuaScriptState 析构 → lua_close
+            PendingOldState.reset(); // → MLuaScriptState 析构 → lua_close
         }
     }
 
@@ -143,8 +143,7 @@ namespace mession::script::lua {
         auto Start = std::chrono::steady_clock::now();
         while (PendingCalls.CountPending() > 0) {
             StepCoroutines();
-            auto Elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now() - Start).count();
+            auto Elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - Start).count();
             if (Elapsed >= TimeoutSeconds) {
                 return TResult<uint32>::Err(MString(ScriptErrorCodes::kVmDrainTimeout));
             }
@@ -155,7 +154,8 @@ namespace mession::script::lua {
 
     void MLuaEngine::InstallStandardLibraries(MLuaScriptState& S) {
         lua_State* L = S.GetLuaState();
-        if (!L) return;
+        if (!L)
+            return;
 
         // 顺序:Rpc 先(它建 Mession 全局表),其他 4 个按 namespace 字母序
         // 每个 Install 都 idempotent(get-or-create Mession 全局表)
@@ -207,9 +207,9 @@ namespace mession::script::lua {
 
         if (Fn->NativeInvoke != nullptr) {
             // 反射路径(NativeInvoke 已 emit 时)
-            int               OldTop = lua_gettop(L);
-            MReflectArchive   In, Out;
-            bool              Ok = Fn->NativeInvoke(nullptr, &In, &Out);
+            int             OldTop = lua_gettop(L);
+            MReflectArchive In, Out;
+            bool            Ok = Fn->NativeInvoke(nullptr, &In, &Out);
             if (!Ok) {
                 lua_settop(L, OldTop);
                 return TResult<void>::Err(MString("native_invocation_failed"));
@@ -220,7 +220,7 @@ namespace mession::script::lua {
 
         // Fallback:lua_getglobal(classname).<method>(args)
         // 适用"业务类完全在 Lua 侧"的情况(MEchoService 已实现)
-        std::string ClsName = Fn->OwnerClass ? Fn->OwnerClass->GetName() : "";
+        std::string ClsName    = Fn->OwnerClass ? Fn->OwnerClass->GetName() : "";
         std::string MethodName = Fn->Name;
         if (ClsName.empty() || MethodName.empty()) {
             return TResult<void>::Err(MString("no_owner_or_method_name"));
@@ -248,11 +248,21 @@ namespace mession::script::lua {
         // Push args
         for (size_t i = 0; i < Args.Count; ++i) {
             switch (Args.Values[i].GetType()) {
-            case EVariantType::Int:    PushInteger(L, Args.Values[i].AsInt().GetValue()); break;
-            case EVariantType::Bool:   PushBoolean(L, Args.Values[i].AsBool().GetValue()); break;
-            case EVariantType::Double: PushNumber(L, Args.Values[i].AsDouble().GetValue()); break;
-            case EVariantType::String: PushString(L, Args.Values[i].AsString().GetValue()); break;
-            case EVariantType::Null:   PushNil(L); break;
+            case EVariantType::Int:
+                PushInteger(L, Args.Values[i].AsInt().GetValue());
+                break;
+            case EVariantType::Bool:
+                PushBoolean(L, Args.Values[i].AsBool().GetValue());
+                break;
+            case EVariantType::Double:
+                PushNumber(L, Args.Values[i].AsDouble().GetValue());
+                break;
+            case EVariantType::String:
+                PushString(L, Args.Values[i].AsString().GetValue());
+                break;
+            case EVariantType::Null:
+                PushNil(L);
+                break;
             }
         }
 
@@ -307,16 +317,16 @@ namespace mession::script::lua {
         }
 
         // 1. Lua 端按 ClassName 创建 instance
-        MString ClassName = Cls->GetName();
-        auto InstanceResult = CreateInstanceByClassName(ClassName, Args);
+        MString ClassName      = Cls->GetName();
+        auto    InstanceResult = CreateInstanceByClassName(ClassName, Args);
         if (InstanceResult.IsErr()) {
             return TResult<uint64>::Err(InstanceResult.GetError());
         }
         TScriptInstanceHandle Handle = InstanceResult.GetValue();
 
         // 2. 生成 ActorId + 构造 MLuaProxyActor
-        uint64 ActorId = MUniqueIdGenerator::Generate();
-        auto Proxy = MakeShared<MLuaProxyActor>(*this, Cls, ActorId, Handle, ClassName);
+        uint64 ActorId      = MUniqueIdGenerator::Generate();
+        auto   Proxy        = MakeShared<MLuaProxyActor>(*this, Cls, ActorId, Handle, ClassName);
         ActorsById[ActorId] = Proxy;
 
         // 3. 触发 OnCreated 钩子

@@ -1,3 +1,4 @@
+#include "Common/Runtime/Reflect/Reflection.h"
 #include "Common/Script/Abstract/EReloadMode.h"
 #include "Common/Script/Abstract/EReloadResult.h"
 #include "Common/Script/Abstract/EScriptLanguage.h"
@@ -7,7 +8,6 @@
 #include "Common/Script/Abstract/SScriptEngineConfig.h"
 #include "Common/Script/Abstract/ScriptErrorCodes.h"
 #include "Common/Script/Abstract/TVariant.h"
-#include "Common/Runtime/Reflect/Reflection.h"
 
 #include <cassert>
 #include <cstdio>

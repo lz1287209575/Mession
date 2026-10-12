@@ -121,6 +121,6 @@ class MPlayerService : public MNetServerBase, public MObject {
     private:
     void RegisterLocalActors();
 
-    SPlayerServiceConfig Config;
+    SPlayerServiceConfig              Config;
     TVector<TSharedPtr<MPlayerActor>> PlayerActors;
 };
