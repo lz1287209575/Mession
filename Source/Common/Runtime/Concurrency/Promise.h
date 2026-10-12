@@ -4,6 +4,7 @@
 #include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Object/Result.h"
+#include <cassert>
 #include <condition_variable>
 #include <exception>
 

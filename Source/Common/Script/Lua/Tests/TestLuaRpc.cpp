@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <cassert>
+#include <cstring>
 
 using namespace mession::script::lua;
 
