@@ -1,3 +1,37 @@
+/**
+ * @file MService.h
+ * @brief MService<TConfigType> —— Service 进程的通用配置中心(反射式 CLI 解析)。
+ *
+ * @detail 取代旧的 ParseCommonArgs / BuildConfig / ApplyConfig 手写解析:
+ *   1. 每个 Service 配一个 MSTRUCT() 标注的配置 struct(如 SEchoServiceConfig)。
+ *      MHeaderTool 在 Build/Generated/<Name>.mgenerated.cpp 里生成
+ *      `SAutoRegisterStruct_<Name> GAutoRegisterStruct_<Name>` 静态对象,其构造期调用
+ *      MHeaderTool_Generated_RegisterStruct_<Name>() 把 MClass 塞进全局反射表。
+ *   2. LoadConfig(argc, argv) 用 MObject::FindStruct(typeid(TConfigType)) 取 MClass,
+ *      遍历 Properties 找 Meta=(Cli="--xxx") 字段,把 argv 里匹配到的 --xxx 值写回该字段
+ *      (POD / MString / bool / enum / TVector<T> / 嵌套 MSTRUCT 的 SetValueFromString
+ *      特化见 ReflectionPropertyTemplates.inl)。
+ *   3. Service 类自己实现 Init / Run / ShutdownConnections,由
+ *      MServiceMain::Run<TService, TConfig>(argc, argv) 启动。
+ *
+ * @detail MSTRUCT 必须先注册反射元数据(标 MSTRUCT() 即可,MHeaderTool 生成
+ *   SAutoRegisterStruct_<Name> 自注册单例)。LoadConfig 找不到反射元数据时直接失败返回。
+ *
+ * @detail 静态初始化顺序(重要):C++ 只保证同一 translation unit 内静态对象按出现顺序
+ *   初始化,跨 TU 顺序由实现定义;而反射表正是由这些静态对象填充的。因此:
+ *     - main() 所在的 TU 必须链接到该配置 struct 的 .mgenerated.cpp(CMake 自动收集,
+ *       见 MHeaderToolTargets.cmake)。
+ *     - LoadConfig 之前不要在别的 TU 里触发任何会 FindStruct 的代码:注册可能尚未发生,
+ *       拿到的 nullptr 会被误判成"配置错误"并触发 LOG_FATAL。
+ *     - 不要把 LoadConfig 放进另一个静态对象的构造期。本模板的单例 Storage() 用
+ *       function-local static(首次访问才构造)只规避了自身的跨 TU 顺序问题,管不到调用方。
+ *
+ * @detail MObject 生命周期:实现子类(MEchoService / MGatewayServer / MPlayerService ...)
+ *   一律由 TSharedPtr 持有(见 Common/Runtime/Object/Object.h "DestroyMObject 已删除"):
+ *   Run 模板用 NewMObject<TService>() 持有实例,进程退出时 TSharedPtr 在栈回退中释放,
+ *   触发 ~MObject 里的 IDisposable::Dispose()(若实现)。严禁对 MObject 派生类直接 delete
+ *   ——绕开 TSharedPtr 会破坏对象图。
+ */
 #pragma once
 
 #include "Common/Runtime/Log/Log.h"
@@ -9,70 +43,24 @@
 #include <typeindex>
 
 /**
- * MService<TConfigType> — Service 通用配置中心模板（反射式 CLI 解析）。
+ * @brief MService<TConfigType> - 配置中心:把 argv 反射式解析进 TConfigType 单例。
  *
- * 设计意图（替代旧 ParseCommonArgs 形式）：
- *   1. 每个 Service 配一个 SEchoServiceConfig 之类的反射可见配置 struct
- *      （由 MHeaderTool 在 Build/Generated/<Name>.mgenerated.cpp 自动注册
- *       MHeaderTool_Generated_RegisterStruct_<Name>()）。
- *   2. main 流程：MService<TConfigType>::LoadConfig(argc, argv) → 通过反射
- *      FindStruct(typeid(TConfigType)) 拿到 MClass，遍历 Properties 找
- *      Meta=(Cli="--xxx") 字段，把 argv 里匹配的 --xxx 值写到对应字段
- *      （SetValueFromString 已经为 POD / MString / bool / enum / TVector<T>
- *       / nested MSTRUCT 实现了特化，ReflectionPropertyTemplates.inl）。
- *   3. Service 类自己实现 Run / Init / ShutdownConnections，通过
- *      MServiceMain::Run<TService, TConfig>(argc, argv) 启动。
- *
- * MSTRUCT 类型必须先被反射注册（用 MSTRUCT() 标记即可，由 MHeaderTool
- * 生成 SAutoRegisterStruct_<Name> 自注册单例）。如果 LoadConfig 找不到
- * 反射元数据，会 LOG_FATAL 退出。
- *
- * 关于 MObject 生命周期：
- *   - MObject 子类（包括所有 MEchoService/MGatewayServer）的生命周期由
- *     TSharedPtr 控制，参见 Common/Runtime/Object/Object.h 中"DestroyMObject
- *     已删除——MObject 生命周期由 TSharedPtr 持有自动管理"。
- *   - 因此 Run 模板用 NewMObject<TService>() 持有 Service 实例；进程
- *     退出时 TSharedPtr 在 stack unwinding 时自然释放，触发 ~MObject
- *     内的 IDisposable::Dispose()（如果实现了）。
- *   - 严禁对 MObject 派生类直接 `delete`（绕开 TSharedPtr 会破坏对象图）。
- *
- * ─────────────────────────────────────────────────────────────────────
- * 静态初始化顺序约定（重要）
- * ─────────────────────────────────────────────────────────────────────
- *
- * 当 main() 调用 MService<TConfigType>::LoadConfig(argc, argv) 时，它内部
- * 会先调 MObject::FindStruct(typeid(TConfigType))。FindStruct 查的是全局
- * MClass 注册表（见 Reflection.cpp），那张表由 MHeaderTool 生成在每个
- * <Name>.mgenerated.cpp 里的 `SAutoRegisterStruct_<Name> GAutoRegisterStruct_<Name>` 静态对象填充。
- *
- * C++ 标准保证：同一 translation unit 内静态对象按出现顺序初始化，跨 TU
- * 则由实现定义（多数平台：同 TU 顺序固定，但跨 TU 之间无序）。
- *
- * 因此：
- *   ✓ main() 必须出现在包含 SEchoServiceConfig 反射注册的那个 cpp 之后
- *     被链接。最朴素的做法：把 .mgenerated.cpp 链进和 main 同一个可执行
- *     文件 target（CMake 已自动收集，见 MHeaderToolTargets.cmake）。
- *   ✓ LoadConfig 之前不要在另一个 TU 提前触发任何会 FindStruct 的代码，
- *     否则可能拿到 nullptr（注册尚未发生），把第一次 LOG_FATAL 误当成
- *     配置错误。
- *   ✓ 不要把 LoadConfig 放在另一个静态对象的构造期里（MService::Storage()
- *     自身用的是 function-local static，第一次访问才初始化，规避了
- *     跨 TU 静态初始化顺序问题）。
- *
- * 见 Common/Runtime/Reflect/Reflection.h 的 FindStruct() 与 Registration，
- * 了解 MClass 表的填充时机。
+ * @detail 使用顺序:先 LoadConfig() 写单例,再 GetConfig() / MutableConfig() 读单例。
+ *   TConfigType 必须是已注册反射元数据的 MSTRUCT,否则 LoadConfig 直接失败。
  */
 template <typename TConfigType> class MService {
     public:
     /**
-     * LoadConfig — 反射式解析 argv 写入 TConfigType 单例。
+     * @brief LoadConfig - 反射式解析 argv,写入 TConfigType 单例。
+     * @param argc main() 的 argc(含程序名,解析从 i=1 开始)
+     * @param argv main() 的 argv
+     * @return true 每个匹配到的字段都解析成功;false = 反射元数据缺失,或某个字段解析失败
      *
-     * argv 形式支持两种：
-     *   --key value            下一个 argv 是 value
-     *   --key=value            = 后直接是 value
-     *
-     * 字段必须有 Meta=(Cli="--xxx")；未注册的字段被忽略。
-     * 重复出现的 --key 覆盖（每次解析都对同一个字段 SetValueFromString）。
+     * @detail 只识别两种形式:`--key value`(把下一个 argv 当值)与 `--key=value`。
+     *   字段必须带 Meta=(Cli="--xxx");未注册的 flag 与普通位置参数都被静默忽略。
+     *   同一 flag 重复出现时后一次覆盖前一次(对同一字段反复 SetValueFromString)。
+     *   解析失败即 fail-fast:LOG_ERROR 后返回 false,不让半成品配置进入 Init()。
+     *   注意:失败不会回滚,单例里保留此前已写入的字段值。
      */
     static bool LoadConfig(int argc, char** argv) {
         MClass* ConfigClass = MObject::FindStruct(std::type_index(typeid(TConfigType)));
@@ -114,14 +102,10 @@ template <typename TConfigType> class MService {
 
             MString Err;
             if (!Prop->SetValueFromString(&Storage, Value, &Err)) {
-                // Fail-fast: a malformed CLI argument should abort the Service
-                // before Init() runs with a half-populated config. Continuing
-                // would silently leave the field at its default and mask the
-                // mistake — the Service would then either bind to a wrong port,
-                // connect to a wrong peer, or hit a confusing failure much later
-                // (e.g. actor-not-found at first call). Loud exit now is far
-                // easier to diagnose than a misconfigured Service that "starts
-                // fine" and breaks later.
+                // Fail-fast:命令行参数格式错误必须让 Service 在 Init() 之前退出。
+                // 继续跑只会静默保留字段默认值,把错误掩盖成"服务启动正常、稍后才炸"
+                // ——绑错端口、连错对端,或者要等到第一次调用才报 actor 找不到。
+                // 现在大声退出,远比一个"看起来启动成功"的错配服务好排查。
                 LOG_ERROR("MService<%s>: failed to parse %s=%s (%s); aborting", typeid(TConfigType).name(), Flag.c_str(), Value.c_str(), Err.c_str());
                 return false;
             }
@@ -129,15 +113,18 @@ template <typename TConfigType> class MService {
         return true;
     }
 
+    /** @brief GetConfig - 只读访问配置单例(必须在 LoadConfig 之后调用)。 */
     static const TConfigType& GetConfig() {
         return Storage();
     }
 
+    /** @brief MutableConfig - 可写访问配置单例(供 LoadConfig 内部按字段写值)。 */
     static TConfigType& MutableConfig() {
         return Storage();
     }
 
     private:
+    /** @brief Storage - 配置单例(function-local static:首次访问才构造,规避跨 TU 静态初始化顺序)。 */
     static TConfigType& Storage() {
         static TConfigType Instance{};
         return Instance;

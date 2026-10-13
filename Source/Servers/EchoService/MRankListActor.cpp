@@ -47,7 +47,7 @@ void MRankListActor::OnMessage(const FActorMessage& InMsg) {
     const ERankListMessage Type = static_cast<ERankListMessage>(InMsg.Header.MsgType);
     switch (Type) {
     case ERankListMessage::UpdateScore: {
-        // Payload: [PlayerId:u64][NewScore:i64]
+        // Payload 布局(小端):[PlayerId:u64][NewScore:i64]
         if (InMsg.Payload.size() < 16) {
             LOG_WARN("MRankListActor: UpdateScore payload too short (%zu)", InMsg.Payload.size());
             break;
@@ -88,7 +88,7 @@ void MRankListActor::OnMessage(const FActorMessage& InMsg) {
         break;
     }
     case ERankListMessage::GetPlayerRank: {
-        // Payload: [PlayerId:u64]
+        // Payload 布局:[PlayerId:u64]
         int64 Rank = -1; // -1 = 不在榜
         if (InMsg.Payload.size() >= 8) {
             const uint64 PlayerId = ReadU64(InMsg.Payload, 0);

@@ -1,3 +1,12 @@
+/**
+ * @file ServiceMain.h
+ * @brief MServiceMain —— 所有 Service 进程的统一入口模板(工厂 + 启动流程)。
+ *
+ * @detail 统一流程:LoadConfig(argc, argv) -> 初始化 MLog 管道 -> 工厂创建 Service
+ *   (默认 CreateService<TService>() 走 NewMObject) -> Init(ListenPort) -> Run() ->
+ *   Shutdown() -> MLog::Shutdown()。Service 只需提供 MSTRUCT 配置与 Init/Run/
+ *   Shutdown 语义,并可(可选)在自己 .cpp 里提供 extern "C" 工厂覆盖默认实现。
+ */
 #pragma once
 #include "Common/Runtime/Concurrency/SignalHandler.h"
 #include "Common/Runtime/Log/Log.h"
@@ -9,17 +18,14 @@
 namespace MServiceMain {
 
     /**
-     * ParseLocalServerType - translate a human-readable server type name
-     * ("Echo" / "Gateway" / ...) into the strongly-typed EServerType enum.
+     * @brief ParseLocalServerType - 把人类可读的服务类型名转成 EServerType。
+     * @param Name 来自 --local-type 的原始字符串(如 "Echo" / "Gateway" / "Player")
+     * @return 匹配到的 EServerType;无法识别时返回 EServerType::Unknown
      *
-     * Used as a post-parse derivation step: SEchoServiceConfig exposes both
-     * `LocalServerTypeName` (MString, set from CLI via --local-type) and
-     * `LocalServerType` (EServerType). The reflection parser only knows how to
-     * fill the MString field; the enum must be filled in code, *after* LoadConfig
-     * returns. Service::Init() calls this and writes the result back into the
-     * Service-side Config copy.
-     *
-     * 新增业务 Service 类型时，本表 + EServerType 枚举同步加一行即可。
+     * @detail 这是"后处理派生"步骤:配置 struct 里 LocalServerTypeName(MString)由反射解析器
+     *   填,而 LocalServerType(EServerType)反射填不了 —— 必须等 LoadConfig 返回后,由
+     *   Service::Init() 调用本函数,再把结果写回 Service 侧的配置副本。
+     *   新增业务 Service 类型时,本表 + EServerType 枚举同步加一行即可。
      */
     inline EServerType ParseLocalServerType(const MString& Name) {
         if (Name == "Gateway")
@@ -33,35 +39,36 @@ namespace MServiceMain {
     }
 
     /**
-     * CreateService - default Service factory (extern "C" not required).
+     * @brief CreateService - 默认 Service 工厂(不需要 extern "C")。
+     * @return 由 TSharedPtr 持有的 Service 实例
      *
-     * Declared before Run so the template is visible at the Run call site below
-     * (the lookup happens at instantiation, but GCC needs declaration order).
-     *
-     * Override per-Service by adding an `extern "C" TSharedPtr<MObject> Create<ServiceClass>()`
-     * factory in the Service cpp. The default fallback uses NewMObject so the
-     * MObject lifetime stays inside the TSharedPtr system (Object.h).
+     * @detail 定义在 Run 之前,保证 Run 调用点能查到该模板(GCC 要求声明顺序)。
+     *   Service 的 .cpp 里可以另提供 `extern "C" TSharedPtr<MObject> Create<ServiceClass>()`
+     *   来覆盖本默认实现;默认实现走 NewMObject,实例生命周期始终留在 TSharedPtr 体系内
+     *   (见 Object.h)。
      */
     template <typename TService> TSharedPtr<MObject> CreateService() {
         return NewMObject<TService>(/*Outer=*/nullptr, /*Name=*/typeid(TService).name());
     }
 
     /**
-     * Run - unified Service entry point (every Service goes through the same one).
+     * @brief Run - 所有 Service 进程的统一入口(每个 Service 都走这同一个)。
+     * @param argc main() 的 argc,交给 LoadConfig 解析
+     * @param argv main() 的 argv,交给 LoadConfig 解析
+     * @return 0 正常退出(收到 SIGINT/SIGTERM);1 = 配置解析失败 / 工厂返回 null / Init 失败
      *
-     * A Service must provide:
-     *   1. An SConfig subtype (e.g. SEchoServiceConfig) annotated with MSTRUCT(),
-     *      with MPROPERTY(Meta=(Cli="--xxx")) marking each CLI flag.
-     *   2. Optionally: an `extern "C" TSharedPtr<MObject> Create<ServiceClass>()`
-     *      factory in the Service cpp. If absent, the default CreateService<T>()
-     *      template above instantiates the Service via NewMObject<TService>(nullptr, ...).
-     *      Either way the Service is owned by TSharedPtr, never by raw new/delete
-     *      (see Object.h: "DestroyMObject deleted - MObject lifetime is managed
-     *      by TSharedPtr").
+     * @detail Service 需要提供:
+     *   1. 一个 MSTRUCT() 标注的配置 struct(如 SEchoServiceConfig),每个 CLI flag 用
+     *      MPROPERTY(Meta=(Cli="--xxx")) 标注;
+     *   2. 可选:自己 .cpp 里的 `extern "C" TSharedPtr<MObject> Create<ServiceClass>()`
+     *      工厂。没有就用上面的默认 CreateService<T>() 模板实例化。无论哪种方式,实例都由
+     *      TSharedPtr 持有,绝不用裸 new/delete(见 Object.h "DestroyMObject 已删除")。
      *
-     * Flow: LoadConfig(argc, argv) -> CreateService<TService>() -> Init(port) -> Run.
+     *   流程:LoadConfig(argc, argv) -> MLog 初始化 -> CreateService<TService>() ->
+     *   Init(ListenPort) -> Run -> Shutdown -> MLog::Shutdown。
+     *   Run() 返回后必须显式调 Shutdown(),原因见该方法体内对应注释。
      *
-     * Old per-Service BuildConfig / ApplyConfig / ParseCommonArgs are gone.
+     *   旧 per-Service 的 BuildConfig / ApplyConfig / ParseCommonArgs 已移除。
      */
     template <typename TService, typename TConfig> int Run(int argc, char** argv) {
         MSignalHandler::Install();
@@ -70,18 +77,16 @@ namespace MServiceMain {
             return 1;
         }
 
-        // Initialize the new logging pipeline. We always read the config that
-        // LoadConfig filled in (--log-file / --log-config / etc. all land in
-        // SLogInitParams via reflection); MLog::Init is idempotent so service
-        // binaries that already inited during main() are unaffected.
+        // 初始化新的日志管道:这里始终读 LoadConfig 填好的配置(--log-file /
+        // --log-config 等都经反射落到 SLogInitParams)。MLog::Init 幂等,因此那些
+        // 已经在 main() 里初始化过日志的 Service 二进制不受影响。
         {
             const TConfig& Cfg = MService<TConfig>::GetConfig();
             SLogInitParams Params;
             Params.GlobalDefaultLevel = ELogLevel::Info;
             Params.bEnableConsole     = true;
-            // When a --log-config file is supplied, file path / rotation policy
-            // come from the JSON; otherwise we fall back to a per-service default
-            // that honors --log-file / --log-rotate-bytes / --log-archives.
+            // 给了 --log-config(JSON)时,文件路径与轮转策略一律由 JSON 决定;否则退回
+            // per-Service 默认值,即 --log-file / --log-rotate-bytes / --log-archives。
             if (Cfg.LogConfigPath.empty()) {
                 if (!Cfg.LogFilePath.empty()) {
                     Params.FilePath = Cfg.LogFilePath;
@@ -92,7 +97,7 @@ namespace MServiceMain {
                 Params.RotatedFileBytes = Cfg.LogRotateBytes;
                 Params.NumArchives      = Cfg.LogArchives;
             } else {
-                Params.FilePath = ""; // let JSON config override
+                Params.FilePath = ""; // 留空,交给 JSON 配置覆盖
             }
             Params.ConfigPath = Cfg.LogConfigPath;
 
@@ -117,28 +122,26 @@ namespace MServiceMain {
         TService*      Service = static_cast<TService*>(ServiceObj.Get());
         const TConfig& Config  = MService<TConfig>::GetConfig();
 
-        // Init failure path: ServiceObj goes out of scope on return and is
-        // released by TSharedPtr, triggering ~MObject and IDisposable::Dispose.
+        // Init 失败路径:直接 return,ServiceObj 出作用域由 TSharedPtr 释放,
+        // 触发 ~MObject 与 IDisposable::Dispose。
         if (!Service->Init(Config.ListenPort)) {
             return 1;
         }
         Service->Run();
 
-        // Normal exit path: Service->Run() returns when MSignalHandler (SIGINT/SIGTERM)
-        // flips bRunning inside MNetServerBase::Run. MNetServerBase::Run() itself does
-        // NOT call Shutdown() on the way out — it only unregisters the listener and
-        // breaks the loop. We must explicitly drive Shutdown() here so the subclass's
-        // ShutdownConnections() runs (close transports, unregister actors, clear maps).
-        // Without this, transport state lingers in static containers
-        // (MActorRouter::ActorRoutes) until process
-        // exit, which is the same shape as the double-free we fixed by removing
-        // RemoveFromRoot() from ~MObject.
+        // 正常退出路径:MSignalHandler(SIGINT/SIGTERM)把 bRunning 置 false 后,
+        // MNetServerBase::Run() 跳出主循环返回。Run() 自己**不**调 Shutdown()
+        // ——它只注销 listener 就退出循环。所以必须在这里显式调 Shutdown(),让子类的
+        // ShutdownConnections() 跑起来(关 transport、注销 actor、清 map)。
+        // 否则 transport 状态会一直留在静态容器(MActorRouter::ActorRoutes)里直到进程
+        // 退出 —— 这正是当初从 ~MObject 里删掉 RemoveFromRoot() 之前那个 double-free
+        // 的成因形状。
         Service->Shutdown();
 
         MLog::Shutdown();
 
-        // ServiceObj goes out of scope here, TSharedPtr releases once,
-        // ~MObject runs IDisposable::Dispose() exactly once.
+        // ServiceObj 在此出作用域,TSharedPtr 释放一次,~MObject 恰好跑一次
+        // IDisposable::Dispose()。
         return 0;
     }
 

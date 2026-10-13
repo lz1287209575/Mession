@@ -1,3 +1,7 @@
+/**
+ * @file PlayerService.cpp
+ * @brief MPlayerService 的实现:Init 装配、actor 注册、框架成员分发与玩家 actor 创建。
+ */
 #include "Servers/Player/PlayerService.h"
 
 #include "Common/Net/Rpc/MRpcChannel.h"
@@ -15,6 +19,8 @@
 #include <algorithm>
 #include <thread>
 
+// 进程单例。注意:与 Echo/Gateway 不同,本文件没有在头里 extern 声明这个变量,
+// 其它 TU 只能经 MPlayerService::GetSingleton() 访问。
 MPlayerService* GGlobalPlayerService = nullptr;
 
 MPlayerService* MPlayerService::GetSingleton() {
@@ -100,14 +106,17 @@ bool MPlayerService::Init(int InPort) {
     return true;
 }
 
+/** @brief TickBackends - 每帧推进 MEndpointCache(Registry 心跳 + 出站连接收包)。 */
 void MPlayerService::TickBackends() {
     MEndpointCache::Get().Tick(0.1f);
 }
 
+/** @brief GetListenPort - 返回配置里的监听端口。 */
 uint16 MPlayerService::GetListenPort() const {
     return Config.ListenPort;
 }
 
+/** @brief OnAccept - 服务器间入站连接(RPC 分发:FunctionCall / FunctionResponse)。 */
 void MPlayerService::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) {
     DispatchConnection(
         ConnId, Conn,
@@ -126,6 +135,7 @@ void MPlayerService::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) {
         [](uint64 /*Cid*/) {});
 }
 
+/** @brief ShutdownConnections - 注销 --actors 声明的本地路由、释放玩家 actor、断开 Registry。 */
 void MPlayerService::ShutdownConnections() {
     for (uint32 InstId : Config.LocalActorIds) {
         const uint64 ActorId = MServiceId::Make(Config.LocalServerType, InstId);
@@ -135,10 +145,12 @@ void MPlayerService::ShutdownConnections() {
     MEndpointCache::Get().DeregisterAndShutdown();
 }
 
+/** @brief OnRunStarted - listener 就绪后的启动日志。 */
 void MPlayerService::OnRunStarted() {
     LOG_INFO("%s running on port %u", Config.ServiceName.c_str(), static_cast<unsigned>(Config.ListenPort));
 }
 
+/** @brief RegisterLocalActors - 注册 --actors 声明的本机 ActorId(ServerType=Unknown = 本机)。 */
 void MPlayerService::RegisterLocalActors() {
     for (uint32 InstId : Config.LocalActorIds) {
         const uint64 ActorId = MServiceId::Make(Config.LocalServerType, InstId);
@@ -148,13 +160,16 @@ void MPlayerService::RegisterLocalActors() {
     }
 }
 
-// 框架成员分发入口:直接转交框架分发器——查 GMemberRpcEntries → 请求反序列化
-// 取 PlayerId → MActorSystem::Find(PlayerId) → actor 宿主成员表 → 成员反射调用。
+// 框架成员分发入口:直接转交框架分发器 —— 查 GMemberRpcEntries -> 请求反序列化取 PlayerId ->
+// MActorSystem::Find(PlayerId) -> actor 宿主成员表 -> 成员反射调用。
 // 这里是框架机制,不是业务协议;业务逻辑在成员(MPlayerItemContainer)上。
+// 失败语义由分发器决定(在工厂/分发器侧产生 future 的错误分支),本函数不做额外兜底。
 SFutureResult<TByteArray> MPlayerService::FrameworkMemberDispatch(const FMemberDispatchRequest& Req) {
     return DispatchFrameworkMemberCall(Req.FunctionId, Req.Payload);
 }
 
+// 创建玩家 actor + 挂载 MPlayerItemContainer,再注册进 MActorRouter(路由 + actor 对象存储)。
+// PlayerActors 持有强引用,ShutdownConnections() 里统一释放。
 SFutureResult<SEmptyServerMessage> MPlayerService::RegisterPlayer(uint64 PlayerId) {
     if (PlayerId == 0) {
         return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>("player_id_required");

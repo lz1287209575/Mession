@@ -1,3 +1,11 @@
+/**
+ * @file GatewayServer.cpp
+ * @brief MGatewayServer 的实现:Init 装配、客户端包解析与 ServerCall 转发、下行推送。
+ *
+ * @detail 转发链路:客户端 envelope -> HandleClientPacket 查 MClientManifest ->
+ *   MEndpointCache::GetOrConnect(TargetType) -> RegisterServerCall(响应回调)+
+ *   SendServerCallMessage;目标进程响应经 HandleServerCallResponse 触发回调解包回客户端。
+ */
 #include "Servers/Gateway/GatewayServer.h"
 #include "Common/Net/ClientCall/MClientTargetContextGuard.h"
 #include "Common/Net/ClientCall/MClientTargetResolver.h"
@@ -45,7 +53,7 @@ bool MGatewayServer::Init(int InPort) {
 
     // 注册到 Registry：AttachEventLoop → BindRegistry → RegisterLocal
     MEndpointCache::Get().AttachEventLoop(&EventLoop);
-    MEndpointCache::Get().SetServiceInstance(this); // P2: install business dispatch target
+    MEndpointCache::Get().SetServiceInstance(this); // 把本实例注册为业务消息分发目标
     MString RegHost;
     uint16  RegPort = 0;
     if (!ParseAddrPort(Config.RegistryAddr, RegHost, RegPort)) {
@@ -58,6 +66,15 @@ bool MGatewayServer::Init(int InPort) {
     return true;
 }
 
+/**
+ * @brief Tick - 零参 per-frame 钩子。
+ *
+ * @detail 注意:框架实际的 per-frame 钩子是 MNetServerBase::TickBackends()(本类已覆盖),
+ *   本函数没有任何调用点。
+ * NOTE: 这里给 MEndpointCache::Tick 传 0.0f —— 若将来真的接上调用点,心跳计时器与出站连接的
+ *       Tick 都不会累积,会退化成"不发心跳 / 收不到对端响应"(见 MEndpointCache::Tick 实现)。
+ *       参考 MEchoService::TickBackends() 用 0.1f。
+ */
 void MGatewayServer::Tick() {
     MEndpointCache::Get().Tick(0.0f);
 }
@@ -101,6 +118,11 @@ void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) {
         });
 }
 
+/**
+ * @brief TickBackends - 每帧把 MEndpointCache 往前推一步。
+ * @detail DeltaTime 必须传真实帧间隔:传 0.0f 会让 Registry 心跳计时器永不累积,并停止驱动
+ *   出站连接(ConnectionPool)的收包 —— 与 MEchoService::TickBackends 保持一致用 0.1f。
+ */
 void MGatewayServer::TickBackends() {
     MEndpointCache::Get().Tick(0.1f);
 }
@@ -163,6 +185,7 @@ MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::PushClientDownl
     return MServerCallAsyncSupport::MakeSuccessFuture(SEmptyServerMessage{});
 }
 
+// 握手 / 心跳桩:无状态 ack —— 与 MEchoService 的实现一致,只为满足反射注册与 ServerCall 分发。
 MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::Rpc_OnServerHandshake(uint32 /*DummyServerId*/) {
     return MServerCallAsyncSupport::MakeSuccessFuture(SEmptyServerMessage{});
 }
@@ -261,6 +284,7 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
         CancelServerCall(CallId);
         SendClientError("server_call_send_failed");
     } else {
+        // NOTE: 成功路径无需额外处理,这个空 else 分支疑似遗留;响应由上面注册的回调异步送回客户端。
     }
 }
 

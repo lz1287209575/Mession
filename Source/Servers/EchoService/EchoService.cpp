@@ -1,3 +1,10 @@
+/**
+ * @file EchoService.cpp
+ * @brief MEchoService 的实现:Init 装配、入站 RPC 分发、跨进程 actor Post/Call、ServerCall 业务体。
+ *
+ * @detail 本文件还承载 EchoAwait 的 codegen 输入(体由
+ *   `#ifdef MESSION_AWAIT_CODEGEN_SOURCE` 包住),业务编译不编译该段。
+ */
 #include "Servers/EchoService/EchoService.h"
 #include "MClientDownlinkManifest.mgenerated.h"
 #include "Common/Net/Rpc/MRpcChannel.h"
@@ -91,7 +98,7 @@ bool MEchoService::Init(int InPort) {
     // 2. BindRegistry：拆 host:port 触发首次 TCP 连接
     // 3. RegisterLocal：发 Register packet
     MEndpointCache::Get().AttachEventLoop(&EventLoop);
-    MEndpointCache::Get().SetServiceInstance(this); // P2: install business dispatch target
+    MEndpointCache::Get().SetServiceInstance(this); // 把本实例注册为业务消息分发目标
     MString RegHost;
     uint16  RegPort = 0;
     if (!ParseAddrPort(Config.RegistryAddr, RegHost, RegPort)) {
@@ -179,8 +186,8 @@ void MEchoService::OnRunStarted() {
 
 void MEchoService::RegisterLocalActors() {
     for (uint32 InstId : Config.LocalActorIds) {
-        // 本机 Actor 标记 EServerType::Unknown——MActorRouter::SendToActor 在
-        // ServerType == Unknown 时走 IsActorLocal 分支（见 ActorRouter.cpp:42-46）。
+        // 本机 Actor 以 EServerType::Unknown 标记——MActorRouter 把 "ServerType == Unknown"
+        // 作为"本机"的判定依据(见 MActorRouter::IsActorLocal / SendToActor)。
         const uint64 ActorId = MServiceId::Make(Config.LocalServerType, InstId);
         MActorRouter::Get().RegisterActor(ActorId, EServerType::Unknown);
         ActorMessages[ActorId] = MString();
@@ -189,10 +196,10 @@ void MEchoService::RegisterLocalActors() {
     }
 }
 
-// P3 v1 inline-body design: MEchoService::EchoAwait has its body in
-// EchoService.h. The generated MHeaderTool_AsyncFrame_MEchoService_EchoAwait
-// struct (MHeaderTool-generated) supplies the AwaitOk helper; AWAIT_OK
-// expands to Frame->AwaitOk(expr). See spec 2026-07-24 §7.3.
+// MEchoService::EchoAwait 的成员实现由 MHeaderTool 生成,见
+// Build/Generated/MEchoService_AwaitImpl.mgenerated.cpp —— 它构造
+// MHeaderTool_AwaitFrame_MEchoService_EchoAwait 并驱动状态机。
+// 状态机的 await 表达式来自本文件末尾 #ifdef MESSION_AWAIT_CODEGEN_SOURCE 段内的业务体。
 
 SFutureResult<FSampleEchoResponse> MEchoService::Echo(const FSampleEchoRequest& Request) {
     if (Request.TargetActorId == 0) {
@@ -246,10 +253,9 @@ SFutureResult<FSampleEchoResponse> MEchoService::Echo(const FSampleEchoRequest& 
 //      mangling 干扰，dlopen/dlsym 也能拿到同一符号）。当前 Service
 //      都不需要第 2 步，但保留扩展空间。
 
-// P2 stub implementations for Rpc_OnServerHandshake / Rpc_OnHeartbeat.
-// These were previously declared but not defined; P2 wires the ServerCall
-// dispatch (Finding A+B) so generated handlers actually invoke them.
-// Both are pure ack-style: zero-payload SEmptyServerMessage Ok on the wire.
+// Rpc_OnServerHandshake / Rpc_OnHeartbeat 的桩实现。这两个函数此前只声明未定义,
+// P2 打通 ServerCall 分发后,生成的 handler 才会真正调到它们。
+// 两者都是纯 ack:线上回一个 payload 为空的 SEmptyServerMessage Ok。
 MFuture<TResult<SEmptyServerMessage, FAppError>> MEchoService::Rpc_OnServerHandshake(uint32 /*DummyServerId*/) {
     SEmptyServerMessage Empty{};
     return MServerCallAsyncSupport::MakeSuccessFuture(std::move(Empty));
@@ -344,7 +350,9 @@ SFutureResult<FSampleEchoResponse> CallEchoRemote(const FSampleEchoRequest& Requ
 }
 
 
-// MFUNCTION(ServerCall, Async) 业务逻辑体（codegen 输入——方案 B：体在 .cpp）
+// MFUNCTION(ServerCall, Async) 业务逻辑体(codegen 输入 —— 方案 B:体在 .cpp)。
+// 该段仅在 MHeaderTool 解析时可见(它带 -DMESSION_AWAIT_CODEGEN_SOURCE),
+// 业务编译不编译;#endif 之后没有第二个 EchoAwait 定义。
 #ifdef MESSION_AWAIT_CODEGEN_SOURCE
 MFUNCTION(ServerCall, Async)
 SFutureResult<FSampleEchoResponse> MEchoService::EchoAwait(const FSampleEchoRequest& Request) {

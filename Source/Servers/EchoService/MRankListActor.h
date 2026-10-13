@@ -36,7 +36,7 @@ class MRankListActor : public IActor, public MObject {
     public:
     MGENERATED_BODY(MRankListActor, MObject, 0)
     public: // MGENERATED_BODY 展开以 private: 结尾,恢复 public 访问(与 MEchoService 一致)
-    /** @brief 全服唯一 actor id(PoC 固定;真生产由 MServiceId::Make 派生). */
+    /** @brief 全服唯一 actor id(PoC 阶段固定值;正式形态由 MServiceId::Make 派生)。 */
     static constexpr uint64 RANK_LIST_ACTOR_ID = 9001;
 
     MRankListActor()           = default;
@@ -61,7 +61,7 @@ class MRankListActor : public IActor, public MObject {
      * @brief 排行榜 state —— actor 内部,只在 actor 自己的 Sub 线程访问.
      */
     struct SState {
-        TMap<uint64, int64> PlayerScores; // PlayerId -> Score
+        TMap<uint64, int64> PlayerScores; // PlayerId -> 分数
         uint64              Version = 0;  // 每次 UpdateScore 递增
     };
 

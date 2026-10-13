@@ -1,3 +1,10 @@
+/**
+ * @file ServiceRegistryServer.cpp
+ * @brief MServiceRegistry 的实现:连接会话管理、协议分发、端点台账维护与变更广播。
+ *
+ * @detail 入站包格式:首字节 = EServiceRegistryMessageType,其后是该消息的 payload(外层
+ *   length-prefix 已由 MNetServerBase 剥掉)。响应统一经 SendAck / SendEndpointChange 回出。
+ */
 #include "Servers/ServiceRegistry/ServiceRegistryServer.h"
 
 #include "Common/Net/Rpc/RpcManifest.h"
@@ -28,6 +35,7 @@ void MServiceRegistry::OnRunStarted() {
     LOG_INFO("MServiceRegistry running on port %u", static_cast<unsigned>(Config.ListenPort));
 }
 
+/** @brief OnAccept - 为入站连接建会话,并注册收包/断开两个回调。 */
 void MServiceRegistry::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) {
     auto Session        = MakeShared<FRegistryClientSession>();
     Session->ConnId     = ConnId;
@@ -195,6 +203,7 @@ void MServiceRegistry::HandleListEndpoints(TSharedPtr<FRegistryClientSession> Se
     SendTo(Session, Packet);
 }
 
+/** @brief SendTo - 发给会话;会话为空 / 连接已断开时静默丢弃。 */
 void MServiceRegistry::SendTo(TSharedPtr<FRegistryClientSession> Session, const TByteArray& Packet) {
     if (!Session || !Session->Conn || !Session->Conn->IsConnected())
         return;
@@ -247,15 +256,19 @@ void MServiceRegistry::TickHeartbeats() {
     }
 }
 
+// 注意:Tick() 是零参函数,并不是 MObject::Tick(float) 或 MNetServerBase::TickBackends() 的
+// 覆盖 —— 框架的 per-frame 钩子是 TickBackends()(已在下面覆盖为 TickHeartbeats),本函数
+// 原本注释里的"Tick override"说法不成立。
+// NOTE: 本函数当前没有任何调用点,保留仅为占位。
 void MServiceRegistry::Tick() {
-    // MNetServerBase::Run 主循环驱动 EventLoop；这里不需要额外的 per-frame
-    // 工作，但保留 Tick override 以便未来扩展。
 }
 
+/** @brief TickBackends - 每帧做一次心跳判活/剔除(框架的 per-frame 钩子)。 */
 void MServiceRegistry::TickBackends() {
     TickHeartbeats();
 }
 
+/** @brief ShutdownConnections - 关闭所有会话连接并清空会话表与端点表。 */
 void MServiceRegistry::ShutdownConnections() {
     for (auto& [ConnId, Session] : Sessions) {
         if (Session && Session->Conn && Session->Conn->IsConnected()) {
@@ -266,6 +279,7 @@ void MServiceRegistry::ShutdownConnections() {
     Endpoints.clear();
 }
 
+/** @brief Dispose - IDisposable 实现:幂等,只做一次 ShutdownConnections()。 */
 void MServiceRegistry::Dispose() {
     if (IsDisposed())
         return;

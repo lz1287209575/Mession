@@ -1,8 +1,19 @@
+/**
+ * @file ServiceRegistryConfig.h
+ * @brief SServiceRegistryConfig —— MServiceRegistry 的 CLI 配置(MSTRUCT + MPROPERTY)。
+ *
+ * @detail 两个超时阈值构成"两级滑梯":
+ *   LastHeartbeatMs 距今超过 HeartbeatTimeoutMs -> 标记 bHealthy=false(仍留在端点表里,
+ *   但 ListEndpoints / EndpointChange 不再把它推给关心方);
+ *   超过 EvictAfterMs -> 直接从端点表移除。
+ *   因此要求 EvictAfterMs > HeartbeatTimeoutMs,否则服务会直接从表里消失、看不到"不健康"这一档。
+ */
 #pragma once
 
 #include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Reflect/Reflection.h"
 
+/** @brief SServiceRegistryConfig - 注册中心进程的 CLI 配置(心跳/失联阈值 + 日志)。 */
 MSTRUCT()
 struct SServiceRegistryConfig {
     MPROPERTY(Meta = (Cli = "--listen"))

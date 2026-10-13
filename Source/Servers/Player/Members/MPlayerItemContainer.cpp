@@ -1,3 +1,7 @@
+/**
+ * @file MPlayerItemContainer.cpp
+ * @brief MPlayerItemContainer 的实现:演示背包预置、数量读写与 UseItem 扣减。
+ */
 #include "Servers/Player/Members/MPlayerItemContainer.h"
 
 #include "Common/Runtime/Log/Log.h"
@@ -5,6 +9,7 @@
 
 #include <algorithm>
 
+/** @brief 挂载即预置演示背包,用于验证 GetActorMember / UseItem 链路。 */
 void MPlayerItemContainer::OnAttach() {
     // 演示背包:挂载即预置几种物品,验证 GetActorMember / UseItem 链路。
     Items[1001] = 5; // 治疗药水
@@ -21,6 +26,8 @@ int32 MPlayerItemContainer::GetItemCount(uint64 InItemId) const {
     return (It != Items.end()) ? It->second : 0;
 }
 
+// 注意:本函数不做失败兜底 —— 物品缺失/数量不足也返回 Ok(只是 bOk=false),
+// 因为这类业务拒绝是正常语义,不应该被上层当成 RPC 错误。
 SFutureResult<FPlayerUseItemResponse> MPlayerItemContainer::UseItem(const FPlayerUseItemRequest& InRequest) {
     FPlayerUseItemResponse Response;
     Response.ItemId = InRequest.ItemId;
