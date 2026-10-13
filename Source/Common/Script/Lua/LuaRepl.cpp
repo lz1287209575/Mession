@@ -1,3 +1,7 @@
+/**
+ * @file LuaRepl.cpp
+ * @brief 实现基于 stdin/stdout 的 Lua REPL:读行、写行、执行、断开。
+ */
 #include "Common/Script/Lua/LuaRepl.h"
 #include "Common/Script/Abstract/IScriptRepl.h"
 
@@ -20,6 +24,13 @@ namespace mession::script::lua {
         return State->IsValid();
     }
 
+    /**
+     * @brief ReadLine - 从 stdin 读一行(阻塞)。
+     * @param OutLine 去掉了行尾 \n / \r 的内容
+     * @return 读到内容返回 true;EOF 或读失败返回 false
+     *
+     * @detail 单行上限 4095 字节,超出部分留在后续行的开头。
+     */
     bool MLuaRepl::ReadLine(MString& OutLine) {
         char Buf[4096];
         if (!std::fgets(Buf, sizeof(Buf), stdin)) {
@@ -33,6 +44,9 @@ namespace mession::script::lua {
         return true;
     }
 
+    /**
+     * @brief WriteLine - 把 Line 写到 stdout 并换行 + flush。
+     */
     void MLuaRepl::WriteLine(MStringView Line) {
         MString Msg(Line.data(), Line.size());
         std::fwrite(Msg.c_str(), 1, Msg.size(), stdout);
@@ -52,8 +66,10 @@ namespace mession::script::lua {
         return TResult<MString>::Ok(MString("ok"));
     }
 
+    /** @brief Interrupt - 空实现(无法打断正在执行的 chunk) */
     void MLuaRepl::Interrupt() {
     }
+    /** @brief Disconnect - 销毁 REPL 自己的 VM;之后 Eval 会返回 "repl not connected" */
     void MLuaRepl::Disconnect() {
         State.reset();
     }

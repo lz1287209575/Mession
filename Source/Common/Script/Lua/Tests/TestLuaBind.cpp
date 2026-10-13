@@ -1,11 +1,14 @@
-// TestLuaBind — 验证 MLuaBridge::M.InvokeStatic 走 C++ 反射 invoke 的 roundtrip
-//
-// 这个 test **不再手写 Register**:
-// - 测试类在 Source/Common/Script/Lua/MTestScriptBindClass.h(MCLASS + MFUNCTION(ScriptBind))
-// - mht 解析 emit MTestScriptBindClass.mgenerated.cpp/.h/.lua/.d.tl
-// - MTestScriptBindClass.mgenerated.cpp 静态 init 时调 MTestScriptBindClass::StaticClass()
-//   → CreateNativeFunction 注册 NativeInvoke
-// - TestLuaBind 链接 generated obj,只调 MTestScriptBindClass::StaticClass() 拿 MClass*
+/**
+ * @file TestLuaBind.cpp
+ * @brief 验证 M.InvokeStatic 经 C++ 反射 NativeInvoke 的实参 / 返回值往返。
+ *
+ * @detail 本测试不再手写注册:
+ *   - 测试类声明在 Source/Common/Script/Lua/MTestScriptBindClass.h(MCLASS + MFUNCTION);
+ *   - MHeaderTool 解析后 emit MTestScriptBindClass.mgenerated.cpp/.h/.lua/.d.tl;
+ *   - generated .cpp 于静态初始化时调 MTestScriptBindClass::StaticClass(),
+ *     由 CreateNativeFunction 注册 NativeInvoke;
+ *   - 本测试只需链接 generated obj,再调 StaticClass() 拿到 MClass*。
+ */
 
 #include "Common/Runtime/Reflect/Class.h"
 #include "Common/Runtime/Reflect/Reflection.h"
@@ -24,6 +27,7 @@ extern "C" {
 using namespace mession::script::lua;
 using namespace mession::script;
 
+/** @brief TestStaticAddInt - InvokeStatic("Add",{2,3}) 应返回 5 */
 static void TestStaticAddInt() {
     MLuaScriptState S;
     MLuaBridge::Install(S.GetLuaState(), nullptr);
@@ -41,6 +45,7 @@ static void TestStaticAddInt() {
     std::printf("ok: TestStaticAddInt (5)\n");
 }
 
+/** @brief TestStaticScaleNumber - InvokeStatic("Scale",{2.5}) 应返回 double 6.25 */
 static void TestStaticScaleNumber() {
     MLuaScriptState S;
     MLuaBridge::Install(S.GetLuaState(), nullptr);
@@ -53,6 +58,7 @@ static void TestStaticScaleNumber() {
     std::printf("ok: TestStaticScaleNumber (6.25)\n");
 }
 
+/** @brief TestStaticEchoString - InvokeStatic("Echo",{"hi"}) 应返回 "hi!"(MString) */
 static void TestStaticEchoString() {
     MLuaScriptState S;
     MLuaBridge::Install(S.GetLuaState(), nullptr);
@@ -66,6 +72,7 @@ static void TestStaticEchoString() {
     std::printf("ok: TestStaticEchoString ('hi!')\n");
 }
 
+/** @brief TestStaticVoidReturn - void 返回的方法不压栈,后续 Lua 语句仍正常执行 */
 static void TestStaticVoidReturn() {
     MLuaScriptState S;
     MLuaBridge::Install(S.GetLuaState(), nullptr);
@@ -79,9 +86,13 @@ static void TestStaticVoidReturn() {
     std::printf("ok: TestStaticVoidReturn\n");
 }
 
+/**
+ * @brief main - 依次执行 4 个用例。
+ * @return 恒为 0(断言失败会直接 abort)
+ */
 int main() {
-    // MTestScriptBindClass::StaticClass() 在程序启动静态初始化时已被 mht 生成的
-    // SAutoRegisterClass_MTestScriptBindClass 调用 — 此处调用只是验证它 idempotent
+    // StaticClass() 在静态初始化阶段已被 mht 生成的 SAutoRegisterClass_* 调用过,
+    // 此处再调一次只是验证它幂等。
     (void)MTestScriptBindClass::StaticClass();
 
     TestStaticAddInt();

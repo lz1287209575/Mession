@@ -1,3 +1,10 @@
+/**
+ * @file MLuaVector.h
+ * @brief MLuaVector —— Lua 与 TVector<MScalarValue> 之间的桥接器声明。
+ *
+ * @detail userdata 持有 TVector<MScalarValue>*;metatable "MVectorProxy" 提供
+ *   __len / __tostring / __eq / __pairs / __gc 与 __index 方法表。
+ */
 #pragma once
 
 #include "Common/Runtime/MLib.h"
@@ -10,14 +17,20 @@ extern "C" {
 
 namespace mession::script::lua {
 
+    /**
+     * @brief MScalarType - 标量的运行时类型标签,决定 MScalarValue 哪个成员有效。
+     */
     enum class MScalarType : uint8 {
-        Int    = 0,
-        Double = 1,
-        String = 2,
+        Int    = 0, // 有效成员:IntVal
+        Double = 1, // 有效成员:DoubleVal
+        String = 2, // 有效成员:StringVal
     };
 
-    // MScalarValue — C++ 与 Lua 之间的标量值统一容器
-    // 引用 Vector / Map / 反射参数 等多个 spec 都用
+    /**
+     * @brief MScalarValue - C++ 与 Lua 之间的标量值统一容器(tagged union 语义)。
+     *
+     * @detail 只有 Type 指明的那个成员有意义;Vector / Map / 反射参数等多处复用。
+     */
     struct MScalarValue {
         MScalarType Type      = MScalarType::Int;
         int64       IntVal    = 0;
@@ -45,16 +58,28 @@ namespace mession::script::lua {
             return S;
         }
 
-        // 从 Lua 栈 idx 位置弹出标量;不支持的类型返回 Err
+        /**
+         * @brief FromLua - 读取 Lua 栈 Index 槽位并转成标量(只读,不弹栈)。
+         * @param L     目标 Lua 状态机
+         * @param Index 栈索引(1-based 或负值相对)
+         * @return nil/boolean 转 Int,number 转 Double,string 转 String;其余类型 Err("unsupported_type")
+         */
         static TResult<MScalarValue> FromLua(lua_State* L, int32 Index);
 
-        // 推 Lua 栈
+        /**
+         * @brief PushToLua - 按 Type 把当前值压入 Lua 栈。
+         * @param L 目标 Lua 状态机
+         */
         void PushToLua(lua_State* L) const;
 
-        // 调试用字符串(测试预期比较)
+        /**
+         * @brief ToDebugString - 生成调试串。
+         * @return "Int(1)" / "Double(1.5)" / "String(s)";Type 未知时返回 "Unknown"
+         */
         MString ToDebugString() const;
     };
 
+    /** @brief operator== - 先比 Type,再比 Type 所指成员的值 */
     inline bool operator==(const MScalarValue& A, const MScalarValue& B) {
         if (A.Type != B.Type)
             return false;
@@ -69,17 +94,25 @@ namespace mession::script::lua {
         return false;
     }
 
+    /** @brief operator!= - operator== 取反 */
     inline bool operator!=(const MScalarValue& A, const MScalarValue& B) {
         return !(A == B);
     }
 
-    // MLuaVector — Lua ↔ TVector<MScalarValue> 桥接器
-    // 用法:在 Lua 初始化阶段 MLuaVector::Install(L),把 Mession.Vector.new(...) 注册到 Lua
-    // 内部:userdata 持 TVector<MScalarValue>*,metatable MVectorProxy 提供 __len / __pairs / __index / __newindex / __gc
+    /**
+     * @brief MLuaVector - Lua 与 TVector<MScalarValue> 的桥接器。
+     *
+     * @detail metatable "MVectorProxy" 实际注册 __len / __tostring / __eq / __pairs /
+     *   __gc 与 __index 方法表;并未注册 __newindex。
+     */
     class MLuaVector {
         public:
-        // 注册 Mession.Vector.new() + MVectorProxy metatable 到 Lua 状态机
-        // 应当从 MLuaEngine::Initialize / 启动 lua_init.lua 之前调用
+        /**
+         * @brief Install - 注册 MVectorProxy metatable 与 Mession.Vector.new()。
+         * @param L 目标 Lua 状态机
+         *
+         * @detail 应在 MLuaEngine::Initialize 中、执行业务 lua 代码之前调用。
+         */
         static void Install(lua_State* L);
     };
 

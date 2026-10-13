@@ -1,3 +1,7 @@
+/**
+ * @file TestLuaLog.cpp
+ * @brief 验证 Mession.Log.* 的注册、调用与类型校验。
+ */
 #include "Common/Script/Lua/LuaScriptState.h"
 #include "Common/Script/Lua/MLuaLog.h"
 
@@ -6,6 +10,7 @@
 
 using namespace mession::script::lua;
 
+/** @brief TestLogInstall - Mession.Log 及其 5 个入口都应是 function */
 static void TestLogInstall() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -24,6 +29,7 @@ static void TestLogInstall() {
     std::printf("ok: TestLogInstall\n");
 }
 
+/** @brief TestLogCall - 各级别日志调用都不应抛错 */
 static void TestLogCall() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -41,6 +47,7 @@ static void TestLogCall() {
     std::printf("ok: TestLogCall\n");
 }
 
+/** @brief TestLogTypeError - 非 string 的 msg 应经 pcall 捕获为错误 */
 static void TestLogTypeError() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -55,6 +62,10 @@ static void TestLogTypeError() {
     std::printf("ok: TestLogTypeError\n");
 }
 
+/**
+ * @brief main - 依次执行 3 个用例。
+ * @return 恒为 0(断言失败会直接 abort)
+ */
 int main() {
     TestLogInstall();
     TestLogCall();

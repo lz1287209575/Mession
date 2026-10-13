@@ -1,3 +1,7 @@
+/**
+ * @file TestLuaCoroutine.cpp
+ * @brief 验证协程基础行为与 MLuaCoroutineBridge 的协程状态判定。
+ */
 #include "Common/Script/Lua/LuaCoroutineBridge.h"
 #include "Common/Script/Lua/LuaScriptState.h"
 
@@ -11,6 +15,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+/** @brief TestCoroutineBasic - LoadBuffer 执行后,全局 co 应是 thread 类型 */
 static void TestCoroutineBasic() {
     mession::script::lua::MLuaScriptState State;
     lua_State*                            L = State.GetLuaState();
@@ -29,8 +34,11 @@ static void TestCoroutineBasic() {
     std::printf("ok: TestCoroutineBasic\n");
 }
 
+/**
+ * @brief TestCoroutineResumeDirect - 直接 resume 无 yield 协程,应得 LUA_OK 且结果为 123。
+ */
 static void TestCoroutineResumeDirect() {
-    // 直接 resume 简单协程,无 yield — 单次 resume 返回 LUA_OK + 栈顶是 return 值
+    // 无 yield 的协程:单次 resume 即返回 LUA_OK,栈顶就是 return 值。
     mession::script::lua::MLuaScriptState State;
     lua_State*                            L = State.GetLuaState();
 
@@ -60,8 +68,10 @@ static void TestCoroutineResumeDirect() {
     std::printf("ok: TestCoroutineResumeDirect (Got=%lld)\n", (long long)Got);
 }
 
+/**
+ * @brief TestCoroutineBridgeStatus - IsCoroutineYielded 在非协程上下文中应返回 false。
+ */
 static void TestCoroutineBridgeStatus() {
-    // 测试 MLuaCoroutineBridge::IsCoroutineYielded 在主线程返回 false
     mession::script::lua::MLuaScriptState State;
     lua_State*                            L = State.GetLuaState();
 
@@ -70,6 +80,10 @@ static void TestCoroutineBridgeStatus() {
     std::printf("ok: TestCoroutineBridgeStatus\n");
 }
 
+/**
+ * @brief main - 依次执行 3 个用例。
+ * @return 恒为 0(断言失败会直接 abort)
+ */
 int main() {
     TestCoroutineBasic();
     TestCoroutineResumeDirect();

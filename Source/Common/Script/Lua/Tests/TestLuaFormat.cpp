@@ -1,3 +1,9 @@
+/**
+ * @file TestLuaFormat.cpp
+ * @brief 验证 Mession.Format 的 fmt / concat / split / trim 入口。
+ *
+ * @detail 本文件内的 PeekInt / PeekString 用于读取任意栈槽位而不破坏其它槽位。
+ */
 #include "Common/Script/Lua/LuaScriptState.h"
 #include "Common/Script/Lua/MLuaFormat.h"
 
@@ -6,9 +12,16 @@
 
 using namespace mession::script::lua;
 
-// 把 Idx 槽位复制到栈顶,读副本后 pop —— 保证 pop 掉的正是读过的值。
-// 旧实现 lua_pop(L, 1) 永远弹栈顶: 当 Idx != -1 时(如 -2)会弹掉别的槽位,
-// 导致后续 PeekString(L, -1) 读到错误值(TestFmtBasic 断言失败的根因)。
+/**
+ * @brief PeekInt - 读取任意栈槽位的整数,且不改变该槽位。
+ * @param L   目标 Lua 状态机
+ * @param Idx 栈索引
+ * @return 该槽位的整数值
+ *
+ * @detail 实现为 pushvalue(Idx) → 读栈顶 → pop。旧实现直接 lua_pop(L, 1),
+ *   永远弹栈顶:当 Idx != -1(如 -2)时会弹掉别的槽位,导致后续读取错位
+ *   (TestFmtBasic 断言失败的根因)。
+ */
 static int PeekInt(lua_State* L, int Idx) {
     lua_pushvalue(L, Idx);
     int V = (int)lua_tointeger(L, -1);
@@ -16,6 +29,7 @@ static int PeekInt(lua_State* L, int Idx) {
     return V;
 }
 
+/** @brief PeekString - 读取任意栈槽位的字符串(按长度拷贝),且不改变该槽位 */
 static MString PeekString(lua_State* L, int Idx) {
     lua_pushvalue(L, Idx);
     size_t      Len = 0;
@@ -25,6 +39,7 @@ static MString PeekString(lua_State* L, int Idx) {
     return S;
 }
 
+/** @brief TestFmtBasic - fmt 占位符替换(含单实参与多实参两种) */
 static void TestFmtBasic() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -38,6 +53,7 @@ static void TestFmtBasic() {
     std::printf("ok: TestFmtBasic\n");
 }
 
+/** @brief TestFmtNoArgs - 无实参时原样返回模板串 */
 static void TestFmtNoArgs() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -49,6 +65,7 @@ static void TestFmtNoArgs() {
     std::printf("ok: TestFmtNoArgs\n");
 }
 
+/** @brief TestConcat - concat 依次拼接 4 个字符串 */
 static void TestConcat() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -60,6 +77,7 @@ static void TestConcat() {
     std::printf("ok: TestConcat\n");
 }
 
+/** @brief TestSplit - split 按逗号切分出 4 段并保持原顺序 */
 static void TestSplit() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -76,6 +94,7 @@ static void TestSplit() {
     std::printf("ok: TestSplit\n");
 }
 
+/** @brief TestTrim - trim 去掉首尾空白 */
 static void TestTrim() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -87,6 +106,7 @@ static void TestTrim() {
     std::printf("ok: TestTrim\n");
 }
 
+/** @brief TestFmtError - 非法 fmt 语法应被 pcall 捕获为 string 型错误 */
 static void TestFmtError() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -106,6 +126,10 @@ static void TestFmtError() {
     std::printf("ok: TestFmtError\n");
 }
 
+/**
+ * @brief main - 依次执行 6 个用例。
+ * @return 恒为 0(断言失败会直接 abort)
+ */
 int main() {
     TestFmtBasic();
     TestFmtNoArgs();

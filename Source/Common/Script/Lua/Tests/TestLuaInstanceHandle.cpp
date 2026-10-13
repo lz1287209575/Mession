@@ -1,3 +1,7 @@
+/**
+ * @file TestLuaInstanceHandle.cpp
+ * @brief 验证 MLuaEngine 的实例句柄生命周期:创建、方法调用、错误路径与释放。
+ */
 #include "Common/Script/Abstract/TVariant.h"
 #include "Common/Script/Lua/LuaEngine.h"
 #include "Common/Script/Lua/LuaScriptState.h"
@@ -18,20 +22,26 @@ using namespace mession::script::lua;
 namespace {
     MLuaEngine* GEngine = nullptr;
 
-    // MLuaEngine 内部创建 State;通过它加载业务代码
+    /**
+     * @brief SetupEnv - 把业务 Lua 代码加载进引擎内部 State。
+     * @param Code 待加载的 Lua 源码
+     */
     void SetupEnv(const char* Code) {
         MString Err = GEngine->LoadBufferIntoState("test", Code, strlen(Code));
         assert(Err.empty());
     }
 
+    /** @brief MakeVarInt - 构造 Int 型 TVariant 实参 */
     TVariant MakeVarInt(int64 V) {
         return TVariant::MakeInt(V);
     }
+    /** @brief MakeVarStr - 构造 String 型 TVariant 实参 */
     TVariant MakeVarStr(const char* S) {
         return TVariant::MakeString(MString(S));
     }
 } // namespace
 
+/** @brief TestBasicCreate - CreateInstanceByClassName 应返回有效句柄 */
 static void TestBasicCreate() {
     SetupEnv("Monster = {}\n"
              "Monster.__index = Monster\n"
@@ -56,6 +66,7 @@ static void TestBasicCreate() {
     GEngine->ReleaseInstance(H);
 }
 
+/** @brief TestFallbackCall - 类无 :new 时经 __call 建实例;未知方法应返回 Err */
 static void TestFallbackCall() {
     SetupEnv("Adder = {}\n"
              "setmetatable(Adder, {__call = function(_, a, b) return a + b end})\n");
@@ -77,6 +88,7 @@ static void TestFallbackCall() {
     GEngine->ReleaseInstance(H);
 }
 
+/** @brief TestClassNotFound - 不存在的类名应返回含 "class_not_found" 的 Err */
 static void TestClassNotFound() {
     TScriptArgs Args;
     auto        R = GEngine->CreateInstanceByClassName("NoSuchClass", Args);
@@ -85,6 +97,7 @@ static void TestClassNotFound() {
     std::printf("ok: TestClassNotFound\n");
 }
 
+/** @brief TestNewThrows - :new 内部 error() 应把错误消息透传到 Err */
 static void TestNewThrows() {
     SetupEnv("Bad = {}\n"
              "function Bad:new() error('boom') end\n");
@@ -96,6 +109,7 @@ static void TestNewThrows() {
     std::printf("ok: TestNewThrows\n");
 }
 
+/** @brief TestMethodCall - 调用 :take_damage(10) 应把 hp 从 100 降到 90 */
 static void TestMethodCall() {
     SetupEnv("Monster = {}; Monster.__index = Monster\n"
              "function Monster:new(name, hp) return setmetatable({name=name, hp=hp}, Monster) end\n"
@@ -124,6 +138,7 @@ static void TestMethodCall() {
     GEngine->ReleaseInstance(H);
 }
 
+/** @brief TestMethodNotFound - 方法不存在应返回含 "method_not_found" 的 Err */
 static void TestMethodNotFound() {
     SetupEnv("Foo = {}; Foo.__index = Foo\n"
              "function Foo:new() return setmetatable({}, Foo) end\n");
@@ -140,6 +155,9 @@ static void TestMethodNotFound() {
     GEngine->ReleaseInstance(H);
 }
 
+/**
+ * @brief TestReleaseAfterGC - 类表被置 nil 并强制 GC 后,再调方法仍应返回 Err(不得 panic)。
+ */
 static void TestReleaseAfterGC() {
     SetupEnv("Monster = {}; Monster.__index = Monster\n"
              "function Monster:new(name) return setmetatable({name=name}, Monster) end\n");
@@ -171,6 +189,7 @@ static void TestReleaseAfterGC() {
     std::printf("ok: TestReleaseAfterGC (err='%s')\n", M.GetError().c_str());
 }
 
+/** @brief TestReleaseExplicit - ReleaseInstance 之后再调方法应返回 Err */
 static void TestReleaseExplicit() {
     SetupEnv("Foo = {}; Foo.__index = Foo\n"
              "function Foo:new() return setmetatable({x=42}, Foo) end\n");
@@ -187,6 +206,10 @@ static void TestReleaseExplicit() {
     std::printf("ok: TestReleaseExplicit\n");
 }
 
+/**
+ * @brief main - 建引擎并依次执行 8 个用例。
+ * @return 恒为 0(断言失败会直接 abort)
+ */
 int main() {
     MLuaEngine Engine;
     Engine.Initialize(SScriptEngineConfig{});

@@ -1,3 +1,7 @@
+/**
+ * @file MLuaRpc.cpp
+ * @brief 实现 MLuaRpc:Mession.RPC / Time / Id 三个子表与 RPC 桥接调用。
+ */
 #include "Common/Script/Lua/MLuaRpc.h"
 #include "Common/Runtime/Id.h"
 #include "Common/Runtime/Time.h"
@@ -8,8 +12,15 @@ namespace mession::script::lua {
 
     namespace {
 
+        /**
+         * @brief GBridge - 当前进程内安装的 RPC bridge(文件级静态变量)。
+         *
+         * @detail NOTE: 位于匿名命名空间、进程级共享 —— 后一次 Install 会覆盖前一次,
+         *   多 engine 共存时不隔离;且无任何同步保护,跨线程使用不安全。
+         */
         IScriptRpcBridge* GBridge = nullptr;
 
+        /** @brief RpcCall - 按 Lua 全局函数名经 bridge 调用 */
         /// @lua-stdlib RPC.call
         /// @lua-param name string
         /// @lua-param ... any
@@ -27,6 +38,7 @@ namespace mession::script::lua {
             return GBridge->CallGlobal(L, Name, 2, Top);
         }
 
+        /** @brief TimeNow - 返回当前时间戳(秒,double) */
         /// @lua-stdlib Time.now
         /// @lua-return number
         int TimeNow(lua_State* L) {
@@ -34,6 +46,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief TimeNowMs - 返回当前时间戳(毫秒,integer) */
         /// @lua-stdlib Time.nowMs
         /// @lua-return integer
         int TimeNowMs(lua_State* L) {
@@ -42,6 +55,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief TimeSleepMs - 阻塞休眠指定毫秒数 */
         /// @lua-stdlib Time.sleepMs
         /// @lua-param ms integer
         /// @lua-return nil
@@ -56,6 +70,7 @@ namespace mession::script::lua {
             return 0;
         }
 
+        /** @brief IdNew - 生成一个自增唯一 ID */
         /// @lua-stdlib Id.new
         /// @lua-return integer
         int IdNew(lua_State* L) {
@@ -65,6 +80,13 @@ namespace mession::script::lua {
 
     } // namespace
 
+    /**
+     * @brief Install - 记录 bridge 并注册 Mession.RPC / Time / Id 三个子表。
+     * @param L       目标 Lua 状态机
+     * @param pEngine RPC 桥接实现
+     *
+     * @detail pEngine 写入文件级静态变量 GBridge(见上),同一进程内以最后一次安装为准。
+     */
     void MLuaRpc::Install(lua_State* L, IScriptRpcBridge* pEngine) {
         GBridge = pEngine;
 
@@ -79,13 +101,13 @@ namespace mession::script::lua {
             lua_setglobal(L, "Mession");
         }
 
-        // RPC namespace
+        // RPC 命名空间
         lua_newtable(L);
         lua_pushcfunction(L, RpcCall);
         lua_setfield(L, -2, "call");
         lua_setfield(L, -2, "RPC");
 
-        // Time namespace
+        // Time 命名空间
         lua_newtable(L);
         lua_pushcfunction(L, TimeNow);
         lua_setfield(L, -2, "now");
@@ -95,7 +117,7 @@ namespace mession::script::lua {
         lua_setfield(L, -2, "sleepMs");
         lua_setfield(L, -2, "Time");
 
-        // Id namespace
+        // Id 命名空间
         lua_newtable(L);
         lua_pushcfunction(L, IdNew);
         lua_setfield(L, -2, "new");

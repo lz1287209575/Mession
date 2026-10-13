@@ -1,12 +1,20 @@
+/**
+ * @file ScriptErrorCodes.h
+ * @brief 跨 VM 错误码字典(字符串常量)+ FScriptError 描述结构。
+ *
+ * @detail 业务侧按 Code 匹配,不要在生产代码里直接比较字面量 —— 后续会演进为
+ *   enum + lookup 表。FScriptError 经 ToErrorString 转成 MString,以满足
+ *   TResult<T, MString> 的错误通道约定。
+ */
 #pragma once
 
 #include "Common/Runtime/MLib.h"
 
 namespace mession::script {
 
-    // 跨 VM 错误码字典(字符串常量)
-    // 业务侧 catch / 匹配用,不要在生产代码里直接比较字符串;
-    // 后续会演进为 enum + lookup 表。
+    /**
+     * @brief ScriptErrorCodes - 跨 VM 错误码常量集合(按语言/通用/句柄/热重载分组)。
+     */
     namespace ScriptErrorCodes {
         inline constexpr const char* kLuaRuntime = "lua_runtime_error";
         inline constexpr const char* kLuaSyntax  = "lua_syntax_error";
@@ -40,12 +48,15 @@ namespace mession::script {
         inline constexpr const char* kActorNotFound  = "actor_not_found";
     } // namespace ScriptErrorCodes
 
-    // FScriptError:VM 抛出的错误描述
-    // 业务侧只需关心 Code + Message;StackTrace 由 VM 实现按需填充
+    /**
+     * @brief FScriptError - VM 抛出的错误描述。
+     *
+     * @detail 业务侧通常只关心 Code + Message;StackTrace 由 VM 实现按需填充,可为空。
+     */
     struct FScriptError {
-        MString Code;       // 来自 ScriptErrorCodes 命名空间
+        MString Code;       // 取自 ScriptErrorCodes 命名空间
         MString Message;    // 人类可读描述
-        MString StackTrace; // 可选,VM 实现可填
+        MString StackTrace; // 可选;VM 实现可填
 
         FScriptError() = default;
 
@@ -56,8 +67,11 @@ namespace mession::script {
         }
     };
 
-    // FScriptError → MString 转换(满足 TResult<T, MString> 接口)
-    // 格式:"[code] message\nstack_trace"
+    /**
+     * @brief ToErrorString - FScriptError → MString(满足 TResult<T, MString> 接口)。
+     * @param E 错误描述
+     * @return 格式 "[code] message",StackTrace 非空时再追加 "\nstack_trace"
+     */
     inline MString ToErrorString(const FScriptError& E) {
         MString Out;
         Out.reserve(16 + E.Code.size() + E.Message.size() + E.StackTrace.size());

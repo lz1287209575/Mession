@@ -1,3 +1,7 @@
+/**
+ * @file TestLuaVector.cpp
+ * @brief 验证 Mession.Vector 的增删查改、越界、相等、遍历、克隆与 GC 行为。
+ */
 #include "Common/Script/Lua/LuaScriptState.h"
 #include "Common/Script/Lua/MLuaVector.h"
 
@@ -6,6 +10,7 @@
 
 using namespace mession::script::lua;
 
+/** @brief TestCreateEmpty - 新建 MVector 的 size() 应为 0 */
 static void TestCreateEmpty() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -18,6 +23,7 @@ static void TestCreateEmpty() {
     std::printf("ok: TestCreateEmpty\n");
 }
 
+/** @brief TestPushPop - push 三次后 pop 应返回 30 且 size() 变为 2 */
 static void TestPushPop() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -34,6 +40,7 @@ static void TestPushPop() {
     std::printf("ok: TestPushPop\n");
 }
 
+/** @brief TestGetSet - get/set 使用 1-based 下标 */
 static void TestGetSet() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -50,6 +57,7 @@ static void TestGetSet() {
     std::printf("ok: TestGetSet\n");
 }
 
+/** @brief TestInsertRemove - insert(2,99) 后 remove(2) 应还原为 [1,3] */
 static void TestInsertRemove() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -72,6 +80,7 @@ static void TestInsertRemove() {
     std::printf("ok: TestInsertRemove\n");
 }
 
+/** @brief TestBoundary - 越界 set 应经 pcall 捕获为错误 */
 static void TestBoundary() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -86,6 +95,7 @@ static void TestBoundary() {
     std::printf("ok: TestBoundary\n");
 }
 
+/** @brief TestEq - 内容相同的两个 MVector 应相等 */
 static void TestEq() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -101,6 +111,7 @@ static void TestEq() {
     std::printf("ok: TestEq\n");
 }
 
+/** @brief TestIpairs - pairs(v) 遍历应能累加出全部元素之和 */
 static void TestIpairs() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -118,6 +129,7 @@ static void TestIpairs() {
     std::printf("ok: TestIpairs\n");
 }
 
+/** @brief TestClone - clone 后修改副本不应影响原对象 */
 static void TestClone() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -135,6 +147,7 @@ static void TestClone() {
     std::printf("ok: TestClone\n");
 }
 
+/** @brief TestGC - 置 nil 并 collectgarbage() 后不应崩溃(走 __gc 析构) */
 static void TestGC() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -151,6 +164,10 @@ static void TestGC() {
     std::printf("ok: TestGC\n");
 }
 
+/**
+ * @brief main - 依次执行 9 个用例。
+ * @return 恒为 0(断言失败会直接 abort)
+ */
 int main() {
     TestCreateEmpty();
     TestPushPop();

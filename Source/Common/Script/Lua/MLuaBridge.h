@@ -1,3 +1,10 @@
+/**
+ * @file MLuaBridge.h
+ * @brief MLuaBridge —— 在 Lua 侧暴露 M.InvokeStatic 的桥接器声明。
+ *
+ * @detail 供 LuaBindEmitter 生成的 .lua 调用,取代早期并不存在的
+ *   M.InvokeClass / M.RegisterClass。
+ */
 #pragma once
 
 #include "Common/Runtime/MLib.h"
@@ -10,21 +17,23 @@ namespace mession::script::lua {
 
     class MLuaEngine;
 
-    // MLuaBridge — 暴露 M.InvokeStatic / M.GetObject 等 Lua 全局 cfunction
-    // 给 LuaBindEmitter emit 出来的 .lua 文件调用,代替之前 phantom 的
-    // M.InvokeClass / M.RegisterClass。
-    //
-    // 使用方式:
-    //   MLuaBridge::Install(L, &engine);
-    //   之后 Lua 内:
-    //     M.InvokeStatic("<ClassName>", "<MethodName>", {...})
-    //     M.GetObject(<id>)            -- Phase 2 才用
-    //
-    // Phase 1 范围:static dispatch(self=nullptr)+ 4 个 primitive args/return
-    // (int32/int64/double/bool/MString)。复杂类型 args/return 返回 Err
-    // 字符串。
+    /**
+     * @brief MLuaBridge - 在 Lua 侧暴露 M.InvokeStatic 的桥接器。
+     *
+     * @detail 用法:
+     *     MLuaBridge::Install(L, &Engine);
+     *     M.InvokeStatic("<ClassName>", "<MethodName>", {...})
+     *   实参支持 5 种 primitive(int32/int64/double/bool/MString),并兼容两种传参
+     *   形态(逐个展开的变参,或单个 args 表);其余类型报 arg_type_mismatch。
+     *   NOTE: M.GetObject / M.LiveObjects 尚未实现 —— Install 只注册 InvokeStatic。
+     */
     class MLuaBridge {
         public:
+        /**
+         * @brief Install - 注册反序列化表与 Lua 全局 M.InvokeStatic。
+         * @param L      目标 Lua 状态机
+         * @param Engine 所属引擎;NOTE 当前实现未使用该参数
+         */
         static void Install(lua_State* L, MLuaEngine* Engine);
     };
 

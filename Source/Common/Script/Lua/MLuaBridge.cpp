@@ -1,3 +1,7 @@
+/**
+ * @file MLuaBridge.cpp
+ * @brief 实现 MLuaBridge:M.InvokeStatic 的实参/返回值编解码与反射调用。
+ */
 #include "Common/Script/Lua/MLuaBridge.h"
 #include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Reflect/Class.h"
@@ -19,33 +23,42 @@ namespace mession::script::lua {
 
     namespace {
 
-        // ====================================================================
-        // Deserializer map:CppTypeIndex (std::type_index) → 反序列化函数
-        // ====================================================================
-        //
-        // MLuaBridge 调 NativeInvoke 拿到 Out.Data(byte stream),需要按返回类型
-        // 反序列化成 C++ 值。MProperty->CppTypeIndex 持 typeid(T),但 runtime
-        // 不能 switch on type_index。改成:启动时注册 4 个 primitive 的反序列化
-        // 函数,运行时按 type_index 查表。
+        /**
+         * @brief FDeserializeFn - 把序列化字节流还原为某个 C++ 值的函数指针。
+         */
         using FDeserializeFn = void (*)(const TByteArray& Data, void* OutValue);
 
+        /**
+         * @brief FDeserializerEntry - type_index → 反序列化函数 的注册项。
+         *
+         * @detail MLuaBridge 调 NativeInvoke 拿到 Out.Data(字节流)后需按返回类型还原;
+         *   MProperty->CppTypeIndex 持有 typeid(T),但运行时无法对 type_index 做 switch,
+         *   故启动时注册各 primitive 的还原函数,运行时按 type_index 查表。
+         */
         struct FDeserializerEntry {
             std::type_index TypeIdx;
             FDeserializeFn  Fn;
         };
 
-        // 全局注册表(进程级;同 type 多次注册覆盖即可,无副作用)
+        /**
+         * @brief GetDeserializerMap - 进程级反序列化注册表(函数内静态,首次调用时构造)。
+         * @return 注册表引用;对同一 type 重复注册只是覆盖,无副作用
+         */
         std::unordered_map<std::type_index, FDeserializeFn>& GetDeserializerMap() {
             static std::unordered_map<std::type_index, FDeserializeFn> Map;
             return Map;
         }
 
+        /**
+         * @brief RegisterDeserializerOnce - 若 T 尚未注册,则注册基于 MReflectArchive 的还原函数。
+         * @tparam T 目标 C++ 类型
+         */
         template <typename T> void RegisterDeserializerOnce() {
             auto&           Map = GetDeserializerMap();
             std::type_index Id(typeid(T));
             if (Map.find(Id) == Map.end()) {
                 Map[Id] = [](const TByteArray& Data, void* OutValue) {
-                    MReflectArchive Ar(Data); // read mode
+                    MReflectArchive Ar(Data); // 读模式
                     T               Val;
                     Ar << Val;
                     *static_cast<T*>(OutValue) = Val;
@@ -53,6 +66,7 @@ namespace mession::script::lua {
             }
         }
 
+        /** @brief RegisterAllDeserializers - 注册 int32 / int64 / double / bool / MString 五种还原函数 */
         void RegisterAllDeserializers() {
             RegisterDeserializerOnce<int32_t>();
             RegisterDeserializerOnce<int64_t>();
@@ -61,11 +75,14 @@ namespace mession::script::lua {
             RegisterDeserializerOnce<MString>();
         }
 
-        // ====================================================================
-        // Lua stack 1 个值 → MReflectArchive 1 个值(按 MProperty->CppTypeIndex 路由)
-        // ====================================================================
-        //
-        // 返回 true 成功;false 表示 Lua 值类型与 C++ 类型不匹配
+        /**
+         * @brief MarshalOne - 把 Lua 栈上一个值按 CppTypeIndex 写入 MReflectArchive。
+         * @param L        目标 Lua 状态机
+         * @param StackIdx 待读取的栈索引
+         * @param TypeIdx  目标 C++ 类型(typeid 索引)
+         * @param Out      输出归档(写入模式)
+         * @return true 成功;false 表示 Lua 值类型与目标 C++ 类型不匹配
+         */
         bool MarshalOne(lua_State* L, int StackIdx, const std::type_index& TypeIdx, MReflectArchive& Out) {
             if (TypeIdx == std::type_index(typeid(int32_t))) {
                 auto R = PopInteger(L, StackIdx);
@@ -109,11 +126,15 @@ namespace mession::script::lua {
             return false; // 不支持的类型
         }
 
-        // ====================================================================
-        // Out.Data(序列化 byte 流)→ Lua stack push(按 CppTypeIndex 路由)
-        // ====================================================================
-        //
-        // 返回 push 的值个数(0 = void,1 = 1 个值);-1 表示错误
+        /**
+         * @brief PushReturnOne - 把序列化字节流按 CppTypeIndex 还原并压入 Lua 栈。
+         * @param L       目标 Lua 状态机
+         * @param Data    序列化字节流(通常是 Out.Data)
+         * @param TypeIdx 返回值 C++ 类型(typeid 索引)
+         * @return 压入的值的个数(1);类型未注册时返回 -1
+         *
+         * @detail NOTE: 返回值为 int64 时会被 static_cast<int32_t> 截断(仅保留低 32 位)。
+         */
         int PushReturnOne(lua_State* L, const TByteArray& Data, const std::type_index& TypeIdx) {
             auto& Map = GetDeserializerMap();
             auto  It  = Map.find(TypeIdx);
@@ -155,11 +176,15 @@ namespace mession::script::lua {
             return -1;
         }
 
-        // ====================================================================
-        // M_InvokeStatic(L) — cfunction body
-        //   栈: [1] ClassName (string) [2] MethodName (string) [3..] args
-        //   返: 1 个返回值,或 0(void),或 push error string
-        // ====================================================================
+        /**
+         * @brief M_InvokeStatic - M.InvokeStatic 的 cfunction 实现体。
+         * @param L 目标 Lua 状态机
+         * @return 1(有返回值)/ 0(void 或出错);出错一律经 luaL_error 抛出
+         *
+         * @detail 入参栈约定: [1] ClassName(string) [2] MethodName(string) [3..] args;
+         *   第 3 槽既可为逐个展开的变参,也可为一个 args 表。调用经反射现场构造
+         *   临时实例,调用结束后 DestroyInstance。
+         */
         int M_InvokeStatic(lua_State* L) {
             int NArgs = lua_gettop(L);
             if (NArgs < 2) {
@@ -210,7 +235,7 @@ namespace mession::script::lua {
                 return 0;
             }
 
-            // 1) Lua args → MReflectArchive In
+            // 1) Lua 实参 → MReflectArchive In
             MReflectArchive In;
             for (size_t i = 0; i < Fn->Params.size(); ++i) {
                 const MProperty* P = Fn->Params[i];
@@ -260,6 +285,13 @@ namespace mession::script::lua {
 
     } // namespace
 
+    /**
+     * @brief Install - 注册反序列化表,并把 M.InvokeStatic 挂到全局 M 表。
+     * @param L 目标 Lua 状态机
+     *
+     * @detail M 表不存在时先建空表。NOTE: 形参 Engine 当前未被使用,
+     *   M.GetObject / M.LiveObjects 也未注册。
+     */
     void MLuaBridge::Install(lua_State* L, MLuaEngine* /*Engine*/) {
         // 注册 deserializer 表(进程级;同 type 多次注册无害)
         RegisterAllDeserializers();

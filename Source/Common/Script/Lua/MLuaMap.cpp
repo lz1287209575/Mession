@@ -1,3 +1,7 @@
+/**
+ * @file MLuaMap.cpp
+ * @brief 实现 MLuaMap:MMapProxy / MMapIter metatable 与 Mession.Map.* 入口。
+ */
 #include "Common/Script/Lua/MLuaMap.h"
 
 #include <cstring>
@@ -7,9 +11,14 @@ namespace mession::script::lua {
 
     namespace {
 
+        /** @brief FMap - MMap 代理内部持有的容器类型 */
         using FMap = TMap<MScalarValue, MScalarValue>;
 
-        // Iter userdata 内部结构
+        /**
+         * @brief FMapIter - __pairs 迭代器 userdata:当前迭代位置 + 结束迭代器。
+         *
+         * @detail 持有 TMap 的 const_iterator;迭代期间被迭代的 map 必须存活。
+         */
         struct FMapIter {
             FMap::const_iterator Cur;
             FMap::const_iterator End;
@@ -18,16 +27,28 @@ namespace mession::script::lua {
         inline const char* MMapProxyMetaName = "MMapProxy";
         inline const char* MMapIterMetaName  = "MMapIter";
 
+        /**
+         * @brief GetMap - 从 1 号(或 ArgNum)参数取 MMapProxy userdata。
+         * @param L      目标 Lua 状态机
+         * @param ArgNum 参数槽位,默认 1
+         * @return 指向 userdata 内 FMap 的指针;类型不符时 luaL_checkudata 抛错
+         */
         FMap* GetMap(lua_State* L, int32 ArgNum = 1) {
             return static_cast<FMap*>(luaL_checkudata(L, ArgNum, MMapProxyMetaName));
         }
 
+        /**
+         * @brief MetaLen - __len;返回键值对个数。
+         *
+         * @detail NOTE: size() 被截断为 int32 后压栈(项数超过 2^31 时结果不可靠)。
+         */
         int MetaLen(lua_State* L) {
             FMap* M = GetMap(L, 1);
             lua_pushinteger(L, static_cast<int32>(M->size()));
             return 1;
         }
 
+        /** @brief MetaToString - __tostring;输出 "Map(size=N)" */
         int MetaToString(lua_State* L) {
             FMap*   M = GetMap(L, 1);
             MString S = MString("Map(size=") + std::to_string(M->size()) + MString(")");
@@ -35,38 +56,38 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MetaMapGC - __gc;显式调用 ~FMap() */
         int MetaMapGC(lua_State* L) {
             FMap* M = GetMap(L, 1);
             M->~FMap();
             return 0;
         }
 
+        /** @brief MetaIterGC - MMapIter 的 __gc;显式调用 ~FMapIter() */
         int MetaIterGC(lua_State* L) {
             FMapIter* It = static_cast<FMapIter*>(luaL_checkudata(L, 1, MMapIterMetaName));
             It->~FMapIter();
             return 0;
         }
 
+        /**
+         * @brief MetaPairs - __pairs;返回迭代三元组 (next_fn, iter_ud, nil)。
+         *
+         * @detail Lua 5.4 契约: __pairs 返回 (next_fn, state, control),for 每步调
+         *   next_fn(state, control);此处 state 为 iter userdata。旧实现返回顺序
+         *   (iter_ud, map, next_fn) 是错的 —— for 会把 iter_ud 当函数调,报
+         *   attempt to call a MMapIter value。
+         */
         int MetaPairs(lua_State* L) {
             FMap* M = GetMap(L, 1);
             // 创建 iter userdata
             void* Ud = lua_newuserdata(L, sizeof(FMapIter));
             new (Ud) FMapIter{M->begin(), M->end()};
             luaL_setmetatable(L, MMapIterMetaName);
-            // iter upvalue 顺序:(iter, map) — next 函数闭包,需要访问 map 与 iter
-            // 由于 __pairs 必须返回 (iter, map, next_fn) 三元组;我们这里 next_fn 用 C closure
-            // 替代方案:写一个 next_fn,迭代 iter 闭包。这里采用更简单做法 — __pairs 在 Lua 侧不可用,
-            // 我们改用 Lua 函数通过 method: 暴露 next(iter)。但 Lua 5.4 supports generic for k,v in pairs(map)。
-            // 实际策略:实现一个 SCRIPT 端的 pairs(map) 工厂函数(走 __pairs 不会自动触发 for 循环)。
-            // 简化:把 iterator state 放在 metatable 的 upvalue 中。
-            //
-            // 设计:C closure 的 upvalue = map 指针(iter 状态随 next_fn 自维护 — 但跨调用不持久)
-            // 为保证 persistence:把 iter 状态放在 userdata,作为第二个 upvalue。
+            // push map 仅用于构造返回栈(下方重排时会删掉);next_fn 不使用 upvalue:
+            // pushcfunction 等价于 pushcclosure(0 upvalue),早期注释误以为 upvalue 1=iter
+            // 却从未注册,导致 upvalueindex(1) 读到无效指针 → SIGSEGV。
             lua_pushvalue(L, 1); // push map(仅作为 pairs 返回栈的一部分,见下方重排)
-            // next_fn 不用 upvalue(pushcfunction = pushcclosure 0 upvalue,原代码注释
-            // 声称 upvalue 1=iter 但从未注册,导致 upvalueindex(1) 读到无效指针 → SIGSEGV)。
-            // Lua for 循环契约: next(state, control),state 作为第一参数传入,
-            // 我们把 state 设为 iter userdata,这里直接从参数 1 取。
             lua_pushcfunction(L, [](lua_State* L) -> int {
                 FMapIter* It2 = static_cast<FMapIter*>(lua_touserdata(L, 1));
                 if (!It2 || It2->Cur == It2->End)
@@ -78,12 +99,9 @@ namespace mession::script::lua {
                 V.PushToLua(L);
                 return 2;
             });
-            // Lua 5.4 pairs 语义: __pairs 返回 (next_fn, state, control),
-            // for 循环每步调 next_fn(state, control)。旧实现返回顺序 (iter_ud, map, next_fn)
-            // 是错的 —— for 会把 iter_ud 当函数调,报 attempt to call a MMapIter value。
-            // 进入时栈=[m];此后 newuserdata + pushvalue(map) + pushcfunction(next)
-            // → 栈=[m, iter_ud, map, next_fn](共 4 个,注意 m 也在)。
-            // pairs 契约: 返回 (next_fn, state=iter_ud, control=nil)。
+            // 进入时栈=[m];经 newuserdata + pushvalue(map) + pushcfunction(next)
+            // → 栈=[m, iter_ud, map, next_fn](共 4 个,m 仍在)。
+            // 重排为 pairs 契约要求的 (next_fn, state=iter_ud, control=nil)。
             lua_remove(L, 1); // 删 m   → [iter_ud, map, next_fn]
             lua_remove(L, 2); // 删 map → [iter_ud, next_fn]
             lua_insert(L, 1); // next 提前 → [next_fn, iter_ud]
@@ -91,6 +109,7 @@ namespace mession::script::lua {
             return 3;
         }
 
+        /** @brief MethodGet - 取键对应的值;键不存在返回 nil */
         /// @lua-stdlib Map.get
         /// @lua-self MMap
         /// @lua-param k MScalar
@@ -110,6 +129,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MethodSet - 写入一个键值对 */
         /// @lua-stdlib Map.set
         /// @lua-self MMap
         /// @lua-param k MScalar
@@ -129,6 +149,7 @@ namespace mession::script::lua {
             return 0;
         }
 
+        /** @brief MethodHas - 判定键是否存在 */
         /// @lua-stdlib Map.has
         /// @lua-self MMap
         /// @lua-param k MScalar
@@ -143,6 +164,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MethodRemove - 移除键并返回其值;键不存在返回 nil */
         /// @lua-stdlib Map.remove
         /// @lua-self MMap
         /// @lua-param k MScalar
@@ -163,6 +185,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MethodSize - 返回键值对个数 */
         /// @lua-stdlib Map.size
         /// @lua-self MMap
         /// @lua-return integer
@@ -172,6 +195,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MethodClear - 清空所有键值对 */
         /// @lua-stdlib Map.clear
         /// @lua-self MMap
         /// @lua-return nil
@@ -181,6 +205,7 @@ namespace mession::script::lua {
             return 0;
         }
 
+        /** @brief MethodKeys - 以 Lua 数组表返回全部键 */
         /// @lua-stdlib Map.keys
         /// @lua-self MMap
         /// @lua-return {MScalar}
@@ -195,6 +220,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MethodValues - 以 Lua 数组表返回全部值 */
         /// @lua-stdlib Map.values
         /// @lua-self MMap
         /// @lua-return {MScalar}
@@ -209,6 +235,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief FactoryNew - 构造空的 MMap */
         /// @lua-stdlib Map.new
         /// @lua-return MMap
         int FactoryNew(lua_State* L) {
@@ -218,8 +245,15 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /**
+         * @brief RegisterMetaMethods - 注册 MMapProxy / MMapIter 两个 metatable。
+         * @param L 目标 Lua 状态机
+         *
+         * @detail MMapProxy:__len / __tostring / __pairs / __gc + __index 方法表;
+         *   MMapIter:仅 __gc。
+         */
         void RegisterMetaMethods(lua_State* L) {
-            // Map metatable
+            // Map 的 metatable
             luaL_newmetatable(L, MMapProxyMetaName);
             lua_pushcfunction(L, MetaLen);
             lua_setfield(L, -2, "__len");
@@ -249,7 +283,7 @@ namespace mession::script::lua {
             lua_setfield(L, -2, "__index");
             lua_pop(L, 1);
 
-            // Iter metatable
+            // Iter 的 metatable
             luaL_newmetatable(L, MMapIterMetaName);
             lua_pushcfunction(L, MetaIterGC);
             lua_setfield(L, -2, "__gc");
@@ -258,6 +292,10 @@ namespace mession::script::lua {
 
     } // namespace
 
+    /**
+     * @brief Install - 注册 metatable 与 Mession.Map.new()。
+     * @param L 目标 Lua 状态机
+     */
     void MLuaMap::Install(lua_State* L) {
         RegisterMetaMethods(L);
 

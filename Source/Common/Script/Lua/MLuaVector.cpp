@@ -1,3 +1,7 @@
+/**
+ * @file MLuaVector.cpp
+ * @brief 实现 MLuaVector / MScalarValue:标量封装与 MVectorProxy metatable 注册。
+ */
 #include "Common/Script/Lua/MLuaVector.h"
 #include "Common/Runtime/Log/Log.h"
 
@@ -52,18 +56,30 @@ namespace mession::script::lua {
 
     namespace {
 
+        /**
+         * @brief GetVector - 从 1 号(或 ArgNum)参数取 MVectorProxy userdata。
+         * @param L      目标 Lua 状态机
+         * @param ArgNum 参数槽位,默认 1
+         * @return 指向 userdata 内 TVector<MScalarValue> 的指针;类型不符时 luaL_checkudata 抛错
+         */
         TVector<MScalarValue>* GetVector(lua_State* L, int32 ArgNum = 1) {
             return static_cast<TVector<MScalarValue>*>(luaL_checkudata(L, ArgNum, "MVectorProxy"));
         }
 
         inline const char* MVectorProxyMetaName = "MVectorProxy";
 
+        /**
+         * @brief MetaLen - __len;返回元素个数。
+         *
+         * @detail NOTE: size() 被截断为 int32 后压栈(元素数超过 2^31 时结果不可靠)。
+         */
         int MetaLen(lua_State* L) {
             TVector<MScalarValue>* V = GetVector(L, 1);
             lua_pushinteger(L, static_cast<int32>(V->size()));
             return 1;
         }
 
+        /** @brief MetaToString - __tostring;输出 "Vector(size=N)" */
         int MetaToString(lua_State* L) {
             TVector<MScalarValue>* V = GetVector(L, 1);
             MString                S = MString("Vector(size=") + std::to_string(V->size()) + MString(")");
@@ -71,6 +87,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MetaEq - __eq;长度相同且逐元素 MScalarValue::operator== 相等才为真 */
         int MetaEq(lua_State* L) {
             TVector<MScalarValue>* A = GetVector(L, 1);
             TVector<MScalarValue>* B = GetVector(L, 2);
@@ -89,17 +106,25 @@ namespace mession::script::lua {
         }
 
         namespace {
-            // pairs 迭代的 state: vec 指针 + 下一个 1-based 下标
+            /**
+             * @brief FVecIterState - __pairs 迭代器 state:vec 指针 + 下一个 1-based 下标。
+             *
+             * @detail 存于独立 userdata;for 循环期间循环变量持有 vec,裸指针安全。
+             */
             struct FVecIterState {
                 TVector<MScalarValue>* Vec;
                 int                    Next; // 1-based
             };
         } // namespace
 
+        /**
+         * @brief MetaPairs - __pairs;返回迭代三元组 (next_fn, state, nil)。
+         *
+         * @detail Lua 5.4 的 for-in 契约: __pairs 返回 (next_fn, state, control),
+         *   每步调 next_fn(state, control)。旧实现 pushcfunction 注册 0 个 upvalue
+         *   却读 upvalueindex(1/2)(无效指针),且返回顺序错误。
+         */
         int MetaPairs(lua_State* L) {
-            // Lua 5.4 for 契约: __pairs 返回 (next_fn, state, control),
-            // 每步调 next_fn(state, control)。旧实现 pushcfunction 注册 0 个
-            // upvalue 却读 upvalueindex(1/2)(无效指针),且返回顺序错误。
             TVector<MScalarValue>* V = GetVector(L, 1);
 
             // state userdata: 持 vec 指针 + 游标。vec 的 TVector 本体在 vec userdata
@@ -127,6 +152,7 @@ namespace mession::script::lua {
             return 3;
         }
 
+        /** @brief MethodGet - 取 1-based 下标处元素;越界抛 out_of_range */
         /// @lua-stdlib Vector.get
         /// @lua-self MVector
         /// @lua-param i integer
@@ -141,6 +167,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MethodSet - 写 1-based 下标处元素;越界抛 out_of_range */
         /// @lua-stdlib Vector.set
         /// @lua-self MVector
         /// @lua-param i integer
@@ -160,6 +187,7 @@ namespace mession::script::lua {
             return 0;
         }
 
+        /** @brief MethodPush - 尾部追加一个元素 */
         /// @lua-stdlib Vector.push
         /// @lua-self MVector
         /// @lua-param v MScalar
@@ -174,6 +202,7 @@ namespace mession::script::lua {
             return 0;
         }
 
+        /** @brief MethodPop - 弹出尾部元素;空表返回 nil */
         /// @lua-stdlib Vector.pop
         /// @lua-self MVector
         /// @lua-return MScalar|nil
@@ -189,6 +218,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MethodSize - 返回元素个数 */
         /// @lua-stdlib Vector.size
         /// @lua-self MVector
         /// @lua-return integer
@@ -198,6 +228,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MethodInsert - 在下标 i 处插入元素(允许 i == size+1) */
         /// @lua-stdlib Vector.insert
         /// @lua-self MVector
         /// @lua-param i integer
@@ -217,6 +248,7 @@ namespace mession::script::lua {
             return 0;
         }
 
+        /** @brief MethodRemove - 移除并返回下标 i 处元素 */
         /// @lua-stdlib Vector.remove
         /// @lua-self MVector
         /// @lua-param i integer
@@ -233,6 +265,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MethodClear - 清空所有元素 */
         /// @lua-stdlib Vector.clear
         /// @lua-self MVector
         /// @lua-return nil
@@ -242,6 +275,7 @@ namespace mession::script::lua {
             return 0;
         }
 
+        /** @brief MethodClone - 深拷贝出一个新 MVector */
         /// @lua-stdlib Vector.clone
         /// @lua-self MVector
         /// @lua-return MVector
@@ -253,12 +287,14 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief MetaGC - __gc;显式调用 ~TVector<MScalarValue>() */
         int MetaGC(lua_State* L) {
             TVector<MScalarValue>* V = GetVector(L, 1);
             V->~TVector<MScalarValue>();
             return 0;
         }
 
+        /** @brief FactoryNew - 构造 MVector;可传 (size, init) 预填充 */
         /// @lua-stdlib Vector.new
         /// @lua-param size? integer
         /// @lua-param init? MScalar
@@ -289,6 +325,13 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /**
+         * @brief RegisterMetaMethods - 注册 MVectorProxy metatable 与 __index 方法表。
+         * @param L 目标 Lua 状态机
+         *
+         * @detail 注册 __len / __tostring / __eq / __pairs / __gc,以及
+         *   get/set/push/pop/size/insert/remove/clear/clone 九个方法。
+         */
         void RegisterMetaMethods(lua_State* L) {
             luaL_newmetatable(L, MVectorProxyMetaName);
 
@@ -328,6 +371,10 @@ namespace mession::script::lua {
 
     } // namespace
 
+    /**
+     * @brief Install - 注册 metatable 与 Mession.Vector.new()。
+     * @param L 目标 Lua 状态机
+     */
     void MLuaVector::Install(lua_State* L) {
         RegisterMetaMethods(L);
 

@@ -1,3 +1,9 @@
+/**
+ * @file LuaTypeBridge.cpp
+ * @brief 实现 Lua 栈标量的 push / pop / 类型判定(仅类型校验,不弹栈)。
+ *
+ * @detail 注意 PopXxx 只读不写栈,因此名字里的 "Pop" 指的是"取值"而非"弹出"。
+ */
 #include "Common/Script/Lua/LuaTypeBridge.h"
 
 namespace mession::script::lua {
@@ -18,6 +24,7 @@ namespace mession::script::lua {
         lua_pushnil(L);
     }
 
+    /** @brief IsInteger - 仅判定 LUA_TNUMBER,不区分整数/浮点子类型(见头文件 NOTE) */
     bool IsInteger(lua_State* L, int32 Index) {
         return lua_type(L, Index) == LUA_TNUMBER;
     }
@@ -34,6 +41,10 @@ namespace mession::script::lua {
         return lua_type(L, Index) == LUA_TNIL;
     }
 
+    /**
+     * @brief PopInteger - 取整数(只读栈)。
+     * @return 非 number 时 Err("expected integer at stack");否则 Ok(lua_tointeger 的截断结果)
+     */
     TResult<int64> PopInteger(lua_State* L, int32 Index) {
         if (!IsInteger(L, Index)) {
             return TResult<int64>::Err(MString("expected integer at stack"));
@@ -55,6 +66,10 @@ namespace mession::script::lua {
         return TResult<double>::Ok(lua_tonumber(L, Index));
     }
 
+    /**
+     * @brief PopString - 取字符串(只读栈,按长度拷贝)。
+     * @return 非 string 时 Err("expected string at stack")
+     */
     TResult<MString> PopString(lua_State* L, int32 Index) {
         if (!IsString(L, Index)) {
             return TResult<MString>::Err(MString("expected string at stack"));

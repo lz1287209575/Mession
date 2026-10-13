@@ -1,3 +1,7 @@
+/**
+ * @file TestLuaMap.cpp
+ * @brief 验证 Mession.Map 的增删查改、遍历、清空与 GC 行为。
+ */
 #include "Common/Script/Lua/LuaScriptState.h"
 #include "Common/Script/Lua/MLuaMap.h"
 
@@ -6,6 +10,7 @@
 
 using namespace mession::script::lua;
 
+/** @brief TestCreateEmpty - 新建 MMap 的 size() 应为 0 */
 static void TestCreateEmpty() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -18,6 +23,7 @@ static void TestCreateEmpty() {
     std::printf("ok: TestCreateEmpty\n");
 }
 
+/** @brief TestSetGet - set/get 往返;缺失键返回 nil */
 static void TestSetGet() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -37,6 +43,7 @@ static void TestSetGet() {
     std::printf("ok: TestSetGet\n");
 }
 
+/** @brief TestHasRemove - has / remove 的返回值与移除后的 size() */
 static void TestHasRemove() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -57,6 +64,7 @@ static void TestHasRemove() {
     std::printf("ok: TestHasRemove\n");
 }
 
+/** @brief TestKeysValues - keys() / values() 的元素个数应与插入数一致 */
 static void TestKeysValues() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -74,6 +82,7 @@ static void TestKeysValues() {
     std::printf("ok: TestKeysValues\n");
 }
 
+/** @brief TestClear - clear() 后 size() 为 0 且 has() 为 false */
 static void TestClear() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -90,6 +99,7 @@ static void TestClear() {
     std::printf("ok: TestClear\n");
 }
 
+/** @brief TestPairs - pairs(m) 遍历应能累加出全部 value 之和 */
 static void TestPairs() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -106,6 +116,7 @@ static void TestPairs() {
     std::printf("ok: TestPairs\n");
 }
 
+/** @brief TestGC - 置 nil 并 collectgarbage() 后不应崩溃(走 __gc 析构) */
 static void TestGC() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -122,6 +133,10 @@ static void TestGC() {
     std::printf("ok: TestGC\n");
 }
 
+/**
+ * @brief main - 依次执行 7 个用例。
+ * @return 恒为 0(断言失败会直接 abort)
+ */
 int main() {
     TestCreateEmpty();
     TestSetGet();

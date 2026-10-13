@@ -1,3 +1,7 @@
+/**
+ * @file TestMobDebug.cpp
+ * @brief 验证 MLuaMobDebugServer 的 hook 计数、启用/停用与 per-engine 隔离。
+ */
 #include "Common/Script/Abstract/SScriptEngineConfig.h"
 #include "Common/Script/Lua/LuaEngine.h"
 #include "Common/Script/Lua/LuaScriptState.h"
@@ -11,12 +15,12 @@ using namespace mession::script::lua;
 
 namespace {
 
-    // Test 1:Enable 后执行大量 Lua 指令,InstructionCount 应该 > 0
+    /** @brief TestHookCountsInstructions - Enable 后跑大量指令,InstructionCount 应 > 0 */
     void TestHookCountsInstructions() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
 
-        // Enable hook
+        // 启用 hook
         MLuaMobDebugServer::Enable(Engine);
 
         // 跑 N 个 for 迭代(每迭代 >= 1 指令)
@@ -30,11 +34,11 @@ namespace {
         assert(Count > 0);
         std::printf("ok: TestHookCountsInstructions (count=%u)\n", Count);
 
-        // Disable
+        // 停用
         MLuaMobDebugServer::Disable();
     }
 
-    // Test 2:Disable 后 hook 不再触发
+    /** @brief TestDisableStopsHook - DisableForEngine 后再执行,virtual-machine hook 不再触发 */
     void TestDisableStopsHook() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
@@ -59,7 +63,7 @@ namespace {
         std::printf("ok: TestDisableStopsHook (before=%u, after=%u)\n", CountBefore, CountAfter);
     }
 
-    // Test 3:Enable / Disable 不崩
+    /** @brief TestEnableDisableSafe - 反复 Enable / Disable 不应崩溃 */
     void TestEnableDisableSafe() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
@@ -72,7 +76,7 @@ namespace {
         std::printf("ok: TestEnableDisableSafe\n");
     }
 
-    // Test 4:per-engine 隔离 — 两个 engine 的 InstructionCount 互不干扰
+    /** @brief TestPerEngineIsolation - 两个 engine 的 InstructionCount 互不干扰 */
     void TestPerEngineIsolation() {
         MLuaEngine EngineA;
         MLuaEngine EngineB;
@@ -93,7 +97,7 @@ namespace {
         std::printf("ok: TestPerEngineIsolation (A=%u, B=%u)\n", CountA, CountB);
     }
 
-    // Test 5:DisableForEngine 后 bRunning=false,后续调用 Disable() 不崩
+    /** @brief TestDisableForEngine - DisableForEngine 后 bRunning 应为 false */
     void TestDisableForEngine() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
@@ -108,6 +112,10 @@ namespace {
 
 } // namespace
 
+/**
+ * @brief main - 依次执行 5 个用例。
+ * @return 恒为 0(断言失败会直接 abort)
+ */
 int main() {
     TestHookCountsInstructions();
     TestDisableStopsHook();

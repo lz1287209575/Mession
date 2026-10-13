@@ -1,3 +1,7 @@
+/**
+ * @file TestLuaHotReload.cpp
+ * @brief 验证 MLuaEngine 的 DualVM 热重载:状态迁移、句柄失效与失败回滚。
+ */
 #include "Common/Script/Abstract/EReloadMode.h"
 #include "Common/Script/Abstract/SScriptEngineConfig.h"
 #include "Common/Script/Abstract/ScriptErrorCodes.h"
@@ -22,8 +26,9 @@ namespace {
         }
     }
 
-    // AT1: DualVmBasicSwap — LoadBuffer + 修改 Counter.count;reload DualVM;
-    //      Counter.count 应该是新值;VmGeneration 应该是 2
+    /**
+     * @brief TestDualVmBasicSwap - DualVM reload 后应执行新代码,且 VmGeneration 递增到 2。
+     */
     void TestDualVmBasicSwap() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
@@ -45,7 +50,9 @@ namespace {
         std::printf("ok: TestDualVmBasicSwap\n");
     }
 
-    // AT2: StaleHandleReturnsErr — 拿 handle,reload,旧 handle invoke 应 Err(kVmSwapped)
+    /**
+     * @brief TestStaleHandleReturnsErr - reload 后用旧 handle 调方法应返回 Err。
+     */
     void TestStaleHandleReturnsErr() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
@@ -71,7 +78,9 @@ namespace {
         std::printf("ok: TestStaleHandleReturnsErr\n");
     }
 
-    // AT3: PendingCallRegistryTracksCount — 直接测 registry API
+    /**
+     * @brief TestPendingCallRegistryTracksCount - 未 InitYield 的 pending call 不计入 CountPending。
+     */
     void TestPendingCallRegistryTracksCount() {
         FLuaPendingCallRegistry Reg;
         assert(Reg.CountPending() == 0);
@@ -93,8 +102,11 @@ namespace {
         std::printf("ok: TestPendingCallRegistryTracksCount\n");
     }
 
-    // AT4: DrainTimeoutWhenBlocked — 注册永不完的 pending,Drain 应超时
-    // 此测试依赖外部 FLuaPendingCall 实例能 InitYield — 简化:直接 drain 空 reg
+    /**
+     * @brief TestDrainTimeoutWhenBlocked - 当前退化为断言 drain 空 registry 立即 Ok()。
+     *
+     * @detail 原意图是注册永不完成的 pending 来触发超时;此处简化为空 registry 路径。
+     */
     void TestDrainTimeoutWhenBlocked() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
@@ -104,7 +116,12 @@ namespace {
         std::printf("ok: TestDrainTimeoutWhenBlocked\n");
     }
 
-    // AT5: ActorSaveRestoreRoundtripsState — 创建 actor,reload,state 保留
+    /**
+     * @brief TestActorSaveRestoreRoundtripsState - 当前退化为断言 SaveAllActorStates 返回空。
+     *
+     * @detail 原意图是创建 actor → reload → 校验 state 保留;此处因 CreateActor 需要
+     *   有效 MClass 而简化为只测 SaveAllActorStates 的空表路径。
+     */
     void TestActorSaveRestoreRoundtripsState() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
@@ -114,17 +131,18 @@ namespace {
                                            "function Echo:__dualvm_save() return self.name .. ':' .. tostring(self.count) end\n"
                                            "function Echo:__dualvm_restore(s) local n,c = s:match('([^:]+):(%d+)'); self.name=n; self.count=tonumber(c) end\n");
 
-        // 1. 创建 actor
+        // 尝试创建 actor。NOTE: CreateActor 需要有效的 MClass,这里以 nullptr 调用
+        // 拿不到可用 actor,因此本用例退化为只验证 SaveAllActorStates 的空表路径。
         TResult<uint64> ActorId = Engine.CreateActor(nullptr, TScriptArgs(nullptr, 0));
-        // nullptr 不行,改用 CreateInstanceByClassName 路径(走 instance,不注册 actor)
-        // 实际验证 CreateActor 需要 MClass — 简化:测 SaveAllActorStates 路径本身
         (void)ActorId;
         assert(Engine.SaveAllActorStates().empty());
 
         std::printf("ok: TestActorSaveRestoreRoundtripsState\n");
     }
 
-    // AT6: CrossActorRefsReboundOnSwap — RebindCrossInstanceRefs 路径不崩
+    /**
+     * @brief TestCrossActorRefsReboundOnSwap - 空 registry 下调 RebindCrossInstanceRefs 应是 no-op。
+     */
     void TestCrossActorRefsReboundOnSwap() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
@@ -133,7 +151,9 @@ namespace {
         std::printf("ok: TestCrossActorRefsReboundOnSwap\n");
     }
 
-    // AT7: RollbackOnNewCodeError — load 错误字节,旧 VM 应仍 live
+    /**
+     * @brief TestRollbackOnNewCodeError - 新代码语法错误时应回滚,VmGeneration 保持不变。
+     */
     void TestRollbackOnNewCodeError() {
         MLuaEngine Engine;
         Engine.Initialize(SScriptEngineConfig{});
@@ -152,6 +172,10 @@ namespace {
 
 } // namespace
 
+/**
+ * @brief main - 依次执行 7 个用例。
+ * @return 恒为 0(断言失败会直接 abort)
+ */
 int main() {
     TestDualVmBasicSwap();
     TestStaleHandleReturnsErr();

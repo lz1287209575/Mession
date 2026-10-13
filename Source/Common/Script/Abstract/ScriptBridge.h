@@ -1,3 +1,10 @@
+/**
+ * @file ScriptBridge.h
+ * @brief MScriptBridge —— 脚本桥接工具(仅声明,无实现)。
+ *
+ * @detail NOTE: 本文件只有声明,仓库内没有对应 .cpp,也没有任何调用点;
+ *   属早期规划遗留。后续 Script 桥接层落地时再补实现,当前链接这两个静态方法会失败。
+ */
 #pragma once
 
 #include "Common/Runtime/MLib.h"
@@ -10,13 +17,27 @@
 
 namespace mession::script {
 
-    // ScriptBridge 工具 — 占位,后续 Script 桥接层 plan 充实具体实现
+    /**
+     * @brief MScriptBridge - 脚本桥接工具(占位,尚未实现)。
+     */
     class MScriptBridge {
         public:
-        // 把 VM 抛出的原生异常包装成 FScriptError,通过 GetErrorString 抽堆栈
+        /**
+         * @brief WrapVmException - 把 VM 原生异常包装成 FScriptError。
+         * @param Engine    出错脚本引擎
+         * @param VmState   VM 的错误状态码(如 lua_State 的返回码)
+         * @param VmFrame   VM 栈帧/错误值,供实现抽取堆栈
+         * @return 带 Code / Message / StackTrace 的错误描述
+         */
         static FScriptError WrapVmException(IScriptEngine* Engine, int32 VmState, void* VmFrame);
 
-        // 通过反射把 MFunction 的参数序列化为 Script 调用参数
+        /**
+         * @brief BuildScriptArgs - 反射地把 C++ 参数序列化为脚本调用参数。
+         * @param Fn         被调用的反射函数(提供形参类型描述)
+         * @param Params     实参数组
+         * @param ParamCount Params 元素个数
+         * @return 序列化后的 SScriptArgs;失败返回 Err
+         */
         static TResult<SScriptArgs> BuildScriptArgs(MFunctionObject* Fn, const TVariant* Params, size_t ParamCount);
     };
 

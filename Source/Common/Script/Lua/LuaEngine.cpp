@@ -1,3 +1,7 @@
+/**
+ * @file LuaEngine.cpp
+ * @brief 实现 MLuaEngine:VM 生命周期、两阶段热重载、反射/脚本互调与 actor 桥接。
+ */
 #include "Common/Script/Lua/LuaEngine.h"
 #include "Common/Net/Routing/ActorRouter.h"
 #include "Common/Runtime/Id.h"
@@ -29,8 +33,16 @@ namespace mession::script::lua {
 
     namespace {
 
-        // 把 Lua 栈参数转 TResult(MString) 错误流,标量支持(int64 / double / bool / MString)
-        // 复杂类型抛 "unsupported_type_in_args" TODO:用 MReflectArchive 反序列化完整 Request
+        /**
+         * @brief PushArgsFromStack - 校验 [FirstArg, LastArg] 区间内全是标量参数。
+         * @param L        Lua 栈
+         * @param FirstArg 首个实参的栈索引
+         * @param LastArg  末个实参的栈索引
+         * @return 全是标量时 Ok;出现 table/userdata 等复杂类型返回 Err("unsupported_type_in_args")
+         *
+         * @detail 目前只做类型白名单校验,并不真正把值写进参数包。
+         *   TODO(script): 用 MReflectArchive 反序列化完整 Request。
+         */
         TResult<void> PushArgsFromStack(lua_State* L, MFunctionObject* /*Fn*/, int FirstArg, int LastArg) {
             for (int i = FirstArg; i <= LastArg; ++i) {
                 int Type = lua_type(L, i);
@@ -52,38 +64,66 @@ namespace mession::script::lua {
         }
     }
 
+    /**
+     * @brief Initialize - 创建 VM 并装配 stdlib。
+     * @return VM 创建失败时 Err("luaL_newstate failed"),否则 Ok
+     *
+     * @detail 配置参数被忽略(见 SScriptEngineConfig.h 的说明)。同时把本 engine
+     *   写入 VM extraspace,并把 DebugStatePtr 指向自己的 DebugState。
+     *   VmGeneration 保持初值 1(不回滚),因此重复 Initialize 不会重置世代号。
+     */
     TResult<void> MLuaEngine::Initialize(const mession::script::SScriptEngineConfig& /*Cfg*/) {
         State = std::make_unique<MLuaScriptState>();
         if (!State->IsValid()) {
             return TResult<void>::Err(MString("luaL_newstate failed"));
         }
-        // Bind extraspace:让 DebugHook 能从 lua_State 反查到本 engine
+        // 绑定 extraspace:让 DebugHook 能从 lua_State 反查到本 engine
         DebugStatePtr = &DebugState;
         State->SetOpaque(this);
-        // Bootstrap:把 5 个 stdlib 装到初始 VM 上(Mession.* 全局表)
+        // 装配 5 个 stdlib 到初始 VM(Mession.* 全局表 + M.InvokeStatic)
         InstallStandardLibraries(*State);
         return TResult<void>::Ok();
     }
 
+    /** @brief Tick - 空实现(脚本推进目前依赖 StepCoroutines 单独驱动) */
     void MLuaEngine::Tick(float /*DeltaSeconds*/) {
     }
+    /**
+     * @brief StepCoroutines - 推进所有待 resume 的协程。
+     *
+     * @detail 委派给 FLuaPendingCallRegistry::StepAll:只处理
+     *   HasResumeArgs() 为真的 call。
+     */
     void MLuaEngine::StepCoroutines() {
-        // 走 FLuaPendingCallRegistry:把所有 bResumePending 的 call 真正 resume
         PendingCalls.StepAll();
     }
 
+    /**
+     * @brief Shutdown - 清空模块表并销毁 VM。
+     * @return 恒 Ok
+     *
+     * @detail 不清理 ActorsById / PendingCalls(见类头的 NOTE)。
+     *   析构函数会在 State 仍在时自动调用本函数。
+     */
     TResult<void> MLuaEngine::Shutdown() {
         Modules.clear();
         State.reset();
         return TResult<void>::Ok();
     }
 
+    /**
+     * @brief ReplaceState - 取写锁,换入 NewState 并返回旧 VM。
+     * @return 旧 VM(所有权交给调用方);调用方负责 lua_close
+     *
+     * @detail ++VmGeneration;对每个模块调 MLuaModule::Rebind 在新 VM 上重建
+     *   backing table 并重放已注册的类型/函数/属性。
+     */
     TUniquePtr<MLuaScriptState> MLuaEngine::ReplaceState(TUniquePtr<MLuaScriptState> NewState) {
         TUniqueLock                 Lock(StateMutex);
         TUniquePtr<MLuaScriptState> Old = std::move(State);
         State                           = std::move(NewState);
         ++VmGeneration;
-        // 触发 modules 重 bind (Task 3 后续 hook)
+        // 重绑所有模块:各自在新 VM 上重建 backing table 并重放反射信息
         for (auto& Kv : Modules) {
             if (auto* LM = dynamic_cast<MLuaModule*>(Kv.second.Get())) {
                 LM->Rebind(*State);
@@ -92,9 +132,17 @@ namespace mession::script::lua {
         return Old;
     }
 
+    /**
+     * @brief BeginSwap - DualVM Phase A:取写锁,把旧 VM 挪进 PendingOldState。
+     * @return 旧 VM(所有权交给调用方);无旧 VM 时 nullptr
+     *
+     * @detail ++VmGeneration;给新 VM 写回 extraspace;重绑所有模块。
+     *   旧 VM 上的 MobDebug hook 不会被自动重挂 —— 业务侧需在 swap 后重新 Enable。
+     *   返回的指针与 PendingOldState 不会同时持有同一对象(release 后置空)。
+     */
     TUniquePtr<MLuaScriptState> MLuaEngine::BeginSwap(TUniquePtr<MLuaScriptState> NewState) {
         TUniqueLock Lock(StateMutex);
-        // 旧 VM 保留在 PendingOldState 直到 EndSwap 由 caller 主动释放
+        // 旧 VM 留在 PendingOldState,直到 EndSwap 或调用方释放
         PendingOldState = std::move(State);
         State           = std::move(NewState);
         ++VmGeneration;
@@ -102,8 +150,8 @@ namespace mession::script::lua {
         if (State) {
             State->SetOpaque(this);
         }
-        // 如果旧 VM 上挂了 MobDebug hook,摘掉(否则 hook 会指已死的 VM)
-        // T11 简化:这里不自动重 enable;业务侧在 BeginSwap 后调 Enable 重新挂新 VM
+        // 旧 VM 上若挂了 MobDebug hook 不再自动重挂(否则 hook 会指向已死的 VM);
+        // 业务侧需在 BeginSwap 之后自行 Enable 到新 VM
         // Rebind 所有 modules — 每个 module 重新 luaL_ref + 重放 reflection
         for (auto& Kv : Modules) {
             if (auto* LM = dynamic_cast<MLuaModule*>(Kv.second.Get())) {
@@ -118,28 +166,43 @@ namespace mession::script::lua {
         return nullptr;
     }
 
+    /**
+     * @brief EndSwap - DualVM Phase B:释放 PendingOldState(触发 lua_close)。
+     *
+     * @detail 若 BeginSwap 的返回值已被调用方持有并释放,则 PendingOldState 为空,
+     *   本函数为 no-op。
+     */
     void MLuaEngine::EndSwap() {
         TUniqueLock Lock(StateMutex);
-        // PendingOldState 此时可能已被 caller 释放(从 BeginSwap 拿走的 ptr)
-        // 如果还在,这里释放并触发 lua_close
         if (PendingOldState) {
             PendingOldState.reset(); // → MLuaScriptState 析构 → lua_close
         }
     }
 
+    /** @brief AcquireReadLock - 读路径 RAII 锁(lua_pcall 期间持有) */
     TSharedLock<MSharedMutex> MLuaEngine::AcquireReadLock() {
         return TSharedLock<MSharedMutex>(StateMutex);
     }
+    /** @brief AcquireWriteLock - 写路径 RAII 锁(换 State / 换 VM) */
     TUniqueLock<MSharedMutex> MLuaEngine::AcquireWriteLock() {
         return TUniqueLock<MSharedMutex>(StateMutex);
     }
 
+    /** @brief CountPendingCalls - 委派给 FLuaPendingCallRegistry 计数 */
     uint32 MLuaEngine::CountPendingCalls() const {
         return PendingCalls.CountPending();
     }
 
+    /**
+     * @brief DrainPendingCalls - 循环 StepCoroutines 直到 pending 归零或超时。
+     * @param TimeoutSeconds 超时上限(秒);0 表示一次调度都不等
+     * @return 成功 Ok(0);超时 Err(kVmDrainTimeout)
+     *
+     * @detail 每轮 StepCoroutines 后 sleep 10ms,超时判定用整秒粒度。
+     *   NOTE: 成功路径返回值恒为 0,不反映实际调度次数。
+     */
     TResult<uint32> MLuaEngine::DrainPendingCalls(uint32 TimeoutSeconds) {
-        // Drain loop:StepCoroutines 每 10ms 一次,直到 pending==0 或 timeout
+        // Drain 循环:每轮 StepCoroutines + sleep 10ms,直到 pending==0 或超时
         auto Start = std::chrono::steady_clock::now();
         while (PendingCalls.CountPending() > 0) {
             StepCoroutines();
@@ -152,27 +215,41 @@ namespace mession::script::lua {
         return TResult<uint32>::Ok(0);
     }
 
+    /**
+     * @brief InstallStandardLibraries - 在指定 VM 上装配 4 个 Mession.* 命名空间 + M 桥。
+     * @param S 目标 VM;L 为空时直接返回
+     *
+     * @detail 顺序敏感:先 MLuaRpc(负责建 Mession 全局表),其余 4 个 Install 均为
+     *   幂等的 get-or-create。最后装 MLuaBridge,注册 M.InvokeStatic。
+     *   NOTE: MLuaRpc::Install 这里传 nullptr 作为 bridge,因此
+     *   Mession.RPC.call 在当前装配下必然报 "rpc: bridge not installed"。
+     */
     void MLuaEngine::InstallStandardLibraries(MLuaScriptState& S) {
         lua_State* L = S.GetLuaState();
         if (!L)
             return;
 
-        // 顺序:Rpc 先(它建 Mession 全局表),其他 4 个按 namespace 字母序
-        // 每个 Install 都 idempotent(get-or-create Mession 全局表)
-        MLuaRpc::Install(L, /*pEngine*/ nullptr); // nullptr — Install(L, ptr) 旧签名;新桥不传 bridge
+        // 先 Rpc(它建 Mession 全局表),其余 4 个按 namespace 字母序、各自幂等
+        MLuaRpc::Install(L, /*pEngine*/ nullptr); // 传 nullptr:bridge 未接入,见上方 NOTE
         MLuaFormat::Install(L);
         MLuaLog::Install(L);
         MLuaMap::Install(L);
         MLuaVector::Install(L);
 
-        // Bridge:暴露 M.InvokeStatic / M.GetObject 给 LuaBindEmitter 生成的代码用
-        // Phase 1: 静态 dispatch + 4 primitive args/return
+        // Bridge:暴露 M.InvokeStatic 给 MHeaderTool 生成的绑定代码用
         MLuaBridge::Install(L, this);
     }
 
+    /**
+     * @brief Reload - 按 Mode 派发到对应热重载实现。
+     * @param Mode 重载模式
+     * @return DualVM / AtomicSwap 的结果;未知模式返回 Err("unknown_reload_mode")
+     *
+     * @detail HotReloadNewBytes 为空时直接返回 Ok(Success),不做任何切换。
+     *   Discard 当前未单独实现:告警后回退到 AtomicSwap。
+     */
     TResult<EReloadResult> MLuaEngine::Reload(EReloadMode Mode) {
-        // HotReloadNewBytes 由外部(file watcher / debug 注入 / 业务侧 reload() API)
-        // 在调 Reload 之前填入;空 → no-op
+        // 数据源由外部(file watcher / debug 注入 / 业务 API)在调用前填入;空则 no-op
         if (HotReloadNewBytes.empty()) {
             return TResult<EReloadResult>::Ok(EReloadResult::Success);
         }
@@ -182,13 +259,26 @@ namespace mession::script::lua {
         case EReloadMode::DualVM:
             return MLuaHotReload::ReloadDualVM(*this, HotReloadNewBytes);
         case EReloadMode::Discard:
-            // T11 简化:Discard 当前没区分,fallback 到 AtomicSwap
+            // Discard 尚未单独实现:退化为 AtomicSwap
             LOG_WARN("Reload: Discard mode not fully implemented, falling back to AtomicSwap");
             return MLuaHotReload::ReloadAtomicSwap(*this, HotReloadNewBytes);
         }
         return TResult<EReloadResult>::Err(MString("unknown_reload_mode"));
     }
 
+    /**
+     * @brief CallFunction - 调用一个反射函数。
+     * @param Fn   反射函数对象;为 nullptr 时 Err("function_null")
+     * @param Args 实参包
+     * @return 成功 Ok;失败 Err(错误文本)
+     *
+     * @detail 两条路径,按优先级:
+     *   1. Fn->NativeInvoke 非空 —— 走真正的 C++ 反射 invoke(需要 MHeaderTool emit
+     *      <Class>_<Method>_NativeInvoke);此路径忽略 Args,只做空参数调用。
+     *   2. 否则 fallback 到 Lua 侧:lua_getglobal(ClassName).<MethodName>(self, args),
+     *      适用于"业务类完全写在 Lua 里"的情况。
+     *   出错或返回时都会把 Lua 栈恢复到入口高度(OldTop),不留残留。
+     */
     TResult<void> MLuaEngine::CallFunction(MFunctionObject* Fn, const mession::script::TScriptArgs& Args) {
         if (!Fn) {
             return TResult<void>::Err(MString("function_null"));
@@ -199,14 +289,11 @@ namespace mession::script::lua {
 
         lua_State* L = State->GetLuaState();
 
-        // 反射桥接路径(优先):走 NativeInvoke
-        // 真实反射(请求/响应序列化)需要 MHeaderTool emit <Class>_<Method>_NativeInvoke
-        // 当前 MFunctionObject.NativeInvoke 字段未填,所以走 fallback Lua 路径:
-        // lua_getglobal(ClassName).<MethodName>(args)
-        // 完整 MHeaderTool 反射放后续 plan
+        // 反射桥接路径优先;NativeInvoke 未 emit 时退化为下面的 Lua 全局查找路径
 
         if (Fn->NativeInvoke != nullptr) {
-            // 反射路径(NativeInvoke 已 emit 时)
+            // 反射路径(NativeInvoke 已 emit):走 MReflectArchive 读写。
+            // NOTE: 这里 In/Out 都是空 archive,方法收到的是全 0 参数。
             int             OldTop = lua_gettop(L);
             MReflectArchive In, Out;
             bool            Ok = Fn->NativeInvoke(nullptr, &In, &Out);
@@ -218,8 +305,7 @@ namespace mession::script::lua {
             return TResult<void>::Ok();
         }
 
-        // Fallback:lua_getglobal(classname).<method>(args)
-        // 适用"业务类完全在 Lua 侧"的情况(MEchoService 已实现)
+        // Fallback:lua_getglobal(ClassName).<MethodName>(self, args)
         std::string ClsName    = Fn->OwnerClass ? Fn->OwnerClass->GetName() : "";
         std::string MethodName = Fn->Name;
         if (ClsName.empty() || MethodName.empty()) {
@@ -242,10 +328,10 @@ namespace mession::script::lua {
             return TResult<void>::Err(MString("method_not_found: ") + MethodName);
         }
 
-        // 插入 self(class)到 args 前
+        // 把 class 表插到方法之前,作为 self 实参
         lua_insert(L, -2);
 
-        // Push args
+        // 依次压入实参
         for (size_t i = 0; i < Args.Count; ++i) {
             switch (Args.Values[i].GetType()) {
             case EVariantType::Int:
@@ -266,9 +352,8 @@ namespace mession::script::lua {
             }
         }
 
-        // self + args=N+1 args
+        // self + N 个实参,共 N+1 个调用参数;不要返回值
         int N = lua_pcall(L, static_cast<int>(Args.Count) + 1, 0, 0);
-        // 不推栈,业务类已实现 ipairs/event 模式
         if (N != LUA_OK) {
             MString Err = lua_isstring(L, -1) ? lua_tostring(L, -1) : MString("pcall_failed");
             lua_settop(L, OldTop);
@@ -279,12 +364,21 @@ namespace mession::script::lua {
         return TResult<void>::Ok();
     }
 
+    /**
+     * @brief CallFunctionById - 按函数 id 在硬编码的两个类里查找后调用。
+     * @param FunctionId 反射函数 id(截断为 uint16 后查找)
+     * @param Args       实参包
+     * @return 找到即转发 CallFunction 的结果;未找到 Err("function_id_not_found")
+     *
+     * @detail NOTE: 目前只在 {"MEchoService", "MServiceRegistry"} 两个类里搜,
+     *   属临时实现,需要换成全局 FunctionId 索引。
+     */
     TResult<void> MLuaEngine::CallFunctionById(uint64 FunctionId, const mession::script::TScriptArgs& Args) {
         if (!State || !State->IsValid()) {
             return TResult<void>::Err(MString("engine_not_initialized"));
         }
 
-        // FunctionId → MFunction 全局查询
+        // FunctionId → MFunction 穷举查询(临时:只覆盖这两个类)
         for (auto& ClsName : {"MEchoService", "MServiceRegistry"}) {
             MClass* Cls = MObject::FindClass(ClsName);
             if (!Cls)
@@ -296,18 +390,33 @@ namespace mession::script::lua {
         return TResult<void>::Err(MString("function_id_not_found"));
     }
 
+    /**
+     * @brief CreateInstance - 反射创建 MObject(尚未实现)。
+     * @return Cls 为空时 Err("class_null");否则恒 Err("create_instance_pending_full_impl")
+     *
+     * @detail 契约要求返回裸 MObject*,而现网创建路径产出 TSharedPtr<MObject>,
+     *   所有权语义未定,故先占位。
+     *   TODO(script): 换成 MObject::NewInstance<T>(Args) 并明确所有权转移规则。
+     */
     TResult<MObject*> MLuaEngine::CreateInstance(MClass* Cls, const mession::script::TScriptArgs& Args) {
         if (!Cls) {
             return TResult<MObject*>::Err(MString("class_null"));
         }
-        // 简化:CreateInstance 实际返回 TSharedPtr<MObject>,但本接口要求 raw MObject*
-        // TODO:用 MObject::NewInstance<T>(Args) 替换,目前 spec 还没要求具体类型
         static MObject* Stub = nullptr;
         Stub                 = Stub; // 防 unused warning
         (void)Args;
         return TResult<MObject*>::Err(MString("create_instance_pending_full_impl"));
     }
 
+    /**
+     * @brief CreateActor - 在脚本侧建实例并包成 MLuaProxyActor 登记。
+     * @param Cls  目标类(取 GetName() 作为脚本侧类名)
+     * @param Args 构造实参
+     * @return 新分配的 ActorId(MUniqueIdGenerator 生成)
+     *
+     * @detail 三步:Lua 侧 CreateInstanceByClassName → 生成 ActorId 并存入 ActorsById
+     *   (TSharedPtr 共享所有权)→ 触发 OnCreated 钩子。
+     */
     TResult<uint64> MLuaEngine::CreateActor(MClass* Cls, const mession::script::TScriptArgs& Args) {
         if (!Cls) {
             return TResult<uint64>::Err(MString("class_null"));
@@ -316,7 +425,7 @@ namespace mession::script::lua {
             return TResult<uint64>::Err(MString("engine_not_initialized"));
         }
 
-        // 1. Lua 端按 ClassName 创建 instance
+        // 1. Lua 端按 ClassName 创建实例
         MString ClassName      = Cls->GetName();
         auto    InstanceResult = CreateInstanceByClassName(ClassName, Args);
         if (InstanceResult.IsErr()) {
@@ -324,7 +433,7 @@ namespace mession::script::lua {
         }
         TScriptInstanceHandle Handle = InstanceResult.GetValue();
 
-        // 2. 生成 ActorId + 构造 MLuaProxyActor
+        // 2. 生成 ActorId 并构造 MLuaProxyActor(此后由 ActorsById 共享持有)
         uint64 ActorId      = MUniqueIdGenerator::Generate();
         auto   Proxy        = MakeShared<MLuaProxyActor>(*this, Cls, ActorId, Handle, ClassName);
         ActorsById[ActorId] = Proxy;
@@ -335,6 +444,12 @@ namespace mession::script::lua {
         return TResult<uint64>::Ok(ActorId);
     }
 
+    /**
+     * @brief CreateModule - 为 OwningClass 建 MLuaModule 并登记到 Modules。
+     * @return 新建模块;State 未初始化时返回 nullptr
+     *
+     * @detail 同一 OwningClass 重复调用会覆盖旧模块(旧模块随之析构、unref 自己的表)。
+     */
     TSharedPtr<mession::script::IScriptModule> MLuaEngine::CreateModule(MClass* OwningClass) {
         if (!State)
             return nullptr;
@@ -343,11 +458,20 @@ namespace mession::script::lua {
         return Mod;
     }
 
+    /** @brief RegisterModule - 空实现:模块在 CreateModule 时已登记 */
     void MLuaEngine::RegisterModule(TSharedPtr<mession::script::IScriptModule> /*Module*/) {
     }
+    /** @brief UnregisterModule - 空实现:模块由 Modules 表生命周期管理 */
     void MLuaEngine::UnregisterModule(MClass* /*OwningClass*/) {
     }
 
+    /**
+     * @brief SetGlobal - 把 TVariant 值写入 Lua 全局变量。
+     * @param Key   全局变量名(内部按 data/size 构造临时 MString,兼容非 NUL 结尾)
+     * @param Value 值;Null 会写入 nil(即删除该全局)
+     *
+     * @detail VM 未初始化时静默返回。
+     */
     void MLuaEngine::SetGlobal(MStringView Key, const mession::script::TVariant& Value) {
         if (!State || !State->IsValid())
             return;
@@ -374,6 +498,14 @@ namespace mession::script::lua {
         lua_setglobal(L, CKey.c_str());
     }
 
+    /**
+     * @brief GetGlobal - 读 Lua 全局变量。
+     * @param Key 全局变量名
+     * @return 成功 Ok(TVariant);number → Double,boolean → Bool,string → String,
+     *   其余类型(含 nil/table/function)一律 → Null
+     *
+     * @detail 注意 Lua number 统一映射为 Double,整数会丢精度区分。
+     */
     TResult<mession::script::TVariant> MLuaEngine::GetGlobal(MStringView Key) {
         if (!State || !State->IsValid()) {
             return TResult<mession::script::TVariant>::Err(MString("engine_not_initialized"));
@@ -395,6 +527,17 @@ namespace mession::script::lua {
         return TResult<mession::script::TVariant>::Ok(Out);
     }
 
+    /**
+     * @brief CreateInstanceByClassName - 在 Lua 全局表里按类名建实例。
+     * @param ClassName 全局类名(必须是一个 table)
+     * @param Args      构造实参
+     * @return 句柄(registry ref + 当前 VmGeneration);失败返回 Err
+     *
+     * @detail 两条分支:类有 `new` 字段则调 `ClassName.new(self, args)`(期望返回 1 个值);
+     *   否则退化为直接调 table 本身(靠 __call 元方法)。
+     *   返回 nil → Err(kFactoryReturnNil)。成功时用 luaL_ref 把实例锚在 registry,
+     *   句柄因此在 Lua GC 回收该实例前一直有效。
+     */
     TResult<TScriptInstanceHandle> MLuaEngine::CreateInstanceByClassName(const MString& ClassName, const TScriptArgs& Args) {
         if (!State || !State->IsValid()) {
             return TResult<TScriptInstanceHandle>::Err(MString("engine_not_initialized"));
@@ -478,6 +621,18 @@ namespace mession::script::lua {
         return TResult<TScriptInstanceHandle>::Ok(TScriptInstanceHandle(Ref, VmGeneration));
     }
 
+    /**
+     * @brief InvokeInstanceMethod - 在句柄对应的 Lua 实例上调用方法。
+     * @param Handle     实例句柄
+     * @param MethodName 方法名
+     * @param Args       实参(标量)
+     * @return Ok(TVariant):nil→Null / boolean→Bool / number→Double / string→String,
+     *   其余返回类型(table/function 等)退化为 Null
+     *
+     * @detail 失败路径 Err(kInvalidArg / kInstanceReleased / kMethodNotFound / VM 错误文本)。
+     *   NOTE: 本函数只校验 Handle.IsValid(),不做 generation 比对 —— 跨 VM 的陈旧
+     *   句柄通常因 registry ref 失效而报 kInstanceReleased,而非显式的 kVmSwapped。
+     */
     TResult<TVariant> MLuaEngine::InvokeInstanceMethod(TScriptInstanceHandle Handle, const MString& MethodName, const TScriptArgs& Args) {
         if (!Handle.IsValid()) {
             return TResult<TVariant>::Err(MString(ScriptErrorCodes::kInvalidArg));
@@ -494,7 +649,7 @@ namespace mession::script::lua {
             return TResult<TVariant>::Err(MString(ScriptErrorCodes::kInstanceReleased));
         }
 
-        // 对象必须是 table / userdata(支持 __index);number / string / bool / nil 都不行
+        // 目标必须是 table / userdata(才能走 __index);标量与 nil 一律拒绝
         int ObjType = lua_type(L, -1);
         if (ObjType != LUA_TTABLE && ObjType != LUA_TUSERDATA) {
             lua_settop(L, OldTop);
@@ -561,6 +716,13 @@ namespace mession::script::lua {
         return Out;
     }
 
+    /**
+     * @brief ReleaseInstance - 释放句柄在 registry 中的引用(幂等)。
+     * @param Handle 目标句柄;无效句柄或 VM 未初始化时静默返回
+     *
+     * @detail 不比对 generation:对旧 VM 的句柄调本函数会作用在当前 VM 的 registry 上,
+     *   可能误释放同号的 ref(见 InvokeInstanceMethod 的 NOTE)。
+     */
     void MLuaEngine::ReleaseInstance(TScriptInstanceHandle Handle) {
         if (!Handle.IsValid())
             return;
@@ -569,6 +731,12 @@ namespace mession::script::lua {
         luaL_unref(State->GetLuaState(), LUA_REGISTRYINDEX, Handle.GetId());
     }
 
+    /**
+     * @brief GetErrorString - 未实现。
+     * @return 恒返回空串
+     *
+     * @detail 当前调用方拿到空串时应自行回退到 VM 返回的错误文本。
+     */
     MString MLuaEngine::GetErrorString(int32 /*State*/, void* /*Frame*/) const {
         return MString();
     }

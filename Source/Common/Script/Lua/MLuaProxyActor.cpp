@@ -1,3 +1,7 @@
+/**
+ * @file MLuaProxyActor.cpp
+ * @brief 实现 MLuaProxyActor:把 actor 生命周期与消息转发到 Lua 钩子。
+ */
 #include "Common/Script/Lua/MLuaProxyActor.h"
 #include "Common/Runtime/Actor/IActor.h"
 #include "Common/Script/Abstract/ScriptErrorCodes.h"
@@ -10,8 +14,11 @@ extern "C" {
 
 namespace mession::script::lua {
 
-    // FActorMessage 的轻量声明,避免引入 actor.h 全头
-    // 实际消息体 payload 走 InvokeInstanceMethod 时不再展开(后续 task 实做 payload 序列化)
+    /**
+     * @brief FActorMessageLite - FActorMessage 的轻量镜像,用于避免引入 actor.h 全头。
+     *
+     * @detail NOTE: 当前仅作占位 —— OnMessage 并未真正解包 Payload(序列化待实做)。
+     */
     struct FActorMessageLite {
         uint64_t    Sender;
         uint64_t    Target;
@@ -21,26 +28,46 @@ namespace mession::script::lua {
     };
 
     namespace {
-        // 把 actor proxy 实例 push 到 Lua 栈顶:先 registry ref 拿 Lua instance,再 push self 引用给 Lua
-        // 用 Lua 5.4 lua_pushvalue 即可
+        /**
+         * @brief PushActorSelf - 经 registry ref 把该 actor 的 Lua 实例压到栈顶。
+         * @param L      目标 Lua 状态机
+         * @param Handle 目标实例句柄(其 Id 即 registry ref)
+         * @return 压栈值非 nil 时为 true;为 nil 时返回 false(该值仍留在栈上,由调用方 pop)
+         */
         bool PushActorSelf(lua_State* L, TScriptInstanceHandle Handle) {
             lua_rawgeti(L, LUA_REGISTRYINDEX, Handle.GetId());
             return !lua_isnil(L, -1);
         }
 
-        // 查找 instance 上的方法 field;若 nil 返回 false
+        /**
+         * @brief GetInstanceField - 取栈顶对象的字段;字段为 nil 时返回 false。
+         * @param L     目标 Lua 状态机
+         * @param Field 字段名
+         * @return 字段非 nil 为 true,否则 false
+         *
+         * @detail 无论结果如何都会压入一个值(字段值或 nil)。
+         */
         bool GetInstanceField(lua_State* L, const char* Field) {
             lua_getfield(L, -1, Field);
             return !lua_isnil(L, -1);
         }
     } // namespace
 
+    /** @brief 构造 - 记录所属 engine / 反射类 / actor id / instance handle / 类名 */
     MLuaProxyActor::MLuaProxyActor(MLuaEngine& InEngine, MClass* InCls, uint64 InActorId, TScriptInstanceHandle InHandle, MString InClassName)
         : Engine(InEngine), Cls(InCls), ActorId(InActorId), Handle(InHandle), ClassName(std::move(InClassName)) {
     }
 
+    /** @brief 析构 - 默认实现,不主动释放 Lua 侧实例 */
     MLuaProxyActor::~MLuaProxyActor() = default;
 
+    /**
+     * @brief OnMessage - 调用 Lua 端 on_message 钩子。
+     * @param InMsg 消息体;NOTE 当前未使用(payload 序列化待实做)
+     *
+     * @detail generation 不符、取不到 self、或没有 on_message 时静默返回;
+     *   钩子抛错时仅 pop 掉错误值,不向上传播。
+     */
     void MLuaProxyActor::OnMessage(const FActorMessage& /*InMsg*/) {
         // PoC:invoke Lua 端 on_message 方法(payload 序列化后续 task 实做)
         lua_State* L = Engine.GetStateForReload().GetLuaState();
@@ -66,6 +93,7 @@ namespace mession::script::lua {
         }
     }
 
+    /** @brief OnCreated - 调用 Lua 端 on_created 钩子(generation 不符或钩子缺失时直接返回) */
     void MLuaProxyActor::OnCreated() {
         lua_State* L = Engine.GetStateForReload().GetLuaState();
         if (!L || !Handle.Matches(Engine.GetVmGeneration())) {
@@ -82,6 +110,7 @@ namespace mession::script::lua {
         }
     }
 
+    /** @brief OnDestroyed - 调用 Lua 端 on_destroyed 钩子(generation 不符或钩子缺失时直接返回) */
     void MLuaProxyActor::OnDestroyed() {
         lua_State* L = Engine.GetStateForReload().GetLuaState();
         if (!L || !Handle.Matches(Engine.GetVmGeneration())) {
@@ -98,12 +127,18 @@ namespace mession::script::lua {
         }
     }
 
+    /**
+     * @brief OnVmSwapped - 用新 handle 覆写自身缓存的 handle。
+     * @param OldHandle 旧 handle;NOTE 当前未使用
+     * @param NewHandle 新 handle
+     */
     void MLuaProxyActor::OnVmSwapped(const TScriptInstanceHandle& /*OldHandle*/, const TScriptInstanceHandle& NewHandle) {
         // ReplaceState 已经把 Handle 改成了新 handle(rebind 时已经在 LuaEngine 侧替换)
         // 这里只用于业务层缓存的句柄更新
         Handle = NewHandle;
     }
 
+    /** @brief SaveLuaState - 调 Lua 端 __dualvm_save();无该钩子时返回 Ok(空串) */
     TResult<MString> MLuaProxyActor::SaveLuaState() const {
         lua_State* L = Engine.GetStateForReload().GetLuaState();
         if (!L || !Handle.Matches(Engine.GetVmGeneration())) {
@@ -140,6 +175,7 @@ namespace mession::script::lua {
         return TResult<MString>::Ok(S);
     }
 
+    /** @brief RestoreLuaState - 调 Lua 端 __dualvm_restore(Snapshot);无该钩子时直接 Ok() */
     TResult<void> MLuaProxyActor::RestoreLuaState(const MString& Snapshot) {
         lua_State* L = Engine.GetStateForReload().GetLuaState();
         if (!L || !Handle.Matches(Engine.GetVmGeneration())) {
@@ -168,6 +204,7 @@ namespace mession::script::lua {
         return TResult<void>::Ok();
     }
 
+    /** @brief RebindHandleOnCurrentVm - 在当前 VM 上以空实参重建实例并替换 Handle */
     void MLuaProxyActor::RebindHandleOnCurrentVm() {
         // 在当前 active VM 上重新 :new(args) — args 暂时传空(后续 plan 支持 ctor args 缓存)
         MString ClassName = this->ClassName;

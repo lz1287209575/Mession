@@ -1,3 +1,9 @@
+/**
+ * @file TestLuaRpc.cpp
+ * @brief 验证 Mession.RPC / Time / Id 的调用行为。
+ *
+ * @detail 测试用 FMockBridge 直接把 Lua 全局函数当 RPC 目标调用。
+ */
 #include "Common/Script/Lua/LuaScriptState.h"
 #include "Common/Script/Lua/MLuaRpc.h"
 
@@ -7,9 +13,19 @@
 
 using namespace mession::script::lua;
 
-// 测试用的 mock bridge — 简单地取 Lua 全局函数并调用
+/**
+ * @brief FMockBridge - 测试用 RPC 桥接:按名取 Lua 全局函数并直接调用。
+ */
 class FMockBridge : public IScriptRpcBridge {
     public:
+    /**
+     * @brief CallGlobal - 取全局函数并调用 [ArgStart, ArgEnd] 区间内的实参。
+     * @param L          目标 Lua 状态机
+     * @param GlobalName 全局函数名
+     * @param ArgStart   实参起始栈索引
+     * @param ArgEnd     实参结束栈索引
+     * @return 成功时 1(被调函数返回值已在栈上);非函数或调用失败时 2(nil, errmsg)
+     */
     int CallGlobal(lua_State* L, const char* GlobalName, int ArgStart, int ArgEnd) override {
         lua_getglobal(L, GlobalName);
         if (!lua_isfunction(L, -1)) {
@@ -27,13 +43,14 @@ class FMockBridge : public IScriptRpcBridge {
         // 调用方永远拿不到返回值(TestRpcCall 断言失败的根因)。
         if (lua_pcall(L, NumArgs, 1, 0) != LUA_OK) {
             lua_pushnil(L);
-            lua_pushvalue(L, -2); // err msg
+            lua_pushvalue(L, -2); // 错误消息
             return 2;
         }
         return 1;
     }
 };
 
+/** @brief TestRpcCall - RPC.call 应转发被调函数(greet)的返回值 */
 static void TestRpcCall() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -53,6 +70,7 @@ static void TestRpcCall() {
     std::printf("ok: TestRpcCall\n");
 }
 
+/** @brief TestRpcNotFound - 目标不是全局函数时应返回 (nil, "not_a_function") */
 static void TestRpcNotFound() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -70,6 +88,7 @@ static void TestRpcNotFound() {
     std::printf("ok: TestRpcNotFound\n");
 }
 
+/** @brief TestTimeNow - Time.now / nowMs 都应返回正数(number) */
 static void TestTimeNow() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -90,6 +109,7 @@ static void TestTimeNow() {
     std::printf("ok: TestTimeNow\n");
 }
 
+/** @brief TestIdUniqueness - 连续两次 Id.new() 应严格递增 */
 static void TestIdUniqueness() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -108,6 +128,7 @@ static void TestIdUniqueness() {
     std::printf("ok: TestIdUniqueness\n");
 }
 
+/** @brief TestSleep - Time.sleepMs(1) 应能正常返回 */
 static void TestSleep() {
     MLuaScriptState State;
     lua_State*      L = State.GetLuaState();
@@ -123,6 +144,10 @@ static void TestSleep() {
     std::printf("ok: TestSleep\n");
 }
 
+/**
+ * @brief main - 依次执行 5 个用例。
+ * @return 恒为 0(断言失败会直接 abort)
+ */
 int main() {
     TestRpcCall();
     TestRpcNotFound();

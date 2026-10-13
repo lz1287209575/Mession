@@ -1,3 +1,7 @@
+/**
+ * @file MLuaFormat.cpp
+ * @brief 实现 MLuaFormat:Mession.Format.* 五个入口与子表注册。
+ */
 #include "Common/Script/Lua/MLuaFormat.h"
 #include "Common/Runtime/StringUtils.h"
 
@@ -8,10 +12,20 @@ namespace mession::script::lua {
 
     namespace {
 
-        // 收集 Lua 栈 args 到 fmt::dynamic_format_arg_store(运行时类型擦除)
+        /**
+         * @brief FArgCollector - 把 Lua 栈上的实参收集到 fmt 的动态实参容器。
+         *
+         * @detail 仅处理 number / boolean / string 三类;其余类型以字符串 "<nil>" 占位。
+         */
         struct FArgCollector {
             fmt::dynamic_format_arg_store<fmt::format_context> Store;
 
+            /**
+             * @brief Collect - 收集 [First, Last] 闭区间内的栈槽位。
+             * @param L     目标 Lua 状态机
+             * @param First 起始栈索引(inclusive)
+             * @param Last  结束栈索引(inclusive)
+             */
             void Collect(lua_State* L, int First, int Last) {
                 for (int i = First; i <= Last; ++i) {
                     int Type = lua_type(L, i);
@@ -42,6 +56,7 @@ namespace mession::script::lua {
             }
         };
 
+        /** @brief FmtFmt - 用 fmt 风格 {} 占位符渲染模板串(模板必须是 string) */
         /// @lua-stdlib Format.fmt
         /// @lua-param tpl string
         /// @lua-param ... any
@@ -68,6 +83,7 @@ namespace mession::script::lua {
             }
         }
 
+        /** @brief FmtConcat - 各实参转字符串后拼接(非 string 实参走 Lua tostring) */
         /// @lua-stdlib Format.concat
         /// @lua-param ... any
         /// @lua-return string
@@ -106,6 +122,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief FmtSplit - 按单字符分隔符切分为 Lua 数组表 */
         /// @lua-stdlib Format.split
         /// @lua-param s string
         /// @lua-param sep string
@@ -132,6 +149,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief FmtTrim - 去掉首尾空白并返回新串 */
         /// @lua-stdlib Format.trim
         /// @lua-param s string
         /// @lua-return string
@@ -147,6 +165,7 @@ namespace mession::script::lua {
             return 1;
         }
 
+        /** @brief FmtToString - 委托 Lua 全局 tostring 的薄封装 */
         /// @lua-stdlib Format.tostring
         /// @lua-param v any
         /// @lua-return string
@@ -160,6 +179,10 @@ namespace mession::script::lua {
 
     } // namespace
 
+    /**
+     * @brief Install - 取/建 Mession 全局表,再挂上 Format 子表。
+     * @param L 目标 Lua 状态机
+     */
     void MLuaFormat::Install(lua_State* L) {
         lua_getglobal(L, "Mession");
         if (lua_isnil(L, -1)) {
