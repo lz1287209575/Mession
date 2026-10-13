@@ -46,7 +46,7 @@ bool MRpcChannel::SendActor(uint64 InActorId, const FActorMessage& InMsg) const 
     // 调用方(MActorHandle::Post)应把消息放进 per-actor outbox,等 OnEndpointChange
     // 触发 drain 重发。
 
-    // 1) wire envelope
+    // 1) 组装 wire 信封(与 CallActor 一致,复用同一结构)。
     FActorMessageWire Envelope;
     Envelope.SenderId = InMsg.Header.SenderId;
     Envelope.TargetId = InMsg.Header.TargetId;
@@ -56,7 +56,7 @@ bool MRpcChannel::SendActor(uint64 InActorId, const FActorMessage& InMsg) const 
     // 它用于与对端的 MT_ServerPush ack 匹配,从而删除 outbox 条目。
     Envelope.SequenceId = InMsg.SequenceId;
 
-    // 2) 寻址
+    // 2) 寻址:查 MActorRouter 路由表,ServerType 决定本地还是跨进程投递。
     const SActorRoute Route = MActorRouter::Get().FindActor(InActorId);
     if (Route.ActorId == 0) {
         LOG_DEBUG("SendActor: actor %llu not in route table", static_cast<unsigned long long>(InActorId));
