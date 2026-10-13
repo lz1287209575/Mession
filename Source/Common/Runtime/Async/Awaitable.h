@@ -1,3 +1,7 @@
+/**
+ * @file Awaitable.h
+ * @brief TAwaitable —— await 目标函数的类型层包装(规范 P5)。
+ */
 #pragma once
 
 #include "Common/Runtime/Async/MAsync.h"
@@ -18,7 +22,7 @@ template <typename R, typename C, typename... Args> struct TAwaitableFnTraits<R 
 };
 
 /**
- * TAwaitable — P5 awaitable 类型层（最简签名）
+ * @brief TAwaitable —— awaitable 类型层(最简签名,规范 P5)。
  *
  * 业务侧唯一写法：TAwaitable<F>(args...)
  *   F    — await 目标函数名（auto 非类型模板参数，如 TAwaitable<AsyncAdd>(a,b)）
@@ -37,7 +41,7 @@ template <auto F> class TAwaitable {
     template <typename... Args> explicit TAwaitable(Args&&...) {
     }
 
-    using RetType    = typename TAwaitableFnTraits<decltype(F)>::Ret; // SFutureResult<R>
+    using RetType    = typename TAwaitableFnTraits<decltype(F)>::Ret; // 展开即 SFutureResult<R>
     using ResultType = typename RetType::InnerType;                   // R
 
     // 占位：await 结果赋值（`int R = TAwaitable<F>(args);`）

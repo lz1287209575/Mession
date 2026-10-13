@@ -1,7 +1,11 @@
+/**
+ * @file InnerTypeTest.cpp
+ * @brief SFutureResult<T>::InnerType 的编译期契约测试。
+ */
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Log/Tests/TestHarness.h"
 
-// P5 类型层 — SFutureResult<T>::InnerType 编译期契约（KD-2 §4.1 关联）
+// 类型层测试:SFutureResult<T>::InnerType 的编译期契约(对应 KD-2 §4.1)。
 namespace {
 
     TEST_CASE(InnerType_MatchesTemplateParameter) {

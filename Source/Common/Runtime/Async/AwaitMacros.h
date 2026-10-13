@@ -1,3 +1,7 @@
+/**
+ * @file AwaitMacros.h
+ * @brief AWAIT_OK —— 状态机 Frame 内使用的 await 宏(规范 §7.1 / §7.3)。
+ */
 #pragma once
 
 #include "Common/Runtime/Async/AsyncContext.h"
@@ -7,9 +11,9 @@
 #include <utility>
 
 // =========================================================================
-// AWAIT_OK(expr) — 状态机 Frame 内的 await 宏 (spec §7.1 / §7.3)
+// AWAIT_OK(expr) —— 状态机 Frame 内的 await 宏(规范 §7.1 / §7.3)
 //
-// 展开: Frame->AwaitOk(expr)
+// 展开为 Frame->AwaitOk(expr)。
 //
 // 业务侧(P2 蓝图):
 //   FSampleEchoResponse Resp = AWAIT_OK(MRpcChannel::Get().CallToActor<...>(...));

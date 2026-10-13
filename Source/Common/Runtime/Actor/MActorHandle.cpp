@@ -1,3 +1,7 @@
+/**
+ * @file MActorHandle.cpp
+ * @brief MActorHandle 实现 —— actor 句柄的 Post / Call 与 Sub 线程亲和投递。
+ */
 #include "Common/Runtime/Actor/MActorHandle.h"
 
 #include "Common/Net/Rpc/MRpcChannel.h"

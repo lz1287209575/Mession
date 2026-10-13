@@ -1,3 +1,17 @@
+/**
+ * @file Config.h
+ * @brief MConfig —— 扁平配置文件(`KEY=VALUE`,支持 `#` 注释)与环境变量的读取工具。
+ *
+ * LoadFromFile() 逐行解析:先截掉 `#` 之后的内容,再按第一个 `=` 拆成
+ * key/value,两侧空白(空格 / 制表符)都裁掉,key 为空的行忽略。不处理
+ * 转义、多行值与 include —— 只适合环境 / 启动参数这类扁平配置,需要嵌套
+ * 结构请用 Json.h。
+ *
+ * Get*() 系列在 key 缺失时一律返回调用方给的默认值,不抛异常也不报错。
+ * 但各取值的容错范围并不一致:GetInt 走 atoi,越界不回退;GetU16 对越界值
+ * 回退默认值;GetU32 / GetU64 只拒绝「一个数字都读不出」的输入,不做上界
+ * 检查。
+ */
 #pragma once
 
 #include "Common/Runtime/MLib.h"

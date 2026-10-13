@@ -1,3 +1,15 @@
+/**
+ * @file Promise.h
+ * @brief MFuture / MPromise —— 项目内的异步结果原语(规范 §7)。
+ *
+ * MFuture<T> 与 MPromise<T> 共享一份引用计数的状态
+ * (MDetail::SPromiseState<T>):Promise 负责 SetValue/SetException,Future 负责
+ * Wait/Await/Get/Then/Peek。T 与 void 各有一份状态结构(后者没有 Value 域)。
+ *
+ * 本头文件刻意不依赖协议头:只用前向声明引用 FAppError,使
+ * MFuture<TResult<T, FAppError>> 可用而不必把 Protocol/Messages/Common/
+ * AppMessages.h 拉进来。需要操作 FAppError(运算符、方法)的调用方自行 include。
+ */
 #pragma once
 
 #include "Common/Runtime/Async/AsyncContext.h"
@@ -8,11 +20,6 @@
 #include <condition_variable>
 #include <exception>
 
-// FAppError lives in Protocol/Messages/Common/AppMessages.h, but Promise.h
-// is a low-level building block that shouldn't depend on protocol types.
-// Forward-declare it so MFuture<TResult<T, FAppError>> can be referenced
-// without pulling the protocol header. Callers that need full FAppError
-// access (operators, methods) include AppMessages.h themselves.
 struct FAppError;
 
 template <typename T> class MFuture;
@@ -76,9 +83,9 @@ template <typename T> class MFuture {
     void Wait() const;
     T    Await() const;
     T    Get() const;
-    // P3 v1: non-destructive view of resolved value (does NOT move out).
-    // Pre-condition: IsReady() must be true; calling on a non-ready
-    // future throws (same contract as Wait/Await).
+    // 非破坏性读取已就绪的结果(不会把值移动出去)。
+    // 前置条件:IsReady() 为真;对未就绪的 future 调用会抛异常
+    // (与 Wait/Await 的契约一致)。
     const T& Peek() const;
 
     void Then(TFunction<void(MFuture<T>)> Callback);
@@ -247,11 +254,10 @@ template <typename T> T MFuture<T>::Get() const {
     return Await();
 }
 
-// P3 v1: non-destructive read of the resolved value. Returns a const
-// reference to the stored T so callers can inspect the value without
-// moving it out of the shared state. Pre-condition: caller must have
-// observed IsReady() == true (or called Wait/Await first); calling on
-// a non-ready future throws std::runtime_error.
+// 非破坏性读取已就绪的结果:返回所存 T 的 const 引用,调用方可以查看值
+// 而不必把它从共享状态里移走。前置条件:调用方必须已观察到
+// IsReady() == true(或先调用过 Wait/Await);对未就绪的 future 调用会抛
+// std::runtime_error。
 template <typename T> const T& MFuture<T>::Peek() const {
     if (!State) {
         throw std::runtime_error("Peek on invalid MFuture");

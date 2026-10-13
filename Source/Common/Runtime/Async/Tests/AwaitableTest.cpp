@@ -1,3 +1,7 @@
+/**
+ * @file AwaitableTest.cpp
+ * @brief TAwaitable / SAwaiter 类型层测试(Ready、Err、挂起后续体恢复)。
+ */
 #include "Common/Runtime/Async/Awaitable.h"
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Concurrency/Promise.h"
@@ -5,10 +9,10 @@
 
 #include <memory>
 
-// P5 类型层 — SAwaiter 三方法 + TAwaitable 模板（KD-1 / KD-2）
+// 类型层测试:SAwaiter 的三个方法 + TAwaitable 模板。
 //
-// 迷你 Frame：只实现 codegen Frame 的 Resume() 契约（KD-6 业务侧不可见，
-// 类型层只依赖 Resume()）。
+// 这里用一个「迷你 Frame」:只实现 codegen 生成 Frame 的 Resume() 契约。
+// 业务侧看不到 Frame(KD-6),类型层也只依赖 Resume()。
 namespace {
 
     struct FTestFrame {

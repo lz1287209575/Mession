@@ -1,3 +1,10 @@
+/**
+ * @file SignalHandler.cpp
+ * @brief MSignalHandler 实现 —— sigaction 注册与 async-signal-safe 的标志位写入。
+ *
+ * HandleSignal() 只做一次原子写;SA_RESTART 让被信号打断的系统调用自动重启,
+ * 否则 accept / read / write 会半路返回 EINTR。
+ */
 #include "Common/Runtime/Concurrency/SignalHandler.h"
 #include "Common/Runtime/Log/Log.h"
 

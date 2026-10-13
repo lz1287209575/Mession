@@ -1,3 +1,7 @@
+/**
+ * @file ActorMember.cpp
+ * @brief IActorMember 的宿主挂载/摘除,以及成员分发所需的辅助实现。
+ */
 #include "Common/Runtime/Actor/ActorMember.h"
 #include "Common/Runtime/Actor/IActor.h"
 #include "Common/Runtime/Actor/MActorSystem.h"

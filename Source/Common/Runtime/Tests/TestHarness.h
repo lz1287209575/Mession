@@ -1,12 +1,16 @@
+/**
+ * @file TestHarness.h
+ * @brief Runtime 测试的最小框架 —— EXPECT_* 断言宏与进程内通过/失败计数器。
+ */
 #pragma once
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <vector>
 
-// NOTE: GTestPassed/GTestFailed 均为 static (内部链接),每个测试 TU 各持一份。
-// 这避免了多 TU 链接符号冲突,但意味着统计是按 TU 内的测试聚合的。
-// 单测试可执行文件下,把测试 TU 通过 #include 合并到 main.cpp 即可共享计数。
+// NOTE: GTestPassed/GTestFailed 均为 static(内部链接),每个测试 TU 各持一份。
+// 这避免了多 TU 的符号冲突,但统计是按 TU 聚合的。单测试可执行文件下,
+// 把测试 TU 直接 #include 进 main.cpp 即可共用这份计数。
 static std::atomic<int> GTestPassed{0};
 static std::atomic<int> GTestFailed{0};
 

@@ -1,3 +1,7 @@
+/**
+ * @file AsyncContext.cpp
+ * @brief MAsyncContext 实现 —— TLS ambient 指针的读写,以及 MLoopAsyncContext 的 IExecutor 绑定。
+ */
 #include "Common/Runtime/Async/AsyncContext.h"
 
 #include <cstdio>
@@ -5,9 +9,8 @@
 namespace MAsync {
 
     namespace {
-        // TLS:每个线程一个 ambient指针
-        // Sub I/O 线程安装自己的 ambient
-        // Worker 线程不安装(显式传 SubAmbient)
+        // 每个线程一个 ambient 指针:Sub I/O 线程安装自己的 ambient,
+        // Worker 线程不安装(改为显式传递 SubAmbient)。
         thread_local MAsyncContext* GCurrentContext = nullptr;
     } // namespace
 

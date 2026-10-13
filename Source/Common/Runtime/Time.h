@@ -1,3 +1,10 @@
+/**
+ * @file Time.h
+ * @brief MTime —— 基于 std::chrono::steady_clock 的计时与休眠工具。
+ *
+ * 统一使用单调时钟,不受系统时间调整影响,适合计时与超时判断。需要墙上
+ * 时间(例如给日志打时间戳)时要显式转换,不要把这些值当 Unix 时间用。
+ */
 #pragma once
 
 #include "Common/Runtime/MLib.h"

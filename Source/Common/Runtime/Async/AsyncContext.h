@@ -1,21 +1,26 @@
+/**
+ * @file AsyncContext.h
+ * @brief MAsyncContext —— 异步执行线抽象(AWAIT / Then 的续体投递目标)。
+ */
 #pragma once
 
 #include "Common/Runtime/Async/IExecutor.h"
 #include "Common/Runtime/MLib.h"
 
-// =========================================================================
-// MAsyncContext — 异步上下文(spec §9 薄 SynchronizationContext)
-//
-// 一个 MAsyncContext 代表一条「执行线」(process event loop / future
-// actor strand 等)。AWAIT / Then 的恢复目标由 ambient Current() 决定。
-// 与 .NET SynchronizationContext 相比只保留最小子集:
-//   * Post(Continuation) — 将续体投递到此 context 的执行线
-//   * IsSameContext()   — Get 红线检测;true 表示当前线程就是 context 的执行线
-//   * Current()/SetCurrent() — TLS ambient
-//
-// v1 默认实现 MLoopAsyncContext 绑 mession::async::IExecutor(process event loop)。
-// IExecutor 接口定义在同目录 IExecutor.h,抽库后 mession-async 不依赖 mession-core。
-// =========================================================================
+/**
+ * @brief MAsyncContext - 异步上下文(规范 §9 的薄 SynchronizationContext)。
+ *
+ * @detail 一个 MAsyncContext 代表一条「执行线」(process event loop / future
+ * actor strand 等);AWAIT / Then 的恢复目标由 ambient Current() 决定。
+ * 相比 .NET SynchronizationContext 只保留最小子集:
+ *   * Post(Continuation) —— 把续体投递到此 context 的执行线
+ *   * IsSameContext() —— Get 红线检测;true 表示当前线程就是执行线本身
+ *   * Current()/SetCurrent() —— TLS ambient
+ *
+ * v1 的默认实现 MLoopAsyncContext 绑 mession::async::IExecutor(process
+ * event loop)。IExecutor 接口定义在同目录 IExecutor.h,抽库后
+ * mession-async 不依赖 mession-core。
+ */
 
 namespace MAsync {
 
@@ -23,31 +28,31 @@ namespace MAsync {
         public:
         virtual ~MAsyncContext() = default;
 
-        /** 将续体投递到此 context 的执行线。May be called from any thread. */
+        /** 把续体投递到此 context 的执行线。可从任意线程调用。*/
         virtual void Post(TFunction<void()> Continuation) = 0;
 
-        /** True iff the calling thread is this context's loop. Used for Get-redline. */
+        /** 当且仅当调用线程就是本 context 的执行线时返回 true。用于 Get 红线检测。*/
         virtual bool IsSameContext() const {
             return false;
         }
 
-        /** Thread-local ambient pointer. May return nullptr (no ambient). */
+        /** 线程局部 ambient 指针;当前线程未安装时返回 nullptr。*/
         static MAsyncContext* Current();
 
-        /** TLS ambient setter (used by per-process install; never call from business code). */
+        /** 设置 TLS ambient(由进程级安装路径调用;业务代码不要直接调)。*/
         static void SetCurrent(MAsyncContext* Ctx);
     };
 
-    /** 默认 context:绑到 mession::async::IExecutor(取代旧的 ITaskRunner)。 */
+    /** @brief 默认 context:绑到 mession::async::IExecutor(取代旧的 ITaskRunner)。*/
     class MLoopAsyncContext final : public MAsyncContext {
         public:
         explicit MLoopAsyncContext(mession::async::IExecutor* InExecutor);
 
         void Post(TFunction<void()> Continuation) override;
-        bool IsSameContext() const override; // returns Executor->IsCurrentThread()
+        bool IsSameContext() const override; // 等价于 Executor->IsCurrentThread()
 
         private:
-        mession::async::IExecutor* Executor = nullptr; // non-owning
+        mession::async::IExecutor* Executor = nullptr; // 不持有所有权
     };
 
 } // namespace MAsync

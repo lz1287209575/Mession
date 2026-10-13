@@ -1,12 +1,17 @@
-// MemberFrameworkTest — F0 ActorMember 框架单测。
-//
-// 覆盖(2026-08-14-actor-member-framework.md):
-//   1. 继承序列化 round-trip(FPlayerRequestBase ← FPlayerUseItemRequest,
-//      PlayerId 基类字段落盘,§5/§6)
-//   2. GMemberRpcEntries 查表(FunctionId → (MemberClass, MethodName, RequestType),§3.2)
-//   3. 成员挂载 + GetActorMember<T>()(Component 模型,§4.2)
-//   4. 框架成员分发 round-trip(DispatchFrameworkMemberCall,§4.3)
-//   5. FindActorMember<T>(PlayerId) 显式路径
+/**
+ * @file MemberFrameworkTest.cpp
+ * @brief MemberFrameworkTest —— ActorMember 框架(F0)的单元测试。
+ *
+ * 覆盖项:
+ *   1. 继承序列化 round-trip(FPlayerRequestBase ← FPlayerUseItemRequest,
+ *      基类字段 PlayerId 落盘,§5 / §6)
+ *   2. GMemberRpcEntries 查表(FunctionId → (MemberClass, MethodName, RequestType),§3.2)
+ *   3. 成员挂载 + GetActorMember<T>()(Component 模型,§4.2)
+ *   4. 框架成员分发 round-trip(DispatchFrameworkMemberCall,§4.3)
+ *   5. FindActorMember<T>(PlayerId) 显式路径
+ *
+ * 设计文档:Docs/superpowers/specs/2026-08-14-actor-member-framework.md
+ */
 
 #include "Common/Net/Rpc/RpcPayload.h"
 #include "Common/Runtime/Actor/ActorMember.h"

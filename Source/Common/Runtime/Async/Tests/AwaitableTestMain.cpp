@@ -1,5 +1,9 @@
-// AwaitableTest 可执行入口：include 测试 TU（匿名 namespace 同 TU 可见），
-// 手动调用各测试函数（模式同 FreeAsyncFuncGenTest）。
+/**
+ * @file AwaitableTestMain.cpp
+ * @brief AwaitableTest 可执行入口 —— 合并测试 TU 并逐个调用测试函数。
+ */
+// AwaitableTest 可执行入口:直接 include 测试 TU(匿名 namespace 在同一 TU
+// 内可见),然后手动调用各测试函数 —— 模式与 FreeAsyncFuncGenTest 一致。
 #include "Common/Runtime/Log/Tests/TestHarness.h"
 
 #include "AwaitableTest.cpp"

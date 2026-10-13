@@ -1,13 +1,18 @@
+/**
+ * @file ActorMember.h
+ * @brief ActorMember 框架 —— 把业务协议下沉到成员类(规范 F0)。
+ *
+ * 目标:业务协议以 MCLASS(Type = ActorMember) 声明,协议下沉到成员;Service 类
+ * 因此可以零业务协议,进程侧接收由框架内部成员分发器完成。
+ *
+ * 命名空间:设计文档草案曾用 `namespace mession::actor`,但仓库现有 actor 基础设施
+ * (MActorSystem / MActorRouter / IActor / MRankListActor)都在全局命名空间,这里
+ * 跟随代码现状,避免两套命名空间割裂。
+ *
+ * 设计文档:Docs/superpowers/specs/2026-08-14-actor-member-framework.md
+ */
 #pragma once
 
-// ActorMember 框架(F0,见 Docs/superpowers/specs/2026-08-14-actor-member-framework.md)
-//
-// 目标:业务协议以 MCLASS(Type = ActorMember) 类声明,协议下沉到成员;
-// Service 类零业务协议,进程接收由框架内部成员分发器完成。
-//
-// 命名空间说明:设计文档草案用 `namespace mession::actor`,但本仓库现有
-// actor 基础设施(MActorSystem/MActorRouter/IActor/MRankListActor)均为
-// 全局命名空间,这里跟随代码现状(全局),避免割裂。
 
 #include "Common/Runtime/Actor/MActorSystem.h"
 #include "Common/Runtime/Actor/MemberRpcManifest.generated.h"

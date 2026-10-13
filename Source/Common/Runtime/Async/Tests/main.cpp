@@ -1,3 +1,7 @@
+/**
+ * @file main.cpp
+ * @brief AsyncContext / MAsync 的运行时行为测试入口(Post 落到 loop、Get 红线等)。
+ */
 #include "Common/Runtime/Async/AsyncContext.h"
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Concurrency/Promise.h"

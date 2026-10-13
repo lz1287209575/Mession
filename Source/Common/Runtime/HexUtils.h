@@ -1,3 +1,11 @@
+/**
+ * @file HexUtils.h
+ * @brief Hex —— 字节序列与十六进制字符串之间的转换。
+ *
+ * 输出一律大写。TryDecodeHex() 要求输入长度为偶数;遇到非法字符会先清空
+ * OutBytes 再返回 false,因此失败时输出参数是干净的空数组。空串视为解码
+ * 成功,结果为空数组。
+ */
 #pragma once
 
 #include "Common/Runtime/MLib.h"

@@ -1,3 +1,7 @@
+/**
+ * @file MActorSystem.cpp
+ * @brief MActorSystem 实现 —— actor 注册表、线程亲和路由与框架成员分发。
+ */
 #include "Common/Runtime/Actor/MActorSystem.h"
 
 #include "Common/Net/Rpc/MRpcChannel.h"

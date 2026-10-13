@@ -1,3 +1,11 @@
+/**
+ * @file MLib.h
+ * @brief 项目公共基础头 —— 标准库聚合、UE 风格类型别名与常用小工具。
+ *
+ * 约定:容器与智能指针一律使用这里定义的别名(TVector、TMap、TSharedPtr
+ * 等),而不是直接写 std 名字 —— 将来若要替换底层实现,只需改这一个头文件。
+ * 本头文件包含面很广,各 .cpp 事实上把它当作预编译头使用。
+ */
 #pragma once
 
 // 基础类型定义 - 仿UE风格
@@ -82,7 +90,7 @@ template <typename T> class TSharedPtr : public std::shared_ptr<T> {
     TSharedPtr() = default;
     TSharedPtr(std::nullptr_t) : std::shared_ptr<T>(nullptr) {
     }
-    // Allow converting construction from std::shared_ptr<U> (e.g., MakeShared returns std::shared_ptr<MBase>)
+    // 允许从 std::shared_ptr<U> 转换构造(MakeShared 返回的常常是基类指针)
     template <typename U> TSharedPtr(const std::shared_ptr<U>& Other) : std::shared_ptr<T>(Other) {
     }
     template <typename U> TSharedPtr(std::shared_ptr<U>&& Other) : std::shared_ptr<T>(std::move(Other)) {
@@ -90,7 +98,7 @@ template <typename T> class TSharedPtr : public std::shared_ptr<T> {
     template <typename U> TSharedPtr(const TSharedPtr<U>& Other) : std::shared_ptr<T>(Other) {
     }
 
-    // UE-style helpers
+    // UE 风格辅助方法
     T* Get() const {
         return std::shared_ptr<T>::get();
     }

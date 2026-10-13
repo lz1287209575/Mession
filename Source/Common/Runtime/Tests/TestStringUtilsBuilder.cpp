@@ -1,3 +1,7 @@
+/**
+ * @file TestStringUtilsBuilder.cpp
+ * @brief MStringBuilder 追加 / 追加格式化接口的测试。
+ */
 #include "Common/Runtime/StringUtils.h"
 #include "Common/Runtime/Tests/TestHarness.h"
 

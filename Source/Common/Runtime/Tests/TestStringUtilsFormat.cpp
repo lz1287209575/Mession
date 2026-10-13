@@ -1,3 +1,7 @@
+/**
+ * @file TestStringUtilsFormat.cpp
+ * @brief MFormat::Format 的替换、进制、精度与非法格式串测试。
+ */
 #include "Common/Runtime/StringUtils.h"
 #include "Common/Runtime/Tests/TestHarness.h"
 

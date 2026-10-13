@@ -1,11 +1,17 @@
+/**
+ * @file Json.h
+ * @brief MJsonWriter / MJsonReader —— 项目统一的 JSON 读写门面。
+ *
+ * 按编译期开关 `USE_NLOHMANN_JSON` 二选一实现:定义时 MJsonImpl 别名到
+ * nlohmann::json;未定义时使用本文件后半部分的轻量自研实现。两种实现对外
+ * 命名与语义一致,业务代码因此不感知底层选择,也不会被迫引入外部依赖。
+ */
 #pragma once
 
 #include "Common/Runtime/MLib.h"
 #include "Common/Runtime/StringUtils.h"
 #include <cstring>
 
-// 如果定义了 USE_NLOHMANN_JSON，则内部实现委托给 nlohmann::json；
-// 否则回退到轻量自研实现，保证不引入外部依赖。
 #if defined(USE_NLOHMANN_JSON)
 
 #include <nlohmann/json.hpp>

@@ -1,3 +1,12 @@
+/**
+ * @file StringUtils.h
+ * @brief MFormat / MStringUtil / MStringViewUtil —— 字符串格式化与处理工具。
+ *
+ * MFormat 是 fmt 的薄包装,用于取代 std::to_string / snprintf /
+ * ostringstream 手工拼装;MStringUtil 作用于 MString,MStringViewUtil 作用于
+ * MStringView。历史上此处曾有 `namespace MStringView`,为避免与 MStringView
+ * 类型别名撞名才改名 —— 见到旧的 `MStringView::` 写法应按新名理解。
+ */
 #pragma once
 
 #include "Common/Runtime/MLib.h"
