@@ -1,13 +1,3 @@
-#pragma once
-
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/Log/LogRecord.h"
-#include "Common/Runtime/Log/LogSinks.h"
-#include "Common/Runtime/MLib.h"
-
-#include <atomic>
-#include <mutex>
-
 /**
  * @file TcpSink.h
  * @brief MTcpSink —— 新管线(规范 §5.8)TCP sink,维持到 Target 的单条
@@ -20,6 +10,16 @@
  * 的生产方线程独占有在途 send() —— 对同一 fd 而言 TCP 的并发调用
  * 并非线程安全。
  */
+#pragma once
+
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/Log/LogRecord.h"
+#include "Common/Runtime/Log/LogSinks.h"
+#include "Common/Runtime/MLib.h"
+
+#include <atomic>
+#include <mutex>
+
 
 class MTcpSink : public ILogSink {
     public:

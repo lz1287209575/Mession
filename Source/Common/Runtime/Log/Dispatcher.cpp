@@ -1,3 +1,7 @@
+/**
+ * @file Dispatcher.cpp
+ * @brief MLogDispatcher 实现 —— 从 MPSC 环形队列批量取日志,按 SinkMask 扇出到各 sink 写线程。
+ */
 #include "Common/Runtime/Log/Dispatcher.h"
 #include "Common/Runtime/Log/LogMetrics.h"
 #include "Common/Runtime/Log/SinkWriter.h"
@@ -43,9 +47,9 @@ void MLogDispatcher::RunLoop() {
         }
         Batch.resize(N);
 
-        // Resize partitions to the writer count up front. Each writer has a
-        // fixed index in the partitions array, so the per-record dispatch
-        // below can append without re-hashing SinkMask → index.
+        // 预先按写线程数量扩好分区数组。每个写线程在 Partitions 中有固定
+        // 下标,因此下面的逐条分发可以直接 append,无需每来一条记录就把
+        // SinkMask 重新映射成下标。
         const size_t NumSinks = Writers ? Writers->size() : 0;
         if (Partitions.size() < NumSinks) {
             Partitions.resize(NumSinks);
@@ -62,8 +66,8 @@ void MLogDispatcher::RunLoop() {
             }
         }
 
-        // Fan-out: hand each partition to its writer. Empty partitions are
-        // skipped so an idle sink sees zero wakeups.
+        // 扇出:把每个分区交给对应的写线程。空分区直接跳过,空闲的 sink
+        // 不应因此被唤醒。
         for (size_t i = 0; i < NumSinks; ++i) {
             if (Partitions[i].empty())
                 continue;

@@ -1,3 +1,10 @@
+/**
+ * @file LogStringTable.cpp
+ * @brief MLogStringTable 实现 —— 日志字符串驻留表,把重复出现的格式串压成 uint32。
+ *
+ * Id 0 保留为「空/无效」,故 GNextId 从 1 起步。表由一把全局互斥量保护;
+ * 它只服务于初始化与低频路径,不在日志写入热路径上。
+ */
 #include "Common/Runtime/Log/LogStringTable.h"
 #include <cstring>
 #include <mutex>

@@ -1,9 +1,13 @@
+/**
+ * @file TestLogContext.cpp
+ * @brief MLogContext TLS 上下文与 MLogContextScope 作用域测试。
+ */
 #include "Common/Runtime/Log/LogContext.h"
 #include "Common/Runtime/Log/Tests/TestHarness.h"
 
 TEST_CASE(LogContext_SetAndUnset) {
     auto& Ctx = MLogContext::GetTLS();
-    // Ensure clean starting slate across prior tests sharing this TLS.
+    // 先清空:同一线程上此前跑过的用例可能留下了 TLS 上下文。
     Ctx.Unset("key1");
     Ctx.Unset("key2");
 
@@ -20,8 +24,8 @@ TEST_CASE(LogContext_SetAndUnset) {
 }
 
 TEST_CASE(LogContext_NestedScope) {
-    // TLS context is shared across tests on the same thread; clear any keys
-    // we know could be lingering so the assertions see only what this test set.
+    // 同一线程上的 TLS 上下文在各用例间共享;把可能残留的 key 清掉,
+    // 断言才能只看到本用例设置的键。
     auto& Ctx = MLogContext::GetTLS();
     Ctx.Unset("key1");
     Ctx.Unset("key2");
@@ -31,6 +35,6 @@ TEST_CASE(LogContext_NestedScope) {
         MLogContextScope S1("actor", "1001");
         EXPECT_EQ(Ctx.Size(), size_t{1});
     }
-    // S1 destroyed -> "actor" should be unset.
+    // S1 析构后,"actor" 应当已被解除。
     EXPECT_EQ(Ctx.Size(), size_t{0});
 }

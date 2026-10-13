@@ -1,3 +1,7 @@
+/**
+ * @file LogMetrics.cpp
+ * @brief MLogMetrics 实现 —— 全局与按分类的日志计数器。
+ */
 #include "Common/Runtime/Log/LogMetrics.h"
 #include "Common/Runtime/Log/LogRegistry.h"
 #include <mutex>
@@ -13,8 +17,8 @@ std::atomic<uint64> MLogMetrics::WrittenBytesUdp{0};
 std::atomic<uint64> MLogMetrics::WrittenBytesTcp{0};
 std::atomic<uint64> MLogMetrics::TotalSuppressed{0};
 
-// Per-category counters live in a small vector protected by a mutex.
-// Sized lazily on first IncSuppressedByCategory call. Index = CategoryId.
+// 按分类的抑制计数器放在一个受互斥量保护的小 vector 里,首次
+// IncSuppressedByCategory 调用时惰性扩容,下标即 SLogCategory::Id。
 static TVector<uint64> GSuppressedByCategory;
 static std::mutex      GSuppressedByCategoryMutex;
 

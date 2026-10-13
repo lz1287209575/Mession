@@ -1,3 +1,9 @@
+/**
+ * @file LogMetrics.h
+ * @brief SLogMetricsSnapshot 与 MLogMetrics —— 日志管线各环节的计数器与快照类型。
+ *
+ * 计数器全部为 atomic<uint64>,可在写入热路径上无锁累加,取快照时逐项 load。
+ */
 #pragma once
 #include "Common/Runtime/Log/LogLevel.h"
 #include "Common/Runtime/MLib.h"

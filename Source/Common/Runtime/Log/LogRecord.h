@@ -1,7 +1,3 @@
-#pragma once
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/MLib.h"
-
 /**
  * @file LogRecord.h
  * @brief SLogRecord —— 定长 176 字节 POD 日志条目(规范 §5.4)。
@@ -12,6 +8,10 @@
  * SLogRecord 以 uint8 存 level,由生产方调用点做 ELogLevel -> uint8
  * 强转;枚举仅 6 个取值,转换安全。
  */
+#pragma once
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/MLib.h"
+
 
 /**
  * @brief 定长 176 字节 POD 日志条目。

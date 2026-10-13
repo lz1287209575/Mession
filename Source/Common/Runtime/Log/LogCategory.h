@@ -1,9 +1,3 @@
-#pragma once
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/MLib.h"
-#include <atomic>
-#include <cstring>
-
 /**
  * @file LogCategory.h
  * @brief SLogCategory 单个已注册日志通道,含级别 / 抑制 / 丢弃计数;
@@ -11,6 +5,13 @@
  *
  * @detail SLogCategory 经 MLogRegistry 全局注册,生命周期由注册表持有。
  */
+#pragma once
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/MLib.h"
+#include <atomic>
+#include <cstring>
+
+
 struct SLogCategory {
     const char*            Name         = nullptr;
     uint16                 Id           = 0;

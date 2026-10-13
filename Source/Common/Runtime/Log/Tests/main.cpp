@@ -1,12 +1,16 @@
-// LogTest main entry — runs all TEST_CASE functions defined in the linked test TUs.
-// Task 1 only links TestMpscRingBuffer.cpp; subsequent tasks will append more TUs.
-//
-// Implementation note: TestHarness.h uses `static` counters (internal linkage per TU).
-// To make RUN_TESTS() in this TU see the same counter instances that the test TU
-// increments, we #include the test source directly. This collapses the test TU into
-// main.cpp so they share internal-linkage statics. (Alternative: switch to extern +
-// single TestGlobals.cpp definition; kept off for now to match the brief verbatim.)
-
+/**
+ * @file main.cpp
+ * @brief LogTest 入口 —— 运行本测试可执行文件内所有 TEST_CASE。
+ *
+ * 实现说明:TestHarness.h 的计数器是 `static`(每个 TU 各持一份内部链接)。
+ * 为了让本 TU 的 RUN_TESTS() 看到测试 TU 递增的同一份计数,这里直接
+ * #include 测试源文件,把测试 TU 塌缩进 main.cpp,从而共用内部链接的
+ * static 变量。(替代方案是改成 extern + 单独的 TestGlobals.cpp 定义;
+ * 暂不采用,以保持与任务书原文一致。)
+ *
+ * 下面的 include 列表已随任务推进补齐 —— 文件头旧注释里「Task 1 只链接
+ * TestMpscRingBuffer.cpp」的说法已不成立。
+ */
 #include "Common/Runtime/Log/Tests/TestLogContext.cpp"
 #include "Common/Runtime/Log/Tests/TestLogMetrics.cpp"
 #include "Common/Runtime/Log/Tests/TestLogPerf.cpp"

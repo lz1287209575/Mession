@@ -1,11 +1,3 @@
-#pragma once
-
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/Log/LogRecord.h"
-#include "Common/Runtime/Log/LogSinks.h"
-#include "Common/Runtime/MLib.h"
-#include <mutex>
-
 /**
  * @file ConsoleSink.h
  * @brief MConsoleSink —— 新管线(规范 §5.8)控制台 sink,向 stdout 写
@@ -21,6 +13,15 @@
  * 对 stdout 而言 Open/Close 是空操作(libc 流始终可用),仍实现以
  * 满足 ILogSink 生命周期契约。
  */
+#pragma once
+
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/Log/LogRecord.h"
+#include "Common/Runtime/Log/LogSinks.h"
+#include "Common/Runtime/MLib.h"
+#include <mutex>
+
+
 class MConsoleSink : public ILogSink {
     public:
     MConsoleSink() = default;

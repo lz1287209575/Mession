@@ -1,3 +1,7 @@
+/**
+ * @file TestMpscRingBuffer.cpp
+ * @brief TMpscRingBuffer 的单/多生产者入队-出队行为测试。
+ */
 #include "Common/Runtime/Log/MpscRingBuffer.h"
 #include "Common/Runtime/Log/Tests/TestHarness.h"
 #include <atomic>

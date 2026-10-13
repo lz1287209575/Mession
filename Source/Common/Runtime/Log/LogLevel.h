@@ -1,11 +1,12 @@
-#pragma once
-
 /**
  * @file LogLevel.h
  * @brief 日志级别与驱逐 / 刷新策略枚举及互转函数。
  *
  * @detail 与设计规范保持一致:FATAL 语义映射为 ELogLevel::Critical。
  */
+#pragma once
+
+
 enum class ELogLevel : int { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4, Critical = 5 };
 
 /**

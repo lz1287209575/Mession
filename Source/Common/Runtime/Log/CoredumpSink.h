@@ -1,12 +1,3 @@
-#pragma once
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/Log/LogRecord.h"
-#include "Common/Runtime/Log/LogSinks.h"
-#include "Common/Runtime/MLib.h"
-
-#include <cstdarg>
-#include <functional>
-
 /**
  * @file CoredumpSink.h
  * @brief MCoredumpSink —— 同步 FATAL 现场捕获(规范 §6.1)。
@@ -23,6 +14,16 @@
  * detached std::thread 上触发钩子,主路径保持同步。上传失败只把错误
  * 写 stderr。
  */
+#pragma once
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/Log/LogRecord.h"
+#include "Common/Runtime/Log/LogSinks.h"
+#include "Common/Runtime/MLib.h"
+
+#include <cstdarg>
+#include <functional>
+
+
 class MCoredumpSink {
     public:
     struct SConfig {

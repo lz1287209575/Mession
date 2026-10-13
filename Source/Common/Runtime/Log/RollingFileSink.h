@@ -1,12 +1,3 @@
-#pragma once
-
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/Log/LogRecord.h"
-#include "Common/Runtime/Log/LogSinks.h"
-#include "Common/Runtime/MLib.h"
-#include <cstdio>
-#include <mutex>
-
 /**
  * @file RollingFileSink.h
  * @brief MRollingFileSink —— 新管线(规范 §5.8)滚动 JSON-Lines 文件 sink。
@@ -26,6 +17,16 @@
  * ServiceName 会写进 JSON 载荷(滚动时也进归档名)。FilePath 是活动
  * 日志路径;归档加数字后缀且与活动文件同目录。
  */
+#pragma once
+
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/Log/LogRecord.h"
+#include "Common/Runtime/Log/LogSinks.h"
+#include "Common/Runtime/MLib.h"
+#include <cstdio>
+#include <mutex>
+
+
 class MRollingFileSink : public ILogSink {
     public:
     MRollingFileSink();

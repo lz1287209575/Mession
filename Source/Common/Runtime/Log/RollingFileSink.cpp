@@ -1,3 +1,7 @@
+/**
+ * @file RollingFileSink.cpp
+ * @brief MRollingFileSink 实现 —— JSON Lines 落盘 + 按体积轮转 + 归档裁剪。
+ */
 #include "Common/Runtime/Log/RollingFileSink.h"
 #include "Common/Runtime/Json.h"
 #include "Common/Runtime/Log/LogMetrics.h"
@@ -14,20 +18,27 @@
 #include <ctime>
 
 namespace {
-    // Resolve category name from a compact Id with safe fallback.
+    /**
+     * @brief 由紧凑的 CategoryId 反查分类名,越界时安全回退。
+     */
     const char* ResolveCategoryName(uint16 CategoryId) {
         const SLogCategory* Cat = MLogRegistry::Get().GetById(CategoryId);
         return (Cat && Cat->Name) ? Cat->Name : "?";
     }
 
-    // Resolve a string-table id with safe fallback to "".
+    /**
+     * @brief 字符串表 id 反查,无效时回退为空串。
+     */
     const char* ResolveInterned(uint32 Id) {
         const char* Str = MLogStringTable::Get(Id);
         return (Str && Str[0]) ? Str : "";
     }
 
-    // Format the steady_clock nanoseconds as an ISO-8601 UTC string with
-    // millisecond resolution. Same wall-clock note as ConsoleSink.
+    /**
+     * @brief 把 steady_clock 纳秒格式化为 ISO-8601 UTC,毫秒精度。
+     *
+     * 墙钟换算的说明同 ConsoleSink。
+     */
     void FormatIsoTimestamp(uint64 TimestampNs, char* Buffer, size_t BufferSize) {
         using namespace std::chrono;
         const auto        Sec    = duration_cast<seconds>(nanoseconds(TimestampNs));
@@ -40,9 +51,8 @@ namespace {
         gmtime_r(&TimeT, &Tm);
 #endif
         const int Millis = static_cast<int>(FracNs / 1'000'000);
-        // 64-byte scratch carries the formatted string; copy into Buffer
-        // with memcpy so the call-site size analysis only sees a single
-        // bounded copy.
+        // 64 字节 scratch 承载格式化结果,用 memcpy 拷进 Buffer —— 调用点的
+        // 长度分析只需看到一个上界明确的拷贝。
         const MString FmtBuf = MFormat::Format("{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}.{:03d}Z", Tm.tm_year + 1900, Tm.tm_mon + 1, Tm.tm_mday, Tm.tm_hour, Tm.tm_min, Tm.tm_sec, Millis);
         const size_t  Len    = FmtBuf.size();
         if (BufferSize > 0) {
@@ -52,8 +62,11 @@ namespace {
         }
     }
 
-    // Return the on-disk size of `Path`, or 0 on error. Cheaper than stat()
-    // for the typical case because we don't need most of struct stat.
+    /**
+     * @brief 返回 Path 在磁盘上的字节数;出错返回 0。
+     *
+     * 只取大小、不依赖 struct stat 的其余字段。
+     */
     size_t FileSizeOrZero(const MString& Path) {
         struct stat St{};
         if (::stat(Path.c_str(), &St) != 0)
@@ -115,9 +128,12 @@ void MRollingFileSink::RotateLocked() {
     Stream = nullptr;
     Fd     = -1;
 
-    // Find the lowest free numeric suffix starting at 1. We do not
-    // re-number existing archives — that would race with concurrent
-    // readers and is unnecessary for the spec's "keep N archives" policy.
+    /**
+     * @brief 找出从 1 开始的最小空闲数字后缀。
+     *
+     * 不重编号已有归档:那会与并发读者竞争,而且规范的「保留 N 份归档」
+     * 策略并不需要重编号。
+     */
     int FreeSuffix = 1;
     while (FreeSuffix <= static_cast<int>(NumArchives) + 8) {
         const MString Candidate = MFormat::Format("{}.{}", FilePath, FreeSuffix);
@@ -128,29 +144,27 @@ void MRollingFileSink::RotateLocked() {
     }
 
     const MString ArchivePath = MFormat::Format("{}.{}", FilePath, FreeSuffix);
-    // rename the live log to the archive slot; if a stale file lives there,
-    // overwrite it (rename(2) atomically replaces on POSIX).
+    // 把活跃日志重命名到归档槽位;若该槽已存在陈旧文件就直接覆盖
+    // (POSIX 的 rename(2) 是原子替换)。
     if (::rename(FilePath.c_str(), ArchivePath.c_str()) != 0) {
-        // Rename failed — give up rotation and reopen a fresh live file
-        // so subsequent writes still go somewhere.
+        // 重命名失败 —— 放弃本次轮转,重新打开一个全新的活跃文件,保证后续
+        // 写入仍有去处。
         OpenLocked();
         return;
     }
 
-    // Trim archives beyond NumArchives. After the live→archive rename above,
-    // the freshly written archive occupies FreeSuffix and any pre-existing
-    // archive at that slot has been overwritten by rename(2). We only need
-    // to delete *pre-existing* archives that no longer fit under the
-    // NumArchives budget, i.e. those with a suffix older than the new
-    // archive's slot minus (NumArchives - 1).
+    // 裁掉超出 NumArchives 的归档。上面的「活跃 → 归档」重命名之后,新写的
+    // 归档就占在 FreeSuffix 上,而原先占该槽的归档已被 rename(2) 覆盖。因此
+    // 只需删除那些因超出 NumArchives 预算而不再保留的**既有**归档,即后缀比
+    // 新归档槽位再减去 (NumArchives - 1) 更旧的那些。
     //
-    // Concretely: if NumArchives == 5 and we just rotated into slot N,
-    // valid archives are N, N-1, N-2, N-3, N-4. Anything below N-4 is dropped.
+    // 具体地:NumArchives == 5、刚轮转到槽 N 时,有效归档是 N, N-1, N-2,
+    // N-3, N-4;低于 N-4 的一律丢弃。
     if (NumArchives > 0) {
         const int OldestKept = FreeSuffix - static_cast<int>(NumArchives) + 1;
-        // Walk upward from OldestKept (skipping the freshly written archive
-        // at FreeSuffix and any kept newer slots) deleting anything older.
-        // Range cap matches the scan above so we can't spin forever.
+        // 从 OldestKept 向上走(跳过 FreeSuffix 上刚写好的归档,以及仍然
+        // 保留的较新槽位),把更旧的逐个删除。范围上限与上面的扫描一致,
+        // 避免死循环。
         const int MaxScan = FreeSuffix + 64;
         for (int N = 0; N < OldestKept && N < MaxScan; ++N) {
             const MString Old = MFormat::Format("{}.{}", FilePath, N);
@@ -189,9 +203,9 @@ void MRollingFileSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<ch
         const char* FileStr = ResolveInterned(R.FileStringId);
         const char* FuncStr = ResolveInterned(R.FuncStringId);
 
-        // Message: pull the inline bytes (the Overflow path is for the
-        // dispatcher's caller; the test path is always Inline because
-        // SLogRecord::Flags bit0 is cleared on small payloads).
+        // 消息正文:取内嵌字节。(Overflow 分支是给 dispatcher 调用方用的;
+        // 测试路径永远是 Inline,因为小载荷上 SLogRecord::Flags 的 bit0
+        // 是清掉的。)
         char         Message[128];
         size_t       MsgLen    = 0;
         const size_t MaxInline = sizeof(R.Payload.Inline.Data);
@@ -203,10 +217,9 @@ void MRollingFileSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<ch
         std::memcpy(Message, R.Payload.Inline.Data, MsgLen);
         Message[MsgLen] = '\0';
 
-        // Build the JSON object via MJsonWriter. It handles all string
-        // escaping for us so the message text can contain quotes / newlines
-        // safely. Object() already opens the scope; we close it with
-        // EndObject() before reading ToString().
+        // 用 MJsonWriter 构造 JSON 对象 —— 字符串转义由它统一处理,消息正文
+        // 里出现引号/换行也安全。Object() 已开作用域,读 ToString() 前要用
+        // EndObject() 收掉。
         MJsonWriter W = MJsonWriter::Object();
         W.Key("ts");
         W.Value(MString(Timestamp));
@@ -229,19 +242,18 @@ void MRollingFileSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<ch
         W.EndObject();
         const MString& Line = W.ToString();
 
-        // Append "\n" so the result is a proper JSON Line.
+        // 追加 "\n",组成规范的 JSON Line。
         char*         Cursor       = BufBegin;
         const MString HeaderStr    = MFormat::Format("{}\n", Line);
         const size_t  BytesToWrite = HeaderStr.size();
         if (BytesToWrite == 0 || Cursor + BytesToWrite >= BufEnd) {
-            // Truncated — skip the record rather than write a partial line.
+            // 被截断:宁可跳过这条记录,也不写出半行 JSON。
             continue;
         }
         std::memcpy(Cursor, HeaderStr.data(), BytesToWrite);
 
-        // Rotation: if writing this record would push us past the size
-        // threshold, rotate first. The threshold check is on the live
-        // file's current size (CurrentBytes).
+        // 轮转:若写入本条会越过体积阈值,则先轮转。阈值以活跃文件的当前
+        // 大小(CurrentBytes)为基准。
         if (RotatedFileBytes > 0 && CurrentBytes > 0 && CurrentBytes + BytesToWrite > RotatedFileBytes) {
             RotateLocked();
         }
@@ -251,9 +263,8 @@ void MRollingFileSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<ch
             CurrentBytes += Written;
             MLogMetrics::AddWrittenBytesFile(Written);
         } else {
-            // fwrite short write: count as disk-full so the operator sees
-            // the drop in metrics. We do not retry — spec §7 says the sink
-            // should count and stop.
+            // fwrite 短写:按磁盘写满处理,让运维能从指标里看到这次丢日志。
+            // 不重试 —— 规范 §7 要求 sink 计数后停下。
             MLogMetrics::IncDroppedOverflow();
             break;
         }
@@ -277,10 +288,13 @@ void MRollingFileSink::MaybeFsyncLocked() {
     if ((FlushCount % FlushesPerFsync) != 0) {
         return;
     }
-    // fdatasync is the right primitive for log durability: it persists
-    // file data without forcing metadata updates that fsync would. On
-    // platforms without fdatasync (e.g. macOS) the conditional compilation
-    // falls back to fsync, which is safe if a touch slower.
+    /**
+     * @brief 把文件数据刷到磁盘。
+     *
+     * fdatasync 才是日志持久化的正确原语:它落盘数据,不强制 fsync 会带来的
+     * 元数据更新。没有 fdatasync 的平台(如 macOS)由条件编译回退到 fsync,
+     * 稍慢但安全。
+     */
 #if defined(__APPLE__)
     ::fsync(Fd);
 #else

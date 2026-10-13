@@ -1,3 +1,11 @@
+/**
+ * @file LogContext.cpp
+ * @brief MLogContext 实现 —— 线程局部 key-value 上下文与进程级快照池。
+ *
+ * 快照池是固定数量的环形槽位(kMaxSnapshots),CaptureSnapshot() 每次覆写
+ * 最早的那一个。因此 SnapshotId 只在「记录入队 → sink 写出」这段窗口内
+ * 有效,长期持有会读到被后来者覆盖的内容。
+ */
 #include "Common/Runtime/Log/LogContext.h"
 #include <thread>
 

@@ -1,3 +1,7 @@
+/**
+ * @file TestLogPerf.cpp
+ * @brief 日志管线性能与背压测试(入队 p99、吞吐、溢出丢弃计数)。
+ */
 #include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Log/LogCategories.h"
 #include "Common/Runtime/Log/LogMetrics.h"
@@ -19,12 +23,11 @@ namespace {
         return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
     }
 
-    // Build a small synthetic SLogRecord and write it through the
-    // MLog::Write path. We use a short pre-registered category and
-    // measure only the synchronous enqueue side (the spec's p99 < 1µs
-    // target is for enqueue, not the full pipeline).
+    // 构造一个小的合成 SLogRecord,走 MLog::Write 路径写入。用短消息 +
+    // 预注册的分类,只测同步入队侧(规范的 p99 < 1µs 目标针对入队,
+    // 而非整条流水线)。
     SLogCategory* PerfCat() {
-        // Find the perf category registered for these tests, or register one.
+        // 找出这些用例注册的性能分类;没有就注册一个。
         const SLogCategory* C = MLogRegistry::Get().FindByName(MString("PerfTestCat"));
         if (C == nullptr) {
             return MLogRegistry::Get().RegisterCategory("PerfTestCat", ELogLevel::Info);
@@ -42,7 +45,7 @@ TEST_CASE(LogPerf_EnqueueP99UnderOneUs) {
     P.RingCapacity       = 1u << 16; // 64K records
     MLog::Init(P);
 
-    // Warmup: a few records to JIT the path and warm the cache.
+    // 预热:先写几条记录,让路径跑热、缓存热起来。
     for (int i = 0; i < 1000; ++i) {
         MLog::Write(Cat, ELogLevel::Info, "warmup %d", i);
     }
@@ -57,7 +60,7 @@ TEST_CASE(LogPerf_EnqueueP99UnderOneUs) {
         Samples.push_back(T1 - T0);
     }
 
-    // p99 = the 99th percentile sample.
+    // p99 = 第 99 百分位样本。
     TVector<long long> Sorted = Samples;
     std::sort(Sorted.begin(), Sorted.end());
     const long long P50  = Sorted[N / 2];
@@ -65,9 +68,8 @@ TEST_CASE(LogPerf_EnqueueP99UnderOneUs) {
     const long long Pmax = Sorted.back();
     std::printf("  enqueue latency: p50=%lld ns  p99=%lld ns  max=%lld ns\n", P50, P99, Pmax);
 
-    // Spec target: p99 < 1µs. We allow some slack in debug builds and on
-    // busy CI hosts; assert 5µs (5x the target) so this stays a stable
-    // signal even under contention.
+    // 规范目标:p99 < 1µs。Debug 构建与繁忙 CI 主机上留些余量,因此断言
+    // 5µs(目标的 5 倍),让这个信号在有竞争时依然稳定。
     EXPECT_TRUE(P99 < 5000);
 
     MLog::Shutdown();
@@ -110,12 +112,12 @@ TEST_CASE(LogPerf_ConcurrentThroughputMeetsOneMillion) {
     const double Throughput = static_cast<double>(TotalProduced.load()) / Seconds;
     std::printf("  8-thread enqueue throughput: %.0f rec/s (%.2f s, %d records)\n", Throughput, Seconds, TotalProduced.load());
 
-    // Drain — give writers a moment to settle.
+    // 排空:给写线程一点时间安顿下来。
     MLog::Flush();
     MLog::Shutdown();
 
-    // Spec target: 1M rec/s. We assert 200K (5x relaxed) to keep the
-    // signal stable in containers / debug builds.
+    // 规范目标:1M 条/秒。这里断言 200K(放宽 5 倍),以便在容器 / Debug
+    // 构建下信号依然稳定。
     EXPECT_TRUE(Throughput > 200000.0);
 }
 
@@ -130,11 +132,9 @@ TEST_CASE(LogPerf_BackpressureDropsProtectErrorLevel) {
 
     SLogMetricsSnapshot Before = MLogMetrics::Snapshot();
 
-    // We spin the dispatcher drain concurrently by sleeping between bursts
-    // so the ring buffer can fill up — single-threaded producers drain
-    // fast enough on their own that the 4K queue rarely overflows. The
-    // point of the test is to exercise the drop counter when the queue
-    // does saturate.
+    // 在突发之间插入睡眠,与 dispatcher 的排空并发竞争,让环形队列有机
+    // 会被填满 —— 单线程生产者自己排空得太快,4K 队列很少溢出。本用例的
+    // 目的就是在队列真的饱和时,验证丢包计数确实被激发。
     std::atomic<bool> bStop{false};
     std::thread       Saturator([&]() {
         while (!bStop.load(std::memory_order_acquire)) {
@@ -162,11 +162,10 @@ TEST_CASE(LogPerf_BackpressureDropsProtectErrorLevel) {
     const uint64        DeltaDroppedOverflow = After.DroppedOverflow - Before.DroppedOverflow;
     std::printf("  backpressure: error-records-written=%d  DroppedOverflow delta=%llu\n", EnqueuedHigh, static_cast<unsigned long long>(DeltaDroppedOverflow));
 
-    // The Error-level path through MLog::Write must NOT be silently
-    // dropped: the high-priority counter increments regardless of queue
-    // pressure, and the system metric reports the eviction. We accept
-    // either "drain was fast enough to absorb everything" or
-    // "overflow was correctly counted", but never both counters at zero.
+    // 走 MLog::Write 的 Error 级路径绝不能被静默丢弃:高优先级计数无论
+    // 队列是否拥塞都会自增,并由系统指标报出这次驱逐。这里接受「排空足够
+    // 快、全部吸收」或「溢出被正确计数」两种结果,但不允许两个计数器同时
+    // 为 0。
     EXPECT_EQ(EnqueuedHigh, 1000);
     EXPECT_TRUE(DeltaDroppedOverflow >= 0); // monotonic; overflow is acceptable
 

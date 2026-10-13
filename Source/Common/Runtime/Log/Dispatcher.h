@@ -1,14 +1,3 @@
-#pragma once
-#include "Common/Runtime/Log/LogRecord.h"
-#include "Common/Runtime/Log/MpscRingBuffer.h"
-#include "Common/Runtime/MLib.h"
-
-#include <atomic>
-#include <thread>
-#include <vector>
-
-class MLogSinkWriter;
-
 /**
  * @file Dispatcher.h
  * @brief MLogDispatcher —— 单消费者分发线程(规范 §5.6),位于共享
@@ -21,6 +10,18 @@ class MLogSinkWriter;
  * 读时分区使入队只需一次原子 slot 抢占;代价——把记录拷进各 sink 的
  * 暂存区——只由这一个线程承担,不会给热路径增加竞争。
  */
+#pragma once
+#include "Common/Runtime/Log/LogRecord.h"
+#include "Common/Runtime/Log/MpscRingBuffer.h"
+#include "Common/Runtime/MLib.h"
+
+#include <atomic>
+#include <thread>
+#include <vector>
+
+class MLogSinkWriter;
+
+
 class MLogDispatcher {
     public:
     MLogDispatcher() = default;

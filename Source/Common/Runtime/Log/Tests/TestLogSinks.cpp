@@ -1,3 +1,7 @@
+/**
+ * @file TestLogSinks.cpp
+ * @brief ILogSink 各实现(sink 契约、JSON Lines 落盘、TSpan 接口)测试。
+ */
 #include "Common/Runtime/Json.h"
 #include "Common/Runtime/Log/ConsoleSink.h"
 #include "Common/Runtime/Log/LogRecord.h"
@@ -14,10 +18,9 @@
 #include <string>
 
 namespace {
-    // Minimal record construction. The payload carries an inlined (≤16B)
-    // message; FileStringId / FuncStringId / CategoryId may all be 0 because
-    // the sinks we test fall back to "" for unresolved intern ids and the
-    // Inline branch stores the message inline in the record itself.
+    // 最小的记录构造。载荷内嵌(短消息)消息;FileStringId / FuncStringId /
+    // CategoryId 都可以为 0,因为此处被测的 sink 对未驻留的 id 会回退成
+    // 空串,而 Inline 分支把消息直接存在记录里。
     SLogRecord MakeRecord(ELogLevel Level, const char* Message, size_t Len) {
         SLogRecord R{};
         R.TimestampNs       = 1234567890ull;
@@ -46,16 +49,14 @@ TEST_CASE(LogSinks_ConsoleWriteBatchToStdout) {
     MLogStringTable::Init();
     MLogRegistry::Get().RegisterCategory("TestSinksConsole", ELogLevel::Trace);
 
-    // Create the new-pipeline ConsoleSink (declared in ConsoleSink.h).
-    // We don't capture stdout here; the goal is to verify that Open/WriteBatch/
-    // Close/Flow-Name plumbing works end-to-end without crashing, since the
-    // existing MConsoleSink (the legacy logger sink) is exercised separately
-    // by the production logger path. The two coexist because the new
-    // ILogSink interface keeps a legacy `Write(ELogLevel, MString&)` virtual
-    // for compatibility with MLogger while defining the new batched contract.
-    // We exercise only the new contract here.
+    // 建立新管线的 ConsoleSink(ConsoleSink.h 中声明)。这里不抓 stdout:
+    // 目标是验证 Open/WriteBatch/Close/Name 这套管线端到端不崩。既有的
+    // MConsoleSink(旧 logger 的 sink)由生产日志路径单独覆盖;两者并存,
+    // 是因为新 ILogSink 接口为兼容 MLogger 保留了旧的
+    // Write(ELogLevel, MString&) 虚函数,同时定义了新的批量契约。
+    // 本用例只走新契约。
 
-    // Verify the public compile-time interface is shaped correctly.
+    // 验证公开的编译期接口形态正确。
     MConsoleSink Sink;
     EXPECT_EQ(Sink.Name(), "console");
     EXPECT_TRUE(Sink.Open());
@@ -103,7 +104,7 @@ TEST_CASE(LogSinks_RollingFileWritesJsonLines) {
     Sink.Flush();
     Sink.Close();
 
-    // Read back, count non-empty lines, validate each is parseable JSON.
+    // 读回内容:统计非空行,并逐行校验可解析为 JSON。
     std::ifstream In(kPath);
     EXPECT_TRUE(In.is_open());
     int         Lines = 0;
@@ -127,11 +128,10 @@ TEST_CASE(LogSinks_RollingFileWritesJsonLines) {
 }
 
 TEST_CASE(LogSinks_MSpanSmokeTest) {
-    // Guards the cpp17 MSpan<T> surface used by TSpan / TSpanMutable against
-    // drift: ctor, data(), size(), empty(), range-for. If any of these break,
-    // every Log TU that constructs a TSpan/TSpanMutable will fail to compile
-    // long before this test runs — but having the explicit assertions makes
-    // the intent obvious and catches subtler regressions.
+    // 守护 TSpan / TSpanMutable 所依赖的 cpp17 MSpan<T> 接口不被改歪:
+    // 构造、data()、size()、empty()、range-for。任何一项失效,所有构造
+    // TSpan/TSpanMutable 的 Log TU 都会先编译失败 —— 但显式断言能让意图
+    // 一目了然,也能抓住更隐蔽的回归。
 
     int              Ints[] = {10, 20, 30, 40};
     TSpan<const int> View(Ints, 4);

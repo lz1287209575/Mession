@@ -1,14 +1,3 @@
-#pragma once
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/Log/LogRecord.h"
-#include "Common/Runtime/Log/LogSinks.h"
-#include "Common/Runtime/MLib.h"
-
-#include <atomic>
-#include <condition_variable>
-#include <mutex>
-#include <thread>
-
 /**
  * @file SinkWriter.h
  * @brief MLogSinkWriter —— 每个 ILogSink 一个写线程(规范 §5.7)。
@@ -25,6 +14,18 @@
  * 生命周期:Start() 起线程;Stop() 置 bRunning=false、唤醒 cv 并 join。
  * Stop() 返回后收件箱已空,该写线程不会再发生任何 Sink->* 调用。
  */
+#pragma once
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/Log/LogRecord.h"
+#include "Common/Runtime/Log/LogSinks.h"
+#include "Common/Runtime/MLib.h"
+
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
+
 class MLogSinkWriter {
     public:
     struct SSinkBatch {

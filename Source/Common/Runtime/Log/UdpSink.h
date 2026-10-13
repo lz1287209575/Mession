@@ -1,13 +1,3 @@
-#pragma once
-
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/Log/LogRecord.h"
-#include "Common/Runtime/Log/LogSinks.h"
-#include "Common/Runtime/MLib.h"
-
-#include <atomic>
-#include <mutex>
-
 /**
  * @file UdpSink.h
  * @brief MUdpSink —— 新管线(规范 §5.8)UDP sink,以 JSON Lines 序列化
@@ -23,6 +13,17 @@
  *
  * Flush() 是空操作:UDP 没有 flush 语义,逐条 sendto() 已立即推给内核。
  */
+#pragma once
+
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/Log/LogRecord.h"
+#include "Common/Runtime/Log/LogSinks.h"
+#include "Common/Runtime/MLib.h"
+
+#include <atomic>
+#include <mutex>
+
+
 class MUdpSink : public ILogSink {
     public:
     MUdpSink();

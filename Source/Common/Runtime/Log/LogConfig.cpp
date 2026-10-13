@@ -1,10 +1,16 @@
+/**
+ * @file LogConfig.cpp
+ * @brief 日志配置解析 —— 把 JSON 文本读成 SLogConfig(级别、路由、各 sink 开关)。
+ *
+ * 只实现 LogConfig schema 需要的那部分 JSON,不追求通用 JSON 兼容。
+ */
 #include "Common/Runtime/Log/LogConfig.h"
 #include "Common/Runtime/Json.h"
 
 #include <fstream>
 
 namespace {
-    // Light-weight JSON tokenizer sufficient for the LogConfig schema.
+    // 轻量 JSON 词法分析器 —— 只覆盖 LogConfig 的 schema,够用即可。
     struct SLex {
         const char* P;
         size_t      Len;
@@ -25,10 +31,9 @@ namespace {
         return false;
     }
 
-    // Accept either a quoted string ("...") or a bare token (true/false/numbers).
-    // The schema only uses these forms; both compare equal against strings on the
-    // call sites, so accepting both avoids forcing every caller to wrap values
-    // in quotes.
+    // 值既接受带引号字符串("..."),也接受裸 token(true/false/数字)。
+    // schema 只用到这两种形式,且在调用点它们与字符串比较都相等,
+    // 因此都接受,免去调用方给所有值加引号。
     bool ReadString(SLex& L, MString& Out) {
         SkipWs(L);
         if (!L.P || !*L.P)
@@ -247,7 +252,7 @@ bool MLogApplyConfigFile(const MString& Path, SLogInitParams& InOutParams, TVect
                     break;
             }
         } else {
-            // Skip unknown value: string only.
+            // 遇到不认识的值:按字符串跳过即可。
             MString V;
             if (!ReadString(L, V))
                 return false;

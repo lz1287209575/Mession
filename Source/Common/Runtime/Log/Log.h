@@ -1,18 +1,3 @@
-#pragma once
-#include "Common/Runtime/Log/LogCategories.h"
-#include "Common/Runtime/Log/LogCategory.h"
-#include "Common/Runtime/Log/LogConfig.h"
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/Log/LogRecord.h"
-#include "Common/Runtime/Log/LogSinks.h"
-#include "Common/Runtime/Log/MpscRingBuffer.h"
-#include "Common/Runtime/MLib.h"
-
-#include <cstdarg>
-
-class MLogSinkWriter;
-class MLogDispatcher;
-
 /**
  * @file Log.h
  * @brief MLog 门面(facade)API —— 日志系统的统一入口(规范 §5.9)。
@@ -29,6 +14,22 @@ class MLogDispatcher;
  * 调用 MCoredumpSink 落盘,然后抛 SIGABRT。这是唯一一条在调用方
  * 线程同步执行事情的路径。
  */
+#pragma once
+#include "Common/Runtime/Log/LogCategories.h"
+#include "Common/Runtime/Log/LogCategory.h"
+#include "Common/Runtime/Log/LogConfig.h"
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/Log/LogRecord.h"
+#include "Common/Runtime/Log/LogSinks.h"
+#include "Common/Runtime/Log/MpscRingBuffer.h"
+#include "Common/Runtime/MLib.h"
+
+#include <cstdarg>
+
+class MLogSinkWriter;
+class MLogDispatcher;
+
+
 namespace MLog {
     // Startup. Wires up sinks, registry, dispatcher, writers. Idempotent:
     // a second call is a no-op.

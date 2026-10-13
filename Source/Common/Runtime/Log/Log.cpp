@@ -1,3 +1,12 @@
+/**
+ * @file Log.cpp
+ * @brief MLog 门面实现 —— 进程单例的装配/拆卸,写入热路径,以及 FATAL 现场捕获。
+ *
+ * 全局状态均为进程单例:MPSC 环形队列 + 一个 dispatcher + 每个 sink
+ * 一个写线程。Init() 按参数装配 sink 并启动线程,Shutdown() 逆序拆卸。
+ * 热路径 WriteV() 只做「过滤 → 路由 → 组记录 → TryEnqueue」,入队失败
+ * 记 DroppedOverflow,绝不阻塞业务线程。
+ */
 #include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/Log/ConsoleSink.h"
 #include "Common/Runtime/Log/CoredumpSink.h"
@@ -21,9 +30,9 @@
 #include <thread>
 
 namespace {
-    // Adapter so MLogSinkWriter can talk to a (possibly unconfigured)
-    // MUdpSink through a uniform ILogSink pointer. Implementation lives
-    // here, after the include of UdpSink.h, so the type is complete.
+    // MUdpSink 适配器:让 MLogSinkWriter 能通过统一的 ILogSink* 操作一个
+    // (可能未配置的)MUdpSink。实现放在这里(UdpSink.h 之后)是因为此时
+    // MUdpSink 才是完整类型。
     class MUdpSinkHolder : public ILogSink {
         public:
         TUniquePtr<MUdpSink> Sink;
@@ -50,13 +59,13 @@ namespace {
         }
     };
 
-    // ---- Global state (process-singleton) ----
+    // ---- 全局状态(进程单例) ----
     std::atomic<bool>            GInitialized{false};
     TMpscRingBuffer<SLogRecord>* GRing       = nullptr;
     MLogDispatcher*              GDispatcher = nullptr;
     TVector<MLogSinkWriter*>     GWriters;
-    // The sinks themselves. We own these (unique_ptr) so that Shutdown()
-    // can tear them down in order: writer -> sink close -> delete.
+    // sink 本体。用 unique_ptr 持有,以便 Shutdown() 按序拆卸:
+    // 先停写线程 → 再 Close sink → 最后释放。
     TUniquePtr<MConsoleSink>     GConsole;
     TUniquePtr<MRollingFileSink> GFile;
     TUniquePtr<MUdpSinkHolder>   GUdpHolder;
@@ -64,8 +73,8 @@ namespace {
 
     constexpr size_t kMaxInlineMessage = sizeof(SLogRecord::Payload.Inline.Data);
 
-    // Format a printf-style message into Out. Returns bytes written
-    // (excluding trailing NUL) or 0 if the result overflowed.
+    // 把 printf 风格消息格式化进 Out。返回写入字节数(不含结尾 NUL);
+    // 结果被截断时返回 OutSize-1(N 为负时返回 0)。
     size_t FormatInline(const char* Fmt, va_list Args, char* Out, size_t OutSize) {
         // va_list 路径:fmt 在 C++17 下无直接 va_list → format_args 的官方 API。
         // fmt::make_format_args 需要编译期参数类型,vsnprintf 是此路径上
@@ -96,8 +105,8 @@ namespace MLog {
         GDispatcher = new MLogDispatcher();
         GDispatcher->SetBatchSize(1024);
 
-        // Resolve routing mask: start with all sinks enabled. The Router
-        // then narrows it per-category in ResolveSinkMask.
+        // 解析路由掩码:先默认打开全部 sink,再由 Router 在
+        // ResolveSinkMask 里按分类收窄。
         uint32 Mask = 0;
 
         if (Params.bEnableConsole) {
@@ -131,8 +140,8 @@ namespace MLog {
             }
         }
 
-        // Build one writer per enabled sink. Order matters: the dispatcher
-        // partitions records by bit position matching the sink index.
+        // 每个启用的 sink 建一个写线程。顺序很重要:dispatcher 按位位置把
+        // 记录分进各分区,位位置必须与 sink 下标一致。
         auto AddWriter = [&](ILogSink* SinkPtr) {
             if (SinkPtr == nullptr)
                 return;
@@ -149,9 +158,8 @@ namespace MLog {
         GDispatcher->Configure(GRing, &GWriters);
         GDispatcher->Start();
 
-        // Suppress unused-Mask warning: we keep the variable for future
-        // per-category default masks. Default routing already gives every
-        // category the full mask via the Router's all-sinks default.
+        // 抑制 unused-Mask 告警:当前 Router 的默认规则已把所有 sink 打开,
+        // 这个局部掩码尚未被消费,保留给后续「按分类设默认掩码」使用。
         (void)Mask;
     }
 
@@ -247,7 +255,7 @@ namespace MLog {
         if (Category == nullptr)
             return;
 
-        // Build the triggering record inline.
+        // 就地构造触发记录:绕过环形队列,直接交给 coredump 路径。
         SLogRecord Trigger{};
         Trigger.TimestampNs = static_cast<uint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
         Trigger.CategoryId  = Category->Id;
@@ -261,17 +269,15 @@ namespace MLog {
             Trigger.Payload.Inline.Data[std::min(Len, kMaxInlineMessage - 1)] = '\0';
         }
 
-        // Drain the ring buffer first so the dump captures everything in
-        // flight. Walk up to RecentRecords by repeatedly dequeueing.
+        // 先排空环形队列,让 dump 覆盖到仍在途中的记录。按 RecentRecords
+        // 的上限反复出队。
         TVector<SLogRecord> Tail;
         if (GRing) {
             SLogRecord Buf[256];
-            // Single pass — we cannot time-walk the queue. Spec says "scan
-            // the RingBuffer's tail"; our MpscRingBuffer exposes only the
-            // live head, so we take what is currently enqueued and rely on
-            // the writer thread to have drained the rest before this
-            // synchronous path runs. For PoC purposes a single
-            // DequeueBatch pass is sufficient.
+            // NOTE: 单趟取一批 —— 队列无法按时间回溯。规范要求「扫描
+            // RingBuffer 尾部」,但我们的 MpscRingBuffer 只暴露存活头部;
+            // 因此这里只取当前已入队的部分,其余依赖写线程在这条同步路径
+            // 之前已排空。PoC 阶段单趟 DequeueBatch 足够。
             const size_t N = GRing->DequeueBatch(Buf, 256);
             for (size_t i = 0; i < N; ++i)
                 Tail.push_back(Buf[i]);
@@ -281,8 +287,7 @@ namespace MLog {
         Cfg.DumpDir        = "Logs/coredump";
         Cfg.RecentRecords  = 1000;
         Cfg.bForceCoreDump = true;
-        // Force a final flush of the in-process writers so file/console
-        // mirrors exist before the coredump file is written.
+        // 强制刷新在途写线程,保证 file/console 镜像先于 coredump 文件落盘。
         for (MLogSinkWriter* W : GWriters) {
             if (W)
                 W->FlushSync();

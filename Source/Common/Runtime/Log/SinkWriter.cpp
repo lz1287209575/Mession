@@ -1,3 +1,7 @@
+/**
+ * @file SinkWriter.cpp
+ * @brief MLogSinkWriter 实现 —— 单 sink 的写线程、有界收件箱与刷新策略。
+ */
 #include "Common/Runtime/Log/SinkWriter.h"
 
 #include <chrono>
@@ -31,8 +35,8 @@ void MLogSinkWriter::EnqueueBatch(TSpan<const SLogRecord> Batch) {
 
     {
         std::unique_lock<std::mutex> Lock(InboxMutex);
-        // Bounded backpressure: spin/yield until the inbox drains below
-        // the cap. Bounded by kMaxBatches so a stuck sink can't OOM us.
+        // 有界背压:等到收件箱降到上限以下为止。上限就是 kMaxBatches
+        // (16 批),所以即使 sink 卡死也不会把内存吃穿。
         while (Inbox.size() >= kMaxBatches) {
             InboxCv.wait_for(Lock, std::chrono::milliseconds(1));
         }
@@ -53,14 +57,14 @@ void MLogSinkWriter::Stop() {
     InboxCv.notify_all();
     if (Worker.joinable())
         Worker.join();
-    // Drain anything left in the inbox (in case Stop() raced a producer).
+    // 排空收件箱残留:Stop() 可能与生产者并发,漏掉这些批次就是丢日志。
     FlushSync();
 }
 
 void MLogSinkWriter::FlushSync() {
     if (Sink == nullptr)
         return;
-    // Pull & dispatch the inbox without entering Wait on the cv.
+    // 直接取空收件箱,不进入 cv 等待。
     TSharedPtr<SSinkBatch> Batch;
     while (true) {
         {
@@ -71,12 +75,9 @@ void MLogSinkWriter::FlushSync() {
             Inbox.pop();
         }
         if (Batch && !Batch->Records.empty()) {
-            // For FlushSync callers we don't have a provided scratch buffer —
-            // reuse a thread-local. Sinks that need a real call-site buffer
-            // (ConsoleSink / RollingFileSink) allocate one internally as
-            // needed. We pass an empty span to signal "use the sink's
-            // internal buffer" if it supports that mode; otherwise the sink
-            // falls back to a per-call allocation.
+            // FlushSync 的调用点没有可复用的缓冲区,这里给一个 4KB 栈缓冲
+            // 兜底。需要更大缓冲的 sink(ConsoleSink / RollingFileSink)会在
+            // 内部按需自行处理,不依赖这个缓冲的大小。
             char                    StackBuf[4096] = {};
             TSpanMutable<char>      Scratch(StackBuf, sizeof(StackBuf));
             TSpan<const SLogRecord> Recs(Batch->Records.data(), Batch->Records.size());
@@ -93,8 +94,8 @@ void MLogSinkWriter::RunLoop() {
         {
             std::unique_lock<std::mutex> Lock(InboxMutex);
             if (Inbox.empty()) {
-                // Wait up to FlushIntervalMs for new data; on timeout
-                // flush if Interval/IntervalOrSize policy wants it.
+                // 最多等 FlushIntervalMs。超时后如果 Interval/IntervalOrSize
+                // 策略认为该刷了,就走下面的 MaybeFlush(false)。
                 InboxCv.wait_for(Lock, std::chrono::milliseconds(FlushIntervalMs));
                 if (Inbox.empty()) {
                     MaybeFlush(false);
@@ -104,7 +105,8 @@ void MLogSinkWriter::RunLoop() {
             Batch = std::move(Inbox.front());
             Inbox.pop();
         }
-        InboxCv.notify_one(); // Producer backpressure slot freed
+        // 腾出一个收件箱槽位,唤醒可能正在等待的生产者
+        InboxCv.notify_one();
         if (!Batch || Batch->Records.empty())
             continue;
 
@@ -115,7 +117,7 @@ void MLogSinkWriter::RunLoop() {
         BufferedBytes += static_cast<int>(Scratch.size() > 0 ? Scratch.size() : 0);
         MaybeFlush(false);
     }
-    // Drain on exit — pull remaining batches and flush the sink.
+    // 退出前排空:取完剩余批次并刷新 sink。
     FlushSync();
 }
 

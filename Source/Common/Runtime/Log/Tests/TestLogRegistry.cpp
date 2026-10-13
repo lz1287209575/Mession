@@ -1,11 +1,15 @@
+/**
+ * @file TestLogRegistry.cpp
+ * @brief MLogRegistry 分类注册行为测试(幂等、越界、按名查找)。
+ */
 #include "Common/Runtime/Log/LogRegistry.h"
 #include "Common/Runtime/Log/Tests/TestHarness.h"
 #include <cstring>
 
 TEST_CASE(LogRegistry_RegisterAndLookup) {
-    // Register a fresh category and verify we get a stable pointer + assigned Id.
-    // Use a name unlikely to collide with any of the project-level categories
-    // (LogCore/LogNet/LogDb/LogRpc/LogAuth/LogScene) defined by LogCategories.cpp.
+    // 注册一个新分类,验证拿到稳定的指针与分配好的 Id。名字要尽量不与
+    // 项目级分类(LogCategories.cpp 里的 LogCore/LogNet/LogDb/LogRpc/
+    // LogAuth/LogScene)重名。
     SLogCategory* Cat = MLogRegistry::Get().RegisterCategory("Test_Registry_RegisterAndLookup", ELogLevel::Debug);
     EXPECT_TRUE(Cat != nullptr);
     EXPECT_TRUE(Cat->Name != nullptr);
@@ -15,10 +19,10 @@ TEST_CASE(LogRegistry_RegisterAndLookup) {
     EXPECT_EQ(Cat->bSuppressed.load(), false);
     EXPECT_EQ(Cat->DropCount.load(), uint64{0});
 
-    // Same name -> same pointer (idempotent).
+    // 同名 → 同一指针(幂等)。
     SLogCategory* Again = MLogRegistry::Get().RegisterCategory("Test_Registry_RegisterAndLookup", ELogLevel::Error);
     EXPECT_TRUE(Again == Cat);
-    // Idempotent re-registration must NOT mutate the existing entry's DefaultLevel.
+    // 幂等重注册不得改写已有条目的 DefaultLevel。
     EXPECT_EQ((int)Cat->DefaultLevel, (int)ELogLevel::Debug);
 }
 
@@ -29,13 +33,13 @@ TEST_CASE(LogRegistry_GetById) {
     const SLogCategory* Found = MLogRegistry::Get().GetById(Cat->Id);
     EXPECT_TRUE(Found == Cat);
 
-    // An out-of-range Id must return nullptr rather than crash.
+    // 越界 Id 必须返回 nullptr,而不是崩。
     const SLogCategory* Bogus = MLogRegistry::Get().GetById(65535);
     EXPECT_TRUE(Bogus == nullptr);
 }
 
 TEST_CASE(LogRegistry_FindByNameAndCount) {
-    // Snapshot baseline; other tests in this TU may have registered categories.
+    // 先取基线:本 TU 内其他用例可能已经注册过分类。
     const size_t Before = MLogRegistry::Get().NumCategories();
 
     SLogCategory* Cat = MLogRegistry::Get().RegisterCategory("Test_Registry_FindByNameAndCount", ELogLevel::Warn);

@@ -1,3 +1,7 @@
+/**
+ * @file UdpSink.cpp
+ * @brief MUdpSink 实现 —— 把日志按 JSON Lines 经 UDP 发给远端收集器。
+ */
 #include "Common/Runtime/Log/UdpSink.h"
 #include "Common/Runtime/Json.h"
 #include "Common/Runtime/Log/LogMetrics.h"
@@ -15,7 +19,9 @@
 #include <cstring>
 
 namespace {
-    // Pull inline bytes out of an SLogRecord as a NUL-terminated string.
+    /**
+     * @brief 从 SLogRecord 取出内嵌字节,当作以 NUL 结尾的字符串。
+     */
     void CopyMessage(const SLogRecord& R, char* Out, size_t OutSize) {
         const size_t Max = sizeof(R.Payload.Inline.Data);
         size_t       Len = 0;
@@ -39,8 +45,11 @@ namespace {
         return (S && S[0]) ? S : "";
     }
 
-    // Build a JSON Line for the record into Out. Returns the number of bytes
-    // written (excluding the trailing '\n'), or 0 if the buffer was too small.
+    /**
+     * @brief 为一条记录组建 JSON Line 写入 Out。
+     *
+     * @return 写入字节数(不含结尾 '\n');缓冲太小则返回 0。
+     */
     size_t BuildJsonLine(const SLogRecord& R, char* Out, size_t OutSize) {
         char Message[64];
         CopyMessage(R, Message, sizeof(Message));
@@ -78,7 +87,9 @@ namespace {
         return Want;
     }
 
-    // Parse "ip:port" into a sockaddr_in. Returns false on any failure.
+    /**
+     * @brief 把 "ip:port" 解析成 sockaddr_in;任何一步失败都返回 false。
+     */
     bool ResolveTarget(const MString& Target, sockaddr_in& OutAddr) {
         const size_t Colon = Target.rfind(':');
         if (Colon == MString::npos) {
@@ -119,8 +130,8 @@ bool MUdpSink::Open() {
     if (SockFd < 0) {
         return false;
     }
-    // We connect() so we can use send() instead of sendto() — saves the
-    // kernel a route lookup per call.
+    // 先 connect():这样就能用 send() 而不是 sendto(),省掉内核每次调用
+    // 的路由查找。
     if (::connect(SockFd, reinterpret_cast<sockaddr*>(&Addr), sizeof(Addr)) != 0) {
         ::close(SockFd);
         SockFd = -1;
@@ -186,5 +197,5 @@ void MUdpSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<char> OutB
 }
 
 void MUdpSink::Flush() {
-    // UDP has no flush semantics; sendto already pushes to the kernel.
+    // UDP 没有 flush 语义:sendto 已经把数据交给内核。
 }

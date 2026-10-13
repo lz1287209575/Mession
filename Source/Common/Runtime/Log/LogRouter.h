@@ -1,10 +1,3 @@
-#pragma once
-#include "Common/Runtime/Log/LogCategory.h"
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/Log/LogSinks.h" // ELogSinkId + MakeSinkMask live here (Task 5)
-#include "Common/Runtime/MLib.h"
-#include <atomic>
-
 /**
  * @file LogRouter.h
  * @brief MLogRouter —— 分类到 (SinkMask, MinLevel) 的无锁读路由表;
@@ -14,6 +7,13 @@
  * 现已上移到 LogSinks.h(Task 5),让枚举与消费其位值的 ILogSink 接口
  * 相邻。位值 0..4 属稳定 ABI,禁止重排。
  */
+#pragma once
+#include "Common/Runtime/Log/LogCategory.h"
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/Log/LogSinks.h" // ELogSinkId + MakeSinkMask live here (Task 5)
+#include "Common/Runtime/MLib.h"
+#include <atomic>
+
 
 struct SLogRouteRule {
     const SLogCategory* Category = nullptr;

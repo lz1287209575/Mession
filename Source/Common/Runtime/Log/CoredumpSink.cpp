@@ -1,3 +1,10 @@
+/**
+ * @file CoredumpSink.cpp
+ * @brief MCoredumpSink 实现 —— FATAL 时同步落盘现场 dump,并触发 OS core。
+ *
+ * dump 内容包括:触发记录、环形队列尾部、进程与系统上下文;
+ * 最后 raise(SIGABRT),交由 OS 生成 core 文件。
+ */
 #include "Common/Runtime/Log/CoredumpSink.h"
 #include "Common/Runtime/Json.h"
 #include "Common/Runtime/Log/LogRegistry.h"
@@ -69,7 +76,9 @@ namespace {
         return (S && S[0]) ? S : "";
     }
 
-    // Read /proc/self/status safely; returns "" on missing file.
+    /**
+     * @brief 安全读取 /proc/self/status;文件不存在时返回空串。
+     */
     MString ReadFileOrEmpty(const MString& Path, size_t MaxBytes = 64 * 1024) {
         std::ifstream F(Path);
         if (!F.is_open())
@@ -164,11 +173,11 @@ void MCoredumpSink::HandleFatal(const SConfig& Config, const SLogRecord& Trigger
         return;
     }
 
-    // 1) Triggering record (carries the formatted message in the file so the
-    // dump is self-contained even if MLogStringTable is not flushed).
+    // 1) 触发记录:把已格式化的消息一并写进文件,这样即使 MLogStringTable
+    //    未落盘,dump 也自成一体。
     Out << "{\"event\":\"trigger\",\"msg\":\"" << JsonEscape(TriggeringMessage).c_str() << "\",\"record\":" << RenderRecord(TriggeringRecord).c_str() << "}\n";
 
-    // 2) Tail of the ring buffer (recent N records).
+    // 2) 环形队列尾部(最近 N 条记录)。
     Out << "{\"event\":\"tail\",\"records\":[";
     for (size_t i = 0; i < TailRecords.size(); ++i) {
         if (i)
@@ -177,7 +186,7 @@ void MCoredumpSink::HandleFatal(const SConfig& Config, const SLogRecord& Trigger
     }
     Out << "]}\n";
 
-    // 3) Process/system context.
+    // 3) 进程与系统上下文。
     const MString Pid       = MFormat::Format("{}", static_cast<int>(::getpid()));
     MString       Status    = ReadFileOrEmpty("/proc/self/status");
     MString       Maps      = ReadFileOrEmpty("/proc/self/maps");
@@ -200,7 +209,7 @@ void MCoredumpSink::HandleFatal(const SConfig& Config, const SLogRecord& Trigger
     Out.flush();
     Out.close();
 
-    // Fire upload hook asynchronously so the abort below is not blocked.
+    // 异步触发上传钩子,避免下面的 abort 被阻塞。
     if (Config.UploadHook) {
         std::thread([Hook = Config.UploadHook, Path]() {
             try {
@@ -212,8 +221,8 @@ void MCoredumpSink::HandleFatal(const SConfig& Config, const SLogRecord& Trigger
     }
 
     if (Config.bForceCoreDump) {
-        // raise(SIGABRT) — OS writes core file (or terminates the process
-        // according to system policy). Spec §6.1 step 6.
+        // raise(SIGABRT):由 OS 写 core 文件(或按系统策略终止进程)。
+        // 规范 §6.1 第 6 步。
         std::raise(SIGABRT);
     }
 }

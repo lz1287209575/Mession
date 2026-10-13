@@ -1,9 +1,3 @@
-#pragma once
-
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/Log/LogRecord.h"
-#include "Common/Runtime/MLib.h"
-
 /**
  * @file LogSinks.h
  * @brief ILogSink 新管线 sink 契约(规范 §5.8),以及 ELogSinkId 位定义。
@@ -32,6 +26,13 @@
  * MLogger 使用)保持具体类。待 MLogger 自身迁到新管线后移除
  * (规范 §12 第 5 步)。
  */
+#pragma once
+
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/Log/LogRecord.h"
+#include "Common/Runtime/MLib.h"
+
+
 class ILogSink {
     public:
     virtual ~ILogSink() = default;

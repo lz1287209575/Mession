@@ -1,12 +1,13 @@
+/**
+ * @file LogConfig.h
+ * @brief MLog 门面配置结构体与 JSON 配置文件加载(规范 §5.9)。
+ */
 #pragma once
 #include "Common/Runtime/Log/LogLevel.h"
 #include "Common/Runtime/MLib.h"
 #include <cstdarg>
 
-/**
- * @file LogConfig.h
- * @brief MLog 门面配置结构体与 JSON 配置文件加载(规范 §5.9)。
- */
+
 struct SLogInitParams {
     MString   ConfigPath;
     ELogLevel GlobalDefaultLevel = ELogLevel::Info;

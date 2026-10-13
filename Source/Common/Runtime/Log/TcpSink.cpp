@@ -1,3 +1,7 @@
+/**
+ * @file TcpSink.cpp
+ * @brief MTcpSink 实现 —— 把日志按 JSON Lines 经 TCP 推给远端收集器,带重连退避。
+ */
 #include "Common/Runtime/Log/TcpSink.h"
 #include "Common/Runtime/Json.h"
 #include "Common/Runtime/Log/LogMetrics.h"
@@ -42,8 +46,11 @@ namespace {
         return (S && S[0]) ? S : "";
     }
 
-    // Build a single JSON Line into Out. Returns bytes written (excluding
-    // the trailing '\n'), or 0 if Out is too small.
+    /**
+     * @brief 把一条记录组建成单个 JSON Line 写入 Out。
+     *
+     * @return 写入字节数(不含结尾 '\n');Out 容不下时返回 0。
+     */
     size_t BuildJsonLine(const SLogRecord& R, char* Out, size_t OutSize) {
         char Message[64];
         CopyMessage(R, Message, sizeof(Message));
@@ -146,7 +153,7 @@ void MTcpSink::SendLocked(const char* Ptr, size_t Bytes) {
         if (N < 0) {
             if (errno == EINTR)
                 continue;
-            // EPIPE / ECONNRESET / EAGAIN on blocking socket → drop.
+            // 阻塞 socket 上出现 EPIPE / ECONNRESET / EAGAIN:直接丢弃这条。
             MLogMetrics::IncDroppedOverflow();
             CloseLocked();
             return;
@@ -163,7 +170,7 @@ void MTcpSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<char> OutB
     std::lock_guard<std::mutex> Lock(WriteMutex);
 
     if (!bOpen) {
-        // Respect backoff window.
+        // 遵守重连退避窗口。
         if (NowSteadyMs() < NextReconnectAtMs) {
             MLogMetrics::IncDroppedOverflow();
             return;
@@ -192,13 +199,12 @@ void MTcpSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<char> OutB
         const size_t N = BuildJsonLine(R, OutBuffer.data(), OutBuffer.size());
         if (N == 0)
             continue;
-        // Subtract the trailing '\n' when reporting bytes; that char lives
-        // in OutBuffer's user space, not the wire payload, but Metrics
-        // AddWrittenBytesTcp reports what we passed to send(), which
-        // includes it — consistent with File sink's accounting.
+        // 统计字节数时减掉结尾 '\n':它属于 OutBuffer 的用户态空间,不是线上
+        // 载荷;但 MLogMetrics::AddWrittenBytesTcp 报的是传给 send() 的长度
+        // (含它),以与 File sink 的口径一致。
         SendLocked(OutBuffer.data(), N);
         if (SockFd < 0) {
-            // Send failed and we closed; remaining records get dropped.
+            // 发送失败且连接已关闭:剩下的记录只能丢弃。
             MLogMetrics::IncDroppedOverflow();
             return;
         }
@@ -206,5 +212,5 @@ void MTcpSink::WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<char> OutB
 }
 
 void MTcpSink::Flush() {
-    // No userspace buffer — every send is immediate. NOP on purpose.
+    // 没有用户态缓冲 —— 每次 send 都立即发出,故此处故意什么都不做。
 }

@@ -1,12 +1,3 @@
-#pragma once
-#include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/MLib.h"
-
-#include <atomic>
-#include <chrono>
-#include <cstring>
-#include <thread>
-
 /**
  * @file MpscRingBuffer.h
  * @brief TMpscRingBuffer<T> —— 多生产者单消费者(MPSC)无锁环形队列,
@@ -19,6 +10,16 @@
  * 多生产者经 CAS(EnqueuePos) 抢占下一个可写 slot;写入 Storage 后
  * 发布(推进 PublishedHead);消费者只读 PublishedHead 范围内的 slot。
  */
+#pragma once
+#include "Common/Runtime/Log/LogLevel.h"
+#include "Common/Runtime/MLib.h"
+
+#include <atomic>
+#include <chrono>
+#include <cstring>
+#include <thread>
+
+
 template <typename T> class TMpscRingBuffer {
     public:
     explicit TMpscRingBuffer(size_t CapacityPow2) : CapacityMask(CapacityPow2 - 1) {

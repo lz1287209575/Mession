@@ -1,7 +1,3 @@
-#pragma once
-#include "Common/Runtime/MLib.h"
-#include <array>
-
 /**
  * @file LogContext.h
  * @brief MLogContext 线程局部日志上下文(key-value 键值对),
@@ -12,6 +8,10 @@
  * (StringUtils.h),避免与 MStringView 类型别名撞名。本头文件统一
  * 使用 MStringView 类型。
  */
+#pragma once
+#include "Common/Runtime/MLib.h"
+#include <array>
+
 
 class MLogContext {
     public:
