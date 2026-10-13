@@ -38,7 +38,7 @@ namespace mession::script::lua {
      *  10. EndSwap —— 释放旧 VM(触发 lua_close)
      */
     TResult<EReloadResult> MLuaHotReload::ReloadDualVM(MLuaEngine& Engine, const MString& NewBytes) {
-        // 1. Drain
+        // 1. 排空待处理调用
         auto Drain = Engine.DrainPendingCalls(kDrainTimeoutSec);
         if (Drain.IsErr()) {
             LOG_WARN("ReloadDualVM: drain timeout ({}s), falling back to AtomicSwap", kDrainTimeoutSec);
@@ -57,7 +57,7 @@ namespace mession::script::lua {
         // 5. 在 VM_B 上装配 stdlib
         Engine.InstallStandardLibraries(*NewState);
 
-        // 6. LoadBuffer
+        // 6. 加载新字节码到 VM_B
         MString LoadErr = NewState->LoadBuffer("reload", NewBytes.c_str(), NewBytes.size());
         if (!LoadErr.empty()) {
             return TResult<EReloadResult>::Err(MString("ReloadDualVM: load failed: ") + LoadErr);

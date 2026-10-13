@@ -128,7 +128,7 @@ class MActorSystem {
     void NotifyRegistryActorChange();
 
     public:
-    /** @brief Per-actor pending message count threshold (drop policy). */
+    /** @brief 单 Actor 待处理消息数上限(超出即按丢弃策略处理)。 */
     static constexpr uint32_t kMaxPendingPerActor = 1024;
 
     /** @brief Per-actor outbox 容量上限（跨连接 Post 缓冲）。 */

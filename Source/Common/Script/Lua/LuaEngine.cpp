@@ -305,7 +305,7 @@ namespace mession::script::lua {
             return TResult<void>::Ok();
         }
 
-        // Fallback:lua_getglobal(ClassName).<MethodName>(self, args)
+        // 回退路径:lua_getglobal(ClassName).<MethodName>(self, args)
         std::string ClsName    = Fn->OwnerClass ? Fn->OwnerClass->GetName() : "";
         std::string MethodName = Fn->Name;
         if (ClsName.empty() || MethodName.empty()) {

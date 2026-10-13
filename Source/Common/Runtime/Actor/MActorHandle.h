@@ -47,7 +47,7 @@ class MActorHandle {
     /** @brief 同步调用(返回 future,Call 完成后由 actor 自己 SetValue). */
     SFutureResult<TByteArray> Call(FActorMessage InMsg) const;
 
-    /** @return actor id. */
+    /** @return 该 Actor 的 ID。 */
     uint64 GetActorId() const {
         return ActorId;
     }

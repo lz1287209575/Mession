@@ -67,7 +67,7 @@ SFutureResult<int> BranchLoopAsync(int N) {
         }
         return SFutureResult<int>(TResult<int, FAppError>::Ok(Sum));
     }
-    return SFutureResult<int>(TResult<int, FAppError>::Ok(0)); // early
+    return SFutureResult<int>(TResult<int, FAppError>::Ok(0)); // 提前返回路径
 }
 MFUNCTION(Async)
 SFutureResult<int> DeepNestAsync(int N) {

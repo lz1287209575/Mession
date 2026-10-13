@@ -113,7 +113,7 @@ namespace mession::script::lua {
              */
             struct FVecIterState {
                 TVector<MScalarValue>* Vec;
-                int                    Next; // 1-based
+                int                    Next; // 游标,1 起始
             };
         } // namespace
 
@@ -136,12 +136,12 @@ namespace mession::script::lua {
             lua_setmetatable(L, -2); // 栈: [vec, state_ud]
 
             lua_pushcfunction(L, [](lua_State* L) -> int {
-                auto* St2 = static_cast<FVecIterState*>(lua_touserdata(L, 1)); // state
+                auto* St2 = static_cast<FVecIterState*>(lua_touserdata(L, 1)); // 迭代状态
                 if (!St2 || St2->Next > static_cast<int>(St2->Vec->size())) {
                     return 0; // 迭代结束
                 }
-                lua_pushinteger(L, St2->Next);           // key(1-based)
-                (*St2->Vec)[St2->Next - 1].PushToLua(L); // value
+                lua_pushinteger(L, St2->Next);           // key(1 起始)
+                (*St2->Vec)[St2->Next - 1].PushToLua(L); // 元素值
                 St2->Next++;
                 return 2;
             });

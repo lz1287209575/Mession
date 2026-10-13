@@ -20,7 +20,7 @@
 
 TEST_CASE(Await_Single_BranchIfAndEarly) {
     EXPECT_EQ(BranchAsync(5).GetResult().GetValue(), 12); // if 分支 await：(5+1)*2
-    EXPECT_EQ(BranchAsync(-3).GetResult().GetValue(), 0); // early return
+    EXPECT_EQ(BranchAsync(-3).GetResult().GetValue(), 0); // 提前返回
 }
 
 TEST_CASE(Await_ElseBranchAwait) {
@@ -49,12 +49,12 @@ TEST_CASE(Await_DeepNest3Levels) {
     EXPECT_EQ(DeepNestAsync(200).GetResult().GetValue(), 201); // 3 层：200+1
     EXPECT_EQ(DeepNestAsync(50).GetResult().GetValue(), 52);   // 2 层：50+2
     EXPECT_EQ(DeepNestAsync(5).GetResult().GetValue(), 5);     // 1 层 early
-    EXPECT_EQ(DeepNestAsync(-3).GetResult().GetValue(), 0);    // 外层 early
+    EXPECT_EQ(DeepNestAsync(-3).GetResult().GetValue(), 0);    // 外层提前返回
 }
 
 TEST_CASE(Await_BranchLoop) {
     EXPECT_EQ(BranchLoopAsync(3).GetResult().GetValue(), 4);  // 分支内循环累加
-    EXPECT_EQ(BranchLoopAsync(-2).GetResult().GetValue(), 0); // early
+    EXPECT_EQ(BranchLoopAsync(-2).GetResult().GetValue(), 0); // 提前返回(空循环)
 }
 
 TEST_CASE(Await_LoopIf) {
