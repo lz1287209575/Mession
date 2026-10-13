@@ -1,3 +1,21 @@
+/**
+ * @file CodeGenerator.h
+ * @brief MCodeGenerator —— 反射代码生成器的全部 emit 逻辑(纯字符串拼接式 codegen)。
+ *
+ * @detail 两条并行的生成路径:
+ *   - legacy 路径:消费字符串解析器产出的 SParsedClass,生成 `<Class>.mgenerated.h/.cpp`。
+ *   - IR 路径(A2/A3):消费 Clang AST 产出的 SParsedRecord / SParseIR,经
+ *     MCodeGenerator.cpp 里的 ToLegacyClass shim 转成 SParsedClass,复用同一套 emit
+ *     代码,保证两条路径产物字节一致。
+ *
+ *   覆盖的产物:类 / 结构 / 枚举的注册单元、属性与函数注册宏、ServerCall handler、
+ *   MRpc wrapper、客户端参数 binder、Async AWAIT_OK 编译期校验,以及 P3/P4/P5 三代
+ *   await 状态机 Frame(`<Class>_AsyncFrames.h` /
+ *   `<Header>_FreeAsyncFrames.mgenerated.h` / `<Class>_AwaitStateMachine.h`)。
+ *
+ *   本类基本无状态:除构造期注入的 Options_ 与 ReflectedClassKinds 外不持有数据,
+ *   所有生成方法都是 const 并返回 MString,落盘由调用方(MHeaderTool.cpp)负责。
+ */
 #pragma once
 
 #include "AST/IR.h"
@@ -9,9 +27,9 @@
 
 namespace fs = std::filesystem;
 
-// IR types live in mession::headercodegen; the legacy MCodeGenerator class
-// itself stays in MHeaderTool to preserve the existing main()/test linkage.
-// A3 (Task 11-13) will fold them into a single namespace.
+// IR 类型定义在 mession::headercodegen 命名空间;legacy MCodeGenerator 类本身留在
+// MHeaderTool,以保住现有 main()/测试的既有链接关系。
+// A3(Task 11-13)会把两者并进同一个命名空间。
 using mession::headercodegen::EAwaitSiteKind;
 using mession::headercodegen::SAwaitSite;
 using mession::headercodegen::SLiveVarDecl;
@@ -21,72 +39,116 @@ using mession::headercodegen::SParsedRecord;
 
 namespace MHeaderTool {
 
-    // ============================================================================
-    // Code Generator - 生成兼容原始格式的代码
-    // ============================================================================
-
+    /**
+     * @brief 反射代码生成器:把解析出的反射类型 emit 成可编译的注册代码与 await 状态机。
+     *
+     * @detail 输入是 legacy SParsedClass(或经 shim 转换来的 IR 节点),输出全是纯文本;
+     *         编排粒度到"每个函数一次 emit",产物形态见 @file。类内除构造期注入的
+     *         Options_ / ReflectedClassKinds 外不持有状态,同一实例可反复调用。
+     */
     class MCodeGenerator {
         public:
         explicit MCodeGenerator(const SOptions& options) : Options_(options) {
         }
 
-        // A2 (Task 7) — IR-based generator entry points. Mirror the legacy
-        // `GenerateHeader` / `GenerateSource` / `EmitAsyncFramesHeader` shape,
-        // but consume `SParsedRecord` from the AST path (Task 8 main() will
-        // dispatch to these once it migrates off the string-parser). The
-        // legacy methods above stay as the fallback until A3 cleanup removes
-        // them. Method bodies live in `Generation/MCodeGenerator.cpp`.
+        // A2(Task 7)—— 基于 IR 的生成器入口。形态与 legacy 的 GenerateHeader /
+        // GenerateSource / EmitAsyncFramesHeader 一一对应,但入参换成 AST 路径产出的
+        // SParsedRecord(Task 8 的 main() 一旦脱离字符串解析器就会改走这里)。在 A3 清理掉
+        // 它们之前,legacy 方法仍作为兜底保留。方法实现都在 Generation/MCodeGenerator.cpp。
 
-        // 生成 IR 头文件内容
-        //
-        // AsyncFrame-classes: classes from the same header that have at least
-        // one `MFUNCTION(..., Async)` function. The Frame struct definitions
-        // themselves are emitted into a separate `<ClassName>_AsyncFrames.h`
-        // file (see EmitAsyncFramesHeaderFromIR) — they cannot live in the
-        // per-class .mgenerated.h because that file includes the user header
-        // (creating a circular include if the user header tries to pull in
-        // the generated file).
+        /**
+         * @brief 生成 IR 路径下某个类型的 `<Class>.mgenerated.h` 内容。
+         * @param InRecord 目标记录(类或结构体)
+         * @param AllRecordsInSameHeader 同一用户头文件里的其他记录;当前实现未读取
+         * @return 头文件全文
+         *
+         * @detail AsyncFrame-classes 指同一头文件里至少有一个 MFUNCTION(..., Async)
+         *         函数的那些类。Frame struct 定义本身**不**在这里,而是单独 emit 到
+         *         `<ClassName>_AsyncFrames.h`(见 EmitAsyncFramesHeaderFromIR):per-class
+         *         的 .mgenerated.h 会 include 用户头文件,若用户头反过来想拉进生成文件
+         *         就会形成循环 include。
+         */
         MString GenerateHeaderFromIR(const SParsedRecord& InRecord, const TVector<SParsedRecord>& AllRecordsInSameHeader) const;
 
-        // 生成 IR 源文件内容
+        /**
+         * @brief 生成 IR 路径下某个类型的 `<Class>.mgenerated.cpp` 内容。
+         * @param InRecord 目标记录
+         * @return 源文件全文(自动注册单元 + StaticClass / RegisterAll* 实现)
+         */
         MString GenerateSourceFromIR(const SParsedRecord& InRecord) const;
 
-        // IR 版本的 AsyncFrames 头文件 emit（A3 cleanup 删除 legacy 版本）
+        /**
+         * @brief IR 版本的 AsyncFrames 头文件 emit(A3 清理时会删掉 legacy 版本)。
+         * @param InRecord 目标记录
+         * @return Frame struct 定义文本;记录不是 class、或没有任何 async 函数时返回空串,
+         *         调用方据此跳过落盘
+         */
         MString EmitAsyncFramesHeaderFromIR(const SParsedRecord& InRecord) const;
 
-        // A2 follow-up (AST 重构 merge) — 把整个 IR 转成 legacy SParsedClass 集合，
-        // 供 ManifestGenerators（CMake/Client manifest）与 LuaBindEmitter 消费。
-        // 复用 MCodeGenerator.cpp 内的 ToLegacyClass shim，保证与逐 Record
-        // 生成路径（GenerateHeaderFromIR 等）字节一致。
+        // NOTE: 原文写的消费方 "LuaBindEmitter" 已随 555b375 重命名为 ScriptBindEmitter
+        // (MHeaderTool.cpp 里的实际调用是 ScriptBindEmitter::Run(Options.OutputDir,
+        // LegacyClasses)),故按现名重写。
+        /**
+         * @brief 把整棵 IR 树转成 legacy SParsedClass 集合(**不含 enum**)。
+         * @param IR 解析出的 SParseIR
+         * @return 与 IR.Records 一一对应、顺序相同的 legacy 视图
+         *
+         * @detail A2 follow-up(AST 重构 merge)引入,供 ManifestGenerators(CMake/Client
+         *         manifest)与 ScriptBindEmitter 消费。内部复用 MCodeGenerator.cpp 里的
+         *         ToLegacyClass shim,保证与逐 Record 生成路径(GenerateHeaderFromIR 等)
+         *         的产物字节一致。需要 enum 的调用方请改用 ToLegacyClassesWithEnums。
+         */
         TVector<SParsedClass> ToLegacyClasses(const mession::headercodegen::SParseIR& IR) const;
-        // Records + namespace enum（CMake manifest 用——enum 注册单元需编译）
+        /**
+         * @brief 在 ToLegacyClasses 的结果后面再追加 enum 的 legacy 视图。
+         * @param IR 解析出的 SParseIR
+         * @return Records 在前、Enums 在后的完整 legacy 集合
+         *
+         * @detail 供 CMake manifest 使用:namespace enum 的注册单元也必须被编译进去。
+         */
         TVector<SParsedClass> ToLegacyClassesWithEnums(const mession::headercodegen::SParseIR& IR) const;
 
-        // A2 follow-up (AST 重构 merge) — enum 生成。AST 路径的 SParseIR::Enums 走
-        // legacy GenerateHeader/GenerateSource（经 ToLegacyEnum shim），与
-        // 字符串解析版输出一致（namespace 级 scoped enum 为 no-op 注册 stub）。
+        // NOTE: 原文称"namespace 级 scoped enum 为 no-op 注册 stub",与代码相反 ——
+        // GenerateEnumHeader 对 `bScopedEnum && Owner.empty()`(即 namespace 级 scoped
+        // enum)恰好用 QualifiedName 生成**真实注册**,no-op stub 只发生在 Owner 非空的
+        // 类内 scoped enum 上(MJsonWriter::EScopeType 那类)。此处按代码重写。
+        /**
+         * @brief IR 路径下某个 enum 的 `<Enum>.mgenerated.h` 内容。
+         * @param InEnum 解析出的 IR enum
+         * @return 头文件全文(经 ToLegacyEnum 转成 legacy 视图后走原有 GenerateHeader)
+         *
+         * @detail AST 路径的 SParseIR::Enums 走 legacy GenerateHeader/GenerateSource
+         *         (经 ToLegacyEnum shim),产物与字符串解析版一致。
+         */
         MString GenerateEnumHeaderFromIR(const mession::headercodegen::SParsedEnum& InEnum) const;
         MString GenerateEnumSourceFromIR(const mession::headercodegen::SParsedEnum& InEnum) const;
 
-        // F0 actor-member-framework §5:设置"全反射类名 → 是否 MSTRUCT"表。
-        // 生成 SetParent 时据此选父类注册表达式(struct → 注册函数,
-        // class → StaticClass);不在表的父类(非反射基类,如 MObject/
-        // IActorMember)跳过——无反射父类字段,继承序列化递归无收益。
+        /**
+         * @brief 注入"全反射类名 → 是否 MSTRUCT"表(F0 actor-member-framework §5)。
+         * @param InReflectedClassKinds 类名到 MSTRUCT 标记的映射
+         *
+         * @detail 生成 SetParent 时据此挑父类注册表达式(struct → 注册函数,
+         *         class → StaticClass);不在表里的父类(非反射基类,如 MObject /
+         *         IActorMember)直接跳过 —— 它们没有反射父类字段,递归继承序列化没有收益。
+         */
         void SetReflectedClassKinds(const TMap<MString, bool>& InReflectedClassKinds) {
             ReflectedClassKinds = InReflectedClassKinds;
         }
 
-        // 生成头文件内容
-        //
-        // AsyncFrame-classes: classes from the same header that have at least
-        // one `MFUNCTION(..., Async)` function. The Frame struct definitions
-        // themselves are emitted into a separate `<ClassName>_AsyncFrames.h`
-        // file (see EmitAsyncFramesHeader) — they cannot live in the per-class
-        // .mgenerated.h because that file includes the user header (creating a
-        // circular include if the user header tries to pull in the generated
-        // file). The user header must include `MEchoService_AsyncFrames.h`
-        // directly; sibling per-class files don't need to emit Frame structs
-        // because the user header transitively brings them in.
+        /**
+         * @brief 生成 legacy 路径下某个类的 `<Class>.mgenerated.h` 内容。
+         * @param parsedClass 目标反射类(按 Kind 分派到 enum / struct / class 三条 emit 路径)
+         * @param allClassesInSameHeader 同一用户头文件里的其他类;当前实现未使用
+         * @return 头文件全文
+         *
+         * @detail AsyncFrame-classes 指同一头文件里至少有一个 MFUNCTION(..., Async)
+         *         函数的那些类。Frame struct 定义不在这里,而是 emit 到单独的
+         *         `<ClassName>_AsyncFrames.h`(见 EmitAsyncFramesHeader):per-class 的
+         *         .mgenerated.h 会 include 用户头文件,若用户头反过来拉进生成文件就成了
+         *         循环 include。用户头必须自己 include `MEchoService_AsyncFrames.h`;
+         *         同头文件的兄弟 per-class 文件无需再 emit Frame struct,因为随用户头
+         *         会被间接带入。
+         */
         MString GenerateHeader(const SParsedClass& parsedClass, const TVector<SParsedClass>& /*allClassesInSameHeader*/) const {
             std::ostringstream out;
 
@@ -101,11 +163,10 @@ namespace MHeaderTool {
             out << "#include \"Common/Runtime/Async/MAsync.h\"\n";
             out << "#include \"Common/Net/Rpc/RpcClientCall.h\"\n";
 
-            // NOTE: Async Frame struct definitions are emitted into a SEPARATE
-            // header `<ClassName>_AsyncFrames.h` (see EmitAsyncFramesHeader),
-            // not inline here. The user header includes that file before
-            // `class <ClassName>` so inline async bodies can reference the
-            // Frame struct.
+            // NOTE: Async Frame struct 定义不内联在这里,而是 emit 到单独的
+            // `<ClassName>_AsyncFrames.h`(见 EmitAsyncFramesHeader)。用户头文件要在
+            // `class <ClassName>` 之前 include 该文件,内联 async 函数体才能引用到该
+            // Frame 结构。
 
             out << "#include \"" << MakeIncludePathFromHeader(parsedClass.HeaderPath) << "\"\n";
             out << "\n";
@@ -132,7 +193,11 @@ namespace MHeaderTool {
             return out.str();
         }
 
-        // 生成源文件内容
+        /**
+         * @brief 生成 legacy 路径下某个类的 `<Class>.mgenerated.cpp` 内容。
+         * @param parsedClass 目标反射类
+         * @return 源文件全文(自动注册单元 + StaticClass / RegisterAll* 实现 + ServerCall 代理实现)
+         */
         MString GenerateSource(const SParsedClass& parsedClass) const {
             std::ostringstream out;
 
@@ -157,14 +222,16 @@ namespace MHeaderTool {
         }
 
         public:
-        // Generate the contents of the `<ClassName>_AsyncFrames.h` file — a
-        // dedicated header containing Frame struct definitions for every
-        // `MFUNCTION(..., Async)` function on `parsedClass`. The user header
-        // must `#include "<ClassName>_AsyncFrames.h"` BEFORE its class
-        // definition so inline async bodies can reference the Frame.
-        //
-        // Returns empty string if `parsedClass` has no async functions (so the
-        // caller can skip writing the file).
+        /**
+         * @brief 生成 `<ClassName>_AsyncFrames.h` 的内容。
+         * @param parsedClass 目标反射类
+         * @return 该头文件全文(Frame struct 定义);Kind 不是 Class、或没有任何 async
+         *         函数时返回空串,调用方据此跳过落盘
+         *
+         * @detail 这是一份专用头文件,为 parsedClass 上每个 MFUNCTION(..., Async) 函数定义
+         *         一个 Frame struct。用户头文件必须在自己的类定义**之前**
+         *         `#include "<ClassName>_AsyncFrames.h"`,内联 async 函数体才能引用到该 Frame。
+         */
         MString EmitAsyncFramesHeader(const SParsedClass& parsedClass) const {
             if (parsedClass.Kind != EParsedTypeKind::Class)
                 return {};
@@ -204,15 +271,17 @@ namespace MHeaderTool {
         }
 
         public:
-        // P4 — spec 2026-07-28 §B: emit a `<Header>_FreeAsyncFrames.mgenerated.h`
-        // file containing one `MHeaderTool_AsyncFrame_Free_<FuncName>` struct per
-        // free `MFUNCTION(Async)` function in `Funcs`. Naming mirrors the
-        // class-method `<Class>_AsyncFrames.h` so the AWAIT_OK macro contract
-        // (AWAIT_OK expands to `Frame->AwaitOk(expr)`) works for both.
-        //
-        // Returns empty string if `Funcs` is empty so the caller can skip
-        // the file write. Per spec Q1, the filename suffix is `FreeAsyncFrames`
-        // to align with the class-method `AsyncFrames` pattern.
+        /**
+         * @brief 生成 `<Header>_FreeAsyncFrames.mgenerated.h` 的内容(P4, spec 2026-07-28 §B)。
+         * @param Funcs 该头文件里的自由 async 函数列表
+         * @param HeaderPath 源用户头文件路径(只写进产物的 "Source:" 提示行)
+         * @return 每个自由 MFUNCTION(Async) 函数一个 MHeaderTool_AsyncFrame_Free_<FuncName>
+         *         struct 的头文件文本;Funcs 为空时返回空串,调用方据此跳过落盘
+         *
+         * @detail 命名刻意对齐类方法版的 `<Class>_AsyncFrames.h`,好让 AWAIT_OK 宏契约
+         *         (AWAIT_OK 展开成 `Frame->AwaitOk(expr)`)对两者都成立。按 spec Q1,
+         *         文件后缀取 FreeAsyncFrames 以贴合类方法版的 AsyncFrames 命名。
+         */
         MString EmitFreeAsyncFramesHeader(const TVector<SFreeAsyncFunc>& Funcs, const fs::path& HeaderPath) const {
             if (Funcs.empty())
                 return {};
@@ -240,9 +309,14 @@ namespace MHeaderTool {
         }
 
         private:
-        // P4 — emit one Frame struct for a free async function. Mirrors the
-        // class-method Frame shape (AwaitOk pass-through + AwaitedSlot +
-        // StoredValue) so the AWAIT_OK macro contract is identical for both.
+        /**
+         * @brief 为一个自由 async 函数 emit 一个 Frame struct(P4)。
+         * @param out 目标输出流
+         * @param Func 自由 async 函数描述
+         *
+         * @detail 形态镜像类方法版 Frame(AwaitOk 透传 + AwaitedSlot + StoredValue),
+         *         使两者的 AWAIT_OK 宏契约完全一致。
+         */
         void EmitFreeAsyncStateMachine(std::ostringstream& out, const SFreeAsyncFunc& Func) const {
             const MString FrameName = "MHeaderTool_AsyncFrame_Free_" + SanitizeIdentifier(Func.Name);
             const MString RespType  = Func.ResponseType;
@@ -408,7 +482,7 @@ namespace MHeaderTool {
                 out << "};\n";
                 out << "\n";
 
-                // Client binder
+                // Client transport 或带 MessageName 的函数:emit 客户端参数 binder
                 if (func.Transport == "Client" || !func.MessageName.empty()) {
                     GenerateClientBinder(out, parsedClass, func);
                 }
@@ -420,19 +494,21 @@ namespace MHeaderTool {
                     GenerateClientCallHandler(out, parsedClass, func);
                 }
 
-                // P3: Async AWAIT_OK validation (runs for every function; non-Async with
-                // AWAIT_OK gets a static_assert per spec §6.3).
-                // Note: Frame struct definitions are emitted in GenerateHeader
-                // BEFORE this header includes the user source — that lets the
-                // user's inline body reference `MHeaderTool_AsyncFrame_*`.
+                // NOTE: 原文称 Frame struct 定义"在 GenerateHeader 里、本头 include 用户
+                // 源码之前"就已 emit —— 实际 GenerateHeader 并不产出 Frame struct,Frame 由
+                // EmitAsyncFramesHeader / EmitAsyncFramesHeaderFromIR 单独 emit 到
+                // `<Class>_AsyncFrames.h`,再由用户头文件自行 include。此处按代码重写。
+                // P3:Async AWAIT_OK 校验(对每个函数都跑;非 Async 却用了 AWAIT_OK 的,
+                // 按 spec §6.3 生成 static_assert)。用户内联体引用 `MHeaderTool_AsyncFrame_*`
+                // 时,该类型已由用户头文件 include 的 `<Class>_AsyncFrames.h` 提供。
                 GenerateAwaitOkValidation(out, parsedClass, func);
 
-                // ServerCall handler
+                // ServerCall handler:解码请求 → 调类型化方法 → 桥接回 TByteArray
                 if (func.Transport == "ServerCall") {
                     GenerateServerCallHandler(out, parsedClass, func);
                 }
 
-                // RPC
+                // RPC wrapper:emit MRpc::<Class>::<Func> 的 payload 构造 + 发送重载
                 if (func.bIsRpc) {
                     GenerateRpcWrapper(out, parsedClass, func);
                 }
@@ -459,7 +535,7 @@ namespace MHeaderTool {
                 for (size_t i = 0; i < parsedClass.Functions.size(); ++i) {
                     const auto& func  = parsedClass.Functions[i];
                     MString     block = ReplaceAll(BuildFunctionRegistrationBlock(parsedClass, func), "\n", " \\\n");
-                    // Remove trailing backslash from block since we'll add our own
+                    // 去掉 block 末尾自带的反斜杠 —— 续行符由下面统一补
                     if (!block.empty() && block.back() == '\\') {
                         block.pop_back();
                     }
@@ -474,7 +550,7 @@ namespace MHeaderTool {
         }
 
         void GenerateClassSource(std::ostringstream& out, const SParsedClass& parsedClass) const {
-            // RegisterAllProperties/RegisterAllFunctions/StaticClass
+            // 依次生成 RegisterAllProperties / RegisterAllFunctions / StaticClass 三个实现
             out << "void " << parsedClass.Name << "::RegisterAllProperties(MClass* InClass)\n";
             out << "{\n";
             out << "    MHEADERTOOL_REGISTER_PROPERTIES_" << parsedClass.Name << "();\n";
@@ -590,7 +666,9 @@ namespace MHeaderTool {
             MString     handlerName  = "MHeaderTool_HandleServerCall_" + SanitizeIdentifier(parsedClass.Name) + "_" + SanitizeIdentifier(func.Name);
             const auto& requestParam = func.Params[0];
 
-            // Extract raw response type from `SFutureResult<FResp>` (CodeGenerator.h:766 ExtractResponseType).
+            // NOTE: 原文引用 "CodeGenerator.h:766" 去定位 ExtractResponseType,该行号早已失效
+            // (现约在文件 1000 行附近),故改为只引用函数名。
+            // 从 `SFutureResult<FResp>` 里剥出原始响应类型(实现见 ExtractResponseType)。
             const MString responseType = ExtractResponseType(func.ReturnStorageType);
             // TByteArray 响应(如框架成员分发入口 FrameworkMemberDispatch)是
             // 原始字节流,不是 MSTRUCT——BuildPayload(TByteArray) 会因
@@ -614,11 +692,10 @@ namespace MHeaderTool {
             out << "    }\n";
             out << "    const SServerCallContext Context = CaptureCurrentServerCallContext();\n";
             out << "    (void)Context;\n";
-            // P3 inline-body design: the user's Async body returns
-            // `SF<RespType>` directly via `return AWAIT_OK(expr);`. The
-            // generated Frame is just a helper struct that the body consumes.
-            // Sync and Async ServerCall handlers therefore share the same
-            // `TypedObject->Func(Request)` invocation + ready/pending bridge.
+            // P3 inline-body 设计:用户的 Async 函数体通过 `return AWAIT_OK(expr);` 直接
+            // 返回 `SF<RespType>`。生成出来的 Frame 只是给函数体消费的辅助结构。因此
+            // Sync 与 Async 的 ServerCall handler 共用同一套 `TypedObject->Func(Request)`
+            // 调用 + ready/pending 桥接。
             out << "    SFutureResult<" << responseType << "> Inner = TypedObject->" << func.Name << "(std::move(RequestValue));\n";
             out << "    MPromise<TResult<TByteArray, FAppError>> OutPromise;\n";
             out << "    auto OutFuture = OutPromise.GetFuture();\n";
@@ -770,7 +847,7 @@ namespace MHeaderTool {
             MString            paramStructName = "MHeaderTool_Params_" + SanitizeIdentifier(parsedClass.Name) + "_" + SanitizeIdentifier(func.Name);
             MString            reliableValue   = func.bReliable ? "true" : "false";
 
-            // No do-while wrapper - we're inside a macro
+            // 不加 do-while 包裹 —— 这段代码本身就在宏体里
             out << "    {\n";
 
             // step-2: 客户端 dispatch 字段(MessageName/RouteName/TargetName/AuthMode/
@@ -804,12 +881,12 @@ namespace MHeaderTool {
                 }
                 out << "        InClass->RegisterFunction(Func);\n";
             } else if (func.Transport == "ServerCall") {
-                // ServerCall transport: wire the generated handler (decodes request,
-                // calls the typed method, bridges SFutureResult<TResp> ->
-                // SFutureResult<TByteArray> via ready/pending branches — see
-                // GenerateServerCallHandler) onto MFunctionObject::ServerCallHandler.
-                // Applies uniformly to MFUNCTION(ServerCall) and MFUNCTION(ServerCall, Async);
-                // the Async flag is preserved on the parsed function for P3 codegen.
+                // ServerCall transport:把生成的 handler(解码请求 → 调类型化方法 → 经
+                // ready/pending 两分支把 SFutureResult<TResp> 桥接成
+                // SFutureResult<TByteArray>,见 GenerateServerCallHandler)挂到
+                // MFunctionObject::ServerCallHandler 上。
+                // 对 MFUNCTION(ServerCall) 与 MFUNCTION(ServerCall, Async) 一视同仁;
+                // Async 标记保留在解析出的函数上,留给 P3 的 codegen 使用。
                 MString handlerName = "MHeaderTool_HandleServerCall_" + SanitizeIdentifier(parsedClass.Name) + "_" + SanitizeIdentifier(func.Name);
                 out << "        auto* Func = new MFUNC_OBJECT();\n";
                 out << "        Func->Name = \"" << func.Name << "\";\n";
@@ -849,14 +926,19 @@ namespace MHeaderTool {
                     continue;
                 auto flagTokens = SplitTopLevelPipes(token);
                 for (const auto& flagToken : flagTokens) {
-                    // Skip tokens that are transport / role labels (handled elsewhere
-                    // by Func->Transport / Func->bIsAsync / Func->bIsClient / etc.),
-                    // not EFunctionFlags enum values. Most importantly:
-                    //   - "Async" -> captured in parsed->bIsAsync (P3 codegen consumer);
-                    //     P2 treats it identically to non-Async ServerCall (the
-                    //     GenerateServerCallHandler already supports pending futures).
-                    //   - "ServerCall" / "ClientCall" / transport labels -> emit
-                    //     separately as Func->Transport, not in the flags bitmask.
+                    // NOTE: 原文称被跳过的 token "都是 transport / role 标签、不是
+                    // EFunctionFlags 枚举值",并提到由 Func->bIsClient 处理 —— 这两点都与代码
+                    // 不符:NetServer / NetClient 确实是 EFunctionFlags 的枚举值(见
+                    // Common/Runtime/Reflect/Class.h),SParsedFunction 上也没有 bIsClient
+                    // 成员。此处按代码实际行为重写,差异记入交付报告。
+                    // 跳过 transport / 角色标签类 token(它们由别处消费,如
+                    // Func->Transport / Func->bIsAsync 等),不写进 EFunctionFlags 位掩码。
+                    // 重点两条:
+                    //   - "Async" → 已记录在 parsed->bIsAsync(P3 codegen 的输入);P2 把它与
+                    //     非 Async 的 ServerCall 同等对待(GenerateServerCallHandler 本来就
+                    //     支持 pending future 那条挂起路径)。
+                    //   - "ServerCall" / "ClientCall" / transport 标签 → 单独 emit 成
+                    //     Func->Transport,不写进位掩码。
                     if (flagToken.empty() || flagToken == "Async" || flagToken == "NetServer" || flagToken == "NetClient" || flagToken == "Client" || flagToken == "ClientCall" || flagToken == "ServerCall" || flagToken == "RPC") {
                         continue;
                     }
@@ -958,7 +1040,7 @@ namespace MHeaderTool {
             // 基于绝对路径中的 "/Source/" 段推导 include 路径，不依赖进程 cwd：
             // ClangTool 并行解析多个 TU 时会 chdir 到各 compile_commands 的
             // directory（Build/ 下，且线程间互相干扰），fs::current_path() 不可用。
-            // /root/Mession/Source/Servers/... → Servers/...
+            // 路径推导示例:/root/Mession/Source/Servers/... → Servers/...
             MString       P      = headerPath.generic_string();
             const MString Needle = "/Source/";
             const size_t  Pos    = P.find(Needle);
@@ -999,22 +1081,25 @@ namespace MHeaderTool {
             return "unknown";
         }
 
-        // 从 MFuture<TResult<T, E>> 中提取 T（原始响应类型）
+        /**
+         * @brief 从 `SFutureResult<X>` / `MFuture<TResult<X, Y>>` 包装里剥出原始响应类型 X。
+         * @param returnType 用户函数的返回类型原文
+         * @return 原始的响应类型;没有可识别的包装时原样返回入参
+         *
+         * @detail 层层剥离包装(可任意组合),供生成的 ServerCall handler 调用类型化方法、
+         *         并对 `TResult<RespType, FAppError>` 做模式匹配。
+         */
         MString ExtractResponseType(const MString& returnType) const {
-            // Strip SFutureResult<X> / MFuture<TResult<X, Y>> wrappers (and any
-            // combination), returning the raw response type X. Used by the
-            // generated ServerCall handler so it can call the typed method and
-            // pattern-match on `TResult<RespType, FAppError>`.
             const MString sfPrefix = "SFutureResult<";
             const MString mfPrefix = "MFuture<TResult<";
 
             MString T = returnType;
-            // Outer wrapper: SFutureResult<Inner>
+            // 外层包装:SFutureResult<Inner>
             if (T.rfind(sfPrefix, 0) == 0 && T.back() == '>') {
                 MString Inner = T.substr(sfPrefix.size(), T.size() - sfPrefix.size() - 1);
                 return ExtractResponseType(Inner);
             }
-            // Inner wrapper: MFuture<TResult<X, Y>>
+            // 内层包装:MFuture<TResult<X, Y>>
             if (T.rfind(mfPrefix, 0) == 0 && T.back() == '>') {
                 MString Inner = T.substr(mfPrefix.size(), T.size() - mfPrefix.size() - 1);
                 size_t  comma = Inner.find(',');
@@ -1025,10 +1110,18 @@ namespace MHeaderTool {
             return T;
         }
 
-        // P3 SPEC §6.3 HARD RULE: a non-Async function declared inside MCLASS may
-        // NOT use AWAIT_OK. Emit a compile-time gate that the user will see at
-        // build time. Async-without-AWAIT_OK is OK (handled by the existing
-        // GenerateServerCallHandler pending branch — see line 731).
+        // NOTE: 原文写 "see line 731" 指向 GenerateServerCallHandler,该行号已失效
+        // (该函数现在位于文件更早处),故改为引用函数名。
+        /**
+         * @brief P3 spec §6.3 硬性规则:非 Async 函数不得使用 AWAIT_OK。
+         * @param out 目标输出流
+         * @param parsedClass 所属反射类(只用于拼报错信息)
+         * @param func 待校验的函数
+         *
+         * @detail 命中时 emit 一条编译期闸门,让使用者在构建时就能看到。反向情况
+         *         (Async 但没用 AWAIT_OK)是合法的,由 GenerateServerCallHandler 的
+         *         pending 分支兜住。
+         */
         void GenerateAwaitOkValidation(std::ostringstream& out, const SParsedClass& parsedClass, const SParsedFunction& func) const {
             if (func.bIsAsync)
                 return;
@@ -1039,30 +1132,34 @@ namespace MHeaderTool {
         }
 
         // =========================================================================
-        // P3: AWAIT_OK scanner + state machine generator
+        // P3:AWAIT_OK 扫描器 + 状态机生成器
         // =========================================================================
         //
-        // v1 scope (mirrors spec 2026-07-24 §7.3 subset):
-        //   - Async functions may carry 0 or 1 AWAIT_OK statements at the top level.
-        //     0 AWAIT_OKs is still allowed if the function's pending behavior comes
-        //     from a ready SFutureResult<RespType>; that path is handled by the
-        //     existing GenerateServerCallHandler pending branch.
-        //   - 2+ AWAIT_OKs in a single Async function = static_assert error (P4 lifts).
-        //   - Non-Async function with AWAIT_OK = static_assert error (spec §6.3).
-        //   - AWAIT_OK(expr) where <expr> may contain arbitrary balanced ()s.
-        // Each match becomes a single state slot in the generated Frame.
-        // P3 v1 (spec §7.3 subset): ScanAwaitOkSites reports *how many* AWAIT_OK
-        // sites appear at the top level of the user's inline body. Generator uses
-        // only the count: 0 = no Frame, 1 = Frame helper, >=2 = static_assert.
-        // (P4 lifts this to a multi-state Frame that slices body around sites.)
+        // v1 范围(对应 spec 2026-07-24 §7.3 的子集):
+        //   - Async 函数在顶层最多带 0 或 1 条 AWAIT_OK 语句。0 条也允许 —— 只要该函数的
+        //     挂起行为来自一个已就绪的 SFutureResult<RespType>,这条路径就由
+        //     GenerateServerCallHandler 的 pending 分支兜住。
+        //   - 单个 Async 函数里出现 2 条及以上 AWAIT_OK = static_assert 报错(P4 解除)。
+        //   - 非 Async 函数里出现 AWAIT_OK = static_assert 报错(spec §6.3)。
+        //   - AWAIT_OK(expr) 里的 <expr> 允许含任意配对的 ()。
+        // 每个匹配在生成的 Frame 里对应一个状态槽。
+        //
+        // P3 v1(spec §7.3 子集):ScanAwaitOkSites 只回报用户内联体顶层出现了**几处**
+        // AWAIT_OK;生成器只用这个计数:0 = 不生成 Frame,1 = 生成 Frame 辅助结构,
+        // >=2 = static_assert。(P4 会升级成围绕各站点切分函数体的多状态 Frame。)
         struct SAwaitSite {
-            size_t  ExprStart = 0; // byte offset of <expr> in AsyncBody
-            size_t  ExprEnd   = 0; // byte offset just after <expr> (past ')')
-            MString Expr;          // captured <expr> text (verbatim)
+            size_t  ExprStart = 0; // <expr> 在 AsyncBody 里的字节偏移
+            size_t  ExprEnd   = 0; // <expr> 之后的字节偏移(已越过 ')')
+            MString Expr;          // 捕获到的 <expr> 原文(逐字)
         };
 
-        // Find AWAIT_OK statements (statement-level only). Walks past balanced
-        // parens so that "AWAIT_OK(fn(a,b))" counts as one site, not three.
+        /**
+         * @brief 扫描用户内联体里的 AWAIT_OK 语句(仅语句级)。
+         * @param Body 用户内联函数体原文
+         * @return 按出现顺序排列的站点列表;括号不配对时返回空表(由调用方负责报错)
+         *
+         * @detail 会跳过成对的括号,因此 "AWAIT_OK(fn(a,b))" 只算一处,而不是三处。
+         */
         TVector<SAwaitSite> ScanAwaitOkSites(const MString& Body) const {
             TVector<SAwaitSite> Sites;
             const MString       Needle    = "AWAIT_OK(";
@@ -1083,7 +1180,7 @@ namespace MHeaderTool {
                     ++i;
                 }
                 if (Depth != 1 || i >= Body.size()) {
-                    return {}; // malformed: caller will report
+                    return {}; // 括号不配对:由调用方负责报错
                 }
                 SAwaitSite Site;
                 Site.ExprStart = ExprStart;
@@ -1095,10 +1192,18 @@ namespace MHeaderTool {
             return Sites;
         }
 
-        // Emit the Frame struct + Run() entry for an Async function with a state
-        // machine wrapping the user body. For zero-await Async functions this is a
-        // no-op (no Frame is needed; SFutureResult pending already handled by
-        // GenerateServerCallHandler pending branch).
+        // NOTE: 原文写 "emit the Frame struct + Run() entry",但 P3 v1 的 inline-body 设计
+        // 下并不生成 `Run()` 入口(见本函数内文与 GenerateServerCallHandler);零 AWAIT_OK
+        // 时也不是严格 no-op —— 会 emit 一行说明注释后返回。此处按代码重写。
+        /**
+         * @brief 为 Async 函数 emit 一个包裹用户函数体的状态机 Frame 结构。
+         * @param out 目标输出流
+         * @param parsedClass 所属反射类(只用于拼 Frame 名)
+         * @param func 目标 async 函数;非 async 或无参数时直接返回
+         *
+         * @detail 零 AWAIT_OK 时只 emit 一行说明注释、不产出 Frame;2 条及以上 AWAIT_OK 时
+         *         emit static_assert(P3 v1 的上限是 1 条)。
+         */
         void GenerateAsyncStateMachine(std::ostringstream& out, const SParsedClass& parsedClass, const SParsedFunction& func) const {
             if (!func.bIsAsync)
                 return;
@@ -1111,11 +1216,10 @@ namespace MHeaderTool {
 
             TVector<SAwaitSite> AwaitSites = ScanAwaitOkSites(func.AsyncBody);
             if (AwaitSites.empty()) {
-                // Zero-AWAIT_OK Async: function body has no `AWAIT_OK(...)` calls.
-                // The Frame is unused in the user's body path; the existing
-                // GenerateServerCallHandler ready/pending branch covers this case.
-                // User's body — when eventually inline — would just `return MakeShared<...>`
-                // of a ready SFutureResult, with no Frame interaction.
+                // 零 AWAIT_OK 的 Async:函数体里没有任何 `AWAIT_OK(...)` 调用。
+                // Frame 在用户函数体路径上用不到,这种情况由 GenerateServerCallHandler 的
+                // ready/pending 分支覆盖。用户函数体(内联后)只会 `return MakeShared<...>`
+                // 一个已就绪的 SFutureResult,完全不与 Frame 交互。
                 out << "// " << FrameName << ": Async function with zero AWAIT_OK — no state machine emitted\n";
                 out << "// (ServerCall handler bridges ready/pending SFutureResult already.)\n\n";
                 return;
@@ -1127,45 +1231,34 @@ namespace MHeaderTool {
                 return;
             }
 
-            // (P3 v1 supports exactly 1 AWAIT_OK site in inline body; sites[0] is
-            //  referenced by no codegen path under the inline-body design — the
-            //  user's body compiles verbatim, AwaitOk is the helper API.)
+            // (P3 v1 只支持内联体里恰好 1 处 AWAIT_OK;inline-body 设计下没有任何 codegen
+            //  路径会引用 sites[0] —— 用户函数体原样编译,AwaitOk 才是给函数体用的辅助 API。)
 
-            // P3 v1 (spec 2026-07-24 §7.3): inline-body design. The user writes
-            // the Async body inline in their header (a self-contained block that
-            // constructs the Frame, sets Context/Service/Request, and uses the
-            // AWAIT_OK macro to await one expression). The generator emits ONLY
-            // the Frame helper struct; user body itself compiles normally and
-            // drives dispatch. No `Run()` entry — the ServerCall handler just
-            // calls TypedObject->Func(Request) and the user's body shapes the
-            // SFutureResult path. No `Awaits=...` metadata — the await target
-            // lives in the user's expression text, not in the macro.
+            // P3 v1(spec 2026-07-24 §7.3):inline-body 设计。用户在头文件里内联书写 Async
+            // 函数体 —— 一段自包含的代码块,自己构造 Frame、设置 Context/Service/Request,
+            // 并用 AWAIT_OK 宏 await 一个表达式。生成器**只** emit Frame 辅助结构;用户函数体
+            // 本身正常编译并驱动分发。没有 `Run()` 入口 —— ServerCall handler 只调
+            // TypedObject->Func(Request),由用户函数体自行塑形 SFutureResult 路径。也没有
+            // `Awaits=...` 元数据 —— await 目标存在于用户的表达式文本里,而不在宏里。
             //
-            // The Frame struct is emitted into a separate `<Class>_AsyncFrames.h`
-            // file (see EmitAsyncFramesHeader). The user header must include that
-            // file AFTER the headers defining ReqType/RespType/FAppError, so all
-            // referenced types are already complete by the time the Frame struct
-            // is parsed.
+            // Frame 结构 emit 到单独的 `<Class>_AsyncFrames.h`(见 EmitAsyncFramesHeader)。
+            // 用户头文件必须在该文件之前先 include 定义 ReqType/RespType/FAppError 的头,
+            // 这样 Frame 被解析时所有被引用的类型都已完整。
 
-            // The Frame struct references ReqType / RespType / FAppError as
-            // template arguments and members; its `SFutureResult<...>` member
-            // forces `TOptional<TResult<T,E>>` (Promise state) to be
-            // instantiated, which requires complete types at this point.
+            // Frame 结构把 ReqType / RespType / FAppError 用作模板实参与成员;它的
+            // `SFutureResult<...>` 成员会迫使 `TOptional<TResult<T,E>>`(Promise 状态)
+            // 实例化,因此这些类型在此处必须已是完整类型。
             //
-            // For inline-body sites, the user header's own #include chain
-            // transitively pulls in these types BEFORE the AsyncFrames header
-            // is included. For direct consumers of AsyncFrames (unit tests,
-            // other translation units), we emit explicit includes so the
-            // header is self-contained. (The generated message headers do not
-            // include the user header back, so this is safe — no circular
-            // include.)
+            // 对 inline-body 站点,用户头文件自身的 #include 链会在 AsyncFrames 头被 include
+            // 之前就把这些类型传递进来。对 AsyncFrames 的直接消费者(单元测试、其他翻译
+            // 单元),这里显式 emit include,以保证该头文件自包含。(生成的 message 头文件
+            // 不会反向 include 用户头,所以这么做是安全的 —— 不会形成循环 include。)
             EmitGeneratedTypeInclude(out, ReqType);
             EmitGeneratedTypeInclude(out, RespType);
             EmitGeneratedTypeInclude(out, "FAppError");
 
-            // Forward-declare parsedClass.Name so the Frame can hold a pointer
-            // to it (Service field). The class itself is defined later in the
-            // user header, so we don't need its full definition here.
+            // 前置声明 parsedClass.Name,好让 Frame 能持有它的指针(Service 字段)。
+            // 该类本身在用户头文件里稍后才定义,此处不需要完整定义。
             EmitForwardDeclaration(out, parsedClass.Name);
 
             out << "// " << FrameName << ": Async frame helper (P3 v1, spec §7.3)\n";
@@ -1193,10 +1286,9 @@ namespace MHeaderTool {
             out << "        AwaitedSlot = Awaited;\n";
             out << "        if (Awaited.IsReady())\n";
             out << "        {\n";
-            // Snapshot via IsOk/GetValue on the TResult reference, NOT via
-            // MFuture::Get() which MOVES the value out of the shared state.
-            // Awaited must remain valid for the caller's return path
-            // (`return AWAIT_OK(expr);` passes Awaited back unchanged).
+            // 通过 TResult 引用的 IsOk/GetValue 取值快照,**不能**用 MFuture::Get() ——
+            // 后者会把值从共享状态里搬走。Awaited 必须在调用方的返回路径上依然有效
+            // (`return AWAIT_OK(expr);` 会把 Awaited 原样带回去)。
             out << "            const auto& R = Awaited.PeekResult();\n";
             out << "            if (R.IsOk()) StoredValue = R.GetValue();\n";
             out << "        }\n";
@@ -1205,8 +1297,8 @@ namespace MHeaderTool {
             out << "            Awaited.Then([this](MFuture<TResult<" << RespType << ", FAppError>> /*F*/)\n";
             out << "            {\n";
             out << "                if (!AwaitedSlot.IsReady()) return;\n";
-            // Use PeekResult (non-destructive) so AwaitedSlot remains
-            // queryable by callers via GetResult() after the callback runs.
+            // 用 PeekResult(非破坏性)取值,回调跑完后调用方仍能通过 GetResult() 查询到
+            // AwaitedSlot 里的结果。
             out << "                const auto& R = AwaitedSlot.PeekResult();\n";
             out << "                if (R.IsOk()) StoredValue = R.GetValue();\n";
             out << "            });\n";
@@ -1217,14 +1309,21 @@ namespace MHeaderTool {
             out << "\n";
         }
 
-        // Emit a `struct Foo;` or `class Foo;` forward declaration for `TypeName`
-        // if it's a plain identifier (not a template or pointer). Skip empty /
-        // qualified / templated names to avoid malformed decls.
+        /**
+         * @brief 为 `TypeName` emit 一条 `struct Foo;` / `class Foo;` 前置声明。
+         * @param out 目标输出流
+         * @param TypeName 待声明的类型名;空串直接跳过
+         *
+         * @detail 只对普通标识符生效(非模板、非指针)。限定名(含 `::`)、模板名
+         *         (含 `<` / `>`)、含 `(` 的名字一律跳过,以免产出畸形声明。
+         */
         static void EmitForwardDeclaration(std::ostringstream& out, const MString& TypeName) {
             if (TypeName.empty())
                 return;
-            // Skip qualified names (Namespace::Type), templated names (Foo<Bar>),
-            // and fundamental types (int, void, etc.).
+            // NOTE: 原文还声称会跳过基础类型(int、void 等),但代码只按 `::` / `<` / `>` /
+            // `(` 过滤,并没有基础类型名单(即 `EmitForwardDeclaration(out, "int")` 会输出
+            // `struct int;`)。实际调用点传的都是类名,所以尚未暴露问题;这里按代码重写。
+            // 跳过限定名(Namespace::Type)、模板名(Foo<Bar>)、含括号的名字。
             if (TypeName.find("::") != MString::npos)
                 return;
             if (TypeName.find("<") != MString::npos)
@@ -1234,17 +1333,20 @@ namespace MHeaderTool {
             if (TypeName.find("(") != MString::npos)
                 return;
 
-            // Heuristic: `class` for type names starting with uppercase `M`,
-            // `struct` otherwise. Doesn't matter for the actual definition
-            // (linkage is the same), just affects compiler diagnostic clarity.
+            // 启发式:类型名以大写 `M` 开头用 `class`,其余用 `struct`。这不影响实际定义
+            // (链接性完全相同),只影响编译器诊断信息的可读性。
             const char* Keyword = (TypeName[0] == 'M') ? "class" : "struct";
             out << Keyword << " " << TypeName << ";\n";
         }
 
-        // Emit `#include "<TypeName>.mgenerated.h"` so the Frame struct sees
-        // a complete type. Used for generated protocol message types like
-        // FSampleEchoResponse that are otherwise defined only in the user
-        // header (which we can't include yet — the Frame must come first).
+        /**
+         * @brief emit `#include "<TypeName>.mgenerated.h"`,让 Frame 结构能看到完整类型。
+         * @param out 目标输出流
+         * @param TypeName 类型名;空串、模板名(含 `<`)、限定名(含 `::`)直接跳过
+         *
+         * @detail 用于生成出来的协议消息类型(如 FSampleEchoResponse)—— 它们只定义在用户
+         *         头文件里,而此处还不能 include 用户头(Frame 必须排在它前面)。
+         */
         static void EmitGeneratedTypeInclude(std::ostringstream& out, const MString& TypeName) {
             if (TypeName.empty())
                 return;
@@ -1510,7 +1612,7 @@ namespace MHeaderTool {
                     OutEndPos = B + 1;
                     return true;
                 }
-                // ---- if (cond) { ... } [else ...] ----
+                // ---- 条件分支:if (cond) { ... } [else ...] ----
                 if (Code.compare(B, 4, "if (") == 0) {
                     const size_t CondOpen = B + 3;
                     int          CDepth   = 1;
@@ -1601,7 +1703,7 @@ namespace MHeaderTool {
                     continue;
                 }
 
-                // ---- for (init; cond; incr) { body } ----
+                // ---- 循环:for (init; cond; incr) { body } ----
                 if (Code.compare(B, 5, "for (") == 0) {
                     const size_t ForOpen  = B + 4;
                     size_t       ForClose = Code.find(')', ForOpen);
@@ -1644,7 +1746,7 @@ namespace MHeaderTool {
                     continue;
                 }
 
-                // ---- return <expr>; ----
+                // ---- 返回:return <expr>; ----
                 if (Code.compare(B, 6, "return") == 0 && (B + 6 >= Code.size() || isspace(static_cast<unsigned char>(Code[B + 6])))) {
                     const size_t Semi = Code.find(';', B);
                     if (Semi == MString::npos)
@@ -2033,7 +2135,7 @@ namespace MHeaderTool {
                             if (!N.AssignVar.empty())
                                 ExtraVars.push_back(N.AssignVar);
                             if (!N.LAccumPrefix.empty()) {
-                                // `Sum += ` → Sum
+                                // `Sum += ` → 取左侧变量 Sum
                                 const size_t OpPos = N.LAccumPrefix.find("+=");
                                 const size_t E     = OpPos == MString::npos ? N.LAccumPrefix.size() : OpPos;
                                 MString      V     = TrimText(N.LAccumPrefix.substr(0, E));
@@ -2041,7 +2143,7 @@ namespace MHeaderTool {
                                     ExtraVars.push_back(V);
                             }
                         } else if (N.Kind == CFlowNode::EKind::For) {
-                            // `int i = 0` → i
+                            // `int i = 0` → 取左侧变量 i
                             const size_t Eq = N.LInit.find('=');
                             if (Eq != MString::npos) {
                                 const size_t EndV = N.LInit.find_last_not_of(" \t", Eq - 1);

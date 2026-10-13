@@ -456,11 +456,6 @@ namespace MHeaderTool {
     // ---------------------------------------------------------------------------
     // ToLegacyEnum — SParsedEnum → legacy SParsedClass(Enum) 适配层
     // ---------------------------------------------------------------------------
-    //
-    // legacy GenerateHeader/GenerateSource 通过 SParsedClass.Kind == Enum 分发
-    // 到 GenerateEnumHeader/GenerateEnumSource。AST 的 SParseIR::Enums 只填了
-    // Name / HeaderPath / bScopedEnum / Values；Owner 恒为空（namespace 级
-    // enum），对应 legacy 的 no-op 注册 stub 行为。
     /**
      * @brief IR enum → legacy SParsedClass(Kind = Enum)。
      * @param In IR 枚举

@@ -23,6 +23,7 @@ core
 core.*
 
 # Logs
+Logs/
 *.log
 __pycache__/
 *.pyc
