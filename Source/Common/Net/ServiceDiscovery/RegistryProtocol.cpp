@@ -1,8 +1,21 @@
+/**
+ * @file RegistryProtocol.cpp
+ * @brief RegistryProtocol.h 的实现:手工拼装/解析各 Registry 报文。
+ *
+ * @detail 实现约定:
+ *   - 整型统一用本机字节序 memcpy(命名中的 "LE" 隐含小端主机假设,未做字节序转换);
+ *   - 先填包体、最后用 PrependType 把 1 字节类型插到最前面;
+ *   - 所有 Parse* 在成功路径上都要求"消费字节数 == payload 长度",多余/缺失字节都判失败,
+ *     避免把脏数据当合法包继续消费。
+ */
 #include "Common/Net/ServiceDiscovery/RegistryProtocol.h"
 
 #include <cstring>
 
 namespace {
+    // AppendFixedLE* / ReadFixedLE* 与 Endpoint.cpp 中同名 helper 重复:
+    // 这是刻意不做共享头,保持两个 wire 模块各自独立演化(改动务必成对检查)。
+
     inline void AppendFixedLE(TByteArray& Out, uint32 V) {
         const uint8* P = reinterpret_cast<const uint8*>(&V);
         Out.insert(Out.end(), P, P + sizeof(V));
@@ -36,6 +49,7 @@ namespace {
         Off += sizeof(uint64);
         return true;
     }
+    // 字符串 = 2 字节长度 + 裸字节;超过 65535 会被截断成 16 位长度
     inline void AppendString_LE(TByteArray& Out, const MString& S) {
         AppendFixedLE16(Out, static_cast<uint16>(S.size()));
         Out.insert(Out.end(), S.begin(), S.end());
@@ -44,12 +58,14 @@ namespace {
         uint16 Len = 0;
         if (!ReadFixedLE16(In, Off, Len))
             return false;
+        // 先验长度再拷贝:长度字段不可信,防止读越界
         if (Off + Len > In.size())
             return false;
         Out.assign(In.begin() + Off, In.begin() + Off + Len);
         Off += Len;
         return true;
     }
+    // 把 1 字节类型插到包首(insert 到 begin,整体后移一次)
     inline void PrependType(TByteArray& Out, EServiceRegistryMessageType Type) {
         Out.insert(Out.begin(), static_cast<uint8>(Type));
     }
@@ -60,6 +76,7 @@ namespace RegistryProtocol {
         TByteArray Body;
         if (!EncodeEndpoint(Endpoint, Body))
             return false;
+        // 先整体搬进 OutPacket 再插类型字节,避免中途失败时 OutPacket 处于半成品状态
         OutPacket = std::move(Body);
         PrependType(OutPacket, EServiceRegistryMessageType::Register);
         return true;
@@ -106,6 +123,7 @@ namespace RegistryProtocol {
             TByteArray Encoded;
             if (!EncodeEndpoint(Ep, Encoded))
                 return false;
+            // 每个端点带长度前缀:接收端可跳过不认识的扩展字段(前向兼容预留)
             AppendFixedLE16(OutPacket, static_cast<uint16>(Encoded.size()));
             OutPacket.insert(OutPacket.end(), Encoded.begin(), Encoded.end());
         }
@@ -123,6 +141,7 @@ namespace RegistryProtocol {
 
     bool ParseRegistryRegisterPacket(const TByteArray& Payload, FServiceEndpoint& OutEndpoint) {
         size_t Off = 0;
+        // 要求恰好消费完:尾部残留视为包体不合法
         return DecodeEndpoint(Payload, Off, OutEndpoint) && Off == Payload.size();
     }
 
@@ -180,6 +199,7 @@ namespace RegistryProtocol {
             uint16 EncodedSize = 0;
             if (!ReadFixedLE16(Payload, Off, EncodedSize))
                 return false;
+            // 外层长度字段不可信:先验再切子缓冲,避免越界构造
             if (Off + EncodedSize > Payload.size())
                 return false;
             TByteArray Encoded(Payload.begin() + Off, Payload.begin() + Off + EncodedSize);

@@ -1,8 +1,22 @@
+/**
+ * @file Endpoint.cpp
+ * @brief FServiceEndpoint 的固定布局编码/解码实现。
+ *
+ * @detail 布局规则(Encode 与 Decode 必须成对修改):
+ *   [ServerType:4][ServerId:4][Address:2 字节长度 + 内容][Port:2]
+ *   [LastHeartbeatMs:8][bHealthy:1][ActorIds 个数:2][ActorId:8 × 个数]
+ * 所有整型都按本机字节序整体 memcpy(命名里的 "LE" 隐含假设是**小端主机**,
+ * 代码本身没有做字节序转换);字符串长度只有 16 位,超长会被截断。
+ * 追加侧不做任何容量校验,读取侧逐字段校验越界。
+ */
 #include "Common/Net/ServiceDiscovery/Endpoint.h"
 
 #include <cstring>
 
 namespace {
+    // 以下 AppendFixedLE* / ReadFixedLE* 都是"整体 memcpy 本机字节序":
+    // 在小端主机上等价于 little-endian。追加侧不做边界检查。
+
     inline void AppendFixedLE(TByteArray& Out, uint32 V) {
         const uint8* P = reinterpret_cast<const uint8*>(&V);
         Out.insert(Out.end(), P, P + sizeof(V));
@@ -15,6 +29,7 @@ namespace {
         const uint8* P = reinterpret_cast<const uint8*>(&V);
         Out.insert(Out.end(), P, P + sizeof(V));
     }
+    // 读取侧统一先判越界再 memcpy,并把游标推进 size;失败时游标保持不动
     inline bool ReadFixedLE(const TByteArray& In, size_t& Off, uint32& Out) {
         if (Off + sizeof(uint32) > In.size())
             return false;
@@ -36,6 +51,7 @@ namespace {
         Off += sizeof(uint64);
         return true;
     }
+    // 字符串 = 2 字节长度 + 裸字节(无终止符);长度超过 65535 会被截断成 16 位
     inline void AppendString_LE(TByteArray& Out, const MString& S) {
         AppendFixedLE16(Out, static_cast<uint16>(S.size()));
         Out.insert(Out.end(), S.begin(), S.end());
@@ -44,6 +60,7 @@ namespace {
         uint16 Len = 0;
         if (!ReadFixedLE16(In, Off, Len))
             return false;
+        // 先验长度再越界拷贝:防止 Len 被伪造导致读越界
         if (Off + Len > In.size())
             return false;
         Out.assign(In.begin() + Off, In.begin() + Off + Len);
@@ -60,6 +77,7 @@ bool EncodeEndpoint(const FServiceEndpoint& Ep, TByteArray& Out) {
     AppendFixedLE16(Out, Ep.Port);
     AppendFixedLE64(Out, Ep.LastHeartbeatMs);
     Out.push_back(Ep.bHealthy ? 1 : 0);
+    // ActorIds 个数用 16 位:单个端点的 actor 数上限 65535
     AppendFixedLE16(Out, static_cast<uint16>(Ep.ActorIds.size()));
     for (uint64 ActorId : Ep.ActorIds) {
         AppendFixedLE64(Out, ActorId);
@@ -80,6 +98,7 @@ bool DecodeEndpoint(const TByteArray& In, size_t& Off, FServiceEndpoint& Ep) {
         return false;
     if (!ReadFixedLE64(In, Off, Ep.LastHeartbeatMs))
         return false;
+    // 布尔按 1 字节读:非 0 即 true
     if (Off + 1 > In.size())
         return false;
     Ep.bHealthy      = (In[Off++] != 0);
