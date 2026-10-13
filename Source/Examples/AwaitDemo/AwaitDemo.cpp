@@ -1,8 +1,14 @@
-// AwaitDemo — await 状态机框架端到端验证（C# async 模型，方案 B）
-// async 业务逻辑体（含 await 表达式）在 AwaitDemo.Async.cpp（约定：*.Async.cpp =
-// codegen 专用源，天然带 MESSION_AWAIT_CODEGEN_SOURCE，业务编译不编译它）；
-// 编译版实现由 MHeaderTool 生成（独立编译单元），业务编译只提供
-// await 目标实现 + main 调用（真实场景由 ServerCall/RPC 自动分发）。
+/**
+ * @file AwaitDemo.cpp
+ * @brief await 状态机框架的端到端验证入口(含 main)。
+ *
+ * 分工:
+ * - async 业务逻辑体(含 await 表达式)在 AwaitDemo.Async.cpp —— 约定 *.Async.cpp
+ *   是 codegen 专用源,天然带 MESSION_AWAIT_CODEGEN_SOURCE,业务编译不编译它;
+ * - 可编译实现由 MHeaderTool 生成(独立编译单元);
+ * - 本文件只提供 await 目标实现 + main 调用。真实场景里这一步由 ServerCall / RPC
+ *   自动分发,不用手写。
+ */
 
 #include "AwaitDemo.h"
 #include "BranchDemo.h"
@@ -13,15 +19,22 @@
 #include <chrono>
 #include <cstdio>
 
-// await 目标实现（模拟异步 I/O：ready future，V*2）
+/**
+ * @brief AwaitDemoHelper - await 目标实现,模拟异步 I/O。
+ * @param V 输入值
+ * @return ready 的 SFutureResult<int>,值为 V * 2
+ */
 SFutureResult<int> AwaitDemoHelper(int V) {
     MPromise<TResult<int, FAppError>> P;
     P.SetValue(TResult<int, FAppError>::Ok(V * 2));
     return SFutureResult<int>(P.GetFuture());
 }
 
-// MFUNCTION(Async) 业务逻辑体（codegen 输入：正常业务逻辑 + await 点）
-
+/**
+ * @brief main - 跑一遍全部 await 场景,逐个打印结果并校验期望值。
+ *
+ * @return 0 表示所有断言值都对;1 表示有偏差。
+ */
 int main() {
     // 单 await：Mid = 5*3 = 15 → await Helper(15) = 30 → 返回 30+1 = 31
     const int R = AwaitDemoCompute(5).GetResult().GetValue();

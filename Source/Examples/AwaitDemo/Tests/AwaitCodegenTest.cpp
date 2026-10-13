@@ -1,8 +1,14 @@
-// AwaitCodegenTest — await 状态机 codegen 系统化测试（回归保护）
-// 覆盖：单 await / 多 await 串行 / 循环 / 真异步 / 并发 / 类成员 /
-//       if+early / else await / if 内多 await / else-if 链 / 嵌套 / 3 层嵌套 /
-//       分支内循环 / 循环内 if。
-// 实现由 MHeaderTool 生成（codegen Impl），本文件只断言结果值。
+/**
+ * @file AwaitCodegenTest.cpp
+ * @brief await 状态机 codegen 的系统化测试(回归保护)。
+ *
+ * 覆盖:单 await / 多 await 串行 / 循环 / 真异步 / 并发 / 类成员 /
+ * if + early return / else await / if 内多 await / else-if 链 / 嵌套 / 3 层嵌套 /
+ * 分支内循环 / 循环内 if。
+ *
+ * @note 被测实现全部由 MHeaderTool 生成(codegen Impl),本文件只断言结果值,
+ *       不自己实现状态机逻辑。
+ */
 
 #include "Examples/AwaitDemo/BranchDemo.h"
 #include "Examples/AwaitDemo/ComplexDemo.h"

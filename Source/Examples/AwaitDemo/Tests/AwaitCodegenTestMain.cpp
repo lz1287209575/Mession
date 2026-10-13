@@ -1,4 +1,10 @@
-// AwaitCodegenTest main — 汇总运行（测试 TU 合并共享计数）
+/**
+ * @file AwaitCodegenTestMain.cpp
+ * @brief AwaitCodegenTest 的 main —— 把各用例汇总跑一遍。
+ *
+ * 直接 #include 测试体所在的 TU,让两个文件共享同一份用例计数与 __COUNTER__
+ * 生成的用例名。
+ */
 #include "AwaitCodegenTest.cpp"
 
 int main() {
