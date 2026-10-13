@@ -2,18 +2,30 @@
 #include "Common/Runtime/Log/LogLevel.h"
 #include "Common/Runtime/MLib.h"
 
-// Note: brief's static_assert(sizeof(ELogLevel) <= sizeof(uint8)) is dropped.
-// ELogLevel is `enum class : int` in this codebase (4B), and changing it to :uint8
-// would alter ABI/int promotion for the entire logger stack (Logger.cpp, sinks).
-// LogRecord stores the level as uint8 and the producer casts ELogLevel -> uint8
-// at the call site, which is safe for the 6-value range.
+/**
+ * @file LogRecord.h
+ * @brief SLogRecord —— 定长 176 字节 POD 日志条目(规范 §5.4)。
+ *
+ * @detail 说明:需求文档曾要求 `static_assert(sizeof(ELogLevel) <= sizeof(uint8))`,
+ * 此处不采纳。ELogLevel 在本代码库是 `enum class : int`(4 字节),改为
+ * `: uint8` 会改变整个日志栈(Logger.cpp 及各 sink)的 ABI 与整型提升。
+ * SLogRecord 以 uint8 存 level,由生产方调用点做 ELogLevel -> uint8
+ * 强转;枚举仅 6 个取值,转换安全。
+ */
 
-// SLogRecord: 64B fixed-size POD log entry.
-// Layout:
-//   Header         — 32B  (TimestampNs, ThreadId, CategoryId, Level, Flags, Reserved)
-//   Source location— 8B   (FileStringId, Line, FuncStringId)
-//   Routing+Context— 8B   (SinkMask, ContextSnapshotId)
-//   Payload        — 128B (union of Inline[128] / Overflow{Offset,Length,Capacity,Reserved})
+/**
+ * @brief 定长 176 字节 POD 日志条目。
+ *
+ * @detail 布局:
+ *   Header(头)         — 32B: TimestampNs / ThreadId / CategoryId /
+ *                              Level / Flags / Reserved
+ *   Source location(源码位置)— 8B : FileStringId / Line / FuncStringId
+ *   Routing+Context(路由与上下文)— 8B : SinkMask / ContextSnapshotId
+ *   Payload(载荷)      — 128B: union{Inline[128], Overflow{Offset,Length,
+ *                              Capacity,Reserved}}
+ *
+ * 注意:头部注释原文写 64B,实际 static_assert 为 176B,以 assert 为准。
+ */
 struct SLogRecord {
     // Header — 32B (timestamps, thread, category, level, flags, 16B reserved for future use)
     uint64 TimestampNs; // steady_clock 纳秒

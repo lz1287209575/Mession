@@ -7,32 +7,31 @@
 #include <cstdio>
 #include <mutex>
 
-// MRollingFileSink — new-pipeline (spec §5.8) rolling JSON-Lines file sink.
-//
-// Each Open() opens `FilePath` for append. WriteBatch serializes every record
-// as one JSON object and writes them (plus '\n' separators) via fwrite —
-// the bulk-path that turns the entire batch into one syscall on Unix.
-//
-// Rotation policy: when the current file's on-disk size plus the size of the
-// next record would exceed `RotatedFileBytes`, the current file is closed,
-// renamed with a numeric suffix, the oldest archive beyond `NumArchives` is
-// deleted, and a fresh file is opened. Rotation is per-record (not per-line)
-// so a single oversized record can never spill across the threshold by more
-// than one record's worth of bytes.
-//
-// Flush() calls fflush() on every call, and additionally issues an
-// fdatasync() every `FlushesPerFsync` calls (default 10) so durability and
-// throughput stay balanced.
-//
-// `ServiceName` is included in the JSON payload and (when rotated) in the
-// archive name. `FilePath` is the live log path; archives get a numeric
-// suffix and stay in the same directory.
+/**
+ * @file RollingFileSink.h
+ * @brief MRollingFileSink —— 新管线(规范 §5.8)滚动 JSON-Lines 文件 sink。
+ *
+ * @detail 每次 Open() 以追加模式打开 FilePath。WriteBatch 把每条记录
+ * 序列化为一个 JSON 对象,连同 '\n' 分隔符一起 fwrite —— 整批在 Unix
+ * 上只需一次系统调用的批量路径。
+ *
+ * 滚动策略:当前文件磁盘大小加上下一条记录大小将超过
+ * RotatedFileBytes 时,关闭当前文件、加数字后缀重命名、删除超出
+ * NumArchives 的最旧归档、重新打开新文件。滚动粒度为"每条记录"
+ * (而非每行),因此单条超大记录最多越过阈值一个记录的字节量。
+ *
+ * Flush() 每次都调 fflush(),并每累计 FlushesPerFsync 次(默认 10)
+ * 追加一次 fdatasync(),在持久性与吞吐之间取平衡。
+ *
+ * ServiceName 会写进 JSON 载荷(滚动时也进归档名)。FilePath 是活动
+ * 日志路径;归档加数字后缀且与活动文件同目录。
+ */
 class MRollingFileSink : public ILogSink {
     public:
     MRollingFileSink();
     ~MRollingFileSink() override;
 
-    // New pipeline
+    // 新管线
     bool      Open() override;
     void      Close() override;
     void      WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<char> OutBuffer) override;
@@ -44,9 +43,8 @@ class MRollingFileSink : public ILogSink {
         return "file";
     }
 
-    // Configuration (public fields for ease of integration; setter-style
-    // access via member assignment is the documented style — see EchoService
-    // examples). Must be set before Open().
+    // 配置(公开字段便于集成;文档约定的用法是直接赋值成员——
+    // 见 EchoService 示例)。必须在 Open() 之前设置。
     MString ServiceName;                                   // e.g. "GatewayServer"
     MString FilePath;                                      // e.g. "/tmp/test-mession-log.jsonl"
     size_t  RotatedFileBytes = 100ull * 1024ull * 1024ull; // 100MB default
@@ -66,16 +64,15 @@ class MRollingFileSink : public ILogSink {
     int        Fd            = -1;
     std::mutex WriteMutex;
 
-    // Rotate: close Stream, rename to <path>.<N>, delete oldest if N exceeds
-    // NumArchives, then reopen Stream. Called under WriteMutex.
+    // 滚动:关闭 Stream、重命名为 <path>.<N>、超出 NumArchives 时
+    // 删最旧归档、再重开 Stream。调用方须持有 WriteMutex。
     void RotateLocked();
 
-    // Open Stream and seed CurrentBytes from the existing on-disk size
-    // (the file is append-only across runs by design). Called under
-    // WriteMutex.
+    // 打开 Stream 并以现有磁盘大小初始化 CurrentBytes(设计上跨运行
+    // 只追加)。调用方须持有 WriteMutex。
     bool OpenLocked();
 
-    // Issue fdatasync on the underlying fd when the counter reaches the
-    // threshold. Called from Flush() under WriteMutex.
+    // 计数达到阈值时对底层 fd 发 fdatasync。由 Flush() 在持有
+    // WriteMutex 时调用。
     void MaybeFsyncLocked();
 };

@@ -4,8 +4,13 @@
 #include <atomic>
 #include <cstring>
 
-// SLogCategory - single registered log channel (level, suppression, drop counter).
-// Registered globally via MLogRegistry; lifetime is owned by the registry.
+/**
+ * @file LogCategory.h
+ * @brief SLogCategory 单个已注册日志通道,含级别 / 抑制 / 丢弃计数;
+ * 以及分类声明宏。
+ *
+ * @detail SLogCategory 经 MLogRegistry 全局注册,生命周期由注册表持有。
+ */
 struct SLogCategory {
     const char*            Name         = nullptr;
     uint16                 Id           = 0;
@@ -15,25 +20,23 @@ struct SLogCategory {
     std::atomic<uint64>    DropCount{0};
 };
 
-// DECLARE_LOG_CATEGORY_EXTERN / DEFINE_LOG_CATEGORY pair.
-//
-// Note on the global-instance type: the original brief wrote `SLogCategory Name`
-// (value) here as the global, but SLogCategory contains std::atomic members,
-// which makes it non-copyable / non-movable, so the brief's
-// `SLogCategory Name = *MLogRegistry::Get().RegisterCategory(...)` pattern
-// cannot compile. We resolve this by making the macro's global a pointer into
-// the registry (`SLogCategory* Name`) so there is exactly one SLogCategory per
-// category and the std::atomic fields remain live.
-//
-// Usage (callers must use arrow syntax to dereference the pointer):
-//   LogNet->Name
-//   LogNet->Id
-//   LogNet->RuntimeLevel
-//   MLog::Write(LogNet, ELogLevel::Info, Fmt, ...);   // takes pointer
-//                                                // (or `const SLogCategory&` if
-//                                                // the API dereferences)
-//
-// DECLARE goes in a header (e.g. LogCategories.h), DEFINE in the matching .cpp.
+/**
+ * @brief DECLARE_LOG_CATEGORY_EXTERN / DEFINE_LOG_CATEGORY 声明 / 定义对。
+ *
+ * @detail 关于全局实例类型:需求原文把全局写成值类型 `SLogCategory Name`,
+ * 但 SLogCategory 含 std::atomic 成员,不可拷贝 / 移动,
+ * `SLogCategory Name = *...RegisterCategory(...)` 无法编译。这里改为
+ * 全局指向注册表的指针(`SLogCategory* Name`),保证每个分类只有一份
+ * SLogCategory 且 std::atomic 字段保持有效。
+ *
+ * 用法(调用方一律用箭头语法解引用):
+ *   LogNet->Name
+ *   LogNet->Id
+ *   LogNet->RuntimeLevel
+ *   MLog::Write(LogNet, ELogLevel::Info, Fmt, ...);   // 收指针
+ *
+ * DECLARE 放头文件(如 LogCategories.h),DEFINE 放同名 .cpp。
+ */
 #define DECLARE_LOG_CATEGORY_EXTERN(Name) extern SLogCategory* Name;
 
 #define DEFINE_LOG_CATEGORY(Name) SLogCategory* Name = MLogRegistry::Get().RegisterCategory(#Name, ELogLevel::Info);

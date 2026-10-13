@@ -3,7 +3,10 @@
 #include "Common/Runtime/MLib.h"
 #include <cstdarg>
 
-// MLog facade configuration (spec §5.9).
+/**
+ * @file LogConfig.h
+ * @brief MLog 门面配置结构体与 JSON 配置文件加载(规范 §5.9)。
+ */
 struct SLogInitParams {
     MString   ConfigPath;
     ELogLevel GlobalDefaultLevel = ELogLevel::Info;
@@ -16,12 +19,12 @@ struct SLogInitParams {
     bool      bEnableTcp = false;
     MString   TcpTarget; // "ip:port"
 
-    // Console on/off (default on). Console is always available in-process;
-    // disable when redirecting to remote sinks only.
+    // 控制台开关(默认开)。Console 始终可进程内使用;只发远端
+    // sink 时可关掉。
     bool bEnableConsole = true;
-    // File roll path; if empty no file sink is configured.
+    // 滚动文件路径;为空则不配置文件 sink。
     MString FilePath; // e.g. "Logs/echo.jsonl"
-    // Ring buffer capacity (in records). Default 1M = 64MB at 64B/record.
+                      // 环形缓冲容量(条数)。默认 1M 条 ≈ 64MB(按 64B/条估算)。
     size_t RingCapacity = 1u << 16;
 };
 
@@ -37,7 +40,13 @@ struct SLogRouteConfig {
     ELogLevel        MinLevel = ELogLevel::Trace;
 };
 
-// Apply a JSON config file in-place to the params & category / route list.
-// Returns true if the file existed and parsed; missing-file or parse-fail
-// returns false WITHOUT mutating the inputs.
+/**
+ * @brief 把 JSON 配置文件就地应用到初始化参数与分类 / 路由列表。
+ * @param Path 配置文件路径
+ * @param InOutParams 初始化参数(就地修改)
+ * @param OutCategories 输出的分类规则列表
+ * @param OutRoutes 输出的路由规则列表
+ * @return 文件存在且解析成功返回 true;文件缺失或解析失败返回
+ * false 且不改动任何入参
+ */
 bool MLogApplyConfigFile(const MString& Path, SLogInitParams& InOutParams, TVector<SLogCategoryConfig>& OutCategories, TVector<SLogRouteConfig>& OutRoutes);

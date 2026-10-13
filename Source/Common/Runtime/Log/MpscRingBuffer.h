@@ -7,14 +7,18 @@
 #include <cstring>
 #include <thread>
 
-// TMpscRingBuffer<T>: 多生产者单消费者环形队列。
-// 容量必须是 2 的幂（内部使用位掩码取模）。
-// 同步机制: 三个计数器
-//   - EnqueuePos (atomic): 已抢占的 slot 上界(含尚未发布的)
-//   - PublishedHead (atomic): 已发布的上界(消费者按此读取)
-//   - DequeuePos (单线程): 已消费的下界
-// 多生产者通过 CAS(EnqueuePos) 抢占下一个可写 slot;
-// 写入 Storage 后发布(推进 PublishedHead);消费者读取 PublishedHead 范围内的 slot。
+/**
+ * @file MpscRingBuffer.h
+ * @brief TMpscRingBuffer<T> —— 多生产者单消费者(MPSC)无锁环形队列,
+ * 日志系统的核心传输结构。
+ *
+ * @detail 容量必须是 2 的幂(内部用位掩码取模)。同步机制为三个计数器:
+ *   - EnqueuePos(atomic): 已抢占的 slot 上界(含尚未发布的)
+ *   - PublishedHead(atomic): 已发布上界(消费者按此读取)
+ *   - DequeuePos(单线程): 已消费下界
+ * 多生产者经 CAS(EnqueuePos) 抢占下一个可写 slot;写入 Storage 后
+ * 发布(推进 PublishedHead);消费者只读 PublishedHead 范围内的 slot。
+ */
 template <typename T> class TMpscRingBuffer {
     public:
     explicit TMpscRingBuffer(size_t CapacityPow2) : CapacityMask(CapacityPow2 - 1) {

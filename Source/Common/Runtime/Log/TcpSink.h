@@ -8,23 +8,25 @@
 #include <atomic>
 #include <mutex>
 
-// MTcpSink — new-pipeline (spec §5.8) TCP sink. Maintains a single TCP
-// connection to `Target` and streams JSON Lines down it. On connection
-// loss (send() returns ECONNRESET or EPIPE), the sink enters a 5s backoff
-// and attempts one reconnect; records emitted during the disconnect
-// window are counted as dropped via MLogMetrics.
-//
-// WriteBatch() holds WriteMutex briefly to guard the connected-state
-// transitions. The producer thread that called WriteBatch owns the
-// in-flight send() — sendto is *not* thread-safe across concurrent
-// callers on the same fd for TCP.
+/**
+ * @file TcpSink.h
+ * @brief MTcpSink —— 新管线(规范 §5.8)TCP sink,维持到 Target 的单条
+ * TCP 连接并流式下发 JSON Lines。
+ *
+ * @detail 连接丢失时(send() 返回 ECONNRESET 或 EPIPE),sink 进入
+ * 5 秒退避并尝试一次重连;断开窗口内发出的记录经 MLogMetrics 记为丢弃。
+ *
+ * WriteBatch() 短暂持有 WriteMutex 保护连接态迁移。调用 WriteBatch
+ * 的生产方线程独占有在途 send() —— 对同一 fd 而言 TCP 的并发调用
+ * 并非线程安全。
+ */
 
 class MTcpSink : public ILogSink {
     public:
     MTcpSink();
     ~MTcpSink() override;
 
-    // New pipeline
+    // 新管线
     bool      Open() override;
     void      Close() override;
     void      WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<char> OutBuffer) override;
@@ -36,7 +38,7 @@ class MTcpSink : public ILogSink {
         return "tcp";
     }
 
-    // Configuration. Must be set before Open().
+    // 配置。必须在 Open() 之前设置。
     MString Target; // "ip:port"
     int     ReconnectBackoffMs = 5000;
 
@@ -49,15 +51,15 @@ class MTcpSink : public ILogSink {
     int       SockFd        = -1;
     bool      bOpen         = false;
 
-    // Tracks when the next reconnect attempt is allowed. Held under WriteMutex.
+    // 记录下一次允许重连的时刻。访问须持有 WriteMutex。
     long long NextReconnectAtMs = 0;
 
     std::mutex WriteMutex;
 
-    // Issue a blocking send of `Bytes` starting at `Ptr`. On error, drop the
-    // connection (CloseLocked) so the next WriteBatch triggers a reconnect.
+    // 从 Ptr 起阻塞发送 Bytes 字节。出错时断开连接(CloseLocked),
+    // 使下一次 WriteBatch 触发重连。
     void SendLocked(const char* Ptr, size_t Bytes);
 
-    // Drop the socket. Caller must hold WriteMutex.
+    // 关闭 socket。调用方须持有 WriteMutex。
     void CloseLocked();
 };

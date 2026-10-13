@@ -9,23 +9,22 @@
 #include <mutex>
 #include <thread>
 
-// MLogSinkWriter — one writer thread per ILogSink (spec §5.7).
-//
-// Producer side: MLogDispatcher pushes batches via EnqueueBatch() (lock-free
-// path: we hand the batch to a small MPSC inbox protected by a mutex + cv —
-// not lock-free because ILogSink is not move-constructible in general, so we
-// can only move a TSinkBatch wrapper when the inbox is small). The hot-path
-// for the dispatcher is EnqueueBatch; the lock contention surface is the
-// inbox mutex, not the sink itself.
-//
-// Consumer side: RunLoop() pulls batches, applies the configured
-// EFlushPolicy, and calls Sink->WriteBatch. Sink owns its own per-sink
-// serialization (text for Console, JSON Lines for the file/UDP/TCP sinks),
-// so the writer thread does not need to know the wire format.
-//
-// Lifecycle: Start() launches the thread; Stop() sets bRunning=false,
-// notifies the cv, and joins. After Stop() returns, the inbox is empty
-// and no further Sink->* calls will happen on this writer thread.
+/**
+ * @file SinkWriter.h
+ * @brief MLogSinkWriter —— 每个 ILogSink 一个写线程(规范 §5.7)。
+ *
+ * @detail 生产侧:MLogDispatcher 经 EnqueueBatch() 推入批次(入口是
+ * 一个小型受 mutex + cv 保护的 MPSC 收件箱;因 ILogSink 一般不可移动
+ * 构造,无法做到完全无锁,只能移动 TSinkBatch 包装)。dispatcher 的
+ * 热路径就是 EnqueueBatch,锁竞争面是收件箱互斥量,而非 sink 本身。
+ *
+ * 消费侧:RunLoop() 取批次,套用配置的 EFlushPolicy,再调 Sink->WriteBatch。
+ * 各 sink 自行负责序列化(Console 出文本,file/UDP/TCP 出 JSON Lines),
+ * 写线程无需知道线上格式。
+ *
+ * 生命周期:Start() 起线程;Stop() 置 bRunning=false、唤醒 cv 并 join。
+ * Stop() 返回后收件箱已空,该写线程不会再发生任何 Sink->* 调用。
+ */
 class MLogSinkWriter {
     public:
     struct SSinkBatch {
@@ -35,13 +34,20 @@ class MLogSinkWriter {
     MLogSinkWriter() = default;
     ~MLogSinkWriter();
 
-    // Bind to a sink. Must be called before Start(). SinkWriter does NOT
-    // own the sink; the caller must keep it alive until Stop() returns.
+    /**
+     * @brief 绑定 sink。必须在 Start() 之前调用。
+     * @param InSink sink 指针(不持有所有权;调用方须保证其存活到
+     * Stop() 返回之后)
+     * @param InPolicy 刷新策略,默认 IntervalOrSize
+     */
     void SetSink(ILogSink* InSink, EFlushPolicy InPolicy = EFlushPolicy::IntervalOrSize);
 
-    // Hot-path entry. Hands the batch to the writer thread. Blocks on the
-    // inbox if it is already full (small bounded queue — 16 batches), which
-    // is a documented backpressure signal.
+    /**
+     * @brief 热路径入口:把批次交给写线程。
+     * @param Batch 一批待写记录
+     * @detail 收件箱满(有界小队列,容量 16 批)时会阻塞,这是
+     * 有文档记录的背压信号。
+     */
     void EnqueueBatch(TSpan<const SLogRecord> Batch);
 
     void Start();
@@ -54,14 +60,16 @@ class MLogSinkWriter {
         FlushSizeThreshold = B;
     }
 
-    // Drain the inbox synchronously and run the sink until empty. Used by
-    // MLog::Shutdown() so that critical-path records make it to the wire
-    // before the writer thread exits.
+    /**
+     * @brief 同步排空收件箱并驱动 sink 直至写完。
+     * @detail 供 MLog::Shutdown() 使用,确保关键路径记录在写线程
+     * 退出前已上线。
+     */
     void FlushSync();
 
     private:
-    // Maximum number of batches the inbox holds before EnqueueBatch blocks.
-    // Sized so we balance wake-up latency against writer-thread pressure.
+    // 收件箱在 EnqueueBatch 开始阻塞前可容纳的最大批次数。
+    // 该容量在唤醒延迟与写线程压力之间取平衡。
     static constexpr size_t kMaxBatches = 16;
 
     ILogSink*    Sink               = nullptr;
@@ -75,7 +83,8 @@ class MLogSinkWriter {
     TQueue<TSharedPtr<SSinkBatch>> Inbox;
     std::atomic<bool>              bRunning{false};
 
-    // Bytes accumulated since last Flush(); used by SizeThreshold / IntervalOrSize.
+    // 自上次 Flush() 以来累积的字节数,用于 SizeThreshold /
+    // IntervalOrSize 策略判断。
     int       BufferedBytes = 0;
     long long LastFlushMs   = 0;
 

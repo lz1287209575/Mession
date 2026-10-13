@@ -13,20 +13,22 @@
 class MLogSinkWriter;
 class MLogDispatcher;
 
-// MLog — public facade (spec §5.9).
-//
-// Lifecycle: call Init() exactly once at startup with the desired SLogInitParams.
-// At shutdown call Shutdown() to drain the queue and join all worker threads.
-//
-// Hot-path: Write() is the entry point for every log call site. It applies
-// the per-category filter, resolves the routing decision (SinkMask), then
-// enqueues a single SLogRecord into the lock-free MPSC ring buffer. The
-// caller never blocks on disk or network — those happen on the dispatcher
-// and writer threads.
-//
-// FATAL path: HandleFatal() bypasses the ring buffer entirely. It snapshots
-// the recent records, calls MCoredumpSink, then raises SIGABRT. This is
-// the only path that does anything synchronous from the caller's thread.
+/**
+ * @file Log.h
+ * @brief MLog 门面(facade)API —— 日志系统的统一入口(规范 §5.9)。
+ *
+ * @detail 生命周期:进程启动时调用一次 Init();退出前调用 Shutdown()
+ * 排空环形队列并 join 所有工作线程。
+ *
+ * 热路径:Write() 是所有日志调用点的入口。先做分类级过滤
+ * (MLogFilter),再解析路由决策(SinkMask),最后把单条 SLogRecord
+ * 压入无锁 MPSC 环形队列。调用方永远不会阻塞在磁盘或网络上——
+ * 那些发生在 dispatcher 与 writer 线程。
+ *
+ * FATAL 路径:HandleFatal() 完全绕过环形队列,直接快照近期记录、
+ * 调用 MCoredumpSink 落盘,然后抛 SIGABRT。这是唯一一条在调用方
+ * 线程同步执行事情的路径。
+ */
 namespace MLog {
     // Startup. Wires up sinks, registry, dispatcher, writers. Idempotent:
     // a second call is a no-op.

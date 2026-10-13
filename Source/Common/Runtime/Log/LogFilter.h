@@ -4,15 +4,16 @@
 #include "Common/Runtime/Log/LogMetrics.h"
 #include "Common/Runtime/MLib.h"
 
-// Per-record filter (spec §8.1): drops records that are suppressed or whose
-// level is below the category's RuntimeLevel. Returns true if the record
-// should be enqueued, false if it was dropped.
-//
-// Dropped records increment TotalSuppressed (global) and the per-category
-// SuppressedByCategory[Cat.Id] counter so the count is observable per
-// category via MLogMetrics::Snapshot(). MLogRouter's SinkMask==0 path is
-// a distinct event handled in the Router (see LogRouter.cpp), so this
-// does not double-count.
+/**
+ * @file LogFilter.h
+ * @brief MLogFilter —— 单条日志入队前的分类级过滤(规范 §8.1)。
+ *
+ * @detail 丢弃两类记录:分类被抑制,或级别低于分类 RuntimeLevel。
+ * 被丢记录同时累加全局 TotalSuppressed 与按分类的
+ * SuppressedByCategory[Cat.Id],可通过 MLogMetrics::Snapshot() 观测。
+ * 注意:MLogRouter 的 SinkMask==0 是另一类事件,在 Router 内部处理
+ * (见 LogRouter.cpp),两者不会重复计数。
+ */
 class MLogFilter {
     public:
     static bool ShouldLog(const SLogCategory* Category, ELogLevel Level) {

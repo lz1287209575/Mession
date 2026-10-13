@@ -7,21 +7,22 @@
 #include <cstdarg>
 #include <functional>
 
-// MCoredumpSink — synchronous FATAL capture (spec §6.1).
-//
-// Triggered from MLog::HandleFatal: bypasses the async ring buffer,
-// scans the buffer's tail (last N records), collects process + system
-// info, writes a JSON Lines dump to Logs/coredump/<service>-<ts>.jsonl,
-// and then raises SIGABRT so the OS writes a core file as well.
-//
-// We do NOT depend on the application stack to call backtrace() — by the
-// time HandleFatal runs the stack may already be partly unwound. The OS
-// coredump captures the full stack; our job is to capture the log tail
-// + process context, not to walk the stack itself.
-//
-// SConfig::UploadHook is reserved (spec §6.2). When set, OnDumpComplete
-// fires the hook on a detached std::thread so the main path stays
-// synchronous. If the upload fails the error is written to stderr only.
+/**
+ * @file CoredumpSink.h
+ * @brief MCoredumpSink —— 同步 FATAL 现场捕获(规范 §6.1)。
+ *
+ * @detail 由 MLog::HandleFatal 触发:绕过异步环形队列,扫描队列尾部
+ * (最近 N 条),收集进程与系统信息,把 JSON Lines dump 写到
+ * Logs/coredump/<service>-<ts>.jsonl,随后抛 SIGABRT 让 OS 也生成 core。
+ *
+ * 我们故意不依赖应用栈调 backtrace() —— HandleFatal 运行时栈可能已
+ * 部分展开。完整栈由 OS coredump 捕获;本类的职责是捕获日志尾部与
+ * 进程上下文,而不是自己走栈。
+ *
+ * SConfig::UploadHook 预留给规范 §6.2。设置后 OnDumpComplete 会在
+ * detached std::thread 上触发钩子,主路径保持同步。上传失败只把错误
+ * 写 stderr。
+ */
 class MCoredumpSink {
     public:
     struct SConfig {

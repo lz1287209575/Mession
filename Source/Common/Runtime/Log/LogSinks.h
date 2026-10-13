@@ -4,61 +4,53 @@
 #include "Common/Runtime/Log/LogRecord.h"
 #include "Common/Runtime/MLib.h"
 
-// =============================================================================
-// ILogSink — the new-pipeline sink contract (spec §5.8).
-// =============================================================================
-//
-// Lifecycle / per-batch:
-//   Open()        — prepare the sink (open file, allocate buffer, etc.). Default
-//                   returns true so sinks that need no setup (e.g. an in-memory
-//                   ring) need not override it.
-//   Close()       — release resources. Default no-op.
-//   WriteBatch()  — consume a pre-populated buffer of SLogRecord plus a caller-
-//                   provided scratch `OutBuffer`; serialize into `OutBuffer` and
-//                   emit to the underlying stream. Pure-virtual: every new-
-//                   pipeline sink must implement its serialization. Sinks that
-//                   are only used through the legacy MLogger path (the existing
-//                   MConsoleSink / MFileSink) override the legacy `Write()`
-//                   method instead and inherit the empty default here.
-//   Flush()       — push pending bytes to the OS. Default no-op.
-//
-// Per-record gating / introspection:
-//   MinLevel()    — records below this level are dropped at the writer (default
-//                   Trace, i.e. accept everything).
-//   Name()        — short identifier for log-routing / metrics labeling.
-//                   Default returns "".
-//
-// Legacy bridge (kept for MLogger compatibility — see ConsoleLogSink.h and
-// FileLogSink.h, which inherit from ILogSink and override Write() to integrate
-// with the existing MLogger plumbing):
-//   Write(ELogLevel, const MString&) — default no-op.
-//   GetMinLevel()                    — default returns MinLevel().
-//
-// The legacy methods have non-pure defaults so the existing MConsoleSink /
-// MFileSink (still used by MLogger) remain concrete. They are scheduled for
-// removal when MLogger itself is migrated to the new pipeline (spec §12 step 5).
+/**
+ * @file LogSinks.h
+ * @brief ILogSink 新管线 sink 契约(规范 §5.8),以及 ELogSinkId 位定义。
+ *
+ * @detail 生命周期 / 每批:
+ *   Open()        — 准备 sink(打开文件、分配缓冲等)。默认返回 true,
+ *                   无需准备的 sink(如内存环)可不必重写。
+ *   Close()       — 释放资源,默认空操作。
+ *   WriteBatch()  — 消费一批 SLogRecord 加调用方提供的暂存 OutBuffer,
+ *                   序列化进 OutBuffer 后发往底层流。每个新管线 sink
+ *                   必须实现自己的序列化。仅走旧 MLogger 路径的 sink
+ *                   (现有 MConsoleSink / MFileSink)改为重写旧接口
+ *                   Write(),继承这里的空实现即可。
+ *   Flush()       — 把待写字节推给 OS,默认空操作。
+ *
+ * 单条级别门控 / 自省:
+ *   MinLevel()    — 低于该级别的记录在写线程被丢(默认 Trace 即全收)。
+ *   Name()        — 路由 / 指标打标用的短标识,默认返回 ""。
+ *
+ * 旧桥接(为兼容仍存在的 MLogger 保留——见 ConsoleLogSink.h 与
+ * FileLogSink.h,二者继承 ILogSink 并重写 Write() 接入现有 MLogger 管线):
+ *   Write(ELogLevel, const MString&) — 默认空操作。
+ *   GetMinLevel()                    — 默认返回 MinLevel()。
+ *
+ * 这些旧方法带非纯默认实现,使现有 MConsoleSink / MFileSink(仍被
+ * MLogger 使用)保持具体类。待 MLogger 自身迁到新管线后移除
+ * (规范 §12 第 5 步)。
+ */
 class ILogSink {
     public:
     virtual ~ILogSink() = default;
 
-    // --- New pipeline (spec §5.8) ---
+    // --- 新管线(规范 §5.8) ---
     virtual bool Open() {
         return true;
     }
     virtual void Close() {
     }
-    // WriteBatch is intentionally non-pure: legacy sinks that live on the
-    // MLogger path (ConsoleLogSink / FileLogSink) keep working without
-    // having to implement the new contract. New-pipeline sinks (ConsoleSink
-    // / RollingFileSink) override it.
+    // WriteBatch 有意设为非纯虚:走 MLogger 路径的旧 sink
+    // (ConsoleLogSink / FileLogSink)无需实现新契约也能工作。
+    // 新管线 sink(ConsoleSink / RollingFileSink)重写它。
     //
-    // Note on the buffer type: the brief's snippet shows `TSpan<char>` but
-    // TSpan is the project's read-only buffer view alias (now backed by the
-    // cpp17-compatible MSpan<const T>), which would make the buffer read-only.
-    // The intent ("sink fills it with serialized text and writes to its
-    // underlying stream") requires a mutable scratch buffer, so we use
-    // TSpanMutable<char> (= MSpan<char>) here. The caller is still expected
-    // to provide the storage.
+    // 关于缓冲区类型:需求片段写的是 `TSpan<char>`,但 TSpan 是本项目
+    // 的只读视图别名(现由兼容 cpp17 的 MSpan<const T> 支撑),会把缓冲
+    // 区变成只读。语义上"sink 往里填序列化文本再写到底层流"要求可变
+    // 暂存,故这里用 TSpanMutable<char>(= MSpan<char>)。存储仍由调用方
+    // 提供。
     virtual void WriteBatch(TSpan<const SLogRecord> /*Batch*/, TSpanMutable<char> /*OutBuffer*/) {
     }
     virtual void Flush() {
@@ -70,7 +62,7 @@ class ILogSink {
         return "";
     }
 
-    // --- Legacy bridge for the still-present MLogger path ---
+    // --- 为仍存在的 MLogger 路径保留的旧桥接 ---
     virtual void Write(ELogLevel /*Level*/, const MString& /*FormattedLine*/) {
     }
     virtual ELogLevel GetMinLevel() const {
@@ -79,9 +71,9 @@ class ILogSink {
 };
 
 // =============================================================================
-// ELogSinkId — bit positions in the 32-bit SLogRecord::SinkMask / SLogRouteRule
-// routing table. Lifted from LogRouter.h (Task 4) so the enum lives next to the
-// interface that consumes it. Bit values 0..4 are STABLE: do not reorder.
+// ELogSinkId —— SLogRecord::SinkMask / SLogRouteRule 32 位路由表中的
+// 位序号。自 LogRouter.h(Task 4)上移到此,让枚举与消费它的接口相邻。
+// 位值 0..4 属稳定 ABI,禁止重排。
 // =============================================================================
 enum class ELogSinkId : uint32 {
     Console  = 0, // 1u << 0

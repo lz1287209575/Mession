@@ -14,10 +14,10 @@ struct SLogMetricsSnapshot {
     uint64 WrittenBytesUdp     = 0;
     uint64 WrittenBytesTcp     = 0;
     uint64 TotalSuppressed     = 0;
-    // SuppressedByCategory: per-category suppression counters. Indexed by
-    // SLogCategory::Id. Consumers should index only up to
-    // MLogRegistry::Get().NumCategories(). Not pre-sized because Category count
-    // is dynamic; resize happens in MLogMetrics::IncSuppressedByCategory().
+    // 按分类的抑制计数器,下标为 SLogCategory::Id。消费者只应索引到
+    // MLogRegistry::Get().NumCategories() 为止。因分类数量是动态的,
+    // 此处不预分配;真正的 resize 发生在
+    // MLogMetrics::IncSuppressedByCategory()。
     TVector<uint64> SuppressedByCategory;
 };
 

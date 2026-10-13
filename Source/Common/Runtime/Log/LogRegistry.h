@@ -8,13 +8,16 @@ class MLogRegistry {
     public:
     static MLogRegistry& Get();
 
-    // Register a category by name. Idempotent: if a category with the same
-    // name already exists, returns the existing entry without mutating it.
-    // Otherwise appends a new entry whose Id equals the resulting size and
-    // whose DefaultLevel / RuntimeLevel both equal DefaultLevel.
+    /**
+     * @brief 按名字注册一个日志分类(幂等)。
+     * @param Name 分类名(C 字符串,需保持常量生命周期)
+     * @param DefaultLevel 新分类的默认级别
+     * @return 该分类的 SLogCategory 指针;同名已存在时直接返回已有项,
+     * 不做任何修改。否则追加新项,其 Id 等于追加后的元素个数,
+     * DefaultLevel 与 RuntimeLevel 均为 DefaultLevel
+     */
     SLogCategory* RegisterCategory(const char* Name, ELogLevel DefaultLevel);
 
-    // Lookup
     const SLogCategory* GetById(uint16 Id) const;
     SLogCategory*       GetById(uint16 Id);
     const SLogCategory* FindByName(const MString& Name) const;
@@ -26,13 +29,11 @@ class MLogRegistry {
     private:
     MLogRegistry() = default;
 
-    // SLogCategory contains std::atomic members, which are non-copyable and
-    // non-movable, so we cannot store them inline in TVector. The brief wrote
-    // `TVector<SLogCategory>` but that cannot compile when the element type
-    // has atomic members — std::vector requires the element to be at least
-    // move-insertable. Instead we store unique_ptrs and hand out raw
-    // SLogCategory* to callers; the pointers are stable across reallocation.
+    // SLogCategory 含 std::atomic 成员,不可拷贝 / 移动,因此不能内联
+    // 存于 TVector(需求原文写的 `TVector<SLogCategory>` 无法编译 ——
+    // vector 要求元素至少可移动插入)。改为存 unique_ptr,对外分发裸
+    // SLogCategory*;重分配不会使已分发的指针失效。
     TVector<TUniquePtr<SLogCategory>> Categories;
-    // mutable so const FindByName can lock it
+    // mutable:让 const 的 FindByName 也能加锁
     mutable std::mutex Mutex;
 };

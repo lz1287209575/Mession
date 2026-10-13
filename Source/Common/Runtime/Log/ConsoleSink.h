@@ -6,23 +6,26 @@
 #include "Common/Runtime/MLib.h"
 #include <mutex>
 
-// MConsoleSink — new-pipeline (spec §5.8) console sink. Writes serialized
-// text lines to stdout via std::cout. Records are dropped by MinLevel
-// at the writer; each accepted record becomes one line of the form:
-//
-//   [ISO-timestamp] [LEVEL] [CatName] [file:line] message\n
-//
-// `bUseColor` is reserved for a future ANSI-color pass-through; the first
-// revision writes plain text regardless. The option is exposed as a
-// public field so callers can flip it without a setter round-trip.
-//
-// Open/Close are no-ops for stdout (the libc stream is always available);
-// they are still implemented to satisfy the ILogSink lifecycle contract.
+/**
+ * @file ConsoleSink.h
+ * @brief MConsoleSink —— 新管线(规范 §5.8)控制台 sink,向 stdout 写
+ * 序列化文本行。
+ *
+ * @detail 低于 MinLevel 的记录在写线程被丢;每条被接受的记录写成一行:
+ *
+ *   [ISO-timestamp] [LEVEL] [CatName] [file:line] message\n
+ *
+ * bUseColor 预留给后续 ANSI 彩色透传,首版一律纯文本;作为公开字段
+ * 暴露,调用方无需 setter 即可翻转。
+ *
+ * 对 stdout 而言 Open/Close 是空操作(libc 流始终可用),仍实现以
+ * 满足 ILogSink 生命周期契约。
+ */
 class MConsoleSink : public ILogSink {
     public:
     MConsoleSink() = default;
 
-    // New pipeline
+    // 新管线
     bool      Open() override;
     void      Close() override;
     void      WriteBatch(TSpan<const SLogRecord> Batch, TSpanMutable<char> OutBuffer) override;
@@ -34,7 +37,7 @@ class MConsoleSink : public ILogSink {
         return "console";
     }
 
-    // Configuration
+    // 配置
     void SetMinLevel(ELogLevel Level) {
         MinLevelValue = Level;
     }
