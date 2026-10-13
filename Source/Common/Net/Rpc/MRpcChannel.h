@@ -1,3 +1,16 @@
+/**
+ * @file MRpcChannel.h
+ * @brief MRpcChannel - 统一的 RPC 调用通道(ServerCall / CallClient / Actor 三合一入口)。
+ *
+ * @detail 三种用法:
+ *   1. Call<TResponse>(TargetServer, Class, Method, Request) —— 到远程服务器的请求-响应;
+ *   2. CallToActor / CallActor / CallActorAndWait              —— 按 actor 路由的投递;
+ *   3. SendToClient(Connection, Class, Method, Response)       —— 服务端→客户端下行。
+ *
+ *   Server 侧的连接解析(选连接 / 惰性建连)由全局单例 MEndpointCache 负责,调用方
+ *   不再需要传 IRpcTransportResolver。
+ */
+
 #pragma once
 
 #include "Common/Net/Routing/ActorRouter.h"
@@ -12,31 +25,32 @@
 #include <utility>
 
 /**
- * MRpcChannel - 统一 RPC 调用通道
+ * @brief MRpcChannel - 统一 ServerCall / CallClient / Actor 投递的进程内单例通道。
  *
- * 统一 ServerCall 和 CallClient，提供一致的异步调用体验。
+ * @detail 设计要点:传输层解析(选哪条连接、必要时惰性建连)由 MEndpointCache 全局单例
+ *   负责,调用方不必再传 IRpcTransportResolver —— 这是相对旧版最主要的简化。
  *
- * Server-side transport resolution（选 connection / lazy connect）由
- * MEndpointCache 全局单例负责——Caller 不用再传 IRpcTransportResolver。
+ *   用法(spec 2026-07-24 §18 附录 A):
  *
- * 用法(spec 2026-07-24 §18 附录 A):
+ *   // ServerCall: 调远程服务器,拿到 ready/pending 的 SFutureResult<FResp>
+ *   auto fut = MRpcChannel::Get().Call<FResponse>(
+ *       EServerType::Echo, "MEchoService", "Echo", request);
+ *   fut.Then([](SFutureResult<FResponse> F)
+ *   {
+ *       if (F.IsOk()) { // use F.GetResult().GetValue()
+ *       }
+ *       else          { // handle F.GetError()
+ *       }
+ *   });
  *
- * // ServerCall: 调用远程服务器,得到 ready/pending SFutureResult<FResp>
- * auto fut = MRpcChannel::Get().Call<FResponse>(
- *     EServerType::Echo, "MEchoService", "Echo", request);
- * fut.Then([](SFutureResult<FResponse> F)
- * {
- *     if (F.IsOk()) { // use F.GetResult().GetValue()
- *     }
- *     else          { // handle F.GetError()
- *     }
- * });
- *
- * // CallClient: 发送到客户端
- * MRpcChannel::Get().SendToClient(connection, "MPlayerController", "OnNotify", response);
+ *   // CallClient: 下行到客户端
+ *   MRpcChannel::Get().SendToClient(connection, "MPlayerController", "OnNotify", response);
  */
 class MRpcChannel {
     public:
+    /**
+     * @brief Get - 取进程内单例(Meyers 单例,首次调用时构造)。
+     */
     static MRpcChannel& Get();
 
     /**
@@ -95,6 +109,19 @@ class MRpcChannel {
     // ServerCall: 调用远程服务器
     // ============================================
 
+    /**
+     * @brief Call - 到指定 ServerType 的请求-响应调用。
+     * @param TargetServer 目标服务类型(Unknown 会被判为非法)
+     * @param ClassName    目标类名
+     * @param MethodName   目标函数名
+     * @param Request      请求体(需在反射系统里注册)
+     * @return 结果 future;失败时为 connection_unavailable / class_not_found /
+     *   server_call_missing_function 等错误
+     *
+     * @detail 内部经 MEndpointCache::GetOrConnect(TargetServer) 取(或建)连接;
+     *   连接不可用时立刻返回 ready 的错误 future,不会阻塞。
+     */
+
     template <typename TResponse, typename TRequest> SFutureResult<TResponse> Call(EServerType TargetServer, const char* ClassName, const char* MethodName, const TRequest& Request) const {
         TSharedPtr<MServerConnection> Connection = MEndpointCache::Get().GetOrConnect(TargetServer);
         if (!Connection || !Connection->IsConnected()) {
@@ -109,7 +136,17 @@ class MRpcChannel {
         return CallServerFunction<TResponse>(Connection, TargetClass, MethodName, Request);
     }
 
-    // 带 Actor 路由
+    /**
+     * @brief CallToActor - 按 actor 路由把 ServerCall 发到该 actor 所在进程。
+     * @param ActorId             目标 actor id
+     * @param ClassName           目标类名
+     * @param MethodName          目标函数名
+     * @param Request             请求体
+     * @param DefaultServer       路由表查不到时的兜底服务类型;仍为 Unknown 则直接报错
+     * @return 结果 future
+     *
+     * @detail 直接转发给 MActorRouter::SendToActor,语义与之一致。
+     */
     template <typename TResponse, typename TRequest> SFutureResult<TResponse> CallToActor(uint64 ActorId, const char* ClassName, const char* MethodName, const TRequest& Request, EServerType DefaultServer = EServerType::Unknown) const {
         return MActorRouter::Get().SendToActor<TResponse>(ActorId, ClassName, MethodName, Request, DefaultServer);
     }
@@ -117,6 +154,18 @@ class MRpcChannel {
     // ============================================
     // CallClient: 发送到客户端
     // ============================================
+
+    /**
+     * @brief SendToClient - 把一条反射下行消息发给指定的客户端连接。
+     * @param Connection 目标连接(INetConnection 或 MServerConnection 的 shared_ptr)
+     * @param ClassName  客户端侧类名
+     * @param MethodName 客户端侧函数名
+     * @param Response   响应体
+     * @return true 已入队;false 类/函数不在反射表,或发送失败
+     *
+     * @detail 类或函数查不到时只记 LOG_ERROR 并返回 false(不回包、不抛异常),
+     *   FunctionId 取自反射表的 MFunction::FunctionId。
+     */
 
     template <typename TResponse, typename TConnection> bool SendToClient(const TConnection& Connection, const char* ClassName, const char* MethodName, const TResponse& Response) const {
         const MClass* TargetClass = MObject::FindClass(ClassName);

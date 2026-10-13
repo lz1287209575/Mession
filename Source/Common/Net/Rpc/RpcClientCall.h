@@ -1,5 +1,3 @@
-#pragma once
-
 /**
  * @file RpcClientCall.h
  * @brief RpcClientCall - server→client 下行推送的两个薄封装。
@@ -17,6 +15,8 @@
  *   ([RequestId:8B][FunctionId:2B][PayloadSize:4B][Payload:N]),纯反射,不带 MessageType 字节;
  *   下行统一写 RequestId = 0,与客户端自身的 Request/Response 区分。
  */
+
+#pragma once
 
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/ClientCall/MClientTargetResolver.h"

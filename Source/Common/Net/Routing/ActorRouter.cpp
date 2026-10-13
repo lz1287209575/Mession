@@ -1,3 +1,8 @@
+/**
+ * @file ActorRouter.cpp
+ * @brief MActorRouter 的实现:路由表增删查 + 对 MActorSystem 的所有权委托。
+ */
+
 #include "Common/Net/Routing/ActorRouter.h"
 #include "Common/Runtime/Actor/IActor.h"
 #include "Common/Runtime/Actor/MActorHandle.h"
@@ -14,7 +19,8 @@ MActorRouter& MActorRouter::Get() {
 void MActorRouter::RegisterActor(uint64 ActorId, EServerType ServerType, uint64 ConnectionId) {
     std::lock_guard<std::mutex> Lock(RoutesMutex);
     auto&                       Routes = ActorRoutes[ActorId];
-    // 1:N fan-out:同 ActorId 重复注册追加（一般不会发生,防御性）
+    // 1:N fan-out:同 ActorId 允许挂多条路由。完全相同的 (ServerType, ConnectionId)
+    // 视为重复注册,直接跳过(防御性,避免表里堆同样的条目)。
     for (const auto& R : Routes) {
         if (R.ServerType == ServerType && R.ConnectionId == ConnectionId) {
             return; // 已存在,跳过
@@ -55,6 +61,8 @@ void MActorRouter::UpdateActorRoute(uint64 ActorId, EServerType ServerType, uint
     RegisterActor(ActorId, ServerType, ConnectionId);
 }
 
+// 取首条路由:1:N fan-out 下"第一条"没有语义偏好,顺序取决于插入顺序 ——
+// 调用方需要确定的目标时应改用 FindAllActorRoutes。
 SActorRoute MActorRouter::FindActor(uint64 ActorId) const {
     TVector<SActorRoute> All = FindAllActorRoutes(ActorId);
     if (All.empty())
@@ -88,6 +96,9 @@ bool MActorRouter::IsActorLocal(uint64 ActorId) const {
     return Route.ActorId != 0 && Route.ServerType == EServerType::Unknown;
 }
 
+// 当前实现是"本地路由表查一下"的同步壳:无论命中与否都返回 Ok,
+// 命中情况由 Result.bFound 表达;future 立即 ready。
+// TargetClassName / MethodName 两个字段本函数从不填充(恒为空)。
 SFutureResult<FLocateActorResult> MActorRouter::LocateActor(uint64 ActorId) const {
     SActorRoute Route = FindActor(ActorId);
 
@@ -108,9 +119,9 @@ SFutureResult<FLocateActorResult> MActorRouter::LocateActor(uint64 ActorId) cons
 }
 
 // ============================================================
-// 阶段 1.2 — actor-extension spec
-// 设计:本地 actor 对象表由 MActorSystem 维护(单例,持 TSharedPtr<IActor>);
-// 本类只维护路由表(SActorRoute)+ SubId 派生。新方法委托给 MActorSystem 以避免双份所有权。
+// actor 对象表 + Handle 路径
+// 设计:本地 actor 对象由 MActorSystem 维护(单例,持 TSharedPtr<IActor>);
+// 本类只维护路由表(SActorRoute)+ SubId 派生。以下方法委托给 MActorSystem,避免双份所有权。
 // ============================================================
 
 void MActorRouter::RegisterActor(TSharedPtr<IActor> InActor, MSubReactorPool* InSubPool) {
@@ -123,13 +134,12 @@ void MActorRouter::RegisterActor(TSharedPtr<IActor> InActor, MSubReactorPool* In
     const uint32 SubCount = (InSubPool != nullptr) ? InSubPool->GetSubCount() : 0;
     const uint32 SubId    = SubCount > 0 ? static_cast<uint32>(ActorId % SubCount) : 0;
 
-    // 1) 填 SActorRoute:本地 actor 用 ServerType=Unknown 标记,ConnectionId=SubId
-    //    —— SendToActor 的 IsActorLocal 分支依据 ServerType==Unknown 判定
-    //    (见 ActorRouter.cpp:47-51 IsActorLocal)。
+    // 1) 填 SActorRoute:本地 actor 用 ServerType=Unknown 标记,ConnectionId=SubId。
+    //    "是否本地"的判定依据是 ServerType == Unknown(见 MActorRouter::IsActorLocal)。
     {
         std::lock_guard<std::mutex> Lock(RoutesMutex);
         auto&                       Routes = ActorRoutes[ActorId];
-        // 本地 route 一般只有 1 条（ServerType=Unknown, ConnId=SubId）
+        // 本地 route 一般只有 1 条(ServerType=Unknown, ConnId=SubId)
         for (const auto& R : Routes) {
             if (R.ServerType == EServerType::Unknown && R.ConnectionId == SubId) {
                 return; // 已存在,跳过
@@ -143,9 +153,9 @@ void MActorRouter::RegisterActor(TSharedPtr<IActor> InActor, MSubReactorPool* In
         Routes.push_back(Route);
     }
 
-    // 2) 委托给 MActorSystem:actor 对象存储 + 在 Sub 线程 Post OnCreated
-    //    所有权通过 TSharedPtr 一次性转入 MActorSystem,符合 MakeShared 惯例
-    //    (CLAUDE.md "Shared pointers":用 MakeShared,接口赋值 TSharedPtr<IBase> = MakeShared<MImpl>(...))。
+    // 2) 委托给 MActorSystem:actor 对象存储 + 在 Sub 线程 Post OnCreated。
+    //    所有权通过 TSharedPtr 一次性转入 MActorSystem(符合 CLAUDE.md "Shared pointers":
+    //    用 MakeShared,接口赋值 TSharedPtr<IBase> = MakeShared<MImpl>(...))。
     MActorSystem::Get().Register(std::move(InActor));
 }
 

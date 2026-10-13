@@ -1,3 +1,8 @@
+/**
+ * @file NetServerBase.cpp
+ * @brief MNetServerBase 的实现:listener 注册、单/多 Reactor 主循环、优雅退出。
+ */
+
 #include "Common/Net/NetServerBase.h"
 #include "Common/IO/Socket/Socket.h"
 #include "Common/Net/Rpc/RpcServerCall.h"
@@ -15,6 +20,7 @@ void MNetServerBase::InitSubPool(uint32 InSubCount) {
     SubPool  = MakeUnique<MSubReactorPool>();
     SubPool->Init(InSubCount);
     LOG_INFO("MNetServerBase: SubPool enabled with %u subs", static_cast<unsigned>(InSubCount));
+    // 注意:这里只 Init,Sub 线程要等 Run() 把 listener 注册到 Sub #0 之后才 Start()。
 }
 
 void MNetServerBase::DispatchConnection(uint64 InConnId, TSharedPtr<INetConnection> InConn, TFunction<void(uint64, const TByteArray&)> InOnRead, TFunction<void(uint64)> InOnClose) {
@@ -33,7 +39,7 @@ void MNetServerBase::DispatchConnection(uint64 InConnId, TSharedPtr<INetConnecti
         return;
     }
 
-    // 单 Reactor 模式(默认):基类 EventLoop 直接注册
+    // 单 Reactor 模式(默认):直接注册到基类 EventLoop,没有跨线程 Post 的开销。
     EventLoop.RegisterConnection(InConnId, InConn, InOnRead, InOnClose);
 }
 
@@ -46,9 +52,10 @@ void MNetServerBase::Run() {
     const uint16 Port = GetListenPort();
 
     if (SubPool != nullptr && SubCount > 0) {
-        // 多 Reactor 模式:在 Sub #0 上注册 listener(Sub #0 的 EventLoop 跑 accept + poll)
-        // 当前简单实现:让 Sub #0 同时管 listen 和该 Sub 上的 conn;
-        // 后续若要 split acceptor / sub,可引入 MAcceptorReactor(见 multi-reactor spec §6.3)。
+        // 多 Reactor 模式:在 Sub #0 上注册 listener(由 Sub #0 的 EventLoop 跑 accept + poll)。
+        // 当前实现让 Sub #0 同时承担 listen 与它自己那批连接;若以后要把 accept 与 poll 拆开,
+        // 可按 multi-reactor 设计引入 MAcceptorReactor
+        // (Docs/superpowers/specs/2026-08-13-multi-reactor-design.md)。
         MNetEventLoop* Sub0 = SubPool->GetLoop(0);
         if (Sub0 == nullptr) {
             LOG_ERROR("MNetServerBase: SubPool Sub #0 is null");
@@ -59,8 +66,8 @@ void MNetServerBase::Run() {
             LOG_ERROR("Failed to register listener on Sub #0, port %d", Port);
             return;
         }
-        // listener 注册完成后才启动 Sub 线程 —— 避免跨线程访问 Loop 内部
-        // 容器(Listeners / Connections)的数据竞争(free(): invalid pointer)。
+        // 必须等 listener 注册完成后才启动 Sub 线程,否则会跨线程访问 Loop 内部容器
+        // (Listeners / Connections),造成数据竞争(典型症状:free(): invalid pointer)。
         SubPool->Start();
     } else {
         // 单 Reactor 模式(默认)
@@ -75,16 +82,16 @@ void MNetServerBase::Run() {
 
     if (!bStepsRegistered) {
         MasterLoop.AddStep(&TaskLoop, 0);
-        // 基类 EventLoop 始终 AddStep —— 单 Reactor 模式它是唯一网络 loop;
-        // 多 Reactor 模式下它承载 Registry 连接 / MEndpointCache 出站连接等
-        // "管理连接"(业务 listener 在 Sub #0,业务连接分桶到各 Sub)。
-        // Registry 连接的收包依赖它被 poll,否则 EndpointChange 收不到,
-        // FindActor miss(actor_route_invalid)。
+        // 基类 EventLoop 无论哪种模式都要 AddStep:单 Reactor 模式下它是唯一的网络 loop;
+        // 多 Reactor 模式下它承载"管理连接"(Registry 连接、MEndpointCache 的出站连接等),
+        // 而业务 listener 在 Sub #0、业务连接被分桶到各 Sub。
+        // Registry 连接必须靠它被 poll 才能收到包,否则收不到 EndpointChange,
+        // FindActor 会 miss 并报 actor_route_invalid。
         MasterLoop.AddStep(&EventLoop, 16);
         bStepsRegistered = true;
     }
 
-    // P1: install ambient MAsyncContext bound to this process's TaskLoop.
+    // 安装 ambient MAsyncContext 并绑到本进程的 TaskLoop,使续体能投递回主线程。
     LoopContext = MakeShared<MAsync::MLoopAsyncContext>(GetTaskRunner());
     MAsync::MAsyncContext::SetCurrent(LoopContext.Get());
 
@@ -96,10 +103,11 @@ void MNetServerBase::Run() {
         }
         MasterLoop.RunOnce();
         TickBackends();
+        // 每帧清理超时/失联的 ServerCall(在锁外回调,见 PumpServerCallMaintenance)
         PumpServerCallMaintenance();
     }
 
-    // P1: clear ambient so no dangling pointer survives Shutdown.
+    // 退出前必须清掉 ambient context,否则 Shutdown 之后会残留悬空指针。
     MAsync::MAsyncContext::SetCurrent(nullptr);
     LoopContext.reset();
 
@@ -122,7 +130,7 @@ void MNetServerBase::Run() {
 void MNetServerBase::RequestShutdown() {
     bRunning = false;
     if (SubPool != nullptr && SubCount > 0) {
-        // Stop 所有 Sub
+        // Stop 全部 Sub,唤醒它们阻塞中的 poll
         for (uint32 Index = 0; Index < SubCount; ++Index) {
             MNetEventLoop* Loop = SubPool->GetLoop(Index);
             if (Loop != nullptr) {

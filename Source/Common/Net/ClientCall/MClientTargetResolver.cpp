@@ -1,3 +1,8 @@
+/**
+ * @file MClientTargetResolver.cpp
+ * @brief MClientTargetResolver 的实现:注册表读写、绑定上下文与两种解析。
+ */
+
 #include "Common/Net/ClientCall/MClientTargetResolver.h"
 
 MClientTargetResolver& MClientTargetResolver::Get() {
@@ -12,6 +17,7 @@ void MClientTargetResolver::RegisterConn(TSharedPtr<INetConnection> Conn) {
         return;
     }
 
+    // 键取业务绑定的 PlayerId(非连接 id);未绑定时为 0,详见头文件 NOTE。
     const uint64                Id = Conn->GetPlayerId();
     std::lock_guard<std::mutex> Lock(Mutex);
     Connections[Id] = std::move(Conn);
@@ -26,8 +32,8 @@ void MClientTargetResolver::UnregisterConn(TSharedPtr<INetConnection> Conn) {
     std::lock_guard<std::mutex> Lock(Mutex);
     Connections.erase(Id);
 
-    // 若被注销的连接正是当前绑定上下文，则清除绑定。
-    // 用裸指针比较，避免通过绑定持有注销调用方的生命周期。
+    // 若被注销的连接正是当前绑定上下文,则清除绑定。
+    // 用裸指针比较:即便连接已被替代,也按对象身份判等,避免误清。
     if (CurrentContext.Get() == Conn.Get()) {
         CurrentContext.reset();
     }
@@ -56,6 +62,7 @@ TVector<TSharedPtr<INetConnection>> MClientTargetResolver::ResolveCurrentContext
 TVector<TSharedPtr<INetConnection>> MClientTargetResolver::ResolveBroadcast() {
     std::lock_guard<std::mutex> Lock(Mutex);
 
+    // 快照式返回:持锁期间把所有可用连接拷进 Result,后续注册/注销不影响本次结果。
     TVector<TSharedPtr<INetConnection>> Result;
     Result.reserve(Connections.size());
     for (const auto& Pair : Connections) {

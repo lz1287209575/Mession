@@ -45,11 +45,12 @@ bool BuildServerRpcMessage(const TByteArray& RpcPayload, TByteArray& OutPacket);
  * @brief SendServerRpcMessage - 以 MT_RPC 发送已构造好的服务器间 RPC 负载。
  * @param Connection 目标连接(引用版;shared_ptr 版为空时返回 false)
  * @param RpcPayload BuildServerRpcPayload 产出的负载(不含包类型字节)
- * @return true 已写入发送缓冲;false 连接不可用 / 发送缓冲满 / 空负载
+ * @return true 已写入发送缓冲;false 连接不可用(未连接/已关闭)或发送缓冲溢出
  *
- * @detail 只做入队,不阻塞等待对端处理。若是需要响应的调用,响应匹配由 RegisterServerCall
- *   按 CallId 完成(见 RpcServerCall.h)。MServerConnection 引用版会跳过空负载检查前的
- *   类型校验路径,INetConnection 版每次多发一个包体拷贝。
+ * @detail 只做入队,不阻塞等待对端处理;需要响应的调用由 RegisterServerCall 按 CallId
+ *   完成匹配(见 RpcServerCall.h)。空负载**不会**导致失败 —— 会正常发出一个只含
+ *   MT_RPC 类型字节的包。两种连接形态的差别只在拼包位置:MServerConnection 版由
+ *   SendPacket 自带包类型字节,INetConnection 版先 BuildServerRpcMessage 再 Send。
  */
 bool SendServerRpcMessage(MServerConnection& Connection, const TByteArray& RpcPayload);
 bool SendServerRpcMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& RpcPayload);
@@ -137,7 +138,9 @@ bool ParseServerCallResponsePacket(const TByteArray& Data, uint16& OutFunctionId
  * @brief SendServerCallMessage - 以 MT_FunctionCall 发送 ServerCall 请求负载。
  * @param Connection    目标连接(shared_ptr 版为空返回 false)
  * @param PacketPayload BuildServerCallPacket 产出的负载
- * @return true 已入队;false 连接不可用 / 缓冲满 / 空负载
+ * @return true 已入队;false 连接不可用(未连接/已关闭)/ 发送缓冲溢出
+ *
+ * @detail 与 SendServerRpcMessage 同理:空负载会成功发出一个只含类型字节的包。
  */
 bool SendServerCallMessage(MServerConnection& Connection, const TByteArray& PacketPayload);
 bool SendServerCallMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& PacketPayload);
@@ -148,7 +151,9 @@ bool SendServerCallMessage(const TSharedPtr<INetConnection>& Connection, const T
  * @brief SendServerCallResponseMessage - 以 MT_FunctionResponse 发送 ServerCall 回包负载。
  * @param Connection    回包目标连接(shared_ptr 版为空返回 false)
  * @param PacketPayload BuildServerCallResponsePacket 产出的负载
- * @return true 已入队;false 连接不可用 / 缓冲满 / 空负载
+ * @return true 已入队;false 连接不可用(未连接/已关闭)/ 发送缓冲溢出
+ *
+ * @detail 同理,空负载不会失败。
  */
 bool SendServerCallResponseMessage(MServerConnection& Connection, const TByteArray& PacketPayload);
 bool SendServerCallResponseMessage(const TSharedPtr<MServerConnection>& Connection, const TByteArray& PacketPayload);

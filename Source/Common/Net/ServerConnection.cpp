@@ -1,7 +1,12 @@
+/**
+ * @file ServerConnection.cpp
+ * @brief 实现 MServerConnection 的建连/握手/心跳/重连与收发循环,以及 MTcpMessageChannel 转发。
+ */
+
 #include "Common/Net/ServerConnection.h"
 #include "Common/Net/Rpc/RpcManifest.h"
 
-// MTcpMessageChannel implementation
+// MTcpMessageChannel:对 MTcpConnection 的纯转发,内部 Connection 允许为空。
 bool MTcpMessageChannel::Send(const void* Data, uint32 Size) {
     return Connection && Connection->Send(Data, Size);
 }
@@ -20,13 +25,15 @@ void MTcpMessageChannel::Close() {
     }
 }
 
-// 静态成员定义
+// 进程级静态成员:本机服务器信息,由 SetLocalInfo 在启动阶段写入。
 SServerInfo MServerConnection::LocalServerInfo;
 
 void MServerConnection::UpdateLogPrefix() {
     LogPrefix = "[Server:" + Config.ServerName + "]";
 }
 
+// 幂等入口:已在 Connected/Authenticated 直接成功;正在 Connecting 时返回 false
+// (避免并发发起两次建连);其余情况交给 TryConnect。
 bool MServerConnection::Connect() {
     if (State == EConnectionState::Authenticated || State == EConnectionState::Connected) {
         return true;
@@ -45,6 +52,7 @@ bool MServerConnection::TryConnect() {
         return false;
     }
 
+    // 先置 Connecting 再尝试,确保中途失败/重入时状态不会停留在"看起来没在连"。
     State = EConnectionState::Connecting;
 
     if (!MSocket::EnsureInit()) {
@@ -62,13 +70,14 @@ bool MServerConnection::TryConnect() {
         return false;
     }
 
-    // 将底层 TCP 连接包装为消息通道
+    // 把底层 TCP 连接包装成消息通道
     Transport = MakeShared<MTcpMessageChannel>(TcpConn);
 
     LOG_INFO("%s Connecting to %s:%d...", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
     State = EConnectionState::Connected;
     LOG_INFO("%s Connected to %s:%d!", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
 
+    // 握手:发送成功后 SendHandshake 会把状态推到 Authenticated(IsConnected() 才开始为真)
     SendHandshake();
 
     if (OnConnectCallback) {
@@ -78,6 +87,8 @@ bool MServerConnection::TryConnect() {
     return true;
 }
 
+// 无幂等保护:每次调用都会复位状态/计时器并触发一次 OnDisconnect 回调,
+// 析构函数也会走到这里(详见头文件里的 NOTE)。
 void MServerConnection::Disconnect() {
     if (Transport) {
         Transport->Close();
@@ -99,6 +110,7 @@ bool MServerConnection::SendPacket(uint8 PacketType, const void* Data, uint32 Si
         return false;
     }
 
+    // 统一在这里拼"1 字节类型 + 负载",下游 SendPacketRaw 无需关心包类型。
     TByteArray Payload;
     Payload.resize(1 + Size);
     Payload[0] = PacketType;
@@ -109,6 +121,7 @@ bool MServerConnection::SendPacket(uint8 PacketType, const void* Data, uint32 Si
     return SendPacketRaw(Payload);
 }
 
+// 空包直接拒绝:调用方若要发"空消息",应通过 SendPacket 带上类型字节。
 bool MServerConnection::SendPacketRaw(const TByteArray& Data) {
     if (!Transport || !Transport->IsConnected() || Data.empty()) {
         return false;
@@ -123,25 +136,28 @@ bool MServerConnection::SendPacketRaw(const TByteArray& Data) {
 }
 
 bool MServerConnection::SendServerPush(uint8 StatusCode, TByteArray&& Payload) {
-    // wire format: [StatusCode:1B][Reserved:2B][Payload:N]（最小 3 字节 + 可选负载）
-    // 不带 CallId ——对端 ConsumeServerCall 不会匹配,直接 drop。
-    // Payload 用途:at-least-once 协议下 server 回 [SequenceId:8B] 让 client 确认投递。
+    // wire format: [StatusCode:1B][Reserved:2B][Payload:N](最小 3 字节 + 可选负载)
+    // 不带 CallId —— 因此对端的 ConsumeServerCall 不会匹配到它,自然不会当成回包处理。
+    // 实际约定的 Payload 是 16 字节小端 [ActorId:8B][SequenceId:8B],供发起方定位并
+    // 删除对应的 outbox 条目。
     TByteArray Pkt;
     Pkt.reserve(3 + Payload.size());
     Pkt.push_back(StatusCode);
-    Pkt.push_back(0); // Reserved
-    Pkt.push_back(0); // Reserved
+    Pkt.push_back(0); // 保留字节
+    Pkt.push_back(0); // 保留字节
     Pkt.insert(Pkt.end(), Payload.begin(), Payload.end());
     return SendPacket(static_cast<uint8>(EServerMessageType::MT_ServerPush), Pkt.data(), static_cast<uint32>(Pkt.size()));
 }
 
+// 每帧驱动:Disconnected 走重连分支;Connected/Authenticated 走收包 + 心跳分支;
+// Connecting 期间什么都不做(建连是同步完成的,不会长时间停留在此态)。
 void MServerConnection::Tick(float DeltaTime) {
     if (State == EConnectionState::Disconnected) {
         if (Config.Address.empty() || Config.Port == 0) {
             return;
         }
 
-        // 尝试重连
+        // 按 ReconnectInterval 节流;每次尝试自增 ReconnectAttempts 便于观测
         ReconnectTimer += DeltaTime;
         if (ReconnectTimer >= ReconnectInterval) {
             ReconnectTimer = 0.0f;
@@ -156,10 +172,10 @@ void MServerConnection::Tick(float DeltaTime) {
         return;
     }
 
-    // 处理接收
+    // 先把本轮能收的包全部收完,再考虑发心跳
     ProcessRecv();
 
-    // 心跳
+    // 心跳:按 HeartbeatInterval 节流
     HeartbeatTimer += DeltaTime;
     if (HeartbeatTimer >= HeartbeatInterval) {
         HeartbeatTimer = 0.0f;
@@ -172,10 +188,13 @@ void MServerConnection::ProcessRecv() {
         return;
     }
 
+    // ReceivePacket 每次解出一个完整逻辑包(粘包/半包由传输层处理);
+    // 返回 false 表示本轮没有再完整的包了。
     TByteArray Packet;
     while (Transport->ReceivePacket(Packet)) {
         if (!Packet.empty()) {
             BytesReceived += static_cast<uint64>(Packet.size());
+            // 首字节是包类型,其余是负载
             const uint8 PacketType = Packet[0];
             TByteArray  Payload(Packet.begin() + 1, Packet.end());
             HandlePacket(PacketType, Payload);
@@ -189,6 +208,8 @@ void MServerConnection::ProcessRecv() {
 }
 
 void MServerConnection::HandlePacket(uint8 PacketType, const TByteArray& Data) {
+    // 目前没有需要在此层特殊处理的包类型(心跳/握手都由 RPC 层承载),
+    // 所有入站包统一上抛给应用层,由上层按 PacketType 分发。
     switch (PacketType) {
     default: {
         // 转发给应用层
@@ -207,9 +228,10 @@ void MServerConnection::SendHandshake() {
         return;
     }
 
-    // Rpc_OnServerHandshake 反射签名是 1 参数（uint32 DummyServerId）——
-    // 传 3 参数会让 SerializeFunctionArgsByMeta 参数数量不匹配（BUILD failed，
-    // State 停在 Connected → IsConnected false → 服务器间调用全部 connection_unavailable）。
+    // Rpc_OnServerHandshake 的反射签名只有 1 个参数(uint32 DummyServerId)——
+    // 若传 3 个参数,SerializeFunctionArgsByMeta 会因参数数量不匹配而失败(对端 BUILD failed),
+    // 结果是状态停在 Connected、IsConnected() 恒为 false,导致所有服务器间调用报
+    // connection_unavailable。
     if (!MRpc::CallRemote(*this, ClassName, "Rpc_OnServerHandshake", LocalServerInfo.ServerId)) {
         LOG_WARN("%s Handshake RPC send failed", LogPrefix.c_str());
         return;
@@ -228,5 +250,6 @@ void MServerConnection::SendHeartbeat() {
         return;
     }
 
+    // 心跳走普通 MT_RPC,不关心对端是否回包(序号仅用于日志/排查)。
     MRpc::CallRemote(*this, ClassName, "Rpc_OnHeartbeat", ++HeartbeatSeq);
 }

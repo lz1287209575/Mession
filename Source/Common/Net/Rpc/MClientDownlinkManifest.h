@@ -1,5 +1,3 @@
-#pragma once
-
 /**
  * @file MClientDownlinkManifest.h
  * @brief MClientDownlinkManifest - 服务端→客户端**下行通知**清单(静态声明部分)。
@@ -16,6 +14,8 @@
  *   GDownlinkEntries / FindByFunctionId 这两个符号被 CMake 编进 mession_common 静态库,
  *   否则生成物不会被链接进 Service binary。
  */
+
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
