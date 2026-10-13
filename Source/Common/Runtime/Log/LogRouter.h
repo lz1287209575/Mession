@@ -10,7 +10,7 @@
 #pragma once
 #include "Common/Runtime/Log/LogCategory.h"
 #include "Common/Runtime/Log/LogLevel.h"
-#include "Common/Runtime/Log/LogSinks.h" // ELogSinkId + MakeSinkMask live here (Task 5)
+#include "Common/Runtime/Log/LogSinks.h" // ELogSinkId 与 MakeSinkMask 定义在此
 #include "Common/Runtime/MLib.h"
 #include <atomic>
 

@@ -75,7 +75,7 @@ TEST_CASE(LogSinks_ConsoleWriteBatchToStdout) {
     Sink.Flush();
     Sink.Close();
 
-    EXPECT_TRUE(true); // reaching here without crash is the assertion
+    EXPECT_TRUE(true); // 能跑到这里而不崩,本身就是断言
 }
 
 TEST_CASE(LogSinks_RollingFileWritesJsonLines) {

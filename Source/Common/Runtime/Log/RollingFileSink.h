@@ -46,9 +46,9 @@ class MRollingFileSink : public ILogSink {
 
     // 配置(公开字段便于集成;文档约定的用法是直接赋值成员——
     // 见 EchoService 示例)。必须在 Open() 之前设置。
-    MString ServiceName;                                   // e.g. "GatewayServer"
-    MString FilePath;                                      // e.g. "/tmp/test-mession-log.jsonl"
-    size_t  RotatedFileBytes = 100ull * 1024ull * 1024ull; // 100MB default
+    MString ServiceName;                                   // 例如 "GatewayServer"
+    MString FilePath;                                      // 例如 "/tmp/test-mession-log.jsonl"
+    size_t  RotatedFileBytes = 100ull * 1024ull * 1024ull; // 默认 100MB
     size_t  NumArchives      = 5;
     uint32  FlushesPerFsync  = 10;
 

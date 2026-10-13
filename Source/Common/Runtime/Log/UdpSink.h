@@ -42,8 +42,8 @@ class MUdpSink : public ILogSink {
     }
 
     // 配置。必须在 Open() 之前设置。
-    MString Target;                       // "ip:port"
-    int     MaxDatagramBytes = 63 * 1024; // safety cap; typical MTU is ~1400
+    MString Target;                       // 形如 "ip:port"
+    int     MaxDatagramBytes = 63 * 1024; // 安全上限;典型 MTU 约 1400
 
     void SetMinLevel(ELogLevel Level) {
         MinLevelValue = Level;

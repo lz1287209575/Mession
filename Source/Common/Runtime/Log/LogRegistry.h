@@ -1,3 +1,9 @@
+/**
+ * @file LogRegistry.h
+ * @brief MLogRegistry —— 日志分类注册表(名 → Id → 运行时级别)的进程级单例。
+ *
+ * DEFINE_LOG_CATEGORY 宏在静态初始化期调用 RegisterCategory();注册顺序决定 SLogCategory::Id。
+ */
 #pragma once
 #include "Common/Runtime/Log/LogCategory.h"
 #include "Common/Runtime/Log/LogLevel.h"

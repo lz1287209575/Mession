@@ -17,24 +17,6 @@
 #include "Common/Runtime/Log/LogRouter.h"
 #include <mutex>
 
-// MLogRouter — category -> (SinkMask, MinLevel) routing table.
-//
-// Storage: two parallel arrays (one for masks, one for min levels) published
-// via std::atomic<TVector<T>*>. Readers (ResolveSinkMask) do an atomic load
-// of each pointer, then index. Writers (SetRule / ClearRules) take a mutex,
-// copy the current arrays, mutate the copies, and atomically swap both
-// pointers. Old generations live until every reader that captured them has
-// finished — we never free them here; for typical log-routing workloads the
-// number of distinct generations over a process lifetime is small and
-// bounded, and freeing on a quiescent point would require a global barrier
-// that we don't need to pay for on the hot path. If memory pressure becomes
-// a concern, replace the raw pointers with shared_ptr and let the generation
-// decay naturally; the public API stays the same.
-//
-// Both arrays must always have the same size; SetRule extends them in lockstep
-// so a category registered after the last write still gets a sensible default
-// slot on the next read.
-
 MLogRouter& MLogRouter::Get() {
     static MLogRouter Inst;
     return Inst;

@@ -338,7 +338,7 @@ namespace MLog {
                     Mask |= 1u << static_cast<uint32>(ELogSinkId::Coredump);
             }
             if (Mask == 0)
-                Mask = 0xFFFFFFFFu; // unknown sink name → keep default
+                Mask = 0xFFFFFFFFu; // 未知 sink 名:保持默认。
             SLogRouteRule Rule;
             Rule.Category = Cat;
             Rule.SinkMask = Mask;

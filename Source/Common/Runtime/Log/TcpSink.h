@@ -39,7 +39,7 @@ class MTcpSink : public ILogSink {
     }
 
     // 配置。必须在 Open() 之前设置。
-    MString Target; // "ip:port"
+    MString Target; // 形如 "ip:port"
     int     ReconnectBackoffMs = 5000;
 
     void SetMinLevel(ELogLevel Level) {

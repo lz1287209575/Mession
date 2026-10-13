@@ -13,18 +13,18 @@ struct SLogInitParams {
     ELogLevel GlobalDefaultLevel = ELogLevel::Info;
     bool      bUseColor          = false;
     MString   LogDir             = "Logs";
-    size_t    RotatedFileBytes   = 100ull * 1024ull * 1024ull; // 100MB
+    size_t    RotatedFileBytes   = 100ull * 1024ull * 1024ull; // 默认 100MB
     size_t    NumArchives        = 5;
     bool      bEnableUdp         = false;
-    MString   UdpTarget; // "ip:port"
+    MString   UdpTarget; // 形如 "ip:port"
     bool      bEnableTcp = false;
-    MString   TcpTarget; // "ip:port"
+    MString   TcpTarget; // 形如 "ip:port"
 
     // 控制台开关(默认开)。Console 始终可进程内使用;只发远端
     // sink 时可关掉。
     bool bEnableConsole = true;
     // 滚动文件路径;为空则不配置文件 sink。
-    MString FilePath; // e.g. "Logs/echo.jsonl"
+    MString FilePath; // 例如 "Logs/echo.jsonl"
                       // 环形缓冲容量(条数)。默认 1M 条 ≈ 64MB(按 64B/条估算)。
     size_t RingCapacity = 1u << 16;
 };
@@ -37,7 +37,7 @@ struct SLogCategoryConfig {
 
 struct SLogRouteConfig {
     MString          Name;
-    TVector<MString> Sinks; // "console", "file", "udp", "tcp", "coredump"
+    TVector<MString> Sinks; // "console" / "file" / "udp" / "tcp" / "coredump"
     ELogLevel        MinLevel = ELogLevel::Trace;
 };
 

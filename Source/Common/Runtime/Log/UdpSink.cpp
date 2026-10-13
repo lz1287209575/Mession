@@ -78,7 +78,7 @@ namespace {
         W.EndObject();
         const MString& Line = W.ToString();
 
-        const size_t Want = Line.size() + 1; // include '\n'
+        const size_t Want = Line.size() + 1; // 含结尾 '\n'
         if (Want > OutSize) {
             return 0;
         }

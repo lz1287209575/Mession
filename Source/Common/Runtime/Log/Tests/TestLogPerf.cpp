@@ -42,7 +42,7 @@ TEST_CASE(LogPerf_EnqueueP99UnderOneUs) {
     P.GlobalDefaultLevel = ELogLevel::Trace;
     P.bEnableConsole     = false;
     P.FilePath           = "";
-    P.RingCapacity       = 1u << 16; // 64K records
+    P.RingCapacity       = 1u << 16; // 64K 条记录
     MLog::Init(P);
 
     // 预热:先写几条记录,让路径跑热、缓存热起来。
@@ -81,7 +81,7 @@ TEST_CASE(LogPerf_ConcurrentThroughputMeetsOneMillion) {
     P.GlobalDefaultLevel = ELogLevel::Trace;
     P.bEnableConsole     = false;
     P.FilePath           = "/tmp/test-mession-perf.jsonl";
-    P.RotatedFileBytes   = 0; // disable rotation for the perf run
+    P.RotatedFileBytes   = 0; // 性能测试期间关闭文件轮转
     P.RingCapacity       = 1u << 20;
     MLog::Init(P);
 
@@ -127,7 +127,7 @@ TEST_CASE(LogPerf_BackpressureDropsProtectErrorLevel) {
     P.GlobalDefaultLevel = ELogLevel::Trace;
     P.bEnableConsole     = false;
     P.FilePath           = "";
-    P.RingCapacity       = 1u << 12; // tiny queue: 4096 records
+    P.RingCapacity       = 1u << 12; // 小队列:4096 条记录
     MLog::Init(P);
 
     SLogMetricsSnapshot Before = MLogMetrics::Snapshot();
@@ -167,7 +167,7 @@ TEST_CASE(LogPerf_BackpressureDropsProtectErrorLevel) {
     // 快、全部吸收」或「溢出被正确计数」两种结果,但不允许两个计数器同时
     // 为 0。
     EXPECT_EQ(EnqueuedHigh, 1000);
-    EXPECT_TRUE(DeltaDroppedOverflow >= 0); // monotonic; overflow is acceptable
+    EXPECT_TRUE(DeltaDroppedOverflow >= 0); // 单调即可;允许溢出
 
     MLog::Shutdown();
 }

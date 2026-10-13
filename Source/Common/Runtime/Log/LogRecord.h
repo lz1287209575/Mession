@@ -27,24 +27,24 @@
  * 注意:头部注释原文写 64B,实际 static_assert 为 176B,以 assert 为准。
  */
 struct SLogRecord {
-    // Header — 32B (timestamps, thread, category, level, flags, 16B reserved for future use)
+    // 头部 —— 32B(时间戳、线程、分类、级别、标志,以及 16B 预留)
     uint64 TimestampNs; // steady_clock 纳秒
     uint32 ThreadId;
     uint16 CategoryId;
     uint8  Level;              // ELogLevel 强转
-    uint8  Flags;              // bit0: MessageOverflowed, bit1: HasSourceLocation
+    uint8  Flags;              // bit0: 消息溢出;bit1: 带源码位置
     uint8  HeaderReserved[16]; // 占位 / 16 字节对齐 + 留作后续字段(TraceId 等)
 
-    // Source location — 8B
+    // 源码位置 —— 8B
     uint32 FileStringId;
     uint16 Line;
     uint16 FuncStringId;
 
-    // Routing + Context — 8B
+    // 路由 + 上下文 —— 8B
     uint32 SinkMask;
     uint32 ContextSnapshotId;
 
-    // Payload — 128B
+    // 载荷 —— 128B
     union {
         struct {
             char Data[128];
