@@ -1,3 +1,21 @@
+/**
+ * @file MHeaderTool.cpp
+ * @brief MHeaderTool(mht)的可执行入口:解析参数 → 跑 AST 管线 → 落盘全部生成物。
+ *
+ * @detail 当前只有**一条**主路径:MASTPipeline::Run 产出 SParseIR,再由 MCodeGenerator 的 IR
+ *         入口逐条记录写 .mgenerated.h/.cpp、AsyncFrames、AwaitStateMachine、AwaitImpl,
+ *         最后复用 ManifestGenerators / ScriptBindEmitter / LuaStdlibHintEmitter 产出各类
+ *         清单与 Lua 侧产物。旧的字符串解析路径已整体删除,本文件里残留的 "A2"/"Task N"
+ *         注释只是历史出处说明,不再是待办。
+ *
+ *         顺序上有两处硬依赖:
+ *           1. 所有输出路径在使用前统一 fs::absolute() —— ClangTool 解析期间会 chdir 到
+ *              compile_commands 的 directory,相对路径会在错误的 cwd 下落盘,而且 ofstream
+ *              打开失败是静默的;
+ *           2. SetReflectedClassKinds 必须在生成任何记录**之前**调用,否则继承链的 SetParent
+ *              注册会缺表(见 actor-member-framework §5)。
+ *         清单类产物的路径为空时整块跳过 —— 空路径即"不要这个产物"。
+ */
 #include <cctype>
 #include <iostream>
 #include <stdexcept>
@@ -17,6 +35,13 @@
 namespace {
     namespace fs = std::filesystem;
 
+    /**
+     * @brief 把用法与全部选项打到 stderr。
+     * @param progName argv[0],仅用于拼出进程名
+     *
+     * @detail NOTE: 帮助文本与 ParseArgs 里的选项表是**两处独立维护**的字符串,两边都要改;
+     *         另外这里只描述选项,不代表选项真的被消费(见 ParseArgs 的 NOTE)。
+     */
     void PrintUsage(const char* progName) {
         std::cerr << "Usage: " << progName << " [options]\n";
         std::cerr << "Options:\n";
@@ -39,9 +64,24 @@ namespace {
         std::cerr << "  --jobs=<n>               Number of parallel jobs (default: auto)\n";
     }
 
-    // A2 (Task 8) — main rewrite: return bool + take Options& so the brief's
-    // `if (!ParseArgs(...)) return 1;` style works. Old signature returned
-    // `MHT::SOptions` by value (legacy string-parser entry point).
+    /**
+     * @brief 逐条解析命令行参数,就地填进 options。
+     * @param argc,argv 原样透传
+     * @param options   [in,out] 就地填充;未出现的选项保留调用方给的默认值
+     * @return true 参数全部识别;false 遇到未知选项(此时已打印用法)
+     *
+     * @detail 只认 `--key=value` 形式和少数无值开关(--verbose/--incremental/--force-full/
+     *         --benchmark/--dry-run);`--help`/`-h` 会直接 std::exit(0)。
+     *         未知选项**立即**返回 false,后面的参数不再处理。
+     *
+     * @detail NOTE: 值部分用 arg.substr(固定长度) 切出来,改动选项名时必须同步改这个偏移量。
+     *         `--jobs=` 的值经 std::stoi,非数字会抛 std::invalid_argument(未被捕获,进程直接终止)。
+     *         NOTE: 以下选项目前**只写不读**,改它们不会产生任何行为差异 ——
+     *         --verbose(bVerbose)、--incremental(bIncremental)、--benchmark(bBenchmark)、
+     *         --dry-run(bDryRun)、--jobs=(NumThreads,线程数其实由 ASTPipeline 自己按核数算)、
+     *         --validation-schema-out=(ValidationSchemaPath,而 GenerateValidationSchema 已无调用点)。
+     *         --force-full 也只有 IncrementalDriver 会读,而整个 Cache/ 层当前没有调用方。
+     */
     bool ParseArgs(int argc, char** argv, MHeaderTool::SOptions& options) {
         for (int i = 1; i < argc; ++i) {
             MString arg = argv[i];
@@ -95,15 +135,21 @@ namespace {
 
 } // namespace
 
-// A2 (Task 8) — main rewritten to the AST path. Brief uses
-// `using namespace mession::headercodegen;` so unqualified
-// `MASTPipeline` / `SParseIR` / `SParsedRecord` resolve. The remaining
-// `MHeaderTool::` symbols (`SOptions`, `MCodeGenerator`,
-// `SanitizeIdentifier`, `WriteFile`, `CreateDirectory`) need their own
-// reachability — `using namespace MHeaderTool;` is the minimum-friction
-// way to honor the brief's "minimal qualification" intent. Renaming
-// `MCodeGenerator` to `MCodeGenerator` (per the brief's snippet) is out
-// of scope for Task 8; that's an A3 cleanup item (Task 7 report §1).
+/**
+ * @brief 主流程:解析参数 → 跑 AST 管线 → 逐类落盘 → 清单 / 绑定产物。
+ * @param argc,argv 命令行
+ * @return 0 正常结束;1 参数解析失败
+ *
+ * @detail 两个 using 是为了让 `MASTPipeline` / `SParseIR`(mession::headercodegen)与
+ *         `SOptions` / `MCodeGenerator` / `SanitizeIdentifier` / `WriteFile` / `CreateDirectory`
+ *         (MHeaderTool)都能不加限定名直接用 —— 这两套符号目前各自分属两个命名空间,不做合并。
+ *         落盘顺序:先按记录写(同名类型去重,避免后写的空记录覆盖完整文件),再按 enum 写,
+ *         最后写 enum 注册引导与各类清单。enum 注册引导单独成 TU,用于绕开静态库链接时
+ *         匿名静态对象被 GC 丢弃的问题。
+ *
+ * @detail NOTE: 原注释里 "Renaming `MCodeGenerator` to `MCodeGenerator`" 是自相矛盾的残留
+ *         (等于把 X 重命名成 X),与现状也对不上,已按代码实际行为重写。
+ */
 int main(int argc, char** argv) {
     using namespace mession::headercodegen;
     using namespace MHeaderTool;
@@ -293,8 +339,9 @@ int main(int argc, char** argv) {
         }
     }
 
-    // A2 follow-up (AST 重构 merge) — CMake / Client manifest。旧 main 在字符串解析
-    // 路径末尾生成这两个文件；AST 路径经 ToLegacyClasses 复用 ManifestGenerators。
+    // A2 follow-up(AST 重构 merge)—— CMake / Client manifest。旧 main 在字符串解析路径
+    // 末尾生成这类清单;AST 路径经 ToLegacyClasses / ToLegacyClassesWithEnums 复用
+    // ManifestGenerators。逐个路径判空,空路径的产物直接跳过。
     const TVector<SParsedClass> LegacyClasses = CodeGen.ToLegacyClasses(IR);
     if (!Options.CMakeManifestPath.empty()) {
         ManifestGenerators ManifestGen(Options);
@@ -317,12 +364,12 @@ int main(int argc, char** argv) {
         WriteFile(Options.MemberRpcManifestPath, ManifestGen.GenerateMemberRpcManifest(LegacyClasses));
     }
 
-    // ScriptBind — emit <Class>.lua / <Class>.d.tl（generates from MHeaderTool;
-    // 后续可加 PythonBindEmitter / TsBindEmitter 同 Transport 入口）。
+    // ScriptBind — 为含 ScriptBind 函数的类生成 <Class>.lua / <Class>.d.tl
+    // (输入是 legacy 视图 LegacyClasses;后续接 Python/TS 时加同名 Emitter 即可,共用 Transport 入口)。
     ScriptBindEmitter::Run(Options.OutputDir, LegacyClasses);
 
-    // Lua stdlib hint — emit Mession.lua + Mession.d.tl 到 Build/Generated/。
-    // 从 MLuaVector/Map/Log/Format/Rpc.cpp 的 /// @lua-* 注解提取。
+    // Lua stdlib 提示 — 生成 Mession.lua + Mession.d.tl 到 Build/Generated/
+    // (注解源是 MLuaVector/Map/Log/Format/Rpc.cpp 里的 /// @lua-* 块)。
     if (!Options.LuaStdlibHintLuaPath.empty() && !Options.LuaStdlibHintTealPath.empty()) {
         LuaStdlibHintEmitter::Run(Options.SourceRoot, Options.LuaStdlibHintLuaPath, Options.LuaStdlibHintTealPath);
     }

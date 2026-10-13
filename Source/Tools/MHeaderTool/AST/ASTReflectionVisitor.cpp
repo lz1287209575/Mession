@@ -1,3 +1,20 @@
+/**
+ * @file ASTReflectionVisitor.cpp
+ * @brief 遍历 Clang AST,把被反射宏修饰的声明翻译成 SParseIR 节点。
+ *
+ * @detail 三条主线:
+ *   - Visit 系列(VisitCXXRecordDecl / VisitFieldDecl / VisitTypeAliasDecl / VisitFunctionDecl /
+ *     VisitEnumDecl)负责"发现":用 MMetaLexer 从源文件字节里取出宏调用参数,判定
+ *     MCLASS / MSTRUCT / MGENERATED_BODY / MPROPERTY / MFUNCTION,并处理宏与声明的关联;
+ *   - Collect 系列(CollectAwaitSites / CollectLiveAcrossAwait)只在函数带 async 语义时
+ *     深入函数体做 await 站点分析;
+ *   - Extract / Split / QualTypeTo 系列是宏参数与类型的文本解析辅助(不碰 AST 语义)。
+ *   去重策略:同名函数(声明 + #ifdef 定义、或多 TU 重复)只保留一条,优先保留有函数体的那份。
+ *
+ *   所有权:构造时传入的 Ctx / IR / SM 与宏展开表全是**引用**,本类一概不拥有;宏展开表由
+ *   PPCallbacks 按解析顺序记录(ASTPipeline.cpp),这里只做只读倒序查找,不重排、不修改。
+ *   非线程安全 —— 每个 TU 一个实例,由 MASTReflectionAction 创建,不共享。
+ */
 #include "AST/ASTReflectionVisitor.h"
 #include "AST/MMetaLexer.h"
 #include "Util/StringUtil.h"
@@ -223,7 +240,8 @@ namespace mession::headercodegen {
             Func.AsyncBody = GetSourceText(FD->getBody()->getSourceRange());
         }
 
-        // MFUNCTION(...) arg extraction — Transport / RpcKind / Endpoint / MessageName / Route / Target / Auth / Wrap / ClientApi
+        // 提取 MFUNCTION(...) 的参数:transport 标记(ServerCall/ClientCall/CallClient/Client/NetServer/
+        // NetClient/RPC/Async/PlayerRPC)以及 Key=Value 形式的 Endpoint/Message/Route/Target/Auth/Wrap/Api
         if (auto MacroArgs = ExtractMacroCallArgs(FD->getBeginLoc(), "MFUNCTION")) {
             ApplyMFUNCTIONMacroArgs(MacroArgs->Args, Func);
         }

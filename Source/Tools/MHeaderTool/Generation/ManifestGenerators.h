@@ -1,3 +1,22 @@
+/**
+ * @file ManifestGenerators.h
+ * @brief ManifestGenerators —— 把解析结果(SParsedClass)投影成构建期清单与查表源码。
+ *
+ * @detail 全部是**纯字符串拼接**的生成器:输入是已解析好的类型列表(不碰 Clang),输出是
+ *         可直接落盘的文本,写文件由调用方(MHeaderTool.cpp)负责。当前仍在用的是 5 个:
+ *           - GenerateCMakeManifest          → MESSION_GENERATED_*_SOURCES 的 .cmake 片段
+ *           - GenerateClientManifest         → MClientManifest(客户端经 Gateway 上行)
+ *           - GenerateClientDownlinkManifest → MClientDownlinkManifest(服务端→客户端下行)
+ *           - GenerateClientDownlinkHeader   → MDownlink_* 常量 + 服务端调用 stub
+ *           - GenerateMemberRpcManifest      → MemberRpc 注册表(ActorMember 的 ServerCall)
+ *         NOTE: GenerateTypeRegistry / GenerateValidationSchema / GenerateHeaderIncludes /
+ *         GenerateRpcMessageIds 在本仓库内**已无任何调用点**(旧实现遗留),保留只为兼容;
+ *         其中 GenerateValidationSchema 还带一处真实的 JSON 逗号缺陷(见该处注释)。
+ *
+ *         所有生成器都跳过 HeaderPath 含 "/Tools/MHeaderTool/" 的条目 —— 工具自身的反射类
+ *         不参与产物,否则会自举污染。组/集合的遍历顺序由 std::map / std::set 保证按键字典序,
+ *         因此产物是稳定可复现的。
+ */
 #pragma once
 
 #include "Core/Types.h"
@@ -11,16 +30,26 @@ namespace fs = std::filesystem;
 
 namespace MHeaderTool {
 
-    // ============================================================================
-    // Manifest Generators - 生成 CMake 和其他清单文件
-    // ============================================================================
-
+    /**
+     * @brief 清单 / 查表代码生成器。
+     *
+     * @detail 只持一份构造时拷贝的 SOptions,所有生成方法都是 const 且不落盘 —— 结果全靠返回值
+     *         交回调用方。实例本身不做缓存,同一实例可反复调用。
+     *         线程安全:实例只读 Options_,不写任何共享状态,多个实例可并发使用。
+     */
     class ManifestGenerators {
         public:
         explicit ManifestGenerators(const SOptions& options) : Options_(options) {
         }
 
-        // 将组名标准化为小写
+        /**
+         * @brief 把组名标准化成 CMake 变量名可用的形式。
+         * @param name 组名原文(如 "Echo Service")
+         * @return 删掉所有空格、并把 ASCII 大写转小写的副本
+         *
+         * @detail 只处理 ASCII 字母与半角空格:制表符、连字符、非 ASCII 字节都原样保留,
+         *         所以组名里的这些字符会直接进入 CMake 变量名。
+         */
         static MString NormalizeGroupName(const MString& name) {
             MString result;
             for (char c : name) {
@@ -33,7 +62,22 @@ namespace MHeaderTool {
             return result;
         }
 
-        // 生成 CMake 清单
+        /**
+         * @brief 生成 CMake 源清单片段(按 Owner 分组 + enum 单独一组)。
+         * @param parsedClasses 解析出的类型列表
+         * @param typeToHeaders 已废弃参数;函数体里 `(void)typeToHeaders` 显式忽略,传 {} 即可
+         * @return 形如 `set(MESSION_GENERATED_<GROUP>_SOURCES ...)`、
+         *         `set(MESSION_GENERATED_GROUPS ...)`、`set(MESSION_GENERATED_ENUM_SOURCES ...)`
+         *         的三段文本;组名与组内文件都按字典序输出,产物稳定
+         *
+         * @detail 被跳过的条目(任一命中即跳过):
+         *   1. HeaderPath 含 "/Tools/MHeaderTool/"(工具自身);
+         *   2. 无任何基类、且 Kind 既不是 Struct 也不是 Enum 的 class —— 无基类的独立 demo 类
+         *      产不出有效的 mgenerated.cpp(注册代码假设有 MObject 反射基类);
+         *      而 MSTRUCT 与 namespace 级 enum **必须保留**:前者漏了会让 FindStruct 查不到、
+         *      服务启动失败,后者是 enum 注册单元的编译来源。
+         *   Owner 为空的类归到 "shared" 组。
+         */
         MString GenerateCMakeManifest(const TVector<SParsedClass>& parsedClasses, const TMap<MString, TVector<MString>>& typeToHeaders) const {
             (void)typeToHeaders;
             MString manifest;
@@ -45,7 +89,7 @@ namespace MHeaderTool {
             TMap<MString, TVector<MString>> groupSources;
             TVector<MString>                enumSources;
             for (const auto& parsed : parsedClasses) {
-                // Skip MHeaderTool source files
+                // 跳过 MHeaderTool 自身的源码:工具内部的反射类不该出现在产物里
                 MString headerPath = parsed.HeaderPath.generic_string();
                 if (headerPath.find("/Tools/MHeaderTool/") != MString::npos) {
                     continue;
@@ -105,7 +149,15 @@ namespace MHeaderTool {
             return manifest;
         }
 
-        // 生成类型注册表
+        /**
+         * @brief 生成"类型名 → Owner/Kind/属性数/函数数"的静态查表源码。
+         * @param parsedClasses 解析出的类型列表(全量,不做过滤)
+         * @return 一份含 `STypeDescriptor GTypeDescriptors[]` 与 `GTypeDescriptorCount` 的头文件文本
+         *
+         * @detail NOTE: 本仓库内已无调用点(旧实现遗留)。另外它输出的 include 是
+         *         "Core/Reflection/MTypeRegistry.h",与当前仓库的实际布局不符,直接启用会编不过 ——
+         *         若将来要复活,先核对这个路径。数组顺序即输入顺序,不做排序。
+         */
         MString GenerateTypeRegistry(const TVector<SParsedClass>& parsedClasses) const {
             MString code;
             code += "#pragma once\n\n";
@@ -117,7 +169,7 @@ namespace MHeaderTool {
             code += "namespace MHeaderTool\n";
             code += "{\n\n";
 
-            // Generate type lookup table
+            // 类型查表数组:字段顺序必须与 STypeDescriptor 的成员声明一致
             code += "static const STypeDescriptor GTypeDescriptors[] = {\n";
 
             for (size_t i = 0; i < parsedClasses.size(); ++i) {
@@ -145,7 +197,17 @@ namespace MHeaderTool {
             return code;
         }
 
-        // 生成验证协议 schema
+        /**
+         * @brief 生成 ValidationProtocol 的 JSON Schema 文本(draft 2020-12)。
+         * @param parsedClasses 解析出的类型列表;只会为**有属性**的类型产出条目
+         * @return JSON 文本(两空格缩进)
+         *
+         * @detail NOTE: 本仓库内已无调用点(旧实现遗留),且存在一处**真实缺陷**:分隔逗号用
+         *         外层下标 `i > 0` 判断,而"无属性则 continue"发生在这个判断之前 —— 只要
+         *           parsedClasses 的**首元素**没有属性,第一个真正输出的类型就会带一个前导逗号,
+         *         产出 `"types": [` 后紧跟 `,` 的非法 JSON。修复方式是在循环外单独维护
+         *         "已输出条目数" 而不是复用下标;当前无人调用,所以缺陷处于潜伏状态。
+         */
         MString GenerateValidationSchema(const TVector<SParsedClass>& parsedClasses) const {
             MString json;
             json += "{\n";
@@ -194,7 +256,7 @@ namespace MHeaderTool {
                         }
                         json += "\n          }";
                     } else {
-                        // Remove trailing comma if no metadata
+                        // 没有元数据时写一个空对象占位,避免上一条多出的尾逗号
                         json += "          \"metadata\": {}";
                     }
 
@@ -211,7 +273,15 @@ namespace MHeaderTool {
             return json;
         }
 
-        // 生成头文件包含映射
+        /**
+         * @brief 生成"把所有反射头文件 include 进来"的汇总头。
+         * @param parsedClasses 解析出的类型列表
+         * @return 一份 `#pragma once` + 若干 `#include "<相对路径>"` 的文本
+         *
+         * @detail 路径是 HeaderPath 相对 Options_.SourceRoot 的结果,写成 '/' 分隔的通用形式;
+         *         内部用 TSet 去重,因此 include 列表按字典序、无重复。
+         *         NOTE: 本仓库内已无调用点(旧实现遗留)。
+         */
         MString GenerateHeaderIncludes(const TVector<SParsedClass>& parsedClasses) const {
             TSet<MString> allIncludes;
 
@@ -232,7 +302,17 @@ namespace MHeaderTool {
             return code;
         }
 
-        // 生成 RPC 消息 ID 映射
+        /**
+         * @brief 生成 RPC 消息 ID 枚举(EMessageId)与 id → 名字的查表函数。
+         * @param parsedClasses 解析出的类型列表;只取 bIsRpc 为真的函数
+         * @return 一份含 `enum class EMessageId : uint32_t`(None=0 起,业务项从 1000 递增)与
+         *         `GetMessageName(EMessageId)` 的头文件文本
+         *
+         * @detail ID 按遍历顺序(输入顺序)递增分配,**不是**稳定哈希 —— 增删任意一个 RPC 函数
+         *         都会让它后面的 id 整体位移。投递到线上的 ID 因此不可依赖本表。
+         *         NOTE: 本仓库内已无调用点(旧实现遗留);另外第二遍(生成 switch)里的
+         *         `++messageId` 是无效自增,该循环从头到尾没读过这个变量,只是死代码。
+         */
         MString GenerateRpcMessageIds(const TVector<SParsedClass>& parsedClasses) const {
             MString code;
             code += "#pragma once\n\n";
@@ -260,7 +340,7 @@ namespace MHeaderTool {
 
             code += "};\n\n";
 
-            // Generate message name lookup
+            // 名字查表:switch 分支顺序与上面的枚举分配顺序保持一致(都靠同一遍遍历)
             code += "static constexpr std::string_view GetMessageName(EMessageId id)\n";
             code += "{\n";
             code += "    switch (id)\n";
@@ -285,25 +365,26 @@ namespace MHeaderTool {
             return code;
         }
 
-        // 生成 MClientManifest — 客户端调用清单（FunctionId → OwnerType/FunctionName/Response/Target）
-        //
-        // 扫描所有 Transport == "Client" 或 Transport == "ClientCall" 的 MFUNCTION，
-        // 用与 C++ 端 ComputeStableClientFunctionId / ComputeStableReflectId 一致的 FNV-1a 算法
-        // 算出 FunctionId。Python 侧会读取这个 .cpp 里的 GClientManifestEntries 表。
-        //
-        // 注意：生成器收集"客户端可经 Gateway 调用的 ServerCall"（如 MEchoService.Echo /
-        // EchoAwait / TriggerNotify / RegisterDynamicActor），表非空；Gateway 经
-        // FindByFunctionId 路由。MFUNCTION(CallClient) 走 GenerateClientDownlinkManifest
-        // （下行方向，单独的表 + 服务端调用 stub）。
+        /**
+         * @brief 生成 MClientManifest 的 .cpp(FunctionId → OwnerType/FunctionName/Response/Target/ClientApi)。
+         * @param parsedClasses 解析出的类型列表
+         * @return 表数据 + `FindByFunctionId` 线性查找函数的文本
+         *
+         * @detail 收录 Transport 为 Client / ClientCall / **ServerCall** 的函数 —— ServerCall 也算,
+         *         因为"客户端发 FunctionId → Gateway 路由到服务端"属于上行方向,manifest 正是
+         *         Gateway 查表要用的那份(下行方向见 GenerateClientDownlinkManifest)。
+         *         FunctionId 走与 C++ 侧一致的稳定哈希:有 ClientApi 时按 ("MClientApi", ClientApi)
+         *         算(等价于 Class.h 的 ComputeStableClientFunctionId),否则回退
+         *         (类名, 函数名)。查表是 O(N) 线性扫描,`FunctionId == 0` 直接返回 nullptr。
+         */
         MString GenerateClientManifest(const TVector<SParsedClass>& parsedClasses) const {
             MString code;
             code += "// Auto-generated by MHeaderTool — DO NOT EDIT\n";
             code += "// Source: scanned 客户端可经 Gateway 调用的函数（ServerCall;MFUNCTION(CallClient) 走下行 manifest）entries\n\n";
             code += "#include \"Common/Net/Rpc/MClientManifest.generated.h\"\n\n";
 
-            // First pass: collect entries with stable FunctionId matching C++ side.
-            // Emitted entries have to be valid C++ struct initializer lists;
-            // we keep them as raw string parts rather than std::tuple to avoid lifetime surprises.
+            // 先收集行文本、再统一拼成数组:产出的每一行都必须是合法的 C++ 聚合体初始化列表,
+            // 因此这里直接用字符串拼接而不是构造临时结构体,避免额外的生命周期/拷贝语义问题。
             TVector<MString> entryLines;
 
             for (const auto& parsed : parsedClasses) {
@@ -383,7 +464,16 @@ namespace MHeaderTool {
             return code;
         }
 
-        // 下行 FunctionId 常量头：业务侧 include 后直接用 MDownlink_<Class>_<Func>。
+        /**
+         * @brief 生成下行 FunctionId 常量头 + 服务端调用 stub。
+         * @param parsedClasses 解析出的类型列表;只取 Transport == "CallClient" 的函数
+         * @return 文本:每个函数一个 `inline constexpr uint16_t MDownlink_<Class>_<Func> = <id>;`,
+         *         以及单参数函数的 `MDownlinkCall_<Class>_<Func>(GatewayConnectionId, Msg)` stub
+         *
+         * @detail 业务侧 include 后可直接用常量或 stub。stub 只在**恰好一个形参**时生成
+         *         (PoC 约定:下行消息统一单参数),参数多于一个就不生成,调用方需要自行按旧写法处理。
+         *         常量/哈希口径与上行 manifest 完全一致,保证同一个 (类, 函数) 两侧 id 相同。
+         */
         MString GenerateClientDownlinkHeader(const TVector<SParsedClass>& parsedClasses) const {
             MString code;
             code += "#pragma once\n";
@@ -439,9 +529,15 @@ namespace MHeaderTool {
             return code;
         }
 
-        // 服务端→客户端下行通知清单：收集所有 MFUNCTION(CallClient) 声明，
-        // 为每个分配下行 FunctionId（ClientApi 或 (OwnerType, FunctionName) 稳定 id），
-        // emit 到 MClientDownlinkManifest.mgenerated.cpp（FindByFunctionId 查表）。
+        /**
+         * @brief 生成 MClientDownlinkManifest 的 .cpp(服务端→客户端下行通知清单)。
+         * @param parsedClasses 解析出的类型列表;只取 Transport == "CallClient" 的函数
+         * @return 表数据 + `FindByFunctionId` 线性查找函数的文本
+         *
+         * @detail 与上行 manifest 同规则分配 id:有 ClientApi 走 ("MClientApi", ClientApi),
+         *         否则回退 (类名, 函数名),保证两侧对同一函数算出同一个 FunctionId。
+         *         条目是 3 元组(Id, 类名, 函数名, 响应类型),比上行的条目少 Target/ClientApi 两列。
+         */
         MString GenerateClientDownlinkManifest(const TVector<SParsedClass>& parsedClasses) const {
             MString code;
             code += "// Auto-generated by MHeaderTool — DO NOT EDIT\n";
@@ -510,13 +606,19 @@ namespace MHeaderTool {
             return code;
         }
 
-        // F0 actor-member-framework §3.2:生成成员 RPC 注册表
-        // (GMemberRpcEntries + 查找函数)。扫描 Type=ActorMember 类的
-        // MFUNCTION(ServerCall),FunctionId 用 ComputeStableReflectIdCpp
-        // (member 类名, 方法名)——与 ServerCall 的 (类, 方法) 域一致,
-        // 不同 member 类同名方法不撞。框架分发器
-        // (DispatchFrameworkMemberCall, Common/Runtime/Actor/ActorMember.cpp)
-        // 按 FunctionId 查表 → 请求取 PlayerId → 宿主成员表 → 反射调用。
+        /**
+         * @brief 生成成员 RPC 注册表(actor-member-framework §3.2)。
+         * @param parsedClasses 解析出的类型列表;只取 Kind == Class 且 ReflectionType == "ActorMember"
+         *                      的类里 Transport == "ServerCall" 的函数
+         * @return `GMemberRpcEntries[]` 数据 + `FindMemberRpcEntryByFunctionId` /
+         *         `FindMemberRpcEntry` / `GetMemberRpcEntryCount` 三个访问函数的文本
+         *
+         * @detail FunctionId 用 (member 类名, 方法名) 走稳定哈希 —— 与 ServerCall 的 (类, 方法)
+         *         同一个域,因此不同 member 类里的同名方法不会撞 id。
+         *         请求类型取第一个形参的 StorageType(无参时写空串)。框架分发器
+         *         (DispatchFrameworkMemberCall, Common/Runtime/Actor/ActorMember.cpp)按 FunctionId
+         *         查表 → 从请求取 PlayerId → 宿主成员表 → 反射调用。
+         */
         MString GenerateMemberRpcManifest(const TVector<SParsedClass>& parsedClasses) const {
             MString code;
             code += "// Auto-generated by MHeaderTool — DO NOT EDIT\n";
@@ -582,8 +684,17 @@ namespace MHeaderTool {
         }
 
         private:
-        // 与 Common/Runtime/Reflect/Class.h 的 ComputeStableReflectId / ComputeStableClientFunctionId
-        // 完全一致：FNV-1a 32-bit，然后高 16 XOR 低 16，0 → 1
+        /**
+         * @brief 复刻运行时的稳定 id 算法(FNV-1a 32 位 → 高低 16 位异或)。
+         * @param ScopeName  作用域名(类名,或客户端 API 的 "MClientApi")
+         * @param MemberName 成员名(函数名或 ClientApi 名)
+         * @return 折叠后的 16 位 id;结果为 0 时改返回 1
+         *
+         * @detail 必须与 Common/Runtime/Reflect/Class.h 的 ComputeStableReflectId 逐字节一致 ——
+         *         生成期算出的 id 要和运行期反射表里的 id 对上,一旦算法分叉,查表就会静默失败。
+         *         哈希输入固定为 ScopeName + "::" + MemberName。折叠到 16 位会提高碰撞率,
+         *         运行期由 MClass::RegisterFunction 的告警兜底。
+         */
         static uint16_t ComputeStableReflectIdCpp(const MString& ScopeName, const MString& MemberName) {
             constexpr uint32_t OffsetBasis = 2166136261u;
             constexpr uint32_t Prime       = 16777619u;

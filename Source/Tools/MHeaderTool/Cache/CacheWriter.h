@@ -1,3 +1,11 @@
+/**
+ * @file CacheWriter.h
+ * @brief CacheWriter —— 把 SBuildCache 手写序列化成 <CacheDir>/manifest.json。
+ *
+ * @detail 这是 CacheReader 的镜像:格式由这两个类共同约定,不引入 JSON 库,也不保证是
+ *         严格合法的通用 JSON(值里的控制字符未完整转义)。
+ *         写入是**整体覆盖**:Save 一次就把 manifest.json 全量替换,没有增量合并或锁定。
+ */
 #pragma once
 
 #include "BuildCache.h"
@@ -11,15 +19,25 @@ namespace fs = std::filesystem;
 namespace MHeaderTool {
 
     // ============================================================================
-    // Cache Writer - 写入缓存
+    // 缓存写入
     // ============================================================================
 
+    /**
+     * @brief 缓存写入器(无状态,只有构造时给定的缓存目录)。
+     */
     class CacheWriter {
         public:
         explicit CacheWriter(const fs::path& cacheDir) : CacheDir_(cacheDir) {
         }
 
-        // 保存缓存
+        /**
+         * @brief 把缓存写到 `<CacheDir_>/manifest.json`。
+         * @param cache 待写入缓存
+         * @return true 写成功;false 目录创建失败或写文件失败
+         *
+         * @detail 目录不存在时会递归创建。写入是覆盖式的:失败时可能留下被截断的旧文件,
+         *         下一次 Load 会因解析失败退化到全量重建。
+         */
         bool Save(const SBuildCache& cache) {
             if (!CreateDirectory(CacheDir_)) {
                 return false;
@@ -31,6 +49,14 @@ namespace MHeaderTool {
         }
 
         private:
+        /**
+         * @brief 生成整份 manifest 文本。
+         * @param cache 缓存内容
+         * @return JSON 文本(以 '\n' 收尾)
+         *
+         * @detail 只序列化 version / createdAt / entries;`MHeaderToolVersion` 与条目里的
+         *         `ParsedContentHash` 当前不落盘(对应字段在 CacheReader 侧也不读回)。
+         */
         MString SerializeCache(const SBuildCache& cache) {
             MString json;
             json += "{\n";
@@ -49,6 +75,14 @@ namespace MHeaderTool {
             return json;
         }
 
+        /**
+         * @brief 生成单个条目的 JSON 文本(不含外层数组的逗号)。
+         * @param entry 条目
+         * @return JSON 文本
+         *
+         * @detail definedTypes / includedHeaders 为空时整个键被省略(保持文件紧凑);
+         *         所有字符串都过 EscapeJsonString。
+         */
         MString SerializeEntry(const STypeCacheEntry& entry) {
             MString json;
             json += "    {\n";

@@ -1,21 +1,19 @@
-// ============================================================================
-// MCodeGenerator - IR-based generator entry points (A2 / Task 7)
-//
-// Mirrors the legacy `GenerateHeader` / `GenerateSource` /
-// `EmitAsyncFramesHeader` methods on `MCodeGenerator`, but consumes
-// `SParsedRecord` from the AST path. The legacy implementations remain
-// inline in `Generation/CodeGenerator.h`; A3 cleanup will delete them.
-//
-// Strategy (A2 / Task 7 simplest implementation):
-//   * Build a legacy `SParsedClass` shim from the `SParsedRecord` IR node,
-//     then delegate to the existing inline `Generate*Header` /
-//     `Generate*Source` / `EmitAsyncFramesHeader` helpers. This guarantees
-//     byte-equal parity with the legacy path (Task 9 `A2DiffTest` will
-//     verify).
-//   * The shim only fills the fields the existing helpers actually read
-//     (`Name`, `HeaderPath`, `Kind`, `ReflectionType`, `Owner`, `Properties`,
-//     `Functions`, `AllParentClasses`, `EnumValues`, `bScopedEnum`).
-// ============================================================================
+/**
+ * @file CodeGenerator.cpp
+ * @brief MCodeGenerator 的 IR 入口实现:把 SParseIR 节点转成 legacy 视图后交给原有生成逻辑。
+ *
+ * @detail 本 TU 只有少量成员函数定义,策略是"**转换 + 委派**":
+ *   1. 先把 IR 节点(SParsedRecord / SParsedFunction / SParsedProperty / SParsedEnum)转换
+ *      成 legacy 的 SParsedClass 家族(anonymous namespace 里的 ToLegacy* 系列);
+ *   2. 再原样调用 CodeGenerator.h 里那批内联生成函数(GenerateHeader / GenerateSource /
+ *      GenerateAsyncStateMachine ...)。
+ *   这样做的目的是让 AST 路径与旧的字符串解析路径产出**逐字节一致**的文件(由
+ *   Tests/A2DiffTest.cpp 把关)。shim 只填那批生成函数真正读到的字段(见各 ToLegacy* 注释),
+ *   IR 独有的字段(bHasAsyncFunctions / AwaitSites / LiveAcrossAwait 等)不参与转换。
+ *
+ *   NOTE: 这是 A2 迁移期的过渡形态 —— 真正的生成逻辑仍在头文件里,本文件只做适配层。
+ *   让生成逻辑直接消费 IR(并删除 legacy 实现)是范围更大的后续改动,不在本阶段。
+ */
 
 #include "Generation/CodeGenerator.h"
 
@@ -29,18 +27,23 @@ namespace MHeaderTool {
 
     namespace {
 
-        // Local alias — `MStringStream` is the brief's verbatim type for the
-        // generator. Project's MLib only exposes `MString`, but Task 7 brief uses
-        // `MStringStream` in the canonical snippet. Defining it here keeps the
-        // .cpp self-contained without polluting the global MLib header.
+        // TU 内部别名:生成器统一用 MStringStream 表示输出流。
+        // MLib 只暴露 MString、没有 MStringStream,与其为一个名字去改公共头,
+        // 不如把别名限制在本 TU 内,保持 .cpp 自包含。
         using MStringStream = std::ostringstream;
 
-        // 对齐旧 Parsing/ClassParser.h::DetermineOwnerFromHeaderPath：
-        // 路径里找 `Source/Servers/<Service>/` → <Service>，否则 "Shared"。
-        // ManifestGenerators 按 Owner 分 CMake generated group（echoservice /
-        // gateway / serviceregistry / shared），Owner 错误会让所有类型挤进
-        // shared 组，链接任一服务时引用其它服务的业务符号（vtable / ServerCall
-        // 实现）导致 undefined reference。
+        /**
+         * @brief 从源文件路径推导 manifest 分组用的 Owner。
+         * @param HeaderPath 头文件路径(绝对路径或仓库相对路径都行)
+         * @return 路径里首个 `/Source/Servers/<Service>/` 的 <Service>;没命中则返回 "Shared"
+         *
+         * @detail 对齐旧 Parsing/ClassParser.h::DetermineOwnerFromHeaderPath。
+         *         Owner 会当成 ManifestGenerators 的 CMake generated group 名
+         *         (echoservice / gateway / serviceregistry / shared);一旦推错,所有类型都会挤进
+         *         shared 组,链接任一服务时就会引用到别的服务的业务符号(vtable / ServerCall 实现),
+         *         报 undefined reference。
+         *         匹配串带前导 '/',因此绝对路径与仓库相对路径都能命中。
+         */
         MString DetermineOwnerFromHeaderPath(const fs::path& HeaderPath) {
             const MString P      = HeaderPath.generic_string();
             const MString Needle = "/Source/Servers/";
@@ -55,8 +58,20 @@ namespace MHeaderTool {
             return "Shared";
         }
 
-        // 对齐旧 CodeGenerator.h::InferPropertyKind（legacy 生成器用它给
-        // CreateOffsetProperty 填 EPropertyType::<Kind>）。
+        /**
+         * @brief 把规范化类型名映射成 legacy 生成器要用的 EPropertyType 后缀。
+         * @param TypeName 类型名,允许带空白(内部先去掉全部空白再比对)
+         * @return "Int8".."UInt64" / "Float" / "Double" / "Bool" / "String" / "Name" /
+         *         "Vector" / "Rotator" / "Array";都不匹配时返回 "Struct"
+         *
+         * @detail 对齐旧 CodeGenerator.h::InferPropertyKind —— legacy 生成器拿这个后缀拼
+         *         `EPropertyType::<Kind>` 传给 CreateOffsetProperty。
+         *
+         * @detail NOTE: 两处宽松,与实现一致 ——
+         *   1. 判断 `TByteArray<` 的那一项基本命中不了(TByteArray 本身是不带模板参数的别名),
+         *      属于冗余条件;
+         *   2. 认不出来的类型一律归成 "Struct"(含指针、自定义类型),不报错也不告警。
+         */
         MString InferPropertyKindCompat(const MString& TypeName) {
             MString Compact = TypeName;
             Compact.erase(std::remove_if(Compact.begin(), Compact.end(), [](char C) { return std::isspace(static_cast<unsigned char>(C)); }), Compact.end());
@@ -96,9 +111,15 @@ namespace MHeaderTool {
             return "Struct";
         }
 
-        // 对齐旧 Parsing/FunctionParser.h 的 NormalizeReflectionType：
-        // 去首尾空白、`const ` 前缀、尾随 `&`/`*`。legacy 生成器用 StorageType
-        // （规范化名）做 include / 类型名，用 Type（源码拼写）做参数声明。
+        /**
+         * @brief 规范化反射类型名:去首尾空白、剥 `const ` 前缀、去尾随 `&` / `*`。
+         * @param TypeName 类型原文(按值传入,内部反复裁剪)
+         * @return 规范化结果
+         *
+         * @detail 对齐旧 Parsing/FunctionParser.h 的同名函数。legacy 生成器用 StorageType
+         *         (即本函数结果)去算 include 与类型名,用 Type(源码拼写)去写参数声明。
+         *         只剥最外层:`const T& const` 这类内层限定不会被处理。
+         */
         MString NormalizeReflectionType(MString TypeName) {
             auto Trim = [](MString In) {
                 const size_t B = In.find_first_not_of(" \t\r\n");
@@ -119,24 +140,26 @@ namespace MHeaderTool {
         }
 
         // ---------------------------------------------------------------------------
-        // IR → legacy `SParsedClass` shim
+        // IR → legacy SParsedClass 适配层
         // ---------------------------------------------------------------------------
         //
-        // Task 7 brief: simplest implementation. Map the IR record fields the
-        // existing inline helpers actually read into a legacy `SParsedClass` and
-        // call those helpers verbatim. Any IR-only fields (`bHasAsyncFunctions`,
-        // `AwaitSites`, `LiveAcrossAwait`, ...) are unused by the legacy codegen
-        // helpers — Task 9 `A2DiffTest` proves byte-equal parity.
+        // 只把"内联生成函数真正会读到"的 IR 字段搬进 legacy 结构体,然后原样调用那批函数。
+        // IR 独有的字段(bHasAsyncFunctions / AwaitSites / LiveAcrossAwait 等)生成器用不到,
+        // 因此不转换 —— 这也是 AST 路径能与旧路径产出逐字节相同文件的原因(A2DiffTest 把关)。
+
+        /**
+         * @brief IR 属性 → legacy SParsedProperty。
+         * @param In IR 属性
+         * @return legacy 属性;只填 legacy 生成函数会读的字段
+         */
         SParsedProperty ToLegacyProperty(const mession::headercodegen::SParsedProperty& In) {
             SParsedProperty Out;
             Out.Name      = In.Name;
             Out.Type      = In.Type.CanonicalName;
             Out.FlagsExpr = In.FlagsExpr;
-            // Mirror FlagsExpr to MacroArgs so legacy BuildPropertyFlagsExpr
-            // (which scans the MacroArgs token stream, not FlagsExpr) gets the
-            // actual MPROPERTY(...) args instead of an empty string. Without
-            // this, every flagged MPROPERTY(PersistentData|Replicated) emits
-            // EPropertyFlags::None in the registered property.
+            // 把 FlagsExpr 同时写进 MacroArgs:legacy 的 BuildPropertyFlagsExpr 扫的是
+            // MacroArgs 的 token 流而不是 FlagsExpr。不同步的话,带标记的
+            // MPROPERTY(PersistentData|Replicated) 在注册属性时一律退化成 EPropertyFlags::None。
             Out.MacroArgs = In.FlagsExpr;
             Out.Owner     = In.Owner;
             for (const auto& M : In.Metadata) {
@@ -145,6 +168,11 @@ namespace MHeaderTool {
             return Out;
         }
 
+        /**
+         * @brief IR 函数 → legacy SParsedFunction。
+         * @param In IR 函数
+         * @return legacy 函数;transport/rpcKind 由强类型枚举还原成小写风格字符串
+         */
         SParsedFunction ToLegacyFunction(const mession::headercodegen::SParsedFunction& In) {
             SParsedFunction Out;
             Out.Name           = In.Name;
@@ -163,9 +191,8 @@ namespace MHeaderTool {
             Out.Endpoint       = In.Endpoint;
             Out.DependencyList = In.DependencyList;
 
-            // IR uses strongly-typed enums; legacy codegen expects lowercase
-            // string identifiers. Map back to the same vocabulary the string
-            // parser produces.
+            // IR 侧是强类型枚举,legacy 生成器只认字符串标记;这里还原成与旧字符串解析
+            // 路径完全相同的词汇表,保证两条路径的产物一致。
             switch (In.Transport) {
             case mession::headercodegen::EFunctionTransport::ServerCall:
                 Out.Transport = "ServerCall";
@@ -205,7 +232,7 @@ namespace MHeaderTool {
             Out.ReturnType        = In.ReturnType.CanonicalName;
             Out.ReturnStorageType = NormalizeReflectionType(In.ReturnType.CanonicalName);
 
-            // Parameters — SParsedParameter → SParsedParameter (legacy)。
+            // 参数 — SParsedParameter → SParsedParameter(legacy)。
             for (const auto& P : In.Params) {
                 SParsedParameter LP;
                 LP.Name        = P.Name;
@@ -219,6 +246,15 @@ namespace MHeaderTool {
             return Out;
         }
 
+        /**
+         * @brief IR 记录 → legacy SParsedClass。
+         * @param In IR 记录(类 / 结构体)
+         * @return legacy 类视图;属性与函数递归走 ToLegacyProperty / ToLegacyFunction
+         *
+         * @detail 有三处**兜底默认值**,它们决定了产物内容,改动前务必确认:
+         *   ParentClass 为空 → "MObject";ClassFlagsExpr 为空 → "0";ReflectionType 为空 → "Object"。
+         *   Owner 为空时会用 DetermineOwnerFromHeaderPath 从路径反推(manifest 分组键)。
+         */
         SParsedClass ToLegacyClass(const mession::headercodegen::SParsedRecord& In) {
             SParsedClass Out;
             Out.Kind             = (In.Kind == mession::headercodegen::ERecordKind::Struct) ? EParsedTypeKind::Struct : EParsedTypeKind::Class;
@@ -246,17 +282,17 @@ namespace MHeaderTool {
 
     } // namespace
 
-    // ============================================================================
-    // GenerateHeaderFromIR
-    // ============================================================================
-    //
-    // Brief verbatim (with internal helper renames so the snippet matches the
-    // existing inline `GenerateStructHeader` / `GenerateClassHeader` helpers):
-    //   * GenerateHeaderFromIR(Record) writes the boilerplate (#pragma once,
-    //     generated banner, source path, common includes) and then dispatches
-    //     to the legacy struct/class codegen via the IR → legacy shim.
-    //   * The legacy helpers require `ostringstream`; we use `MStringStream`
-    //     alias per the brief's verbatim type.
+    /**
+     * @brief 生成一个类型的 .mgenerated.h 内容。
+     * @param Record                目标记录(类或结构体)
+     * @param AllRecordsInSameHeader 同名头文件内的其它记录 —— **当前未使用**(legacy 生成函数也不读)
+     * @return 头文件全文
+     *
+     * @detail 先写固定抬头(#pragma once、生成标记、来源路径、公共 include 与用户头),
+     *         再经适配层分派到 legacy 的 GenerateStructHeader / GenerateClassHeader。
+     *         MSTRUCT 且父类也是反射 struct 时,额外 include 父类的 .mgenerated.h ——
+     *         继承请求链的 SetParent 需要父类的注册函数声明(actor-member-framework §5)。
+     */
 
     MString MCodeGenerator::GenerateHeaderFromIR(const SParsedRecord& Record, const TVector<SParsedRecord>& /*AllRecordsInSameHeader*/) const {
         MStringStream Out;
@@ -294,13 +330,14 @@ namespace MHeaderTool {
         return Out.str();
     }
 
-    // ============================================================================
-    // GenerateSourceFromIR
-    // ============================================================================
-    //
-    // Same shape as legacy `GenerateSource`: emit a generated banner + the
-    // matching `.mgenerated.h` + user header includes, then dispatch to the
-    // legacy enum/struct/class source codegen via the IR → legacy shim.
+    /**
+     * @brief 生成一个类型的 .mgenerated.cpp 内容。
+     * @param Record 目标记录(类或结构体)
+     * @return 源文件全文
+     *
+     * @detail 形态与 legacy GenerateSource 一致:生成标记 + 来源路径 + include 对应的
+     *         .mgenerated.h 与用户头,再经适配层分派到 GenerateStructSource / GenerateClassSource。
+     */
 
     MString MCodeGenerator::GenerateSourceFromIR(const SParsedRecord& Record) const {
         MStringStream Out;
@@ -322,16 +359,18 @@ namespace MHeaderTool {
         return Out.str();
     }
 
-    // ============================================================================
-    // EmitAsyncFramesHeaderFromIR
-    // ============================================================================
-    //
-    // Mirrors legacy `EmitAsyncFramesHeader`: skip if no async functions,
-    // then emit the dedicated `<ClassName>_AsyncFrames.h` contents. Delegates
-    // to the existing `GenerateAsyncStateMachine` helper via the legacy shim.
+    /**
+     * @brief 生成 `<ClassName>_AsyncFrames.h`(async 函数用的 Frame 结构体定义)。
+     * @param Record 目标记录
+     * @return 文件全文;不是 class、或没有任何 async 函数时返回**空串**(调用方据此跳过落盘)
+     *
+     * @detail Frame 结构体必须放在用户头**之前**,内联的 async 函数体才能在 AWAIT_OK 里构造并使用
+     *         它,所以单独出一个文件而不是塞进 .mgenerated.h(.mgenerated.h 反过来 include 用户头,
+     *         会形成循环 include)。
+     */
 
     MString MCodeGenerator::EmitAsyncFramesHeaderFromIR(const SParsedRecord& Record) const {
-        // AsyncFrames only apply to classes (not enums or structs).
+        // AsyncFrames 只对 class 有意义(enum / struct 直接空返回)。
         if (Record.Kind != mession::headercodegen::ERecordKind::Class) {
             return {};
         }
@@ -377,10 +416,17 @@ namespace MHeaderTool {
     // ToLegacyClasses — 整树 IR → legacy SParsedClass 集合
     // ---------------------------------------------------------------------------
     //
-    // A2 follow-up (AST 重构 merge)。ManifestGenerators / LuaBindEmitter 仍消费
-    // legacy `SParsedClass`（Core/Types.h）；AST 路径产出 `SParseIR`。这里
-    // 复用 anonymous namespace 里的 ToLegacyClass（同一 TU 可见），逐 Record
-    // 转换，与 GenerateHeaderFromIR 内部的单 Record 转换完全一致。
+    // ManifestGenerators / ScriptBindEmitter 消费的仍是 legacy SParsedClass(Core/Types.h),
+    // 而 AST 路径产出 SParseIR。这里复用 anonymous namespace 里的 ToLegacyClass(同 TU 可见)
+    // 逐 Record 转换,与 GenerateHeaderFromIR 内部的单 Record 转换完全一致。
+    /**
+     * @brief 整树 IR → legacy 类集合(只含类/结构体)。
+     * @param IR 解析出的 IR 树
+     * @return 与 IR.Records 一一对应、顺序相同的 legacy 视图
+     *
+     * @detail **不含 enum** —— 需要 enum 的调用方(CMake manifest)请用 ToLegacyClassesWithEnums,
+     *         其余 manifest 消费只关心 Records。
+     */
     TVector<SParsedClass> MCodeGenerator::ToLegacyClasses(const mession::headercodegen::SParseIR& IR) const {
         // 只含 Records（类/结构）。enum 走 ToLegacyClassesWithEnums（CMake manifest
         // 需要 namespace enum 的注册单元编译；其它 manifest 消费仍只用 Records）。
@@ -392,6 +438,13 @@ namespace MHeaderTool {
         return Out;
     }
 
+    /**
+     * @brief ToLegacyClasses 的结果再追加 enum 的 legacy 视图。
+     * @param IR 解析出的 IR 树
+     * @return Records 在前、Enums 在后的完整 legacy 集合
+     *
+     * @detail 只有 CMake manifest 需要这份"全量" —— namespace enum 的注册单元必须被编译进去。
+     */
     TVector<SParsedClass> MCodeGenerator::ToLegacyClassesWithEnums(const mession::headercodegen::SParseIR& IR) const {
         TVector<SParsedClass> Out = ToLegacyClasses(IR);
         for (const auto& Enum : IR.Enums) {
@@ -401,13 +454,25 @@ namespace MHeaderTool {
     }
 
     // ---------------------------------------------------------------------------
-    // ToLegacyEnum — SParsedEnum → legacy SParsedClass(Enum) shim
+    // ToLegacyEnum — SParsedEnum → legacy SParsedClass(Enum) 适配层
     // ---------------------------------------------------------------------------
     //
     // legacy GenerateHeader/GenerateSource 通过 SParsedClass.Kind == Enum 分发
     // 到 GenerateEnumHeader/GenerateEnumSource。AST 的 SParseIR::Enums 只填了
     // Name / HeaderPath / bScopedEnum / Values；Owner 恒为空（namespace 级
     // enum），对应 legacy 的 no-op 注册 stub 行为。
+    /**
+     * @brief IR enum → legacy SParsedClass(Kind = Enum)。
+     * @param In IR 枚举
+     * @return Kind/ReflectionType 已按 legacy 约定填好的类视图
+     *
+     * @detail legacy 的 GenerateHeader/GenerateSource 按 SParsedClass.Kind == Enum 分派到
+     *         GenerateEnumHeader / GenerateEnumSource。AST 侧 SParseIR::Enums 只填了
+     *         Name / QualifiedName / Owner / HeaderPath / bScopedEnum / Values。
+     *         Owner 通常是空(namespace 级 scoped enum),此时 GenerateEnumHeader 会用
+     *         QualifiedName 生成真实注册(mession::script::EScriptLanguage::Value 之类),
+     *         而不是退化版 stub。
+     */
     SParsedClass ToLegacyEnum(const mession::headercodegen::SParsedEnum& In) {
         SParsedClass Out;
         Out.Name           = In.Name;
@@ -424,10 +489,20 @@ namespace MHeaderTool {
         return Out;
     }
 
+    /**
+     * @brief 生成一个 enum 的 .mgenerated.h 内容。
+     * @param InEnum IR 枚举
+     * @return 头文件全文(经 ToLegacyEnum 转成 legacy 视图后走原有 GenerateHeader)
+     */
     MString MCodeGenerator::GenerateEnumHeaderFromIR(const mession::headercodegen::SParsedEnum& InEnum) const {
         return GenerateHeader(ToLegacyEnum(InEnum), {});
     }
 
+    /**
+     * @brief 生成一个 enum 的 .mgenerated.cpp 内容。
+     * @param InEnum IR 枚举
+     * @return 源文件全文(经 ToLegacyEnum 转成 legacy 视图后走原有 GenerateSource)
+     */
     MString MCodeGenerator::GenerateEnumSourceFromIR(const mession::headercodegen::SParsedEnum& InEnum) const {
         return GenerateSource(ToLegacyEnum(InEnum));
     }

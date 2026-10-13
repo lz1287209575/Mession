@@ -1,3 +1,16 @@
+/**
+ * @file ASTPipeline.cpp
+ * @brief 组装反射专用的 ClangTool 管线:修补 CDB → 记录宏展开 → 按 TU 分片并行解析 → 合并去重。
+ *
+ * @detail 这是 MHeaderTool 的**解析主路径**(Tests 里的 MClangToolRunner 只是裸 dump,不做过滤):
+ *   1. 找 compile_commands.json(多候选目录),剥掉 GCC 生成的 PCH 参数,再给不在数据库里的
+ *      *.Async.cpp 造 fallback 编译命令;
+ *   2. 只保留 Source/ 与 Protocol/Tests/ 下可能含反射类型的 TU(其余 TU 解析纯属浪费时间);
+ *   3. 按 TU 分片,每片一个线程、一份独立 SParseIR 并行跑 ClangTool;
+ *   4. 按 (QualifiedName, HeaderPath) 去重合并,同名函数优先保留"带函数体"的那份。
+ *
+ *   线程安全:各分片互不共享 SParseIR;共享的只有只读的 CDB(其查询接口都是 const)。
+ */
 #include "AST/ASTPipeline.h"
 #include "AST/ASTReflectionVisitor.h"
 
@@ -14,8 +27,15 @@ namespace mession::headercodegen {
 
     namespace {
 
-        // 递归收集 InRoot 下所有源文件(.h/.hpp/.cpp/.cc) — fallback 路径下用。
-        // 与 AST/ClangToolRunner.cpp 里的同名逻辑保持一致。
+        /**
+         * @brief 递归收集 InRoot 下所有源文件(.h/.hpp/.cpp/.cc)。
+         * @param InRoot   扫描根;不存在时直接返回
+         * @param OutFiles [out] 追加收集结果(不清理旧内容)
+         *
+         * @detail 仅在 compile_commands.json 缺失的 fallback 路径下使用;与
+         *         AST/ClangToolRunner.cpp 里的同名函数保持行为一致(两份实现是有意的重复,
+         *         因为两条路径互不依赖对方的 TU)。
+         */
         void CollectHeaders(const fs::path& InRoot, TVector<MString>& OutFiles) {
             if (!fs::exists(InRoot)) {
                 return;
@@ -34,9 +54,14 @@ namespace mession::headercodegen {
 
     } // namespace
 
-    // 记录反射宏（MCLASS/MPROPERTY/MFUNCTION/MSTRUCT/MGENERATED_BODY）的展开：
-    // 预处理器在宏展开时回调，位置/参数来自源码事实——注释与字符串不会产生
-    // 宏展开事件，且没有字节窗口限制（超长 Meta 列表完整可取）。
+    /**
+     * @brief 预处理器回调:把反射宏(MCLASS/MPROPERTY/MFUNCTION/MSTRUCT/MGENERATED_BODY)的展开记录下来。
+     *
+     * @detail 为什么走 PPCallbacks 而不是文本扫描:位置与参数都来自源码事实 —— 注释与字符串
+     *         不会产生宏展开事件,也没有"字节窗口"限制,超长的 Meta=(...) 列表能完整取到。
+     *         记录按 TU 内解析顺序追加,消费方(MASTReflectionVisitor)按倒序找"最近的、同文件的、
+     *         在声明之前的"那次展开。
+     */
     class MReflectionMacroRecorder : public clang::PPCallbacks {
         public:
         MReflectionMacroRecorder(clang::SourceManager& SM, TVector<SMacroExpand>& Out) : SMRef(SM), OutRef(Out) {
@@ -83,6 +108,9 @@ namespace mession::headercodegen {
         TVector<SMacroExpand>& OutRef;
     };
 
+    /**
+     * @brief 单 TU 的 ASTConsumer:把 TU 交给 MASTReflectionVisitor 遍历。
+     */
     class MASTReflectionConsumer : public clang::ASTConsumer {
         public:
         MASTReflectionConsumer(clang::ASTContext& Ctx, SParseIR& IR, const TVector<SMacroExpand>& MacroExpands) : Visitor(Ctx, IR, MacroExpands) {
@@ -96,6 +124,11 @@ namespace mession::headercodegen {
         MASTReflectionVisitor Visitor;
     };
 
+    /**
+     * @brief 单个 TU 的前端动作:装 Ignoring 诊断 + 注册宏记录器 + 建 consumer。
+     *
+     * @detail MacroExpands 是**每 TU 一份**的成员(同一分片内 TU 串行解析),因此不需要加锁。
+     */
     class MASTReflectionAction : public clang::ASTFrontendAction {
         public:
         explicit MASTReflectionAction(SParseIR& IR) : IRRef(IR) {
@@ -113,8 +146,13 @@ namespace mession::headercodegen {
         TVector<SMacroExpand> MacroExpands; // 每 TU（同一分片内 TU 串行解析）
     };
 
-    // GCC 生成的 CMake PCH（cmake_pch.hxx.gch）clang libtooling 无法加载。
-    // 持有剥离了 `-include <pch>` 参数的编译命令，替换原 CDB 喂给 ClangTool。
+    /**
+     * @brief 持有"已剥离 PCH 参数"的编译命令集合,替代原 CDB 喂给 ClangTool。
+     *
+     * @detail 背景:CMake 的 cmake_pch.hxx.gch 是 GCC 生成的,clang libtooling 加载会报
+     *         "input is not a PCH file",每个 TU 都解析失败并触发类型错误恢复 —— 必须先把
+     *         `-include <pch>` / `-include-pch` / `-Winvalid-pch` 等参数删掉。
+     */
     class MPCHStrippedCompilationDatabase : public clang::tooling::CompilationDatabase {
         public:
         explicit MPCHStrippedCompilationDatabase(TVector<clang::tooling::CompileCommand> InCommands) : Commands(std::move(InCommands)) {
@@ -146,9 +184,15 @@ namespace mession::headercodegen {
         TVector<clang::tooling::CompileCommand> Commands;
     };
 
-    // 追加 *.Async.cpp 等"codegen 专用源"的编译命令——这些文件不参与业务编译,
-    // 不在 compile_commands.json 里,但需要被 MHeaderTool 解析(提取 async 业务体)。
-    // 内层 CDB 查不到命令时,给 fallback 命令(-fsyntax-only + 宏 + include)。
+    /**
+     * @brief CDB 装饰器:内层查不到编译命令时,用"参照 TU 的命令行"克隆一条 fallback 命令。
+     *
+     * @detail 目标是把 *.Async.cpp 这类"codegen 专用源"喂给 ClangTool —— 它们不参与业务编译、
+     *         不在 compile_commands.json 里,但 MHeaderTool 必须解析它们才能提取 async 业务体。
+     *         参照命令取第一条非 PCH 的业务 TU 命令:include 根、-std、宏、-f 选项都与真实业务
+     *         编译一致;手工拼 fallback 极易漏参数(例如缺 -std=c++17 会让 TAwaitable 的
+     *         template<auto F> 解析失败),导致函数体遍历不到、AwaitSites 收集为空。
+     */
     class MCodegenSourceCompilationDatabase : public clang::tooling::CompilationDatabase {
         public:
         MCodegenSourceCompilationDatabase(TUniquePtr<clang::tooling::CompilationDatabase> InBase, const MString& InSourceRoot) : Base(std::move(InBase)), SourceRoot(InSourceRoot) {
@@ -217,6 +261,9 @@ namespace mession::headercodegen {
         TVector<MString>                                ReferenceArgs;
     };
 
+    /**
+     * @brief 给每个 TU 造 MASTReflectionAction 的工厂;把目标 IR 传进去。
+     */
     class MFactory : public clang::tooling::FrontendActionFactory {
         public:
         explicit MFactory(SParseIR& IR) : IRRef(IR) {
@@ -233,8 +280,8 @@ namespace mession::headercodegen {
     SParseIR MASTPipeline::Run(const SOptions& InOptions) {
         SParseIR IR;
 
-        // 加载 compile_commands.json — ClangTool 入口。
-        // Brief 使用 loadFromJSONFile;LLVM 17 实际 API 是 loadFromDirectory。
+        // ClangTool 的入口:编译数据库。
+        // 注意:原始任务书写的是 loadFromJSONFile,而 LLVM 17 的实际 API 叫 loadFromDirectory。
         // loadFromDirectory 只在给定目录下找 compile_commands.json（不会上溯
         // 父目录），而本工程的 json 在 Build/ 下、SourceRoot 是 Source/——
         // 只试 SourceRoot 会加载失败，ClangTool 退到缺系统 include 的 fallback，
@@ -329,8 +376,8 @@ namespace mession::headercodegen {
                 }
             }
         } else {
-            // fallback: 构造固定 -fsyntax-only 命令行
-            // Brief 原版只放 `-fsyntax-only`,没有 -I 也没有实际源文件列表,
+            // fallback: 构造固定 -fsyntax-only 命令行。
+            // 原始任务书只写了 `-fsyntax-only`,既没有 -I 也没有实际源文件列表,
             // 直接把目录当 source 喂给 ClangTool 会报 "expected exactly one
             // compiler job"。补 -I<SourceRoot> 让相对 include 可解析,再递归
             // 收集 .h/.cpp 文件喂给 ClangTool,与 MClangToolRunner 行为对齐。
@@ -343,14 +390,18 @@ namespace mession::headercodegen {
         }
 
         if (SourceFiles.empty()) {
-            // 无可解析文件 — 直接返回空 IR(测试将由 EXPECT_TRUE 失败)
+            // 一个可解析文件都没有:返回空 IR,由调用方判断是否可接受。
             return IR;
         }
 
-        // 性能：ClangTool::run 是单线程的，95 个 TU 串行完整解析约 2 分钟。
-        // 本机 96 核——把 TU 分片、每片独立 ClangTool + 独立 SParseIR 并行跑，
-        // 最后按 (QualifiedName, HeaderPath) 等键去重合并（各分片解析同一
-        // 头文件会重复产出 Record/Enum/FreeFunctions）。
+        // 性能:ClangTool::run 本身是单线程的,95 个 TU 串行完整解析约 2 分钟。
+        // 这里把 TU 分片,每片一个独立 ClangTool + 独立 SParseIR 并行跑,最后按
+        // (QualifiedName, HeaderPath) 等键去重合并 —— 每个分片都会重复产出同一头文件
+        // 里的 Record/Enum/FreeFunctions,所以合并不是可选项。
+        //
+        // NOTE: NThreads = min(文件数, hardware_concurrency())。标准允许
+        //       hardware_concurrency() 返回 0,此时 NThreads 为 0,下面的 `I % NThreads`
+        //       会除零崩溃 —— 本函数没有加兜底(SourceFiles 非空时已排除,但核数为 0 未防)。
         const size_t              NThreads = std::min<size_t>(SourceFiles.size(), static_cast<size_t>(std::thread::hardware_concurrency()));
         TVector<TVector<MString>> Shards(NThreads);
         for (size_t I = 0; I < SourceFiles.size(); ++I) {
