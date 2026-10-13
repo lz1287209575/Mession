@@ -1,6 +1,10 @@
-// ProtocolMessagesTest — #5 协议样例 round-trip 验证。
-// 真实形状消息（战斗/场景）：多字段、嵌套结构、数组、枚举、bool、
-// 浮点坐标——BuildPayload → ParsePayload 往返后逐字段断言。
+/**
+ * @file ProtocolMessagesTest.cpp
+ * @brief 协议消息反射序列化的 round-trip 验证。
+ *
+ * 用真实形状消息(战斗 / 场景)覆盖多字段、嵌套结构、数组、枚举、bool 与浮点
+ * 坐标:BuildPayload → ParsePayload 往返后逐字段断言还原。
+ */
 
 #include "Common/Net/Rpc/RpcPayload.h"
 #include "Common/Runtime/Reflect/Reflection.h"
@@ -88,7 +92,7 @@ static void TestSceneEnterRoundTrip() {
 }
 
 static void TestEnumReflection() {
-    // 战斗消息里的 namespace 级 scoped enum 应能被反射查询（#5 附带验证）
+    // 战斗消息里的 namespace 级 scoped enum 也应能被反射查询到(顺带覆盖 enum 注册)
     MEnum* Enum = MObject::FindEnum("EEffectType");
     assert(Enum != nullptr);
     assert(Enum->GetValues().size() >= 5);
