@@ -70,12 +70,9 @@ int main() {
     std::printf("[ Async_PendingFutureResolvesViaContext ]\n");
     Test_Async_PendingFutureResolvesViaContext();
 
-    // Note: Get-redline path (Sub-task 8) is intentionally not exercised as a
-    // boolean test here — exercising it requires either aborting the test
-    // process via assertion, or capturing stderr for LOG_ERROR, both of which
-    // are heavier than warranted for this slice. The redline itself is
-    // exercised in the pending-RPC end-to-end path (validated separately
-    // via Scripts/validate.py suites).
+    // NOTE: Get 红线这条路径在这里有意不做布尔断言 —— 要把它踩出来,要么靠断言
+    // 直接中止测试进程,要么去捕获 LOG_ERROR 的 stderr,两者对本切片来说都太重。
+    // 红线本身由 pending-RPC 端到端路径覆盖,另有 Scripts/validate.py 套件单独验证。
 
     RUN_TESTS();
 }

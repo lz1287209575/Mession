@@ -64,7 +64,7 @@ namespace {
         MPromise<TResult<int, FAppError>> P;
         SFutureResult<int>                Future(P.GetFuture());
         auto                              Awaiter = Future.AsAwaiter();
-        EXPECT_TRUE(!Awaiter.AwaitReady()); // pending
+        EXPECT_TRUE(!Awaiter.AwaitReady()); // 未就绪
 
         FTestFrame Frame;
         Awaiter.AwaitSuspend(&Frame);
