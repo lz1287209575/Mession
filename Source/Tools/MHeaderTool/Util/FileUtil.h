@@ -107,10 +107,10 @@ namespace MHeaderTool {
      * @brief 求 absolutePath 相对 basePath 的路径。
      * @param absolutePath 目标路径
      * @param basePath     基准目录
-     * @return 相对路径
+     * @return 相对路径;fs::relative 失败时退化为"从 basePath 末级目录名之后截取",再失败则只留文件名
      *
-     * @detail fs::relative 失败时依次退化为:"从路径里 'Source/' 之后的部分" → "仅文件名"。
-     *         两次 fallback 都改变了键空间(见 IncrementalDriver 里的同名 NOTE)。
+     * @detail fallback 分支保证与正常分支同为"相对 basePath"的键空间,不会再混入带目录前缀的
+     *         仓库相对路径(见 IncrementalDriver 里的同名实现)。
      */
     inline fs::path MakeRelativePath(const fs::path& absolutePath, const fs::path& basePath) {
         fs::path absPath = fs::absolute(absolutePath);
@@ -119,11 +119,15 @@ namespace MHeaderTool {
         std::error_code ec;
         fs::path        relPath = fs::relative(absPath, base, ec);
         if (ec) {
-            // 如果失败，尝试从 Source/ 开始提取
-            MString pathStr   = absPath.generic_string();
-            size_t  sourcePos = pathStr.find("Source/");
-            if (sourcePos != MString::npos) {
-                return pathStr.substr(sourcePos);
+            // fallback:按 base 的末级目录名截断,结果仍相对 base(与正常分支同一键空间)
+            const MString pathStr  = absPath.generic_string();
+            const MString baseName = base.filename().generic_string();
+            if (!baseName.empty()) {
+                const MString marker = "/" + baseName + "/";
+                const size_t  pos    = pathStr.find(marker);
+                if (pos != MString::npos) {
+                    return pathStr.substr(pos + marker.size());
+                }
             }
             return absPath.filename();
         }

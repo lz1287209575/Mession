@@ -43,9 +43,9 @@ namespace MHeaderTool {
          *   4. 缓存版本与 SBuildCache::Version 不一致 → FullRebuild
          *   5. 有受影响文件 → Regenerate,否则 Skip
          *
-         *         NOTE: 删除判定用的是 `Options_.SourceRoot / cachedHeader`,而缓存键在
-         *         MakeRelativePath 的 fallback 分支会返回带 "Source/" 前缀的仓库相对路径 ——
-         *         两种键空间混用时可能把仍存在的头文件误判为已删除。
+         *         NOTE: 删除判定按 `Options_.SourceRoot / cachedHeader` 还原绝对路径,前提是
+         *         缓存键与 currentHeaders 已由 MakeRelativePath 归一到"相对 SourceRoot"的同一
+         *         键空间(fallback 分支已相应修正,不再返回带 "Source/" 前缀的仓库相对路径)。
          */
         SIncrementalDecision Decide(const TVector<fs::path>& currentHeaders) {
             SIncrementalDecision decision;
@@ -181,10 +181,10 @@ namespace MHeaderTool {
         /**
          * @brief 把路径折算成相对 Options_.SourceRoot 的路径。
          * @param absolutePath 输入路径(相对路径会先被 fs::absolute 解析)
-         * @return 相对路径;fs::relative 失败时退化为"从 'Source/' 开始截取",再失败则只留文件名
+         * @return 相对路径;fs::relative 失败时退化为"从 SourceRoot 末级目录名之后截取",再失败则只留文件名
          *
-         * @detail NOTE: fallback 分支返回的是**仓库相对**路径(以 "Source/" 开头),与正常分支的
-         *         "相对 SourceRoot" 不是同一个键空间 —— 混用会让按路径查找/存在性判断失准。
+         * @detail fallback 分支保证与正常分支同为"相对 SourceRoot"的键空间(不再返回带 "Source/"
+         *         前缀的仓库相对路径),因此按路径查找/存在性判断不会因键空间混用而失准。
          */
         fs::path MakeRelativePath(const fs::path& absolutePath) const {
             fs::path sourceRoot = fs::absolute(Options_.SourceRoot);
@@ -194,11 +194,15 @@ namespace MHeaderTool {
             std::error_code ec;
             fs::path        relPath = fs::relative(absPath, sourceRoot, ec);
             if (ec) {
-                // 如果失败，尝试从 Source/ 开始提取
-                MString pathStr   = absPath.generic_string();
-                size_t  sourcePos = pathStr.find("Source/");
-                if (sourcePos != MString::npos) {
-                    return pathStr.substr(sourcePos);
+                // fallback:按 SourceRoot 的末级目录名截断,结果仍相对 SourceRoot(同一键空间)
+                const MString pathStr  = absPath.generic_string();
+                const MString rootName = sourceRoot.filename().generic_string();
+                if (!rootName.empty()) {
+                    const MString marker = "/" + rootName + "/";
+                    const size_t  pos    = pathStr.find(marker);
+                    if (pos != MString::npos) {
+                        return pathStr.substr(pos + marker.size());
+                    }
                 }
                 return absPath.filename();
             }

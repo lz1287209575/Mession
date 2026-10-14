@@ -185,9 +185,8 @@ namespace MHeaderTool {
      * @param text 原始文本
      * @return 转义后的文本
      *
-     * @detail 处理 `\\ " \b \f \n \r \t`。
-     *         NOTE: 其余控制字符(0x00-0x1F,如 0x01)原样透传,严格来说会产出非法 JSON;
-     *         当前消费方是自产的 manifest,未触发该路径。
+     * @detail 处理 `\\ " \b \f \n \r \t`,以及其余 0x00-0x1F 控制字符(按 `\u00XX`
+     *         转义),保证输出是合法的 JSON 字符串内容。
      */
     inline MString EscapeJsonString(std::string_view text) {
         MString result;
@@ -216,7 +215,16 @@ namespace MHeaderTool {
                 result += "\\t";
                 break;
             default:
-                result += ch;
+                // 其余控制字符(0x00-0x1F)按 \u00XX 转义,否则会产出非法 JSON
+                if (static_cast<unsigned char>(ch) < 0x20) {
+                    static constexpr char kHexDigits[] = "0123456789abcdef";
+                    const auto            Byte         = static_cast<unsigned char>(ch);
+                    result += "\\u00";
+                    result.push_back(kHexDigits[(Byte >> 4) & 0x0F]);
+                    result.push_back(kHexDigits[Byte & 0x0F]);
+                } else {
+                    result += ch;
+                }
                 break;
             }
         }

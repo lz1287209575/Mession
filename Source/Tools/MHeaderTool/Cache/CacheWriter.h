@@ -2,8 +2,8 @@
  * @file CacheWriter.h
  * @brief CacheWriter —— 把 SBuildCache 手写序列化成 <CacheDir>/manifest.json。
  *
- * @detail 这是 CacheReader 的镜像:格式由这两个类共同约定,不引入 JSON 库,也不保证是
- *         严格合法的通用 JSON(值里的控制字符未完整转义)。
+ * @detail 这是 CacheReader 的镜像:格式由这两个类共同约定,不引入 JSON 库,只覆盖本工程
+ *         用到的字段子集(字符串值经 EscapeJsonString 完整转义)。
  *         写入是**整体覆盖**:Save 一次就把 manifest.json 全量替换,没有增量合并或锁定。
  */
 #pragma once
