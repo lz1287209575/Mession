@@ -629,13 +629,16 @@ namespace mession::script::lua {
      * @return Ok(TVariant):nil→Null / boolean→Bool / number→Double / string→String,
      *   其余返回类型(table/function 等)退化为 Null
      *
-     * @detail 失败路径 Err(kInvalidArg / kInstanceReleased / kMethodNotFound / VM 错误文本)。
-     *   NOTE: 本函数只校验 Handle.IsValid(),不做 generation 比对 —— 跨 VM 的陈旧
-     *   句柄通常因 registry ref 失效而报 kInstanceReleased,而非显式的 kVmSwapped。
+     * @detail 失败路径 Err(kInvalidArg / kVmSwapped / kInstanceReleased / kMethodNotFound /
+     *   VM 错误文本)。跨 VM 的陈旧句柄经 Handle.Matches(VmGeneration) 校验后显式报 kVmSwapped。
      */
     TResult<TVariant> MLuaEngine::InvokeInstanceMethod(TScriptInstanceHandle Handle, const MString& MethodName, const TScriptArgs& Args) {
         if (!Handle.IsValid()) {
             return TResult<TVariant>::Err(MString(ScriptErrorCodes::kInvalidArg));
+        }
+        // 跨 VM 陈旧句柄 fail-fast:generation 不匹配说明句柄来自已被 swap 掉的旧 VM
+        if (!Handle.Matches(VmGeneration)) {
+            return TResult<TVariant>::Err(MString(ScriptErrorCodes::kVmSwapped));
         }
         if (!State || !State->IsValid()) {
             return TResult<TVariant>::Err(MString("engine_not_initialized"));

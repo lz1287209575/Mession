@@ -40,13 +40,13 @@ namespace mession::script::lua {
         /**
          * @brief ResumeFromStack - 以栈上已有值作为实参 resume。
          * @param L           协程的 lua_State*
-         * @param NArgs       实参个数(取自栈顶)
-         * @param FromStackIdx 仅用于实参数量下界校验的起始索引,不会搬动栈上元素
-         * @return 状态归类;实参不足返回 Error
+         * @param NArgs       实参个数(取自栈顶连续 NArgs 个值)
+         * @param FromStackIdx 首个实参的栈索引,不会搬动栈上元素
+         * @return 状态归类;实参区间与栈顶不吻合时返回 Error
          *
-         * @detail NOTE: 实际交给 lua_resume 的实参是"栈顶连续 NArgs 个值",FromStackIdx
-         *   只参与 `Top < FromStackIdx + NArgs - 1` 这一处判定 —— 它不会把值搬到栈顶。
-         *   错误分支会无条件 pop 掉一个栈顶值,即便它并不是错误字符串。
+         * @detail lua_resume 只把"栈顶连续 NArgs 个值"当实参,故要求实参区间正好落在
+         *   栈顶(FromStackIdx + NArgs - 1 == lua_gettop(L));FromStackIdx 不匹配则返回
+         *   Error。错误分支 pop 掉 lua_resume 留在栈顶的错误值。
          */
         static ECoroutineResumeStatus ResumeFromStack(lua_State* L, int32 NArgs, int32 FromStackIdx = 1);
         /** @brief ThrowError - 把 Msg 压栈并 lua_error(不返回) */

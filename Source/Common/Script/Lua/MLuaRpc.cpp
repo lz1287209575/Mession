@@ -13,12 +13,24 @@ namespace mession::script::lua {
     namespace {
 
         /**
-         * @brief GBridge - 当前进程内安装的 RPC bridge(文件级静态变量)。
-         *
-         * @detail NOTE: 位于匿名命名空间、进程级共享 —— 后一次 Install 会覆盖前一次,
-         *   多 engine 共存时不隔离;且无任何同步保护,跨线程使用不安全。
+         * @brief GBridgeKeyAddr - registry 中存放 RPC bridge 的键(取该静态变量地址作唯一键)。
          */
-        IScriptRpcBridge* GBridge = nullptr;
+        const char GBridgeKeyAddr = 0;
+
+        /**
+         * @brief GetBridge - 从当前 lua_State 的 registry 取回 RPC bridge。
+         *
+         * @detail bridge 按 lua_State(其 registry)隔离存储,随该 state 关闭自动失效,
+         *   因此多 engine / 多 VM 共存时互不覆盖(修复原进程级静态变量被后一次 Install
+         *   覆盖的问题)。同一 state 未安装时返回 nullptr。
+         *   注:registry 本身不是线程安全的,同一 state 仍需外部同步(属 Lua 固有约束)。
+         */
+        IScriptRpcBridge* GetBridge(lua_State* L) {
+            lua_rawgetp(L, LUA_REGISTRYINDEX, &GBridgeKeyAddr);
+            auto* Bridge = static_cast<IScriptRpcBridge*>(lua_touserdata(L, -1));
+            lua_pop(L, 1);
+            return Bridge;
+        }
 
         /** @brief RpcCall - 按 Lua 全局函数名经 bridge 调用 */
         /// @lua-stdlib RPC.call
@@ -30,12 +42,13 @@ namespace mession::script::lua {
             if (!lua_isstring(L, 1)) {
                 return luaL_error(L, "rpc.call: global_name must be string");
             }
-            const char* Name = lua_tolstring(L, 1, nullptr);
-            int         Top  = lua_gettop(L);
-            if (!GBridge) {
+            const char*       Name   = lua_tolstring(L, 1, nullptr);
+            int               Top    = lua_gettop(L);
+            IScriptRpcBridge* Bridge = GetBridge(L);
+            if (!Bridge) {
                 return luaL_error(L, "rpc: bridge not installed");
             }
-            return GBridge->CallGlobal(L, Name, 2, Top);
+            return Bridge->CallGlobal(L, Name, 2, Top);
         }
 
         /** @brief TimeNow - 返回当前时间戳(秒,double) */
@@ -85,10 +98,12 @@ namespace mession::script::lua {
      * @param L       目标 Lua 状态机
      * @param pEngine RPC 桥接实现
      *
-     * @detail pEngine 写入文件级静态变量 GBridge(见上),同一进程内以最后一次安装为准。
+     * @detail pEngine 存入该 lua_State 的 registry(见 GetBridge),按 state 隔离。
      */
     void MLuaRpc::Install(lua_State* L, IScriptRpcBridge* pEngine) {
-        GBridge = pEngine;
+        // bridge 存入当前 lua_State 的 registry:per-state 隔离,随该 state 关闭自动失效
+        lua_pushlightuserdata(L, pEngine);
+        lua_rawsetp(L, LUA_REGISTRYINDEX, &GBridgeKeyAddr);
 
         lua_getglobal(L, "Mession");
         if (lua_isnil(L, -1)) {

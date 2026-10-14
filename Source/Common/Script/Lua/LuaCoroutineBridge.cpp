@@ -24,20 +24,22 @@ namespace mession::script::lua {
 
     /**
      * @brief ResumeFromStack - resume 协程并归类结果。
-     * @return Invalid(L 为空)/ Error(实参不足或协程报错)/ Ok / Yield
+     * @return Invalid(L 为空)/ Error(实参区间不吻合或协程报错)/ Ok / Yield
      *
-     * @detail 复杂度 O(1)。FromStackIdx 只用于栈深下界校验;真正传给 lua_resume 的是
-     *   栈顶 NArgs 个值。Error 分支会无条件 pop 一个栈顶值。
+     * @detail 复杂度 O(1)。lua_resume 只消费栈顶连续 NArgs 个值,故校验实参区间
+     *   [FromStackIdx, FromStackIdx+NArgs-1] 正好落在栈顶。Error 分支 pop 掉
+     *   lua_resume 留在栈顶的错误值。
      */
     ECoroutineResumeStatus MLuaCoroutineBridge::ResumeFromStack(lua_State* L, int32 NArgs, int32 FromStackIdx) {
         if (!L) {
             return ECoroutineResumeStatus::Invalid;
         }
 
-        // 确认栈上至少有 NArgs 个可用值(从 FromStackIdx 起算)
+        // lua_resume 只把"栈顶连续 NArgs 个值"当实参,故首个实参必须满足
+        // FromStackIdx + NArgs - 1 == 栈顶;否则 FromStackIdx 并未指向真正的实参起点。
         if (NArgs > 0) {
             int Top = lua_gettop(L);
-            if (Top < FromStackIdx + NArgs - 1) {
+            if (FromStackIdx < 1 || FromStackIdx + NArgs - 1 != Top) {
                 return ECoroutineResumeStatus::Error;
             }
         }

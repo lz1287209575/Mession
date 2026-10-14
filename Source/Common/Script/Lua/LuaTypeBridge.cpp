@@ -24,9 +24,9 @@ namespace mession::script::lua {
         lua_pushnil(L);
     }
 
-    /** @brief IsInteger - 仅判定 LUA_TNUMBER,不区分整数/浮点子类型(见头文件 NOTE) */
+    /** @brief IsInteger - 用 lua_isinteger 判定 Lua integer 子类型(浮点数返回 false) */
     bool IsInteger(lua_State* L, int32 Index) {
-        return lua_type(L, Index) == LUA_TNUMBER;
+        return lua_isinteger(L, Index) != 0;
     }
     bool IsBoolean(lua_State* L, int32 Index) {
         return lua_type(L, Index) == LUA_TBOOLEAN;
@@ -43,7 +43,7 @@ namespace mession::script::lua {
 
     /**
      * @brief PopInteger - 取整数(只读栈)。
-     * @return 非 number 时 Err("expected integer at stack");否则 Ok(lua_tointeger 的截断结果)
+     * @return 非 Lua integer(含浮点数)时 Err("expected integer at stack");否则 Ok(lua_tointeger 结果)
      */
     TResult<int64> PopInteger(lua_State* L, int32 Index) {
         if (!IsInteger(L, Index)) {

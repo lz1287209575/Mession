@@ -38,15 +38,14 @@ namespace mession::script::lua {
     TResult<MString> PopString(lua_State* L, int32 Index);
 
     /**
-     * @brief IsInteger - 判定是否为 Lua number 类型。
+     * @brief IsInteger - 判定是否为 Lua integer 子类型(浮点数返回 false)。
      *
-     * @detail NOTE: 实现只比较 LUA_TNUMBER,不调用 lua_isinteger,因此浮点数同样
-     *   返回 true —— 它并不区分 integer 子类型。取整需自行检查 lua_isinteger。
+     * @detail 用 lua_isinteger 区分 integer / float 两个 number 子类型。
      */
     bool IsInteger(lua_State* L, int32 Index);
     /** @brief IsBoolean - 判定是否为 Lua boolean */
     bool IsBoolean(lua_State* L, int32 Index);
-    /** @brief IsNumber - 判定是否为 Lua number(与 IsInteger 实现相同) */
+    /** @brief IsNumber - 判定是否为 Lua number(integer 与 float 都返回 true) */
     bool IsNumber(lua_State* L, int32 Index);
     /** @brief IsString - 判定是否为 Lua string(number 不会隐式通过,不同于 lua_isstring) */
     bool IsString(lua_State* L, int32 Index);

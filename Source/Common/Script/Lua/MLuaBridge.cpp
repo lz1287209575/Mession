@@ -133,7 +133,7 @@ namespace mession::script::lua {
          * @param TypeIdx 返回值 C++ 类型(typeid 索引)
          * @return 压入的值的个数(1);类型未注册时返回 -1
          *
-         * @detail NOTE: 返回值为 int64 时会被 static_cast<int32_t> 截断(仅保留低 32 位)。
+         * @detail 返回值为 int64 时经 PushInteger 完整压栈(lua_Integer 为 64 位,无截断)。
          */
         int PushReturnOne(lua_State* L, const TByteArray& Data, const std::type_index& TypeIdx) {
             auto& Map = GetDeserializerMap();
@@ -152,7 +152,7 @@ namespace mession::script::lua {
             if (TypeIdx == std::type_index(typeid(int64_t))) {
                 int64_t Val = 0;
                 It->second(Data, &Val);
-                PushInteger(L, static_cast<int32_t>(Val)); // Lua 5.4 默认 integer
+                PushInteger(L, Val); // lua_Integer 为 64 位,完整保留 int64 值
                 return 1;
             }
             if (TypeIdx == std::type_index(typeid(double))) {

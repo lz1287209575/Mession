@@ -40,11 +40,11 @@ namespace mession::script::lua {
         /**
          * @brief MetaLen - __len;返回键值对个数。
          *
-         * @detail NOTE: size() 被截断为 int32 后压栈(项数超过 2^31 时结果不可靠)。
+         * @detail 以 lua_Integer(64 位)压栈键值对个数,不再截断为 int32。
          */
         int MetaLen(lua_State* L) {
             FMap* M = GetMap(L, 1);
-            lua_pushinteger(L, static_cast<int32>(M->size()));
+            lua_pushinteger(L, static_cast<lua_Integer>(M->size()));
             return 1;
         }
 
@@ -191,7 +191,7 @@ namespace mession::script::lua {
         /// @lua-return integer
         int MethodSize(lua_State* L) {
             FMap* M = GetMap(L, 1);
-            lua_pushinteger(L, static_cast<int32>(M->size()));
+            lua_pushinteger(L, static_cast<lua_Integer>(M->size()));
             return 1;
         }
 

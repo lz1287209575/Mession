@@ -71,11 +71,11 @@ namespace mession::script::lua {
         /**
          * @brief MetaLen - __len;返回元素个数。
          *
-         * @detail NOTE: size() 被截断为 int32 后压栈(元素数超过 2^31 时结果不可靠)。
+         * @detail 以 lua_Integer(64 位)压栈元素个数,不再截断为 int32。
          */
         int MetaLen(lua_State* L) {
             TVector<MScalarValue>* V = GetVector(L, 1);
-            lua_pushinteger(L, static_cast<int32>(V->size()));
+            lua_pushinteger(L, static_cast<lua_Integer>(V->size()));
             return 1;
         }
 
@@ -224,7 +224,7 @@ namespace mession::script::lua {
         /// @lua-return integer
         int MethodSize(lua_State* L) {
             TVector<MScalarValue>* V = GetVector(L, 1);
-            lua_pushinteger(L, static_cast<int32>(V->size()));
+            lua_pushinteger(L, static_cast<lua_Integer>(V->size()));
             return 1;
         }
 
