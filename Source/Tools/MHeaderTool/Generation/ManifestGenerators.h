@@ -11,7 +11,8 @@
  *           - GenerateMemberRpcManifest      → MemberRpc 注册表(ActorMember 的 ServerCall)
  *         NOTE: GenerateTypeRegistry / GenerateValidationSchema / GenerateHeaderIncludes /
  *         GenerateRpcMessageIds 在本仓库内**已无任何调用点**(旧实现遗留),保留只为兼容;
- *         其中 GenerateValidationSchema 还带一处真实的 JSON 逗号缺陷(见该处注释)。
+ *         其中 GenerateValidationSchema 的 JSON 逗号缺陷、GenerateRpcMessageIds 的 switch
+ *         死自增均已修复(见各自注释)。
  *
  *         所有生成器都跳过 HeaderPath 含 "/Tools/MHeaderTool/" 的条目 —— 工具自身的反射类
  *         不参与产物,否则会自举污染。组/集合的遍历顺序由 std::map / std::set 保证按键字典序,
@@ -202,11 +203,9 @@ namespace MHeaderTool {
          * @param parsedClasses 解析出的类型列表;只会为**有属性**的类型产出条目
          * @return JSON 文本(两空格缩进)
          *
-         * @detail NOTE: 本仓库内已无调用点(旧实现遗留),且存在一处**真实缺陷**:分隔逗号用
-         *         外层下标 `i > 0` 判断,而"无属性则 continue"发生在这个判断之前 —— 只要
-         *           parsedClasses 的**首元素**没有属性,第一个真正输出的类型就会带一个前导逗号,
-         *         产出 `"types": [` 后紧跟 `,` 的非法 JSON。修复方式是在循环外单独维护
-         *         "已输出条目数" 而不是复用下标;当前无人调用,所以缺陷处于潜伏状态。
+         * @detail NOTE: 本仓库内已无调用点(旧实现遗留)。分隔逗号改用"已输出条目数"
+         *         `emittedTypes` 判断,不再复用会被 `continue` 跳过的下标 `i`,因此首元素无属性
+         *         时第一个真正输出的条目也不会带前导逗号(该前导逗号缺陷已修复)。
          */
         MString GenerateValidationSchema(const TVector<SParsedClass>& parsedClasses) const {
             MString json;
@@ -216,6 +215,8 @@ namespace MHeaderTool {
             json += "  \"version\": \"1.0\",\n";
             json += "  \"types\": [\n";
 
+            // 已实际输出的类型条目数(与下标 i 不同:i 会被上面的 continue 跳过)。
+            size_t emittedTypes = 0;
             for (size_t i = 0; i < parsedClasses.size(); ++i) {
                 const auto& parsed = parsedClasses[i];
 
@@ -224,7 +225,7 @@ namespace MHeaderTool {
                     continue;
                 }
 
-                if (i > 0) {
+                if (emittedTypes > 0) {
                     json += ",\n";
                 }
 
@@ -265,6 +266,7 @@ namespace MHeaderTool {
 
                 json += "\n      ]\n";
                 json += "    }";
+                ++emittedTypes;
             }
 
             json += "\n  ]\n";
@@ -310,8 +312,8 @@ namespace MHeaderTool {
          *
          * @detail ID 按遍历顺序(输入顺序)递增分配,**不是**稳定哈希 —— 增删任意一个 RPC 函数
          *         都会让它后面的 id 整体位移。投递到线上的 ID 因此不可依赖本表。
-         *         NOTE: 本仓库内已无调用点(旧实现遗留);另外第二遍(生成 switch)里的
-         *         `++messageId` 是无效自增,该循环从头到尾没读过这个变量,只是死代码。
+         *         NOTE: 本仓库内已无调用点(旧实现遗留)。第二遍(生成 switch)只按函数名产出
+         *         分支,不再维护/自增 id 变量(原先的 `++messageId` 死代码已删除)。
          */
         MString GenerateRpcMessageIds(const TVector<SParsedClass>& parsedClasses) const {
             MString code;
@@ -346,12 +348,10 @@ namespace MHeaderTool {
             code += "    switch (id)\n";
             code += "    {\n";
 
-            messageId = 1000;
             for (const auto& parsed : parsedClasses) {
                 for (const auto& func : parsed.Functions) {
                     if (func.bIsRpc) {
                         code += "        case EMessageId::" + parsed.Name + "_" + func.Name + ": return \"" + func.Name + "\";\n";
-                        ++messageId;
                     }
                 }
             }

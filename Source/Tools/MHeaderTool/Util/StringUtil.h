@@ -7,8 +7,6 @@
  *   - 若干函数(FindMatching / SplitTopLevel* / MakeMaskedCopy)只做括号配平与引号切换式的
  *     启发式扫描,遇到 `\\"`、代字符号、raw string 等复杂写法可能误判 —— 因此提供了
  *     MakeMaskedCopy 供调用方在切分前先把注释与字面量抹掉。
- *   - NOTE: 本头文件未 include "Common/Runtime/MLib.h",却使用了 MString/TVector/TOptional;
- *     依赖包含者先引入 MLib.h(它不是自包含头文件)。
  *   - 所有函数按值返回新字符串;接收 std::string_view 的版本不分配,除非另有说明。
  */
 #pragma once
@@ -18,6 +16,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "Common/Runtime/MLib.h"
 
 namespace MHeaderTool {
 

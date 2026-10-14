@@ -93,7 +93,7 @@ static bool RecvAll(TSocketFd Fd, uint8* Data, size_t Size) {
  */
 static bool SendLoginAndWaitResponse(TSocketFd Fd, uint64 PlayerId) {
     // 构造统一函数调用登录请求(旧版带 MessageType 字节的线格式):
-    // Length(4) + MsgType(1) + FunctionId(2) + PayloadSize(4) + PlayerId(8)
+    // 报文布局 = Length(4) + MsgType(1) + FunctionId(2) + PayloadSize(4) + PlayerId(8)
     constexpr uint8 MsgType           = 13; // 13 = 旧协议 client MessageType(注释原写 EClientMessageType::MT_FunctionCall,该枚举已删除)
     const uint16    FunctionId        = MGET_STABLE_CLIENT_FUNCTION_ID("Client_Login");
     const uint32    PlayerPayloadSize = sizeof(PlayerId);

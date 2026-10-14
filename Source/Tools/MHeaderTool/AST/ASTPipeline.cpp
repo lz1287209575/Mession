@@ -399,10 +399,10 @@ namespace mession::headercodegen {
         // (QualifiedName, HeaderPath) 等键去重合并 —— 每个分片都会重复产出同一头文件
         // 里的 Record/Enum/FreeFunctions,所以合并不是可选项。
         //
-        // NOTE: NThreads = min(文件数, hardware_concurrency())。标准允许
-        //       hardware_concurrency() 返回 0,此时 NThreads 为 0,下面的 `I % NThreads`
-        //       会除零崩溃 —— 本函数没有加兜底(SourceFiles 非空时已排除,但核数为 0 未防)。
-        const size_t              NThreads = std::min<size_t>(SourceFiles.size(), static_cast<size_t>(std::thread::hardware_concurrency()));
+        // NThreads = min(文件数, hardware_concurrency())。标准允许 hardware_concurrency()
+        // 返回 0(核数不可推断),此时下面的 `I % NThreads` 会除零,所以兜底至少 1 个分片。
+        const size_t              HwThreads = std::max<size_t>(1, static_cast<size_t>(std::thread::hardware_concurrency()));
+        const size_t              NThreads  = std::min<size_t>(SourceFiles.size(), HwThreads);
         TVector<TVector<MString>> Shards(NThreads);
         for (size_t I = 0; I < SourceFiles.size(); ++I) {
             Shards[I % NThreads].push_back(SourceFiles[I]);

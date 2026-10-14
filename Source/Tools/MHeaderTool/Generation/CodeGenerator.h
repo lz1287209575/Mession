@@ -926,20 +926,18 @@ namespace MHeaderTool {
                     continue;
                 auto flagTokens = SplitTopLevelPipes(token);
                 for (const auto& flagToken : flagTokens) {
-                    // NOTE: 原文称被跳过的 token "都是 transport / role 标签、不是
-                    // EFunctionFlags 枚举值",并提到由 Func->bIsClient 处理 —— 这两点都与代码
-                    // 不符:NetServer / NetClient 确实是 EFunctionFlags 的枚举值(见
-                    // Common/Runtime/Reflect/Class.h),SParsedFunction 上也没有 bIsClient
-                    // 成员。此处按代码实际行为重写,差异记入交付报告。
-                    // 跳过 transport / 角色标签类 token(它们由别处消费,如
-                    // Func->Transport / Func->bIsAsync 等),不写进 EFunctionFlags 位掩码。
-                    // 重点两条:
-                    //   - "Async" → 已记录在 parsed->bIsAsync(P3 codegen 的输入);P2 把它与
-                    //     非 Async 的 ServerCall 同等对待(GenerateServerCallHandler 本来就
-                    //     支持 pending future 那条挂起路径)。
-                    //   - "ServerCall" / "ClientCall" / transport 标签 → 单独 emit 成
-                    //     Func->Transport,不写进位掩码。
-                    if (flagToken.empty() || flagToken == "Async" || flagToken == "NetServer" || flagToken == "NetClient" || flagToken == "Client" || flagToken == "ClientCall" || flagToken == "ServerCall" || flagToken == "RPC") {
+                    // 只跳过"并非 EFunctionFlags 枚举值、且已由别处单独消费"的语义标记,其余
+                    // token 一律写进位掩码:
+                    //   - "Async" → 已记录在 func.bIsAsync(P3 codegen 的输入);P2 把它与非
+                    //     Async 的 ServerCall 同等对待(GenerateServerCallHandler 本来就支持
+                    //     pending future 那条挂起路径)。
+                    //   - "Client" / "ClientCall" / "ServerCall" / "RPC" → transport 标签,
+                    //     单独 emit 成 Func->Transport(或 ERpcType),本就不是枚举值。
+                    //   NetServer / NetClient 不在跳过之列:它们既是 transport 语义(经 RpcKind →
+                    //   ERpcType::Server/Client),也是 EFunctionFlags 的枚举值(见
+                    //   Common/Runtime/Reflect/Class.h),因此同时写进 Flags —— 此前被误跳过,
+                    //   导致 MFUNCTION(NetServer)/MFUNCTION(NetClient) 无法置位对应 flag(已修复)。
+                    if (flagToken.empty() || flagToken == "Async" || flagToken == "Client" || flagToken == "ClientCall" || flagToken == "ServerCall" || flagToken == "RPC") {
                         continue;
                     }
                     parts.push_back("static_cast<uint32>(EFunctionFlags::" + flagToken + ")");
@@ -1310,19 +1308,39 @@ namespace MHeaderTool {
         }
 
         /**
+         * @brief 判断 `TypeName` 是否是 C++ 基础类型(不需要前置声明的那一类)。
+         * @return true 表示基础类型,调用方应跳过
+         *
+         * @detail 名单覆盖内置类型与项目里按基础类型使用的别名(MString/TVector 等)。
+         *         命中这些名字时前置声明没有语义,只会产出畸形声明。
+         */
+        static bool IsBuiltinTypeName(const MString& TypeName) {
+            static const TVector<MString> Builtins = {
+                "void",    "bool",    "char",    "short",   "int",      "long",     "float",    "double", "signed",    "unsigned", "wchar_t",   "char8_t", "char16_t",    "char32_t",   "int8_t",
+                "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "size_t", "ptrdiff_t", "intptr_t", "uintptr_t", "MString", "MStringView", "TByteArray",
+            };
+            for (const MString& Name : Builtins) {
+                if (TypeName == Name)
+                    return true;
+            }
+            return false;
+        }
+
+        /**
          * @brief 为 `TypeName` emit 一条 `struct Foo;` / `class Foo;` 前置声明。
          * @param out 目标输出流
          * @param TypeName 待声明的类型名;空串直接跳过
          *
-         * @detail 只对普通标识符生效(非模板、非指针)。限定名(含 `::`)、模板名
-         *         (含 `<` / `>`)、含 `(` 的名字一律跳过,以免产出畸形声明。
+         * @detail 只对普通标识符生效(非模板、非指针、非基础类型)。限定名(含 `::`)、
+         *         模板名(含 `<` / `>`)、含 `(` 的名字,以及基础类型(int、void 等)
+         *         一律跳过,以免产出 `struct int;` 这类畸形声明。
          */
         static void EmitForwardDeclaration(std::ostringstream& out, const MString& TypeName) {
             if (TypeName.empty())
                 return;
-            // NOTE: 原文还声称会跳过基础类型(int、void 等),但代码只按 `::` / `<` / `>` /
-            // `(` 过滤,并没有基础类型名单(即 `EmitForwardDeclaration(out, "int")` 会输出
-            // `struct int;`)。实际调用点传的都是类名,所以尚未暴露问题;这里按代码重写。
+            // 跳过基础类型:对 int/void 这类名字做前置声明没有意义(`struct int;` 是畸形声明)。
+            if (IsBuiltinTypeName(TypeName))
+                return;
             // 跳过限定名(Namespace::Type)、模板名(Foo<Bar>)、含括号的名字。
             if (TypeName.find("::") != MString::npos)
                 return;

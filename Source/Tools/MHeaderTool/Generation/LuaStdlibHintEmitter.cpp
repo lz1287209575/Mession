@@ -10,9 +10,8 @@
  *   产物只服务于 IDE 补全 / 类型检查,运行时不会被 require:真正的 `Mession.*` 注册在
  *   C++ 侧 MLuaXxx::Install 里。
  *
- *   NOTE: 解析对格式高度敏感且失败是"静默少产条目":`///` 块一旦缩进,ParseFile 用 Trim 后的
- *   行判断能收进来,而 ParseCommentBlock 却拿原始行做 rfind("///", 0) 前缀判断,整块会被忽略;
- *   cfunction 名也只在 5 行窗口里找,注解与实现之间插入内容就会漏掉。改注解格式时务必同步改这里。
+ *   NOTE: 解析对格式高度敏感且失败是"静默少产条目":cfunction 名只在注释块结束后 5 行窗口里
+ *   找,注解与实现之间插入内容就会漏掉。改注解格式时务必同步改这里。
  */
 #include "Generation/LuaStdlibHintEmitter.h"
 
@@ -121,14 +120,13 @@ namespace MHeaderTool {
          *         `@lua-param`、`@lua-return`(按 '|' 拆联合类型)、`@lua-self`(插到形参最前面
          *         并把 bIsMethod 置真)。
          *         未写 `@lua-return` 时按"无返回值"处理:补一个 "nil" 且 bIsVoid=true。
-         *         NOTE: 行首缩进的 `///` 在这里会被 rfind("///", 0) 判掉,与 ParseFile 收行的
-         *         判断标准不一致(那边先 Trim),因此缩进的注解块会被整块忽略。
          */
         bool ParseCommentBlock(const TVector<MString>& Block, SLuaStdlibBinding& Binding) {
             bool bFound = false;
             for (auto& Raw : Block) {
-                MString Line = Raw;
-                // 剥掉行首 "///" 及其后的可选空格
+                // 先 Trim 再判前缀,允许行首缩进的 `///`,与 ParseFile 的收行标准一致
+                //(此前直接对原始行做 rfind,缩进的注解块会被整块忽略,缺陷已修复)。
+                MString Line = Trim(Raw);
                 if (Line.rfind("///", 0) != 0)
                     continue;
                 Line = Line.substr(3);
@@ -281,15 +279,17 @@ namespace MHeaderTool {
          * @brief 组内排序:`new` 永远排最前,其余按函数名字典序。
          * @param Bs [in,out] 就地排序
          *
-         * @detail NOTE: 比较器对 `new` 一律返回 true,严格弱序并不成立(两个 `new` 之间也
-         *         返回"小于"),只是当前数据里 `new` 不会重复才没出问题。
+         * @detail `new` 排最前、其余按函数名字典序;两个同名(含两个 `new`)之间返回
+         *         false,以满足 std::sort 对严格弱序的要求。
          */
         void SortBindings(TVector<SLuaStdlibBinding>& Bs) {
             std::sort(Bs.begin(), Bs.end(), [](const SLuaStdlibBinding& A, const SLuaStdlibBinding& B) {
-                if (A.FunctionName == "new")
-                    return true;
-                if (B.FunctionName == "new")
-                    return false;
+                const bool bANew = (A.FunctionName == "new");
+                const bool bBNew = (B.FunctionName == "new");
+                if (bANew != bBNew)
+                    return bANew; // 只有一侧是 new 时,new 排前面
+                if (bANew && bBNew)
+                    return false; // 两个都是 new:相等,严格弱序要求返回 false
                 return A.FunctionName < B.FunctionName;
             });
         }
@@ -549,9 +549,6 @@ namespace MHeaderTool {
                 continue;
             ParseFile(Entry.path(), OutBindings);
         }
-        for (auto& Kv : GroupByNamespace(OutBindings)) {
-            SortBindings(Kv.second);
-        }
         return static_cast<int>(OutBindings.size());
     }
 
@@ -563,9 +560,8 @@ namespace MHeaderTool {
             return;
         }
 
-        // 重新分组排序:ExtractBindings 里的 SortBindings 作用在 GroupByNamespace 返回的
-        // **临时 map** 上,对 OutBindings 本身毫无影响,所以这里必须自己再排一次。
-        // NOTE: ExtractBindings 末尾那次排序是无效代码(迟早要删);在它删掉之前不要依赖它。
+        // 按 namespace 分组、组内排序(`new` 优先,其余按函数名字典序),再按 namespace 字典序
+        // 摊平成有序列表交给 RenderLua / RenderTeal(此前组内排序从未生效,顺序取自目录遍历)。
         auto                       Groups = GroupByNamespace(Bindings);
         TVector<SLuaStdlibBinding> Sorted;
         TVector<MString>           NSOrder;
@@ -573,6 +569,7 @@ namespace MHeaderTool {
             NSOrder.push_back(Kv.first);
         std::sort(NSOrder.begin(), NSOrder.end());
         for (auto& NS : NSOrder) {
+            SortBindings(Groups[NS]);
             for (auto& B : Groups[NS])
                 Sorted.push_back(B);
         }
