@@ -102,8 +102,4 @@ class MServiceRegistry : public MNetServerBase, public MObject, public IDisposab
 
     // 会话表:key = ConnId(注意:与端点表不同,未注册成功的会话也在表里)。
     TMap<uint64, TSharedPtr<FRegistryClientSession>> Sessions;
-
-    // NOTE: NextSeq 从未被读写(序号实际来自 MonotonicSeq[ServerType]),疑似早期设计残留;
-    //       此处保留不动,仅作记录。
-    uint64 NextSeq = 0;
 };

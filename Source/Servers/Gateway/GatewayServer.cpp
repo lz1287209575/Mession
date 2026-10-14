@@ -283,9 +283,8 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
     if (!bSent) {
         CancelServerCall(CallId);
         SendClientError("server_call_send_failed");
-    } else {
-        // NOTE: 成功路径无需额外处理,这个空 else 分支疑似遗留;响应由上面注册的回调异步送回客户端。
     }
+    // 成功路径无需额外处理:响应由上面注册的回调异步送回客户端。
 }
 
 // CreateService 工厂——ServiceMain.h 中 namespace 内的
