@@ -13,6 +13,7 @@
 #pragma once
 
 #include "Common/Runtime/MLib.h"
+#include <cassert>
 #include <cstring>
 #include <type_traits>
 #include <utility>
@@ -106,10 +107,13 @@ inline bool ReadValueBE(const TByteArray& Data, size_t& Offset, uint64& OutValue
  * @param Value   源字符串(不校验编码,按原样拷贝)
  *
  * @detail 空串只写 2 字节长度。
- * NOTE: 长度强转为 uint16,Value.size() > 65535 时长度字段会静默截断(正文也只写截断后的字节数),
- *       调用方需自行保证字符串长度不超过 65535。
+ * NOTE: 长度字段只有 16 位,协议上表达不了超过 65535 字节的字符串 —— 超长时长度字段与正文
+ *       都按截断值写,因此对端不会读错包,但数据会被静默丢弃。这里用 assert 把这种"静默丢
+ *       数据"变成调试期可见的失败;release(NDEBUG)下仍按截断处理,调用方需自行保证字符串
+ *       长度不超过 65535。
  */
 inline void AppendString(TByteArray& OutData, const MString& Value) {
+    assert(Value.size() <= 0xFFFF); // 见 NOTE:超出 16 位长度上限的部分会被静默丢弃
     const uint16 Length = static_cast<uint16>(Value.size());
     AppendValue(OutData, Length);
     if (Length == 0) {
@@ -127,8 +131,10 @@ inline void AppendString(TByteArray& OutData, const MString& Value) {
  * @param Value   源字符串
  *
  * @detail 与 AppendString 唯一区别是长度字段走大端。正文编码本身无字节序问题。
+ *         长度上限同样是 65535(见 AppendString 的 NOTE)。
  */
 inline void AppendStringBE(TByteArray& OutData, const MString& Value) {
+    assert(Value.size() <= 0xFFFF); // 与 AppendString 相同的 16 位长度上限
     const uint16 Length = static_cast<uint16>(Value.size());
     AppendValueBE(OutData, Length);
     if (Length == 0) {

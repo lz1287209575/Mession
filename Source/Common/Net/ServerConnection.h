@@ -95,9 +95,8 @@ struct SServerConnectionConfig {
     float ConnectTimeout    = 3.0f; // 连接超时
     float ReconnectInterval = 5.0f; // 重连间隔
 
-    // NOTE: 用上面的带参构造 / 下面这个默认构造创建 MServerConnection 时,HeartbeatInterval 与
-    // ReconnectInterval **不会**被搬进连接对象(MServerConnection(config) 只存 Config);
-    // 连接用的仍是成员默认值 5.0f。要生效必须先构造再调 SetConfig()。
+    // 下面两个构造只填对端身份字段,心跳/重连间隔保持上面的默认值;
+    // MServerConnection 的带参构造内部走 SetConfig,会把这些字段一并搬进连接对象。
     SServerConnectionConfig() = default;
 
     SServerConnectionConfig(uint32 Id, EServerType Type, const MString& Name, const MString& Addr, uint16 P) : ServerId(Id), ServerType(Type), ServerName(Name), Address(Addr), Port(P) {
@@ -141,7 +140,7 @@ class MTcpMessageChannel : public MMessageChannel {
  *     1. 构造(可带 config) / SetConfig;
  *     2. Connect() —— 立即发起一次建连;失败则等待 Tick 触发重连;
  *     3. 主循环每帧 Tick(DeltaTime) —— 收包、心跳、重连都发生在这里;
- *     4. Disconnect() 或析构收尾。
+ *     4. Disconnect() 显式断开;对象析构只做本地收尾(不会触发 OnDisconnect 回调)。
  *
  *   所有权:继承 TEnableSharedFromThis,必须由 TSharedPtr 持有(内部回调要传自身)。
  *   线程安全:无锁,假定 Tick/Connect/Disconnect 都在同一条事件循环线程上调用;
@@ -158,12 +157,12 @@ class MServerConnection : public TEnableSharedFromThis<MServerConnection> {
 
     // 心跳
     float  HeartbeatTimer    = 0.0f; ///< 距上次心跳的累计时长
-    float  HeartbeatInterval = 5.0f; ///< 心跳间隔;只有 SetConfig 会从配置搬进来
+    float  HeartbeatInterval = 5.0f; ///< 心跳间隔;由 SetConfig 从配置搬进来(带参构造内部也走 SetConfig)
     uint32 HeartbeatSeq      = 0;    ///< 心跳序号(每次发送前自增)
 
     // 重连
     float  ReconnectTimer    = 0.0f; ///< 距上次重连尝试的累计时长
-    float  ReconnectInterval = 5.0f; ///< 重连间隔;只有 SetConfig 会从配置搬进来
+    float  ReconnectInterval = 5.0f; ///< 重连间隔;由 SetConfig 从配置搬进来(带参构造内部也走 SetConfig)
     uint32 ReconnectAttempts = 0;    ///< 累计重连尝试次数(只增不减)
 
     // 统计
@@ -172,7 +171,7 @@ class MServerConnection : public TEnableSharedFromThis<MServerConnection> {
 
     // 回调(全部可为空;为空即跳过)
     TFunction<void(TSharedPtr<MServerConnection>)>                           OnConnectCallback;             ///< 连接建立(TCP 通)后回调
-    TFunction<void(TSharedPtr<MServerConnection>)>                           OnDisconnectCallback;          ///< 断开时回调(无幂等保护,可能多次触发)
+    TFunction<void(TSharedPtr<MServerConnection>)>                           OnDisconnectCallback;          ///< 断开时回调(无幂等保护:重复调用 Disconnect() 会重复触发;析构路径不触发)
     TFunction<void(TSharedPtr<MServerConnection>, uint8, const TByteArray&)> OnMessageCallback;             ///< 收到包回调(已剥掉类型字节)
     TFunction<void(TSharedPtr<MServerConnection>, const SServerInfo&)>       OnServerAuthenticatedCallback; ///< 握手完成后回调
 
@@ -183,19 +182,25 @@ class MServerConnection : public TEnableSharedFromThis<MServerConnection> {
     MServerConnection() {
     }
 
-    /// @brief 用配置构造。注意:只保存 Config 与日志前缀,HeartbeatInterval /
-    /// ReconnectInterval 不会从配置搬进来(仍是成员默认值),需要生效请随后调 SetConfig()。
-    explicit MServerConnection(const SServerConnectionConfig& InConfig) : Config(InConfig) {
-        UpdateLogPrefix();
+    /// @brief 用配置构造。等价于默认构造之后立刻 SetConfig:对端身份、心跳与重连间隔都会
+    /// 从配置搬进连接对象,因此构造完即可直接使用,不必再补一次 SetConfig()。
+    explicit MServerConnection(const SServerConnectionConfig& InConfig) {
+        SetConfig(InConfig);
     }
 
-    // NOTE: 析构无条件调用 Disconnect(),而 Disconnect() 既没有幂等保护、又会通过
-    // shared_from_this() 取自身来构造回调参数。因此:
-    //   - 若曾显式 Disconnect() 过,析构会再触发一次 OnDisconnect 回调(回调会被调用两次);
-    //   - 若对象是在最后一个 shared_ptr 释放时析构的,shared_from_this() 会抛
-    //     std::bad_weak_ptr,所以务必在还有外部引用时显式 Disconnect()。
+    // NOTE: 析构**不能**调用 Disconnect() —— Disconnect() 会用 shared_from_this() 取自身来
+    // 构造 OnDisconnect 回调参数,而析构时(尤其是最后一个 TSharedPtr 释放时)对象已无 shared
+    // 属主,shared_from_this() 会抛 std::bad_weak_ptr,在隐式 noexcept 的析构里直接
+    // std::terminate;即使侥幸还有属主,回调里访问一个正在析构的对象也不安全。
+    // 因此这里只做无回调的本地收尾(与 Disconnect() 的前半段等价,只是不触发回调、不打日志);
+    // 需要 OnDisconnect 回调的调用方,应在仍持有 TSharedPtr 时显式调用 Disconnect()
+    // (注意它没有幂等保护,重复调用会重复触发回调)。
     ~MServerConnection() {
-        Disconnect();
+        if (Transport) {
+            Transport->Close();
+            Transport.reset();
+        }
+        State = EConnectionState::Disconnected;
     }
 
     /// @brief 更新配置与日志前缀,并把 HeartbeatInterval / ReconnectInterval 搬进成员。

@@ -82,21 +82,25 @@ namespace {
                 DispatchActorPostMessage(Service, Sender, Data);
                 break;
             case EServerMessageType::MT_ServerPush:
-                // 投递 ack 的解析(注意踩坑:见下方 NOTE)——
+                // 投递 ack 的解析:线上布局由生产端唯一确定 ——
+                //   MServerConnection::SendServerPush 先写 [StatusCode:1B][Reserved:2B] 前缀,
+                //   再拼上调用方给的 payload;而唯一的 payload 生产者(下方
+                //   DispatchActorPostMessage)造的 payload 自身已含 1 字节 StatusCode,即
+                //   [StatusCode:1B][ActorId:8B][SequenceId:8B]。于是线上整包是
+                //   [StatusCode][Reserved:2B][StatusCode][ActorId:8B][SequenceId:8B](20 字节),
+                //   首字节与 payload 内那个 StatusCode 恒为同一个值,因此 Status 取 Data[0],
+                //   ActorId / SequenceId 则要从第 4 字节起算。
                 // 解析出 ActorId/SequenceId 后调 MActorSystem::AckOutboxByRoute 删掉对应
                 // route 的 outbox entry(fan-out 场景只删这一条,其他 route 还在等 ack),
                 // 最后 fire 所有已注册的 listener(业务订阅可观测性)。
-                if (Data.size() >= 1 + 8 + 8) {
+                if (Data.size() >= 3 + 1 + 8 + 8) {
                     const uint8 Status  = Data[0];
                     uint64      ActorId = 0, SequenceId = 0;
+                    // 跳过 [StatusCode:1B] + [Reserved:2B] + payload 内的 [StatusCode:1B]
                     for (int i = 0; i < 8; ++i) {
-                        ActorId |= static_cast<uint64>(Data[1 + i]) << (i * 8);
-                        SequenceId |= static_cast<uint64>(Data[9 + i]) << (i * 8);
+                        ActorId |= static_cast<uint64>(Data[4 + i]) << (i * 8);
+                        SequenceId |= static_cast<uint64>(Data[12 + i]) << (i * 8);
                     }
-                    // NOTE: 生产端 MServerConnection::SendServerPush 会在 payload 前插入
-                    // [StatusCode:1B][Reserved:2B],而这里按 [StatusCode:1B][ActorId:8B][SequenceId:8B]
-                    // 解析,实际偏移错开 2 字节 —— ActorId/SequenceId 会被解错(此注释只描述现状,
-                    // 修不修由后续任务决定)。Status 取 Data[0] 是正确的。
                     if (Status == 0 /* Delivered:已投递 */ && Sender) {
                         // 1:N fan-out:按连接对应的 ServerType 精确删除该 route 的 outbox entry
                         const EServerType Route = Sender->GetConfig().ServerType;
@@ -136,8 +140,11 @@ namespace {
      *   StatusCode:0 = Delivered, 1 = ActorNotFound, 2 = ParseError, 3 = QueueFull
      *   ActorId 取 Envelope.TargetId(让发起端知道该删哪个 actor 的 outbox entry);
      *   SequenceId 取 Envelope.SequenceId(让发起端在 outbox 里定位并删除对应 entry)。
-     *   注意:该 payload 还会被 MServerConnection::SendServerPush 再包一层
-     *   [StatusCode:1B][Reserved:2B],接收端解析时必须把这 2 字节算进去。
+     *   注意:该 payload 还会被 MServerConnection::SendServerPush 在前面再补一层
+     *   [StatusCode:1B][Reserved:2B],因此线上整包是
+     *   [StatusCode:1B][Reserved:2B][StatusCode:1B][ActorId:8B][SequenceId:8B](共 20 字节),
+     *   其中前缀里的 StatusCode 与本 payload 内那个 StatusCode 恒为同一个值。
+     *   接收端解析(见本文件 MT_ServerPush 分支)必须按这个 20 字节布局算偏移。
      */
     void DispatchActorPostMessage(MObject* Service, TSharedPtr<MServerConnection> Sender, const TByteArray& Data) {
         // 至少要能读出 2 字节 FunctionId
