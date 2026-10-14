@@ -57,15 +57,17 @@ class MEventBus {
      * @brief Subscribe - 订阅事件(自由函数形式)。
      * @param Object  订阅者对象(裸指针,不拥有;须在退订前保持有效)
      * @param Handler 形如 void(void* Object, const TEvent*) 的处理函数
-     * @return 订阅句柄(Handle = 当前槽位下标,EventTypeId = 事件类型 ID)
+     * @return 订阅句柄(Handle = 槽位下标 + 1,EventTypeId = 事件类型 ID)
      *
      * @detail 句柄永不复用:退订只置空槽位,再次订阅会在末尾追加新槽位。
      * 重复订阅同一个 (对象, 函数) 不会去重,会被调用多次。
+     * 句柄从 1 开始编号(0 保留给"无效句柄"),因此**第一个订阅者的句柄是 1 而不是 0**,
+     * 可以与 MEventSubscription::IsValid() 的 Handle != 0 判定共存。
      */
     template <typename TEvent> MEventSubscription Subscribe(void* Object, void (*Handler)(void*, const TEvent*)) {
         uint32 TypeId = TEvent::GetStaticEventTypeId();
         auto&  List   = GetOrCreateList(TypeId);
-        uint32 Handle = static_cast<uint32>(List.size());
+        uint32 Handle = static_cast<uint32>(List.size()) + 1; // 1 起编号:0 保留给无效句柄
         List.push_back(MakeErasedHandler<TEvent>(Object, Handler));
         return {Handle, TypeId};
     }
@@ -119,7 +121,8 @@ class MEventBus {
      *
      * @detail 只把对应槽位置空(不压缩、不复用),因此其它句柄继续有效;
      * 同时**不**清理 OneShotHandles —— 一次性订阅退订后会留下一个永不触发的句柄记录。
-     * 已知限制:第一个订阅者的 Handle 为 0,被 IsValid() 判为无效,句柄 0 无法退订。
+     * 句柄是"槽位下标 + 1"(见 Subscribe),所以默认构造 / Reset() 之后的 Handle == 0 会被
+     * IsValid() 判为无效而直接返回;真实的第一个订阅者(句柄 1)可以正常退订。
      */
     void Unsubscribe(const MEventSubscription& Sub) {
         if (!Sub.IsValid()) {
@@ -131,9 +134,10 @@ class MEventBus {
             return;
         }
 
-        auto& List = It->second;
-        if (Sub.Handle < List.size()) {
-            List[Sub.Handle] = nullptr; // 标记为空，后续广播跳过
+        auto&        List  = It->second;
+        const uint32 Index = Sub.Handle - 1; // 句柄 = 槽位下标 + 1
+        if (Index < List.size()) {
+            List[Index] = nullptr; // 标记为空，后续广播跳过
         }
     }
 
@@ -175,10 +179,9 @@ class MEventBus {
      * 再按槽位顺序同步调用 —— 处理函数若在回调中 Subscribe/Unsubscribe,会实时影响
      * 本次遍历(新增的槽位可能被本轮就调用到,而被置空的槽位被跳过)。
      * 没有异常保护:某个处理函数抛异常会中断后续处理函数。
-     * 一次性订阅的处理方式:检查该槽位是否在 OneShotHandles 里,是则置空;
-     * 只要本轮触发过任意一个一次性订阅,就整体 erase 该类型的 OneShotHandles ——
-     * 因此**本轮没轮到触发的一次性订阅会失去自动退订能力**(它会留在列表里,
-     * 后续再发布时仍被调用),需要严格一次性语义时应改用 Unsubscribe 显式退订。
+     * 一次性订阅的处理方式:检查该槽位是否在 OneShotHandles 里,是则置空该槽位,并且只从
+     * 侧表里摘掉**这一个**句柄 —— 同类型下本轮没轮到触发的一次性订阅仍保留下次自动退订的
+     * 能力;只有该类型的侧表条目空了才删除整个 key。
      */
     template <typename TEvent> void Publish(const TEvent* Event) {
         uint32 TypeId = TEvent::GetStaticEventTypeId();
@@ -187,8 +190,7 @@ class MEventBus {
             return;
         }
 
-        auto& List       = It->second;
-        bool  HasOneShot = false;
+        auto& List = It->second;
 
         for (size_t i = 0; i < List.size(); ++i) {
             auto& Handler = List[i];
@@ -200,17 +202,19 @@ class MEventBus {
             const void* EventPtr = static_cast<const void*>(Event);
             Handler(EventPtr);
 
-            // 检查是否是一次性订阅
+            // 检查是否是一次性订阅:只移除本次真正触发的这一个句柄
             auto ShotIt = OneShotHandles.find(TypeId);
-            if (ShotIt != OneShotHandles.end() && ShotIt->second.count(static_cast<uint32>(i))) {
-                Handler    = nullptr; // 标记移除
-                HasOneShot = true;
+            if (ShotIt != OneShotHandles.end()) {
+                const uint32 Handle   = static_cast<uint32>(i) + 1; // 句柄 = 槽位下标 + 1
+                auto         HandleIt = ShotIt->second.find(Handle);
+                if (HandleIt != ShotIt->second.end()) {
+                    Handler = nullptr; // 标记移除
+                    ShotIt->second.erase(HandleIt);
+                    if (ShotIt->second.empty()) {
+                        OneShotHandles.erase(ShotIt); // 该类型已无待触发的一次性订阅
+                    }
+                }
             }
-        }
-
-        // 清理一次性订阅句柄(注意:整表清除,不只是已触发的那些)
-        if (HasOneShot) {
-            OneShotHandles.erase(TypeId);
         }
     }
 

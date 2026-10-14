@@ -9,8 +9,8 @@
  * 两个必须知道的事实:
  *   - 基类带 virtual 析构,所以每个事件类型都有 vptr(不是零开销,不能在 ABI 敏感的
  *     地方指望它和裸 struct 同布局);
- *   - ID 由模板实例内部的静态计数器生成,而静态变量在函数模板里是"每个实例化一份",
- *     因此当前实现下所有事件类型的 ID 都是 1(详见 GetEventTypeIdImpl)。
+ *   - ID 由 MEventDetail 里的非模板计数器统一分配,因此不同事件类型的 ID 互不相同;
+ *     ID 是首次调用时惰性分配出来的运行期值,不是编译期常量(详见 GetEventTypeIdImpl)。
  * 本文件只定义类型,不做任何运行时注册。
  */
 #pragma once
@@ -19,20 +19,29 @@
 
 namespace MEventDetail {
     /**
-     * @brief GetEventTypeIdImpl - 取事件类型 T 的类型 ID(每个 T 只算一次)。
-     * @return 该模板实例第一次调用时分配到的 ID(之后恒定)
+     * @brief AllocateEventTypeId - 分配一个全进程唯一的事件类型 ID。
+     * @return 新 ID(从 1 开始递增;0 保留表示无效)
      *
-     * @detail 现状(实测行为,不是设计意图):NextId 是 lambda 体内的静态变量,
-     * 而 lambda 位于函数模板内 —— 每个模板实例化都会生成独立的闭包类型与独立的静态
-     * 变量,于是每个事件类型各自从 1 开始编号,**所有事件类型的 ID 都是 1**。
-     * 影响:MEventBus 会把所有事件类型当作同一个键来路由(IEvent 之间互相串扰)。
-     * 若要真正得到全局递增的 ID,计数器必须放在**非模板**函数或命名空间作用域里。
+     * @detail 计数器只放在**非模板**函数里是有意为之:静态局部变量在函数模板内是
+     * "每个实例化一份",若把它写在 GetEventTypeIdImpl<T>() 体内,每个事件类型都会各自
+     * 从 1 开始编号,于是所有类型 ID 都退化成 1(MEventBus 会把它们当成同一个键路由)。
+     * 用 std::atomic 是因为首次调用可能来自不同线程,而 ID 一旦分配就不能重复。
+     */
+    inline uint32 AllocateEventTypeId() {
+        static std::atomic<uint32> NextId{1}; // 从 1 开始,0 表示无效
+        return NextId.fetch_add(1);
+    }
+
+    /**
+     * @brief GetEventTypeIdImpl - 取事件类型 T 的类型 ID(每个 T 只算一次)。
+     * @return 该模板实例第一次调用时从 AllocateEventTypeId() 取到的 ID(之后恒定)
+     *
+     * @detail ID 只在本模板实例首次调用时分配一次,结果缓存在该实例自己的静态变量里;
+     * 计数器本身在所有实例间共享,因此不会有两个事件类型拿到同一个 ID。
+     * 注意:分配顺序取决于首次调用顺序,所以 ID 是运行期惰性分配的值,不是编译期常量。
      */
     template <typename T> uint32 GetEventTypeIdImpl() {
-        static const uint32 Id = []() -> uint32 {
-            static uint32 NextId = 1; // 从 1 开始,0 表示无效
-            return NextId++;
-        }();
+        static const uint32 Id = AllocateEventTypeId();
         return Id;
     }
 } // namespace MEventDetail
