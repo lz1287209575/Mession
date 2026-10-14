@@ -241,46 +241,90 @@ set(MESSION_HEADERTOOL_MANIFEST "${MESSION_GENERATED_DIR}/MHeaderToolTargets.cma
 file(MAKE_DIRECTORY "${MESSION_GENERATED_DIR}")
 
 set(MESSION_HEADERTOOL_EXE "${CMAKE_SOURCE_DIR}/Bin/MHeaderTool${CMAKE_EXECUTABLE_SUFFIX}")
-set(MESSION_HEADERTOOL_BOOTSTRAP_EXE "${CMAKE_BINARY_DIR}/MHeaderTool.bootstrap${CMAKE_EXECUTABLE_SUFFIX}")
 
-set(MESSION_HEADERTOOL_BOOTSTRAP_COMMAND
-    "${CMAKE_CXX_COMPILER}"
-)
-if(MSVC)
-    list(APPEND MESSION_HEADERTOOL_BOOTSTRAP_COMMAND
-        /std:c++20
-        /EHsc
-        /utf-8
-        "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool/MHeaderTool.cpp"
-        "/Fe:${MESSION_HEADERTOOL_BOOTSTRAP_EXE}"
-    )
-else()
-    list(APPEND MESSION_HEADERTOOL_BOOTSTRAP_COMMAND
-        -std=c++17
-        -O2
-        "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool/MHeaderTool.cpp"
-        -I "${CMAKE_SOURCE_DIR}/Source"
-        -I "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool"
-        -o
-        "${MESSION_HEADERTOOL_BOOTSTRAP_EXE}"
-    )
+# 全新检出时 Bin/MHeaderTool 不存在,必须在 configure 期先编出一个宿主工具:
+# 否则 Build/Generated/ 为空,MHeaderToolTargets.cmake 里的 MESSION_GENERATED_GROUPS
+# 也是空,各 add_executable 会因为找不到 *.mgenerated.cpp 而直接报错。
+#
+# 这里编的是一个独立子工程(Source/Tools/MHeaderTool/Bootstrap),而不是拼一条编译器
+# 命令行——链接 libtooling 必须走 Clang/LLVM 的导入目标,手写 -l 旗标在 Ubuntu 上会因为
+# libclang-cpp 只提供 libclang-cpp.so.19.1、没有 .so 别名而失败,写死版本号又会随 LLVM
+# 升级漂移。另外 A2 重构把生成器实现搬到了 Generation/*.cpp,旧的单文件命令行只编
+# MHeaderTool.cpp,会以 undefined reference 收场(这正是全新检出 configure 失败的直接原因);
+# Bootstrap 工程 include 同一份 Sources.cmake,不会再漏编。
+#
+# 子工程用默认生成器(与顶层生成器无关),所以全新机器上 Ninja 不在 PATH 也不影响引导。
+set(MESSION_HEADERTOOL_BOOTSTRAP_DIR "${CMAKE_BINARY_DIR}/MHeaderToolBootstrap")
+set(MESSION_HEADERTOOL_BOOTSTRAP_BASENAME "bootstrap_mht${CMAKE_EXECUTABLE_SUFFIX}")
+set(MESSION_HEADERTOOL_BOOTSTRAP_EXE
+    "${MESSION_HEADERTOOL_BOOTSTRAP_DIR}/${MESSION_HEADERTOOL_BOOTSTRAP_BASENAME}")
+# 多配置生成器(VS/Xcode)会把可执行文件放进每配置子目录。
+if(CMAKE_CONFIGURATION_TYPES)
+    if(NOT CMAKE_BUILD_TYPE)
+        list(GET CMAKE_CONFIGURATION_TYPES 0 _mession_bootstrap_config)
+    else()
+        set(_mession_bootstrap_config "${CMAKE_BUILD_TYPE}")
+    endif()
+    set(MESSION_HEADERTOOL_BOOTSTRAP_EXE
+        "${MESSION_HEADERTOOL_BOOTSTRAP_DIR}/${_mession_bootstrap_config}/${MESSION_HEADERTOOL_BOOTSTRAP_BASENAME}")
+    unset(_mession_bootstrap_config)
 endif()
 
 # Fresh checkout bootstrap:
-# If Bin/MHeaderTool does not exist yet, compile a temporary host tool at configure-time
+# If Bin/MHeaderTool does not exist yet, build a temporary host tool at configure-time
 # so generated reflection sources and manifest are available in the first build.
 if(NOT EXISTS "${MESSION_HEADERTOOL_EXE}")
+    set(_mession_bootstrap_args
+        -S "${CMAKE_SOURCE_DIR}/Source/Tools/MHeaderTool/Bootstrap"
+        -B "${MESSION_HEADERTOOL_BOOTSTRAP_DIR}"
+        "-DMHT_SOURCE_ROOT=${CMAKE_SOURCE_DIR}/Source"
+        -DCMAKE_BUILD_TYPE=Release
+    )
+    # Clang_DIR 由上面 add_subdirectory(Source/Tools/MHeaderTool) 里的
+    # find_package(Clang CONFIG) 写进 cache,引导工程复用它,不再二次探测。
+    if(Clang_DIR)
+        list(APPEND _mession_bootstrap_args "-DClang_DIR=${Clang_DIR}")
+    endif()
+    # Visual Studio 生成器不接受显式指定 CMAKE_CXX_COMPILER。
+    if(NOT MSVC)
+        list(APPEND _mession_bootstrap_args "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}")
+    endif()
+
+    message(STATUS "Bootstrapping MHeaderTool (configure-time host tool)...")
     execute_process(
-        COMMAND ${MESSION_HEADERTOOL_BOOTSTRAP_COMMAND}
+        COMMAND "${CMAKE_COMMAND}" ${_mession_bootstrap_args}
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         RESULT_VARIABLE MESSION_HEADERTOOL_BOOTSTRAP_RESULT
         ERROR_VARIABLE MESSION_HEADERTOOL_BOOTSTRAP_ERROR
+        OUTPUT_VARIABLE MESSION_HEADERTOOL_BOOTSTRAP_OUTPUT
     )
+    if(MESSION_HEADERTOOL_BOOTSTRAP_RESULT EQUAL 0)
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" --build "${MESSION_HEADERTOOL_BOOTSTRAP_DIR}"
+                    --target bootstrap_mht --parallel "${DEFAULT_JOBS}"
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            RESULT_VARIABLE MESSION_HEADERTOOL_BOOTSTRAP_RESULT
+            ERROR_VARIABLE MESSION_HEADERTOOL_BOOTSTRAP_BUILD_ERROR
+            OUTPUT_VARIABLE MESSION_HEADERTOOL_BOOTSTRAP_BUILD_OUTPUT
+        )
+    endif()
     if(NOT MESSION_HEADERTOOL_BOOTSTRAP_RESULT EQUAL 0)
         message(WARNING
-            "Failed to compile configure-time MHeaderTool bootstrap (code ${MESSION_HEADERTOOL_BOOTSTRAP_RESULT}). "
-            "First build may require reconfigure.\n${MESSION_HEADERTOOL_BOOTSTRAP_ERROR}")
+            "Failed to build configure-time MHeaderTool bootstrap (code ${MESSION_HEADERTOOL_BOOTSTRAP_RESULT}). "
+            "Generation will be skipped, so the first build is expected to fail unless "
+            "Bin/MHeaderTool already exists. See Scripts/build_from_scratch.sh for a guided "
+            "fresh-checkout build.\n"
+            "${MESSION_HEADERTOOL_BOOTSTRAP_ERROR}${MESSION_HEADERTOOL_BOOTSTRAP_BUILD_ERROR}"
+            "${MESSION_HEADERTOOL_BOOTSTRAP_OUTPUT}${MESSION_HEADERTOOL_BOOTSTRAP_BUILD_OUTPUT}")
+    else()
+        message(STATUS "MHeaderTool bootstrap ready: ${MESSION_HEADERTOOL_BOOTSTRAP_EXE}")
     endif()
+    unset(MESSION_HEADERTOOL_BOOTSTRAP_RESULT)
+    unset(MESSION_HEADERTOOL_BOOTSTRAP_ERROR)
+    unset(MESSION_HEADERTOOL_BOOTSTRAP_OUTPUT)
+    unset(MESSION_HEADERTOOL_BOOTSTRAP_BUILD_ERROR)
+    unset(MESSION_HEADERTOOL_BOOTSTRAP_BUILD_OUTPUT)
+    unset(_mession_bootstrap_args)
 endif()
 
 set(MESSION_HEADERTOOL_RUNNER "${MESSION_HEADERTOOL_EXE}")

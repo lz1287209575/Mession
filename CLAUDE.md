@@ -5,7 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-# Configure and build
+# Fresh checkout (no Build/, no Bin/) — one command, handles the host MHeaderTool
+# bootstrap and the two configure passes a clean tree needs
+Scripts/build_from_scratch.sh                    # Release -> Build/
+Scripts/build_from_scratch.sh -t Debug --test    # Debug -> cmake-build-debug/, then run Bin/*Test
+Scripts/build_from_scratch.sh --fmt-dir DIR      # offline: local fmt source instead of FetchContent
+
+# Configure and build (manual equivalent; first configure must run TWICE on a clean
+# checkout — pass 1 cannot see compile_commands.json yet, so await *.mgenerated.cpp
+# files are missing and it reports errors; pass 2 generates them and passes)
+cmake -S . -B Build -DCMAKE_BUILD_TYPE=Release
 cmake -S . -B Build -DCMAKE_BUILD_TYPE=Release
 cmake --build Build -j4
 

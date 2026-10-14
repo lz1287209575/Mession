@@ -5,20 +5,17 @@
 # alongside AsyncFrameTest — that is the project's established pattern for
 # test executable declarations.
 
+# TU 清单收敛在 Sources.cmake——configure 期的引导工程(Bootstrap/)必须编同一份清单,
+# 否则新增的 Generation/*.cpp 只进 mht_lib、不进引导工具,全新检出会在链接期缺符号。
+include("${CMAKE_CURRENT_SOURCE_DIR}/Sources.cmake")
+
 # Library TU — contains ProcessFreeFunctions (extracted from MHeaderTool.cpp
 # so tests can link it without colliding with MHeaderTool.cpp's main()).
 # Generation/CodeGenerator.cpp carries the IR-based generator entry points
 # (A2 / Task 7: GenerateHeaderFromIR / GenerateSourceFromIR /
 # EmitAsyncFramesHeaderFromIR). The legacy inline generators still live
 # in CodeGenerator.h; A3 cleanup removes them.
-add_library(mht_lib STATIC
-    MHeaderToolLib.cpp
-    Generation/ScriptBindEmitter.cpp
-    AST/ASTReflectionVisitor.cpp
-    AST/ASTPipeline.cpp
-    Generation/CodeGenerator.cpp
-    Generation/LuaStdlibHintEmitter.cpp
-)
+add_library(mht_lib STATIC ${MHT_LIB_SOURCES})
 target_link_libraries(mht_lib PUBLIC
     mession_core
 )
@@ -32,9 +29,7 @@ target_compile_options(mht_lib PRIVATE
 )
 
 # Executable: thin wrapper holding main()
-add_executable(MHeaderTool
-    MHeaderTool.cpp
-)
+add_executable(MHeaderTool ${MHT_EXE_SOURCES})
 target_link_libraries(MHeaderTool PRIVATE
     mht_lib
 )

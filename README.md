@@ -58,10 +58,29 @@ ActorId 布局：[ServiceId (高 32 位 = `EServerType::Echo`=7)][InstId (低 32
 
 ## 快速开始
 
+> **全新检出（没有 `Build/`、没有 `Bin/`）请直接用一键脚本**——它会把裸 cmake 流程里
+> 三个容易卡住的地方处理掉：Ninja 常只随 IDE 分发而不在 `PATH`；第一次 configure 需要先编
+> 一个宿主 `MHeaderTool`；以及新检出需要**配置两趟**（configure 期的 MHeaderTool 要读到
+> `compile_commands.json` 才能把 `*.Async.cpp` 里的 await 业务体解析出来，而该文件是第一趟
+> generate 阶段才写出的）。
+>
+> ```bash
+> Scripts/build_from_scratch.sh                  # Release 构建到 Build/
+> Scripts/build_from_scratch.sh -t Debug --test  # Debug 构建到 cmake-build-debug/，构建完跑测试
+> Scripts/build_from_scratch.sh --fmt-dir DIR    # 离线环境：用本地 fmt 源码跳过 FetchContent
+> ```
+>
+> 依赖：CMake ≥ 3.15、GCC/Clang 编译器、Clang 19 的 CMake 包
+> （Debian/Ubuntu：`apt install libclang-19-dev llvm-19-dev`）。
+
+等价的手工流程见下面 1、2 两步；**第一次配置需要连跑两次 `cmake`**（第一趟会报一部分
+`*.mgenerated.cpp` 找不到，那是预期内的，第二趟生成物补齐后即通过）。
+
 1. 配置工程
 
 ```bash
 cmake -S . -B Build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B Build -DCMAKE_BUILD_TYPE=Release   # 新检出需要第二趟
 ```
 
 2. 编译
