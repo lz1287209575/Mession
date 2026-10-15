@@ -70,11 +70,28 @@ ActorId 布局：[ServiceId (高 32 位 = `EServerType::Echo`=7)][InstId (低 32
 > Scripts/build_from_scratch.sh --fmt-dir DIR    # 离线环境：用本地 fmt 源码跳过 FetchContent
 > ```
 >
-> 依赖：CMake ≥ 3.15、GCC/Clang 编译器、Clang 19 的 CMake 包
-> （Debian/Ubuntu：`apt install libclang-19-dev llvm-19-dev`）。
+> 依赖：CMake ≥ 3.15、GCC/Clang 编译器、任意已安装 Clang 的 CMake 包
+> （Debian/Ubuntu：`apt install libclang-19-dev llvm-19-dev`；用其他版本时装对应版本的
+> `libclang-XX-dev llvm-XX-dev`，并参考下面的"指定 Clang 版本"）。
 
 等价的手工流程见下面 1、2 两步；**第一次配置需要连跑两次 `cmake`**（第一趟会报一部分
 `*.mgenerated.cpp` 找不到，那是预期内的，第二趟生成物补齐后即通过）。
+
+#### 指定 Clang 版本
+
+反射工具 `MHeaderTool` 是链接 `libclang-cpp` 的宿主工具，`find_package(Clang)` 默认找系统
+里版本号最大的那套。要换成别的版本，把对应 CMake 包的目录传给 `Clang_DIR` / `LLVM_DIR`
+即可，引导工具与正式构建会使用同一套 Clang：
+
+```bash
+Scripts/build_from_scratch.sh -D Clang_DIR=/usr/lib/cmake/clang-22
+# 等价手工写法：cmake -S . -B Build -DClang_DIR=/usr/lib/cmake/clang-22
+```
+
+`MHeaderTool` 不在版本间做条件编译，代码只依赖跨版本稳定的 libtooling API；CMake 会按
+`${LLVM_LIBRARY_DIRS}/clang/${LLVM_VERSION_MAJOR}` 自动定位内置头（`stddef.h` 等）并作为
+`-resource-dir` 传给解析器，找不到时才回落到 clang 自身按可执行路径的推测逻辑。
+
 
 1. 配置工程
 

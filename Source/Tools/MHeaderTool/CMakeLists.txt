@@ -43,14 +43,31 @@ target_compile_options(MHeaderTool PRIVATE
 )
 
 # A1 — libtooling 集成
-find_package(Clang 19.1.7 REQUIRED CONFIG)
+# 版本不写死：Clang 的 config 版本文件只对 major.minor 兼容，写死 19.1.7 会让装有
+# clang-22 等其它版本的机器直接 configure 失败。本项目只用长期稳定的 libtooling API，
+# 不需要版本分支；要指定版本时用 -DClang_DIR=/path/to/lib/cmake/clang 指向具体安装。
+find_package(Clang REQUIRED CONFIG)
 
 target_include_directories(mht_lib PUBLIC ${CLANG_INCLUDE_DIRS})
 target_link_libraries(mht_lib PUBLIC ${CLANG_LIBRARIES})
 
+# clang 资源头目录（stddef.h 等内置头所在）：libtooling 不经过 clang driver，
+# 它自己按可执行文件路径推测 -resource-dir，在非标准安装前缀下必然探测失败，
+# 导致每个 TU 解析失败成 error 节点、await 生成物静默缺失。configure 期按
+# ${LLVM_LIBRARY_DIRS}/clang/${LLVM_VERSION_MAJOR} 精确算出并交给代码显式传参。
+set(MESSION_CLANG_RESOURCE_DIR "${LLVM_LIBRARY_DIRS}/clang/${LLVM_VERSION_MAJOR}")
+if(NOT EXISTS "${MESSION_CLANG_RESOURCE_DIR}/include/stddef.h")
+    message(WARNING
+        "MHeaderTool: 预期的 clang 资源头目录 ${MESSION_CLANG_RESOURCE_DIR}/include/stddef.h 不存在。"
+        " libtooling 解析会退回到按可执行文件路径推测的 -resource-dir；"
+        " 若 clang 装在非标准前缀下，请显式 -DClang_DIR=... 指向完整安装。")
+    set(MESSION_CLANG_RESOURCE_DIR "")
+endif()
+
 target_compile_definitions(mht_lib PRIVATE
     CLANG_VERSION_MAJOR=${LLVM_VERSION_MAJOR}
     CLANG_VERSION_MINOR=${LLVM_VERSION_MINOR}
+    MESSION_CLANG_RESOURCE_DIR="${MESSION_CLANG_RESOURCE_DIR}"
 )
 
 target_compile_options(mht_lib PRIVATE

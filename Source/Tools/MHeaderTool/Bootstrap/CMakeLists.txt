@@ -37,7 +37,17 @@ endif()
 if(MHT_CLANG_DIR)
     set(Clang_DIR "${MHT_CLANG_DIR}" CACHE PATH "Clang config package location" FORCE)
 endif()
-find_package(Clang 19.1.7 REQUIRED CONFIG)
+# 版本同样不写死：引导工具与正式构建必须是同一套 Clang（上层已把 Clang_DIR 传进来），
+# 写死 19.1.7 会让装有其它 clang 版本的机器 configure 期直接失败。
+find_package(Clang REQUIRED CONFIG)
+
+# clang 资源头目录（stddef.h 等内置头）：libtooling 不经过 clang driver，
+# 它自己按可执行文件路径推测 -resource-dir，非标准安装前缀下必然探测失败，
+# 导致每个 TU 解析失败成 error 节点、await 生成物静默缺失。与顶层 mht_lib 同口径计算。
+set(MESSION_CLANG_RESOURCE_DIR "${LLVM_LIBRARY_DIRS}/clang/${LLVM_VERSION_MAJOR}")
+if(NOT EXISTS "${MESSION_CLANG_RESOURCE_DIR}/include/stddef.h")
+    set(MESSION_CLANG_RESOURCE_DIR "")
+endif()
 
 # 引导工具只用 Core 的头文件与 inline 实现,不需要重编 mession_core 的实现 TU
 # (顶层在 configure 期也还没有可用的 mession_core 目标)。留一个 INTERFACE 占位,
@@ -98,4 +108,12 @@ endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(bootstrap_mht PRIVATE -Wno-unused-parameter)
+endif()
+
+# 资源头目录宏：ASTPipeline.cpp 据此给 libtooling 显式传 -resource-dir
+# （见顶层 Source/Tools/MHeaderTool/CMakeLists.txt 的同名说明）。
+if(MESSION_CLANG_RESOURCE_DIR)
+    target_compile_definitions(bootstrap_mht PRIVATE
+        MESSION_CLANG_RESOURCE_DIR="${MESSION_CLANG_RESOURCE_DIR}"
+    )
 endif()

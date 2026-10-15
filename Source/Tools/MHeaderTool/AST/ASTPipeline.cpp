@@ -28,6 +28,33 @@ namespace mession::headercodegen {
     namespace {
 
         /**
+         * @brief 取当前 libclang 自带的 clang 资源头目录（含 stddef.h 等内置头）。
+         *
+         * @detail 为什么必须显式传给 libtooling:libtooling 不经过 clang driver,
+         *         CompilerInvocation 的默认 -resource-dir 是按可执行文件路径推测的
+         *         (<exe>/../../lib/clang/<major>)。clang 装在发行版标准位置时恰好命中,
+         *         但装在非标准前缀(Debian 多版本并存、容器内 /tmp 组装树、conda 等)时
+         *         探测必然失败 —— 缺 stddef.h 会让每个 TU 解析失败成 error 节点,
+         *         函数体遍历不到,AwaitSites / LiveAcrossAwait 全空,await 生成物
+         *         (*_AwaitImpl.mgenerated.cpp / *_AwaitStateMachine.h)一个都不产。
+         *         该缺陷极隐蔽:AsyncFrames.h 仍正常生成(它不依赖函数体),只有 await
+         *         产物静默缺失,直到 CMake 的 add_executable 报"找不到源文件"才暴露。
+         *
+         *         优先用 CMake 传进来的 MESSION_CLANG_RESOURCE_DIR(configure 期按
+         *         ${LLVM_LIBRARY_DIRS}/clang/${LLVM_VERSION_MAJOR} 精确算出);未定义时
+         *         退回空串,由 clang 自身按老逻辑探测(标准安装路径下仍能工作)。
+         */
+        MString GetClangResourceDirArg() {
+#ifdef MESSION_CLANG_RESOURCE_DIR
+            const MString Dir = MESSION_CLANG_RESOURCE_DIR;
+            if (!Dir.empty()) {
+                return "-resource-dir=" + Dir;
+            }
+#endif
+            return {};
+        }
+
+        /**
          * @brief 递归收集 InRoot 下所有源文件(.h/.hpp/.cpp/.cc)。
          * @param InRoot   扫描根;不存在时直接返回
          * @param OutFiles [out] 追加收集结果(不清理旧内容)
@@ -328,6 +355,11 @@ namespace mession::headercodegen {
                 // await：业务头用 #ifdef MESSION_AWAIT_CODEGEN_SOURCE 保护 TAwaitable 体——
                 // 正常编译只见声明，MHeaderTool 解析时开宏才能看到 await 体。
                 NewArgs.push_back("-DMESSION_AWAIT_CODEGEN_SOURCE");
+                // libtooling 不走 driver，资源头目录必须显式给（见 GetClangResourceDirArg）。
+                const MString ResourceArg = GetClangResourceDirArg();
+                if (!ResourceArg.empty()) {
+                    NewArgs.push_back(ResourceArg);
+                }
                 C.CommandLine = std::move(NewArgs);
                 Stripped.push_back(std::move(C));
             }
@@ -385,7 +417,13 @@ namespace mession::headercodegen {
             // fallback 直接解析 .h 文件：clang 对 .h 默认按 C 语言（struct 成员
             // 初始化在 C 里非法，如 `int X = 0;`）——必须显式 -x c++。
             // 同样开 await codegen 宏（业务头 #ifdef MESSION_AWAIT_CODEGEN_SOURCE 保护 TAwaitable 体）。
-            CDB = std::make_unique<clang::tooling::FixedCompilationDatabase>(SourceRootAbs.generic_string(), TVector<MString>{"-fsyntax-only", "-x", "c++", "-DMESSION_AWAIT_CODEGEN_SOURCE", IncludeArg});
+            TVector<MString> FallbackArgs = {"-fsyntax-only", "-x", "c++", "-DMESSION_AWAIT_CODEGEN_SOURCE", IncludeArg};
+            // 资源头目录同样必须显式给，否则非标准安装路径下 TU 解析全失败。
+            const MString FallbackResourceArg = GetClangResourceDirArg();
+            if (!FallbackResourceArg.empty()) {
+                FallbackArgs.push_back(FallbackResourceArg);
+            }
+            CDB = std::make_unique<clang::tooling::FixedCompilationDatabase>(SourceRootAbs.generic_string(), FallbackArgs);
             CollectHeaders(SourceRootAbs, SourceFiles);
         }
 

@@ -106,6 +106,7 @@ UE / Scripts/validate.py
 ### Style
 - Full rules: **`Docs/CodingStyle.md`** (ColumnLimit 240, Allman braces, etc.)
 - Tooling: `.clang-format`, `Scripts/check-style.sh` (includes reflected-ABI guard), optional pre-commit via `Scripts/install-hooks.sh`
+- Clang version: not pinned — pass `Clang_DIR` / `LLVM_DIR` to pick one (e.g. `-DClang_DIR=/usr/lib/cmake/clang-22`); no `LLVM_VERSION_MAJOR` conditionals, libtooling APIs used are stable across 19/22
 - **C1 (docs + tools) is on main; C2–C5 bulk reformat is TODO** — avoid huge format-only PRs mixed with features
 
 ### STL wrapping
