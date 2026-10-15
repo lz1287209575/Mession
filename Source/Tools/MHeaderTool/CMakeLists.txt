@@ -51,23 +51,24 @@ find_package(Clang REQUIRED CONFIG)
 target_include_directories(mht_lib PUBLIC ${CLANG_INCLUDE_DIRS})
 target_link_libraries(mht_lib PUBLIC ${CLANG_LIBRARIES})
 
-# clang 资源头目录（stddef.h 等内置头所在）：libtooling 不经过 clang driver，
-# 它自己按可执行文件路径推测 -resource-dir，在非标准安装前缀下必然探测失败，
-# 导致每个 TU 解析失败成 error 节点、await 生成物静默缺失。configure 期按
-# ${LLVM_LIBRARY_DIRS}/clang/${LLVM_VERSION_MAJOR} 精确算出并交给代码显式传参。
-set(MESSION_CLANG_RESOURCE_DIR "${LLVM_LIBRARY_DIRS}/clang/${LLVM_VERSION_MAJOR}")
-if(NOT EXISTS "${MESSION_CLANG_RESOURCE_DIR}/include/stddef.h")
-    message(WARNING
-        "MHeaderTool: 预期的 clang 资源头目录 ${MESSION_CLANG_RESOURCE_DIR}/include/stddef.h 不存在。"
-        " libtooling 解析会退回到按可执行文件路径推测的 -resource-dir；"
-        " 若 clang 装在非标准前缀下，请显式 -DClang_DIR=... 指向完整安装。")
-    set(MESSION_CLANG_RESOURCE_DIR "")
-endif()
+# clang 资源头目录（stddef.h 等内置头所在）：libtooling 不经过 clang driver，会按
+# 可执行文件路径推测 -resource-dir，非标准前缀下探测失败会让 await 生成物静默缺失。
+# 探测逻辑见同目录 DetectClangResourceDir.cmake——各发行版布局并不统一：Debian/Ubuntu
+# 在 ${LLVM_LIBRARY_DIRS}/clang/<major>，RHEL/Fedora 由 clang-resource-filesystem 包
+# 提供、落在 /usr/lib/clang/<major>。
+include("${CMAKE_CURRENT_LIST_DIR}/DetectClangResourceDir.cmake")
+
+# 透传给顶层，再由顶层交给 configure 期的引导子工程——那是一次独立的 cmake 调用，
+# 看不到本作用域的普通变量，而引导工具与正式构建必须指向同一个资源目录。
+set(MESSION_CLANG_RESOURCE_DIR_RESOLVED
+    "${MESSION_CLANG_RESOURCE_DIR_RESOLVED}"
+    PARENT_SCOPE
+)
 
 target_compile_definitions(mht_lib PRIVATE
     CLANG_VERSION_MAJOR=${LLVM_VERSION_MAJOR}
     CLANG_VERSION_MINOR=${LLVM_VERSION_MINOR}
-    MESSION_CLANG_RESOURCE_DIR="${MESSION_CLANG_RESOURCE_DIR}"
+    MESSION_CLANG_RESOURCE_DIR="${MESSION_CLANG_RESOURCE_DIR_RESOLVED}"
 )
 
 target_compile_options(mht_lib PRIVATE

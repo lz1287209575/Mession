@@ -38,6 +38,7 @@ FMT_DIR=""
 DO_CLEAN=0
 DO_TEST=0
 DO_CONFIGURE_ONLY=0
+CMAKE_ARGS=()
 
 CONFIGURE_FAIL_RC=10
 BUILD_FAIL_RC=20
@@ -64,6 +65,8 @@ Options:
   -t, --type TYPE       CMAKE_BUILD_TYPE: Debug|Release|RelWithDebInfo|MinSizeRel (默认 Release)
   -j, --jobs N          并行度 (默认: 核数, 上限 32)
   -g, --generator GEN   CMake 生成器 (默认: 有 ninja 用 Ninja, 否则 Unix Makefiles)
+  -D, --cmake-arg A     追加一个 CMake 变量; A 形如 NAME=VALUE(脚本自动补 -D 前缀),
+                        可重复。指定 Clang 版本就用它: -D Clang_DIR=/path/to/lib/cmake/clang
       --fmt-dir DIR     本地 fmt 源码目录, 跳过 FetchContent 网络下载
       --clean           先删除构建目录再配置
       --configure-only  只跑配置阶段
@@ -78,6 +81,9 @@ while [ $# -gt 0 ]; do
         -t|--type)        BUILD_TYPE="${2:?--type 需要一个值}"; shift 2 ;;
         -j|--jobs)        JOBS="${2:?--jobs 需要一个数字}"; shift 2 ;;
         -g|--generator)   GENERATOR="${2:?--generator 需要一个值}"; shift 2 ;;
+        -D)               CMAKE_ARGS+=("${2:?-D 需要一个 NAME=VALUE}"); shift 2 ;;
+        -D*)              CMAKE_ARGS+=("${1#-D}"); shift ;;
+        --cmake-arg)      CMAKE_ARGS+=("${2:?--cmake-arg 需要一个 NAME=VALUE}"); shift 2 ;;
         --fmt-dir)        FMT_DIR="${2:?--fmt-dir 需要一个目录}"; shift 2 ;;
         --clean)          DO_CLEAN=1; shift ;;
         --test)           DO_TEST=1; shift ;;
@@ -186,13 +192,19 @@ fi
 
 # --- Clang / LLVM(MHeaderTool libtooling 依赖) --------------------------------
 CLANG_FOUND=0
-for dir in /usr/lib/cmake/clang-* /usr/local/lib/cmake/clang-* /usr/lib/llvm-*/lib/cmake/clang; do
+# 发行版布局不一: Debian/Ubuntu 是 /usr/lib/cmake/clang-<ver> 或 /usr/lib/llvm-<ver>/lib/cmake/clang,
+# RHEL/Fedora 是 /usr/lib64/cmake/clang。
+for dir in /usr/lib/cmake/clang-* /usr/lib64/cmake/clang* \
+           /usr/local/lib/cmake/clang-* \
+           /usr/lib/llvm-*/lib/cmake/clang /usr/lib/llvm-*/lib64/cmake/clang \
+           /usr/lib64/llvm-*/lib/cmake/clang; do
     if [ -d "${dir}" ]; then CLANG_FOUND=1; break; fi
 done
 if [ "${CLANG_FOUND}" -eq 0 ] && [ -z "${Clang_DIR:-}" ]; then
-    warn "没有在常见位置找到 Clang 的 CMake 包,而 MHeaderTool 需要 Clang 19。"
-    warn "  Debian/Ubuntu: apt install libclang-19-dev llvm-19-dev"
-    warn "  自定义安装位置时配置阶段请追加 -DClang_DIR=/path/to/lib/cmake/clang"
+    warn "没有在常见位置找到 Clang 的 CMake 包,而 MHeaderTool 的 libtooling 依赖它。"
+    warn "  Debian/Ubuntu: apt install libclang-19-dev llvm-19-dev libclang-common-19-dev"
+    warn "  RHEL/Fedora:   dnf install clang-devel llvm-devel clang-resource-filesystem"
+    warn "  装在自定义位置时用 -D Clang_DIR=/path/to/lib/cmake/clang 指定"
 fi
 
 log "仓库根:   ${REPO_ROOT}"
@@ -213,6 +225,15 @@ CONFIGURE_LOG2="$(mktemp -t mession-configure-2.XXXXXX.log)"
 
 # --- 配置 --------------------------------------------------------------------
 CONFIGURE_ARGS=(-S "${REPO_ROOT}" -B "${BUILD_DIR}" "-DCMAKE_BUILD_TYPE=${BUILD_TYPE}")
+if [ "${#CMAKE_ARGS[@]}" -gt 0 ]; then
+    for _arg in "${CMAKE_ARGS[@]}"; do
+        case "${_arg}" in
+            *=*) CONFIGURE_ARGS+=("-D${_arg}") ;;
+            *)   die "cmake 变量要写成 NAME=VALUE,收到: ${_arg}" ;;
+        esac
+    done
+    unset _arg
+fi
 if [ -n "${GENERATOR}" ]; then CONFIGURE_ARGS+=(-G "${GENERATOR}"); fi
 if [ -n "${FMT_DIR}" ]; then
     [ -f "${FMT_DIR}/CMakeLists.txt" ] || die "--fmt-dir '${FMT_DIR}' 下没有 CMakeLists.txt"

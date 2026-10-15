@@ -106,7 +106,12 @@ endfunction()
 set(FMT_HEADER_ONLY ON CACHE BOOL "Use fmt header-only build" FORCE)
 set(FMT_DIR "" CACHE PATH "Local fmt source directory (skips FetchContent)")
 if(FMT_DIR AND EXISTS "${FMT_DIR}/CMakeLists.txt")
+    # 本地源码也走 FetchContent,只是用 SOURCE_DIR 指过去。这里必须仍然调用
+    # MakeAvailable: 只设 FMT_SOURCE_DIR 不会创建 fmt::fmt-header-only 目标,
+    # 后面的 target_link_libraries 会以"目标不存在"收场(--fmt-dir 因此失效)。
     set(FMT_SOURCE_DIR "${FMT_DIR}")
+    FetchContent_Declare(fmt SOURCE_DIR "${FMT_SOURCE_DIR}")
+    FetchContent_MakeAvailable(fmt)
 else()
     FetchContent_Declare(
         fmt
@@ -284,6 +289,12 @@ if(NOT EXISTS "${MESSION_HEADERTOOL_EXE}")
     # find_package(Clang CONFIG) 写进 cache,引导工程复用它,不再二次探测。
     if(Clang_DIR)
         list(APPEND _mession_bootstrap_args "-DClang_DIR=${Clang_DIR}")
+    endif()
+    # clang 资源头目录同样透传（顶层已由 MHeaderTool 子目录算出），保证引导工具与
+    # 正式构建指向同一个内置头目录。
+    if(MESSION_CLANG_RESOURCE_DIR_RESOLVED)
+        list(APPEND _mession_bootstrap_args
+            "-DMESSION_CLANG_RESOURCE_DIR=${MESSION_CLANG_RESOURCE_DIR_RESOLVED}")
     endif()
     # Visual Studio 生成器不接受显式指定 CMAKE_CXX_COMPILER。
     if(NOT MSVC)
