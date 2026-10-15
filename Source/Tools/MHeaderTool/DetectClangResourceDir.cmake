@@ -12,9 +12,10 @@
 # "找不到源文件"才暴露。
 #
 # 为什么不能只拼一条路径：各发行版布局不同。Debian/Ubuntu 的资源头在
-# ${LLVM_LIBRARY_DIRS}/clang/<major>；RHEL/Fedora 由独立包
-# clang-resource-filesystem 提供，落在 /usr/lib/clang/<major>，与
-# LLVM_LIBRARY_DIRS（/usr/lib64）前缀不同。因此按序试候选，取第一个含
+# ${LLVM_LIBRARY_DIRS}/clang/<major>；RHEL/Fedora 落在 /usr/lib/clang/<major>
+# （目录归 clang<版本>-resource-filesystem 所有，内置头由 clang<版本>-libs 装入，
+# 两者都随 clang<版本>-devel 自动装上），与 LLVM_LIBRARY_DIRS（/usr/lib64）
+# 前缀不同。因此按序试候选，取第一个含
 # include/stddef.h 的：
 #   1. -DMESSION_CLANG_RESOURCE_DIR=...（用户显式指定，优先级最高）
 #   2. 同版本 clang driver 的 -print-resource-dir（最权威，且能消解资源目录用
@@ -119,6 +120,6 @@ else()
         "将退回 clang 默认按可执行文件路径推测的 -resource-dir。"
         "若 clang 装在非标准前缀下会导致 await 生成物静默缺失。"
         "请确认已安装内置头包（Debian/Ubuntu: libclang-common-<版本>-dev；"
-        "RHEL/Fedora: clang-resource-filesystem），"
+        "RHEL/Fedora: clang<版本>-libs，随 clang<版本>-devel 自动装上），"
         "或用 -DMESSION_CLANG_RESOURCE_DIR=<含 include/stddef.h 的目录> 显式指定。")
 endif()

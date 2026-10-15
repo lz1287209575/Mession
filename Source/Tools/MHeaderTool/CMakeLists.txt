@@ -54,8 +54,8 @@ target_link_libraries(mht_lib PUBLIC ${CLANG_LIBRARIES})
 # clang 资源头目录（stddef.h 等内置头所在）：libtooling 不经过 clang driver，会按
 # 可执行文件路径推测 -resource-dir，非标准前缀下探测失败会让 await 生成物静默缺失。
 # 探测逻辑见同目录 DetectClangResourceDir.cmake——各发行版布局并不统一：Debian/Ubuntu
-# 在 ${LLVM_LIBRARY_DIRS}/clang/<major>，RHEL/Fedora 由 clang-resource-filesystem 包
-# 提供、落在 /usr/lib/clang/<major>。
+# 在 ${LLVM_LIBRARY_DIRS}/clang/<major>，RHEL/Fedora 则由 clang<版本>-libs 装到
+# /usr/lib/clang/<major>。
 include("${CMAKE_CURRENT_LIST_DIR}/DetectClangResourceDir.cmake")
 
 # 透传给顶层，再由顶层交给 configure 期的引导子工程——那是一次独立的 cmake 调用，

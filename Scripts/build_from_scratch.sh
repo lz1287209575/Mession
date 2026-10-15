@@ -192,19 +192,24 @@ fi
 
 # --- Clang / LLVM(MHeaderTool libtooling 依赖) --------------------------------
 CLANG_FOUND=0
-# 发行版布局不一: Debian/Ubuntu 是 /usr/lib/cmake/clang-<ver> 或 /usr/lib/llvm-<ver>/lib/cmake/clang,
-# RHEL/Fedora 是 /usr/lib64/cmake/clang。
+# 发行版布局不一, 目录名尤其不同:
+#   Debian/Ubuntu: /usr/lib/cmake/clang-<ver>, /usr/lib/llvm-<ver>/lib/cmake/clang
+#   RHEL/Fedora:   /usr/lib64/llvm<ver>/lib/cmake/clang
+# RHEL 侧的基名是无连字符的 llvm19 这种形式, 所以通配要用 llvm* 而非 llvm-*。
 for dir in /usr/lib/cmake/clang-* /usr/lib64/cmake/clang* \
-           /usr/local/lib/cmake/clang-* \
-           /usr/lib/llvm-*/lib/cmake/clang /usr/lib/llvm-*/lib64/cmake/clang \
-           /usr/lib64/llvm-*/lib/cmake/clang; do
+           /usr/local/lib/cmake/clang-* /usr/local/lib64/cmake/clang* \
+           /usr/lib/llvm*/lib/cmake/clang /usr/lib/llvm*/lib64/cmake/clang \
+           /usr/lib64/llvm*/lib/cmake/clang /usr/lib64/llvm*/lib64/cmake/clang; do
     if [ -d "${dir}" ]; then CLANG_FOUND=1; break; fi
 done
 if [ "${CLANG_FOUND}" -eq 0 ] && [ -z "${Clang_DIR:-}" ]; then
     warn "没有在常见位置找到 Clang 的 CMake 包,而 MHeaderTool 的 libtooling 依赖它。"
     warn "  Debian/Ubuntu: apt install libclang-19-dev llvm-19-dev libclang-common-19-dev"
-    warn "  RHEL/Fedora:   dnf install clang-devel llvm-devel clang-resource-filesystem"
+    warn "  RHEL/Fedora:   dnf install clang19-devel llvm19-devel"
+    warn "                 EPEL 的包名带版本号, 稳定版有 clang19-devel / clang20-devel"
+    warn "                 (clang21-devel 在 epel9-testing); 内置头随 -devel 自动装上"
     warn "  装在自定义位置时用 -D Clang_DIR=/path/to/lib/cmake/clang 指定"
+    warn "  RHEL/Fedora 常见取值: /usr/lib64/llvm19/lib/cmake/clang"
 fi
 
 log "仓库根:   ${REPO_ROOT}"

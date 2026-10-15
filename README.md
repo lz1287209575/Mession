@@ -72,10 +72,11 @@ ActorId 布局：[ServiceId (高 32 位 = `EServerType::Echo`=7)][InstId (低 32
 >
 > 依赖：CMake ≥ 3.15、GCC/Clang 编译器、任意已安装 Clang 的 CMake 包与内置头
 > （Debian/Ubuntu：`apt install libclang-19-dev llvm-19-dev libclang-common-19-dev`；
-> RHEL/Fedora：`dnf install clang-devel llvm-devel clang-resource-filesystem`，部分源只提供
-> 带版本号的包名（如 `clang19-devel llvm19-devel`），装对应版本即可。内置头由
-> `clang-resource-filesystem` 提供，一般随 `clang-libs` 自动装上，缺失时需显式安装。
-> 换版本时装对应版本号的包，并参考下面的"指定 Clang 版本"）。
+> RHEL/Fedora + EPEL：`dnf install clang19-devel llvm19-devel`。EPEL 的包名一律带版本号，
+> 核实到的稳定版有 `clang19-devel`、`clang20-devel`（`clang21-devel` 在 epel9-testing），
+> 版本号并不连续，用 `dnf list 'clang*-devel'` 看本机仓库实际提供哪些即可。内置头
+> （`stddef.h` 等）由 `clang19-libs` 装到 `/usr/lib/clang/19/include`，随 `clang19-devel`
+> 自动装上，无需单独安装。详见下面的"指定 Clang 版本"）。
 
 等价的手工流程见下面 1、2 两步；**第一次配置需要连跑两次 `cmake`**（第一趟会报一部分
 `*.mgenerated.cpp` 找不到，那是预期内的，第二趟生成物补齐后即通过）。
@@ -91,6 +92,9 @@ ActorId 布局：[ServiceId (高 32 位 = `EServerType::Echo`=7)][InstId (低 32
 Scripts/build_from_scratch.sh -D Clang_DIR=/usr/lib/cmake/clang-22
 # 等价手工写法：cmake -S . -B Build -DClang_DIR=/usr/lib/cmake/clang-22
 ```
+
+`Clang_DIR` 的常见取值：Debian/Ubuntu 是 `/usr/lib/cmake/clang-<ver>`，RHEL/Fedora 是
+`/usr/lib64/llvm<ver>/lib/cmake/clang`（基名 `llvm19` 不带连字符，与 Debian 侧不同）。
 
 `MHeaderTool` 不在版本间做条件编译，代码只依赖跨版本稳定的 libtooling API。内置头
 （`stddef.h` 等）目录由 `Source/Tools/MHeaderTool/DetectClangResourceDir.cmake` 探测后作为
