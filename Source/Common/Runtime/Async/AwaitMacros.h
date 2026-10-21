@@ -20,8 +20,8 @@
 //
 // - Ready 路径: 拆 TResult<T, FAppError>;Ok -> 返回 T;Err -> Outer 设 Err,
 //   Frame 标记 "已 halt"
-// - Pending 路径: 续体(Awaited.Then([Frame, Ctx](F){
-//   Ctx->Post([Frame, F]{ Frame->Resume(); }); }))
+// - Pending 路径: await 注册点捕获通用 MAsyncContext，并通过
+//   Awaited.ThenOn(Ctx, [Frame](F){ Frame->Resume(); }) 恢复
 //   + Frame 标记 "挂起中"
 //
 // spec §7.3 v1 子集: 单语句级 await、≤8/函数、顺序;for/while 内 await 禁;

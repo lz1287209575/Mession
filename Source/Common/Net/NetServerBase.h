@@ -23,7 +23,7 @@
 
 #include "Common/IO/Socket/Socket.h" // 拿 INetConnection 完整定义(DispatchConnection 要调 GetRemoteAddress)
 #include "Common/Runtime/Async/AsyncContext.h"
-#include "Common/Runtime/Concurrency/ITaskRunner.h"
+#include "Common/Runtime/Async/IExecutor.h"
 #include "Common/Runtime/Concurrency/SubReactorPool.h"
 #include "Common/Runtime/EventLoop/EventLoopGroup.h"
 #include "Common/Runtime/EventLoop/NetEventLoop.h"
@@ -57,7 +57,7 @@ class MNetServerBase {
     void Shutdown();
 
     /// @return 绑给异步续体用的执行器(= 任务子循环 TaskLoop)。
-    ITaskRunner* GetTaskRunner() {
+    ::mession::async::IExecutor* GetExecutor() {
         return &TaskLoop;
     }
 

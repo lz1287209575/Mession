@@ -175,9 +175,10 @@ template <typename T> struct SFutureResult : MFuture<TResult<T, FAppError>> {
         }
 
         template <typename FrameT> void AwaitSuspend(FrameT* Frame) {
-            // Frame 由 P5 codegen 生成（业务侧不可见，KD-6）；此处只依赖
-            // 其 Resume() 契约——future 完成时恢复状态机执行。
-            Self.Then([Frame](MFuture<TResult<T, FAppError>> /*F*/) mutable { Frame->Resume(); });
+            // 在注册 await 时捕获恢复目标。生产者可以在任意线程完成，
+            // 不能通过该线程的 TLS 上下文改变此 Frame 的恢复位置。
+            TSharedPtr<MAsync::MAsyncContext> ResumeContext = MAsync::MAsyncContext::CurrentShared();
+            Self.ThenOn(ResumeContext, [Frame](MFuture<TResult<T, FAppError>> /*F*/) mutable { Frame->Resume(); });
         }
 
         T AwaitResume() {

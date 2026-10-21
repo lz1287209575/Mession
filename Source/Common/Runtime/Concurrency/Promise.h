@@ -13,10 +13,8 @@
 #pragma once
 
 #include "Common/Runtime/Async/AsyncContext.h"
-#include "Common/Runtime/Log/Log.h"
 #include "Common/Runtime/MLib.h"
 #include "Common/Runtime/Object/Result.h"
-#include <cassert>
 #include <condition_variable>
 #include <exception>
 
@@ -88,7 +86,16 @@ template <typename T> class MFuture {
     // (与 Wait/Await 的契约一致)。
     const T& Peek() const;
 
+    /**
+     * 注册完成回调。回调在兑现 Promise 的线程执行，仅用于结果桥接。
+     *
+     * 要恢复业务执行的代码必须使用 ThenOn() 并传入注册点捕获的上下文。
+     * Promise 完成时不得从完成线程的 TLS 状态选择恢复上下文。
+     */
     void Then(TFunction<void(MFuture<T>)> Callback);
+
+    /** 注册一个在显式指定异步上下文中执行的回调。 */
+    void ThenOn(TSharedPtr<MAsync::MAsyncContext> ResumeContext, TFunction<void(MFuture<T>)> Callback);
 
     private:
     TSharedPtr<MDetail::SPromiseState<T>> State;
@@ -133,6 +140,7 @@ template <> class MFuture<void> {
     void Get() const;
 
     void Then(TFunction<void(MFuture<void>)> Callback);
+    void ThenOn(TSharedPtr<MAsync::MAsyncContext> ResumeContext, TFunction<void(MFuture<void>)> Callback);
 
     private:
     TSharedPtr<MDetail::SPromiseStateVoid> State;
@@ -170,24 +178,9 @@ template <typename T> void MPromise<T>::DispatchCallbacks(TVector<TFunction<void
         if (!Callback) {
             continue;
         }
-        // P5: 优先投递到 ambient(回原 Sub / 原线程),保持续体执行在原上下文
-        // 无 ambient(Worker 线程 / 测试)走同步路径,行为不变
-        if (auto* Ctx = MAsync::MAsyncContext::Current()) {
-            if (Ctx->IsSameContext()) {
-                // SetValue 在 ambient 自己的执行线程上,Post 进去会下一帧才跑
-                // 业务在当前线程等这个 future ready → 死锁风险。redline 提示。
-                LOG_ERROR("deadlock risk: SetValue on loop thread for future awaited in same loop; "
-                          "use AWAIT_OK (P4) or move the wait off-loop");
-#ifndef NDEBUG
-                assert(false && "deadlock risk: SetValue on loop thread");
-#endif
-            }
-            // 仍然 Post,让续体在 ambient 的执行线程跑(回原 Sub)
-            Ctx->Post([Callback = std::move(Callback), State = State]() mutable { Callback(MFuture<T>(State)); });
-        } else {
-            // 无 ambient:同步跑(Worker 线程 / 测试 / 早期代码)
-            Callback(MFuture<T>(State));
-        }
+        // 上下文由注册点选择，不由生产者选择。ThenOn 会以显式上下文包装
+        // 回调；普通 Then 则刻意保持为就地执行的结果桥接原语。
+        Callback(MFuture<T>(State));
     }
 }
 
@@ -287,6 +280,21 @@ template <typename T> void MFuture<T>::Then(TFunction<void(MFuture<T>)> Callback
     }
 }
 
+template <typename T> void MFuture<T>::ThenOn(TSharedPtr<MAsync::MAsyncContext> ResumeContext, TFunction<void(MFuture<T>)> Callback) {
+    if (!Callback) {
+        return;
+    }
+    Then([ResumeContext, Callback = std::move(Callback)](MFuture<T> Completed) mutable {
+        if (ResumeContext != nullptr) {
+            ResumeContext->Post([Callback = std::move(Callback), Completed = std::move(Completed)]() mutable { Callback(std::move(Completed)); });
+            return;
+        }
+        // 注册点没有安装 TLS 上下文。保持既有的独立 Future 行为，同时把
+        // 该选择固定在注册点而不是完成点。
+        Callback(std::move(Completed));
+    });
+}
+
 // void 特化实现
 inline MFuture<void> MPromise<void>::GetFuture() {
     std::lock_guard<std::mutex> Lock(State->Mutex);
@@ -316,18 +324,7 @@ inline void MPromise<void>::DispatchCallbacks(TVector<TFunction<void(MFuture<voi
         if (!Callback) {
             continue;
         }
-        if (auto* Ctx = MAsync::MAsyncContext::Current()) {
-            if (Ctx->IsSameContext()) {
-                LOG_ERROR("deadlock risk: SetValue on loop thread for future awaited in same loop; "
-                          "use AWAIT_OK (P4) or move the wait off-loop");
-#ifndef NDEBUG
-                assert(false && "deadlock risk: SetValue on loop thread");
-#endif
-            }
-            Ctx->Post([Callback = std::move(Callback), State = State]() mutable { Callback(MFuture<void>(State)); });
-        } else {
-            Callback(MFuture<void>(State));
-        }
+        Callback(MFuture<void>(State));
     }
 }
 
@@ -394,4 +391,17 @@ inline void MFuture<void>::Then(TFunction<void(MFuture<void>)> Callback) {
     if (bCallNow) {
         Callback(MFuture<void>(State));
     }
+}
+
+inline void MFuture<void>::ThenOn(TSharedPtr<MAsync::MAsyncContext> ResumeContext, TFunction<void(MFuture<void>)> Callback) {
+    if (!Callback) {
+        return;
+    }
+    Then([ResumeContext, Callback = std::move(Callback)](MFuture<void> Completed) mutable {
+        if (ResumeContext != nullptr) {
+            ResumeContext->Post([Callback = std::move(Callback), Completed = std::move(Completed)]() mutable { Callback(std::move(Completed)); });
+            return;
+        }
+        Callback(std::move(Completed));
+    });
 }

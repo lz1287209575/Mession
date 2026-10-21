@@ -3,11 +3,13 @@
  * @brief TAwaitable / SAwaiter 类型层测试(Ready、Err、挂起后续体恢复)。
  */
 #include "Common/Runtime/Async/Awaitable.h"
+#include "Common/Runtime/EventLoop/TaskEventLoop.h"
 #include "Common/Runtime/Async/MAsync.h"
 #include "Common/Runtime/Concurrency/Promise.h"
 #include "Common/Runtime/Log/Tests/TestHarness.h"
 
 #include <memory>
+#include <thread>
 
 // 类型层测试:SAwaiter 的三个方法 + TAwaitable 模板。
 //
@@ -17,9 +19,11 @@ namespace {
 
     struct FTestFrame {
         int ResumeCount = 0;
+        std::thread::id ResumeThread;
 
         void Resume() {
             ++ResumeCount;
+            ResumeThread = std::this_thread::get_id();
         }
     };
 
@@ -72,6 +76,39 @@ namespace {
 
         P.SetValue(TResult<int, FAppError>::Ok(7)); // 完成 → Then 回调 → Frame->Resume()
         EXPECT_TRUE(Frame.ResumeCount == 1);
+    }
+
+    TEST_CASE(SAwaiter_Suspend_CapturesRegistrationContext) {
+        MTaskEventLoop                         RegistrationLoop;
+        MTaskEventLoop                         CompletionLoop;
+        auto RegistrationContext = MakeShared<MAsync::MLoopAsyncContext>(&RegistrationLoop);
+        auto CompletionContext   = MakeShared<MAsync::MLoopAsyncContext>(&CompletionLoop);
+        MPromise<TResult<int, FAppError>> P;
+        SFutureResult<int>             Future(P.GetFuture());
+        FTestFrame                     Frame;
+
+        // await 注册点会在生产者执行前选定 RegistrationContext。
+        MAsync::MAsyncContext::SetCurrent(RegistrationContext.Get());
+        Future.AsAwaiter().AwaitSuspend(&Frame);
+        MAsync::MAsyncContext::SetCurrent(nullptr);
+        // ThenOn 必须持有 context；调用方释放自己的引用后，续体仍应安全地
+        // 投递到 RegistrationLoop。
+        RegistrationContext.reset();
+
+        std::thread Producer([&] {
+            // 模拟一个安装了不同 TLS 上下文的完成线程。
+            MAsync::MAsyncContext::SetCurrent(CompletionContext.Get());
+            P.SetValue(TResult<int, FAppError>::Ok(7));
+            MAsync::MAsyncContext::SetCurrent(nullptr);
+        });
+        Producer.join();
+
+        EXPECT_TRUE(Frame.ResumeCount == 0);
+        CompletionLoop.RunOnce();
+        EXPECT_TRUE(Frame.ResumeCount == 0);
+        RegistrationLoop.RunOnce();
+        EXPECT_TRUE(Frame.ResumeCount == 1);
+        EXPECT_TRUE(Frame.ResumeThread == std::this_thread::get_id());
     }
 
     TEST_CASE(TAwaitable_FormA_MinimalSignature) {

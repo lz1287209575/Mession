@@ -706,7 +706,8 @@ namespace MHeaderTool {
             out << "        else OutPromise.SetValue(TResult<TByteArray, FAppError>::Ok(" << okExpr << "));\n";
             out << "        return SFutureResult<TByteArray>(OutFuture);\n";
             out << "    }\n";
-            out << "    Inner.Then([OutPromise](MFuture<TResult<" << responseType << ", FAppError>> F) mutable\n";
+            out << "    TSharedPtr<MAsync::MAsyncContext> ResumeContext = MAsync::MAsyncContext::CurrentShared();\n";
+            out << "    Inner.ThenOn(ResumeContext, [OutPromise](MFuture<TResult<" << responseType << ", FAppError>> F) mutable\n";
             out << "    {\n";
             out << "        TResult<" << responseType << ", FAppError> R = F.Get();\n";
             out << "        if (R.IsErr()) OutPromise.SetValue(TResult<TByteArray, FAppError>::Err(R.GetError()));\n";
@@ -1267,7 +1268,7 @@ namespace MHeaderTool {
             out << "struct " << FrameName << "\n";
             out << "{\n";
             out << "    // Context (populated by user body)\n";
-            out << "    MAsync::MAsyncContext* Ctx = nullptr;\n";
+            out << "    TSharedPtr<MAsync::MAsyncContext> Ctx;\n";
             out << "    " << parsedClass.Name << "* Service = nullptr;\n";
             out << "    " << ReqType << " Request;\n";
             out << "    // Single-await slot (P4 will split into per-state slots)\n";
@@ -1292,7 +1293,7 @@ namespace MHeaderTool {
             out << "        }\n";
             out << "        else\n";
             out << "        {\n";
-            out << "            Awaited.Then([this](MFuture<TResult<" << RespType << ", FAppError>> /*F*/)\n";
+            out << "            Awaited.ThenOn(Ctx, [this](MFuture<TResult<" << RespType << ", FAppError>> /*F*/)\n";
             out << "            {\n";
             out << "                if (!AwaitedSlot.IsReady()) return;\n";
             // 用 PeekResult(非破坏性)取值,回调跑完后调用方仍能通过 GetResult() 查询到

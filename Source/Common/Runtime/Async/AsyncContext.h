@@ -10,8 +10,8 @@
 /**
  * @brief MAsyncContext - 异步上下文(规范 §9 的薄 SynchronizationContext)。
  *
- * @detail 一个 MAsyncContext 代表一条「执行线」(process event loop / future
- * actor strand 等);AWAIT / Then 的恢复目标由 ambient Current() 决定。
+ * @detail 一个 MAsyncContext 代表一条「执行线」；await 注册点捕获
+ * Current() 并显式把它交给 future，完成线程不参与选择恢复目标。
  * 相比 .NET SynchronizationContext 只保留最小子集:
  *   * Post(Continuation) —— 把续体投递到此 context 的执行线
  *   * IsSameContext() —— Get 红线检测;true 表示当前线程就是执行线本身
@@ -24,7 +24,7 @@
 
 namespace MAsync {
 
-    class MAsyncContext {
+    class MAsyncContext : public TEnableSharedFromThis<MAsyncContext> {
         public:
         virtual ~MAsyncContext() = default;
 
@@ -36,10 +36,21 @@ namespace MAsync {
             return false;
         }
 
+        /** 停止接收新续体；关停执行器前必须调用。*/
+        virtual void Deactivate() {
+        }
+
         /** 线程局部 ambient 指针;当前线程未安装时返回 nullptr。*/
         static MAsyncContext* Current();
 
-        /** 设置 TLS ambient(由进程级安装路径调用;业务代码不要直接调)。*/
+        /**
+         * 返回当前 ambient 的保活句柄。续体必须捕获此句柄，而不能保存
+         * Current() 的裸指针；服务退出后，未完成 future 仍可能在其他线程兑现。
+         * 未由 shared_ptr 管理的上下文返回空句柄。
+         */
+        static TSharedPtr<MAsyncContext> CurrentShared();
+
+        /** 设置 TLS ambient(由执行入口安装;业务代码不要直接调)。*/
         static void SetCurrent(MAsyncContext* Ctx);
     };
 
@@ -50,9 +61,12 @@ namespace MAsync {
 
         void Post(TFunction<void()> Continuation) override;
         bool IsSameContext() const override; // 等价于 Executor->IsCurrentThread()
+        void Deactivate() override;
 
         private:
-        mession::async::IExecutor* Executor = nullptr; // 不持有所有权
+        // Post 与 Deactivate 互斥，确保执行器释放后不会再被晚到的 future 访问。
+        mutable std::mutex           ExecutorMutex;
+        mession::async::IExecutor*   Executor = nullptr; // 不持有所有权
     };
 
 } // namespace MAsync

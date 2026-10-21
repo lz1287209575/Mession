@@ -19,6 +19,9 @@ int main() {
     std::printf("[ SAwaiter_Suspend_ThenResumesFrameOnCompletion ]\n");
     Test_SAwaiter_Suspend_ThenResumesFrameOnCompletion();
 
+    std::printf("[ SAwaiter_Suspend_CapturesRegistrationContext ]\n");
+    Test_SAwaiter_Suspend_CapturesRegistrationContext();
+
     std::printf("[ TAwaitable_FormA_MinimalSignature ]\n");
     Test_TAwaitable_FormA_MinimalSignature();
 

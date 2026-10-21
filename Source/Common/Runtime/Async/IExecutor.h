@@ -15,9 +15,8 @@
  *
  * 业务侧适配:
  * - MTaskEventLoop 实现 IExecutor(PostTask 已存在,改名即可)
- * - MNetEventLoop 不做 IExecutor:它只负责 poll 网络 fd,不含任务队列;
- *   异步续体一律投递到与其配对的 MTaskEventLoop(单 Reactor 下是
- *   MNetServerBase::TaskLoop,多 Reactor 下是 SubReactorPool 的 SubTaskLoops)
+ * - 纯 I/O loop 不必实现 IExecutor:它只负责 poll 网络 fd,不含任务队列;
+ *   异步续体应投递到与之配对的通用任务执行器。
  *
  * ## 抽库边界
  *
@@ -66,7 +65,3 @@ namespace mession::async {
         }
     };
 } // namespace mession::async
-
-// 兼容别名:旧代码仍可写 ITaskRunner,实际就是 IExecutor。
-// 抽库完成后所有代码迁移到 IExecutor,本 typedef 会在后续 PR 删除。
-using IExecutor_Compat = ::mession::async::IExecutor;

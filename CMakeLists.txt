@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
 project(Mession VERSION 1.0.0 LANGUAGES CXX C)
 
-# 供 MHeaderTool libtooling 接入 — ClangTool 读取 compile_commands.json
+# compile_commands.json 仅供 IDE、clangd 和离线分析工具使用；构建图本身
+# 不应以它是否已生成作为前置条件。
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "" FORCE)
 
 include(FetchContent)
@@ -121,6 +122,15 @@ else()
     )
     FetchContent_MakeAvailable(fmt)
 endif()
+
+# fmt 以头文件形式传播到绝大多数目标。把它标记为系统包含目录，避免项目的
+# -Wall/-Wextra 把第三方模板实现中的警告混入业务代码的构建输出。
+get_target_property(MESSION_FMT_INCLUDE_DIRS fmt-header-only INTERFACE_INCLUDE_DIRECTORIES)
+if(MESSION_FMT_INCLUDE_DIRS)
+    set_property(TARGET fmt-header-only PROPERTY INTERFACE_INCLUDE_DIRECTORIES "")
+    target_include_directories(fmt-header-only SYSTEM INTERFACE ${MESSION_FMT_INCLUDE_DIRS})
+endif()
+unset(MESSION_FMT_INCLUDE_DIRS)
 
 # Core 库（底层运行时：Common 下的网络/并发/事件循环基础能力）
 set(MESSION_CORE_SOURCES
@@ -356,6 +366,8 @@ set(MESSION_HEADERTOOL_CMD
     "--lua-stdlib-hint-teal=${MESSION_GENERATED_DIR}/Mession.d.tl"
 )
 
+# manifest 决定生成源文件和目标图，必须在 configure 阶段刷新；否则 build
+# 阶段新生成的源文件不会进入本次 CMake graph。
 if(EXISTS "${MESSION_HEADERTOOL_RUNNER}")
     execute_process(
         COMMAND ${MESSION_HEADERTOOL_CMD}
@@ -471,12 +483,27 @@ target_link_libraries(MemberFrameworkTest PRIVATE
 configure_mession_compile_options(MemberFrameworkTest)
 add_dependencies(MemberFrameworkTest mession_reflection_codegen)
 
-add_custom_target(mession_reflection_codegen
-    COMMAND ${MESSION_HEADERTOOL_CMD}
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    DEPENDS MHeaderTool
-    COMMENT "Generating reflection glue with MHeaderTool"
+# configure 阶段刷新 manifest 以建立正确目标图；构建阶段仍以 stamp 和输入
+# 时间戳保持生成物与最终编译出的 MHeaderTool 同步。
+file(GLOB_RECURSE MESSION_HEADERTOOL_INPUTS CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/Source/*.h"
+    "${CMAKE_SOURCE_DIR}/Source/*.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/*.c"
 )
+# CONFIGURE_DEPENDS 只能发现 glob 结果的增删；显式登记全部输入才能让
+# 既有头/源文件的内容变更先触发重新 configure，再按新 manifest 建图。
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MESSION_HEADERTOOL_INPUTS})
+set(MESSION_HEADERTOOL_STAMP "${MESSION_GENERATED_DIR}/MHeaderTool.stamp")
+add_custom_command(
+    OUTPUT "${MESSION_HEADERTOOL_STAMP}"
+    COMMAND ${MESSION_HEADERTOOL_CMD}
+    COMMAND "${CMAKE_COMMAND}" -E touch "${MESSION_HEADERTOOL_STAMP}"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    DEPENDS MHeaderTool ${MESSION_HEADERTOOL_INPUTS}
+    COMMENT "Generating reflection glue with MHeaderTool"
+    VERBATIM
+)
+add_custom_target(mession_reflection_codegen DEPENDS "${MESSION_HEADERTOOL_STAMP}")
 
 add_dependencies(mession_common mession_reflection_codegen)
 

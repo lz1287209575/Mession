@@ -92,7 +92,7 @@ void MNetServerBase::Run() {
     }
 
     // 安装 ambient MAsyncContext 并绑到本进程的 TaskLoop,使续体能投递回主线程。
-    LoopContext = MakeShared<MAsync::MLoopAsyncContext>(GetTaskRunner());
+    LoopContext = MakeShared<MAsync::MLoopAsyncContext>(GetExecutor());
     MAsync::MAsyncContext::SetCurrent(LoopContext.Get());
 
     while (bRunning) {
@@ -109,6 +109,9 @@ void MNetServerBase::Run() {
 
     // 退出前必须清掉 ambient context,否则 Shutdown 之后会残留悬空指针。
     MAsync::MAsyncContext::SetCurrent(nullptr);
+    // 未完成的 future 可能还持有 LoopContext；先断开其非拥有的 TaskLoop 指针，
+    // 使这些晚到续体安全丢弃，再释放 context。
+    LoopContext->Deactivate();
     LoopContext.reset();
 
     if (SubPool != nullptr && SubCount > 0) {

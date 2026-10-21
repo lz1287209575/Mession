@@ -18,7 +18,7 @@
 #
 # 用法:
 #   Scripts/build_from_scratch.sh                          # Release 构建到 Build/
-#   Scripts/build_from_scratch.sh -t Debug                 # Debug 构建到 cmake-build-debug/
+#   Scripts/build_from_scratch.sh -t Debug                 # Debug 构建到 Build/
 #   Scripts/build_from_scratch.sh -b /tmp/mession-out -j 32
 #   Scripts/build_from_scratch.sh --clean --test
 #   Scripts/build_from_scratch.sh --fmt-dir /path/to/fmt   # 离线/加速
@@ -61,7 +61,7 @@ Ninja 不在 PATH、configure 期需要先编宿主 MHeaderTool、fmt 需要联�
 用法: Scripts/build_from_scratch.sh [选项]
 
 Options:
-  -b, --build-dir DIR   构建目录 (默认: Release → Build, 其它 → cmake-build-<type 小写>)
+  -b, --build-dir DIR   构建目录 (默认: Build；不同构建类型应使用独立工作区或先 --clean)
   -t, --type TYPE       CMAKE_BUILD_TYPE: Debug|Release|RelWithDebInfo|MinSizeRel (默认 Release)
   -j, --jobs N          并行度 (默认: 核数, 上限 32)
   -g, --generator GEN   CMake 生成器 (默认: 有 ninja 用 Ninja, 否则 Unix Makefiles)
@@ -101,11 +101,7 @@ case "${BUILD_TYPE}" in
 esac
 
 if [ -z "${BUILD_DIR}" ]; then
-    if [ "${BUILD_TYPE}" = "Release" ]; then
-        BUILD_DIR="${REPO_ROOT}/Build"
-    else
-        BUILD_DIR="${REPO_ROOT}/cmake-build-$(printf '%s' "${BUILD_TYPE}" | tr '[:upper:]' '[:lower:]')"
-    fi
+    BUILD_DIR="${REPO_ROOT}/Build"
 elif [ "${BUILD_DIR#/}" = "${BUILD_DIR}" ]; then
     BUILD_DIR="${REPO_ROOT}/${BUILD_DIR}"
 fi

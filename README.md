@@ -66,9 +66,18 @@ ActorId 布局：[ServiceId (高 32 位 = `EServerType::Echo`=7)][InstId (低 32
 >
 > ```bash
 > Scripts/build_from_scratch.sh                  # Release 构建到 Build/
-> Scripts/build_from_scratch.sh -t Debug --test  # Debug 构建到 cmake-build-debug/，构建完跑测试
+> Scripts/build_from_scratch.sh -t Debug --test  # Debug 构建到 Build/，构建完跑测试
 > Scripts/build_from_scratch.sh --fmt-dir DIR    # 离线环境：用本地 fmt 源码跳过 FetchContent
 > ```
+
+日常开发可使用两个更明确的入口：
+
+```bash
+Scripts/BuildFull.sh                          # 清理 Build/ 后完整配置、编译
+Scripts/BuildIncremental.sh                   # 复用 Build/ 做增量编译
+Scripts/BuildIncremental.sh --target MHeaderTool -j 16
+Scripts/GenerateXcodeProject.sh               # macOS：生成 Build-Xcode/Mession.xcodeproj
+```
 >
 > 依赖：CMake ≥ 3.15、GCC/Clang 编译器、任意已安装 Clang 的 CMake 包与内置头
 > （Debian/Ubuntu：`apt install libclang-19-dev llvm-19-dev libclang-common-19-dev`；

@@ -19,7 +19,9 @@
 # 产物:<引导构建目录>/[<配置名>/]bootstrap_mht
 cmake_minimum_required(VERSION 3.15)
 
-project(MHeaderToolBootstrap LANGUAGES CXX)
+# LLVM 的 CMake 包在解析 Clang 时会探测 C 头文件（例如 libedit）。同时启用
+# C 与 C++，使这些配置期探测可在全新检出环境中正常工作。
+project(MHeaderToolBootstrap LANGUAGES C CXX)
 
 # 与顶层一致:项目整体是 C++17。
 set(CMAKE_CXX_STANDARD 17)

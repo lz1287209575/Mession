@@ -105,6 +105,13 @@ void MSubReactorPool::Shutdown() {
     }
 
     LoopThreads.clear();
+    // Ambient 可能被未完成 future 保活。清除 TaskLoop 前先使它们失效，避免
+    // 后续完成线程经 context 访问已销毁的执行器。
+    for (const auto& Ambient : SubAmbients) {
+        if (Ambient != nullptr) {
+            Ambient->Deactivate();
+        }
+    }
     SubLoops.clear();
     SubTaskLoops.clear();
     SubAmbients.clear();

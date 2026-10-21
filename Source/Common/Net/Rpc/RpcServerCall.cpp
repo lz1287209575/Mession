@@ -233,24 +233,22 @@ bool DispatchServerCall(MObject* TargetInstance, uint16 FunctionId, uint64 CallI
         return true;
     }
 
-    // 异步路径:续体经 ambient MAsyncContext::Post 回到当前线程执行,而不是就地执行 ——
-    // 避免在 I/O 线程上跑业务代码。
-    MAsync::MAsyncContext* Ctx = MAsync::MAsyncContext::Current();
+    // 异步路径:在注册点捕获当前通用恢复上下文。Future 的完成线程只会
+    // 触发完成，不参与决定回包续体在哪条执行线运行。
+    TSharedPtr<MAsync::MAsyncContext> Ctx = MAsync::MAsyncContext::CurrentShared();
     if (!Ctx) {
         LOG_ERROR("Pending ServerCall has no MAsyncContext — synthesizing error");
         (void)ResponseTarget->SendServerCallResponse(FunctionId, CallId, false, BuildPayload(FAppError::Make("async_context_missing")));
         return true;
     }
 
-    RespFuture.Then([Ctx, ResponseTarget, FunctionId, CallId](SFutureResult<TByteArray> F) mutable {
-        Ctx->Post([F = std::move(F), ResponseTarget, FunctionId, CallId]() mutable {
-            TResult<TByteArray, FAppError> Result = F.GetResult();
-            if (Result.IsErr()) {
-                (void)ResponseTarget->SendServerCallResponse(FunctionId, CallId, false, BuildPayload(Result.GetError()));
-            } else {
-                (void)ResponseTarget->SendServerCallResponse(FunctionId, CallId, true, std::move(Result.GetValue()));
-            }
-        });
+    RespFuture.ThenOn(Ctx, [ResponseTarget, FunctionId, CallId](SFutureResult<TByteArray> F) mutable {
+        TResult<TByteArray, FAppError> Result = F.GetResult();
+        if (Result.IsErr()) {
+            (void)ResponseTarget->SendServerCallResponse(FunctionId, CallId, false, BuildPayload(Result.GetError()));
+        } else {
+            (void)ResponseTarget->SendServerCallResponse(FunctionId, CallId, true, std::move(Result.GetValue()));
+        }
     });
     return true; // 返回 true 仅表示"调用已受理",不代表"已同步执行完成"
 }
