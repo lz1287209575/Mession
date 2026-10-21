@@ -71,7 +71,8 @@ if [ "${BUILD_DIR#/}" = "${BUILD_DIR}" ]; then
     BUILD_DIR="${REPO_ROOT}/${BUILD_DIR}"
 fi
 
-echo "[xcode] 生成工程: ${BUILD_DIR}/Mession.xcodeproj"
+PROJECT_PATH="${BUILD_DIR}/Mession.xcodeproj"
+echo "[xcode] 生成工程: ${PROJECT_PATH}"
 CONFIGURE_ARGS=(
     --configure-only \
     --generator Xcode \
@@ -81,4 +82,12 @@ if [ "${#FORWARD_ARGS[@]}" -gt 0 ]; then
     CONFIGURE_ARGS+=("${FORWARD_ARGS[@]}")
 fi
 
-exec "${SCRIPT_DIR}/build_from_scratch.sh" "${CONFIGURE_ARGS[@]}"
+"${SCRIPT_DIR}/build_from_scratch.sh" "${CONFIGURE_ARGS[@]}"
+
+if [ ! -d "${PROJECT_PATH}" ]; then
+    echo "[xcode] 配置命令已结束，但未找到 Xcode 工程: ${PROJECT_PATH}" >&2
+    echo "[xcode] 请使用 --clean 重试；若仍失败，请提供上方 CMake 输出。" >&2
+    exit 1
+fi
+
+echo "[xcode] 工程已生成: ${PROJECT_PATH}"
