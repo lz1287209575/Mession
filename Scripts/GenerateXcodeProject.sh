@@ -72,8 +72,13 @@ if [ "${BUILD_DIR#/}" = "${BUILD_DIR}" ]; then
 fi
 
 echo "[xcode] 生成工程: ${BUILD_DIR}/Mession.xcodeproj"
-exec "${SCRIPT_DIR}/build_from_scratch.sh" \
+CONFIGURE_ARGS=(
     --configure-only \
     --generator Xcode \
-    --build-dir "${BUILD_DIR}" \
-    "${FORWARD_ARGS[@]}"
+    --build-dir "${BUILD_DIR}"
+)
+if [ "${#FORWARD_ARGS[@]}" -gt 0 ]; then
+    CONFIGURE_ARGS+=("${FORWARD_ARGS[@]}")
+fi
+
+exec "${SCRIPT_DIR}/build_from_scratch.sh" "${CONFIGURE_ARGS[@]}"
