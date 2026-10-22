@@ -55,6 +55,8 @@ namespace {
         TFunction<void(const SServerCallResponse&)> Completion;
         double                                      DeadlineSeconds = 0.0; ///< 绝对时刻(秒),由 MTime 提供
         TFunction<bool()>                           LivenessProbe;
+        uint16                                      ExpectedFunctionId = 0;
+        const void*                                 ExpectedConnectionIdentity = nullptr;
     };
 
     // CallId 从 1 开始分配:0 在 wire 上是"未分配"的哨兵,不能用作真实 id。
@@ -254,7 +256,7 @@ bool DispatchServerCall(MObject* TargetInstance, uint16 FunctionId, uint64 CallI
 }
 
 // CallId 由原子计数器分配,保证并发登记不冲突;超时传 0/负数时回退到默认 5 秒。
-uint64 RegisterServerCall(TFunction<void(const SServerCallResponse&)> Completion, double TimeoutSeconds, TFunction<bool()> LivenessProbe) {
+uint64 RegisterServerCall(TFunction<void(const SServerCallResponse&)> Completion, double TimeoutSeconds, TFunction<bool()> LivenessProbe, uint16 ExpectedFunctionId, const void* ExpectedConnectionIdentity) {
     if (!Completion) {
         return 0;
     }
@@ -265,6 +267,8 @@ uint64 RegisterServerCall(TFunction<void(const SServerCallResponse&)> Completion
     Pending.Completion          = std::move(Completion);
     Pending.DeadlineSeconds     = MTime::GetTimeSeconds() + ((TimeoutSeconds > 0.0) ? TimeoutSeconds : 5.0);
     Pending.LivenessProbe       = std::move(LivenessProbe);
+    Pending.ExpectedFunctionId  = ExpectedFunctionId;
+    Pending.ExpectedConnectionIdentity = ExpectedConnectionIdentity;
     GPendingServerCalls[CallId] = std::move(Pending);
     return CallId;
 }
@@ -279,12 +283,18 @@ void CancelServerCall(uint64 CallId) {
 }
 
 // 先在锁内摘除条目,再到锁外触发回调 —— 回调里可以安全地再次发起 RPC,不会自锁。
-bool ConsumeServerCall(uint64 CallId, const SServerCallResponse* Response) {
+bool ConsumeServerCall(uint64 CallId, uint16 FunctionId, const void* SourceConnectionIdentity, const SServerCallResponse* Response) {
     TFunction<void(const SServerCallResponse&)> Completion;
     {
         std::lock_guard<std::mutex> Lock(GServerCallMutex);
         auto                        It = GPendingServerCalls.find(CallId);
         if (It == GPendingServerCalls.end()) {
+            return false;
+        }
+
+        if ((It->second.ExpectedFunctionId != 0 && It->second.ExpectedFunctionId != FunctionId) ||
+            (It->second.ExpectedConnectionIdentity != nullptr && It->second.ExpectedConnectionIdentity != SourceConnectionIdentity)) {
+            LOG_WARN("ServerCall response rejected: call_id=%llu function_id=%u source mismatch", static_cast<unsigned long long>(CallId), static_cast<unsigned>(FunctionId));
             return false;
         }
 
@@ -344,7 +354,7 @@ void PumpServerCallMaintenance() {
 }
 
 // MT_FunctionResponse 的入口:解析头部 → 拷出负载 → 交给 ConsumeServerCall 按 CallId 兑现。
-bool HandleServerCallResponse(const TByteArray& Data) {
+bool HandleServerCallResponse(const TByteArray& Data, const void* SourceConnectionIdentity) {
     uint16 FunctionId    = 0;
     uint64 CallId        = 0;
     bool   bSuccess      = false;
@@ -360,7 +370,7 @@ bool HandleServerCallResponse(const TByteArray& Data) {
     }
 
     const SServerCallResponse Response{bSuccess, std::move(Payload)};
-    return ConsumeServerCall(CallId, &Response);
+    return ConsumeServerCall(CallId, FunctionId, SourceConnectionIdentity, &Response);
 }
 
 /// @brief 入站 MT_FunctionCall(MServerConnection 版):解析 → 建回包通道 → 派发。

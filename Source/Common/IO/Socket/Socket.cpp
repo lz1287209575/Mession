@@ -75,7 +75,7 @@ TSharedPtr<MTcpConnection> MTcpConnection::ConnectTo(const SSocketAddress& Addre
     PollFd.revents = 0;
 
     const int PollResult = poll(&PollFd, 1, static_cast<int>(TimeoutSeconds * 1000.0f));
-    if (PollResult <= 0 || !(PollFd.revents & POLLOUT)) {
+    if (PollResult <= 0 || !(PollFd.revents & POLLOUT) || MSocketPlatform::GetSocketError(NewSocketFd) != 0) {
         MSocketPlatform::CloseSocket(NewSocketFd);
         return nullptr;
     }

@@ -17,7 +17,7 @@ class MTaskEventLoop;
  * @brief MSubReactorPool - 多 Reactor 池.
  *
  * 持有 N 个独立的 I/O 线程 + TaskLoop 线程对。
- * fd 按 remote_addr hash 分桶,保证同一客户端始终在同一 Sub 上,
+ * fd 按 remote_addr + connection id hash 分桶,保证同一连接始终在同一 Sub 上,
  * 保留 session affinity,提升 ConnectionPool 与业务 sharded cache 的命中率。
  *
  * 生命周期:
@@ -58,6 +58,9 @@ class MSubReactorPool {
      * @return  SubId ∈ [0, InSubCount)
      */
     uint32 PickSub(const MString& InRemoteAddr) const;
+
+    /** @brief 连接分桶。ConnectionId 消除 NAT/localhost 共用 IP 时的热点。 */
+    uint32 PickSub(const MString& InRemoteAddr, uint64 InConnectionId) const;
 
     /**
      * @brief PickSub - 按 ActorId 选 Sub(hash(ActorId) % SubCount).

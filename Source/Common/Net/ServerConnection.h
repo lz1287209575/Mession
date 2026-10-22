@@ -267,6 +267,11 @@ class MServerConnection : public TEnableSharedFromThis<MServerConnection> {
         return State == EConnectionState::Authenticated;
     }
 
+    /// @brief 底层传输是否仍可用于握手等控制消息；不代表远端已认证。
+    bool IsTransportConnected() const {
+        return (State == EConnectionState::Connected || State == EConnectionState::Authenticated) && Transport && Transport->IsConnected();
+    }
+
     /// @return true:正在建连(Connecting)或已建连但未握手(Connected)。
     bool IsConnecting() const {
         return State == EConnectionState::Connecting || State == EConnectionState::Connected;
@@ -364,7 +369,7 @@ class MServerConnection : public TEnableSharedFromThis<MServerConnection> {
     /// 按包类型分发。当前实现只有 default 分支:所有包(含心跳)都转发给 OnMessageCallback。
     void HandlePacket(uint8 PacketType, const TByteArray& Data);
 
-    /// 发握手 RPC 并置为 Authenticated;无对应端点类名时跳过。
+    /// 发 ServerCall 握手；仅在收到成功响应后置为 Authenticated。
     void SendHandshake();
 
     /// 发一次心跳 RPC(序号自增)。

@@ -89,7 +89,7 @@ namespace MHeaderTool {
      * @brief 一次构建的完整缓存内容。
      */
     struct SBuildCache {
-        static constexpr uint32_t Version = 2; // 缓存格式版本;不兼容变更时必须递增
+        static constexpr uint32_t Version = 3; // v3:入口实际消费该缓存；不兼容变更时必须递增
 
         uint32_t                              Version_ = Version; // 实际存盘/读回的版本,反序列化后与 Version 比对
         std::chrono::system_clock::time_point CreatedAt;          // 缓存创建时刻(写入秒级 Unix 时间戳)

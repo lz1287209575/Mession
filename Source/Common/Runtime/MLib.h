@@ -192,7 +192,8 @@ template <typename... TArgs> using TTuple = std::tuple<TArgs...>;
 using TIfstream = std::ifstream;
 using TOfstream = std::ofstream;
 
-// 字节序：协议使用网络字节序（大端），提供 HostToNetwork/NetworkToHost 供序列化使用
+// 字节序：协议使用网络字节序（大端），提供 HostToNetwork/NetworkToHost 供序列化使用。
+// Windows 目标均为小端；GCC/Clang 则显式识别大端目标，不能无条件 byteswap。
 #if defined(_WIN32) || defined(_WIN64)
 #include <stdlib.h>
 inline uint16 HostToNetwork(uint16 Value) {
@@ -204,6 +205,10 @@ inline uint32 HostToNetwork(uint32 Value) {
 inline uint64 HostToNetwork(uint64 Value) {
     return _byteswap_uint64(Value);
 }
+#elif defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+inline uint16 HostToNetwork(uint16 Value) { return Value; }
+inline uint32 HostToNetwork(uint32 Value) { return Value; }
+inline uint64 HostToNetwork(uint64 Value) { return Value; }
 #else
 inline uint16 HostToNetwork(uint16 Value) {
     return __builtin_bswap16(Value);

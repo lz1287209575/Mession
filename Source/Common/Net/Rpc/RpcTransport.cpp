@@ -2,8 +2,7 @@
  * @file RpcTransport.cpp
  * @brief RpcTransport 的实现:三类报文的拼包/解包与发送。
  *
- * @detail 全部整数走 memcpy / AppendValue(主机字节序),不做网络序转换 —— 只在
- *   little-endian 同架构集群内互通。所有 Parse* 都会先校验 header 完整、
+ * @detail 全部多字节整数走网络字节序。所有 Parse* 都会先校验 header 完整、
  *   再校验声明长度不超过实际数据,失败一律返回 false,不抛异常、不越界读。
  */
 
@@ -20,11 +19,8 @@ bool BuildServerRpcPayload(uint16 FunctionId, const TByteArray& InPayload, TByte
     OutData.clear();
     OutData.reserve(sizeof(FunctionId) + sizeof(PayloadSize) + PayloadSize);
 
-    const uint8* FuncPtr = reinterpret_cast<const uint8*>(&FunctionId);
-    OutData.insert(OutData.end(), FuncPtr, FuncPtr + sizeof(FunctionId));
-
-    const uint8* SizePtr = reinterpret_cast<const uint8*>(&PayloadSize);
-    OutData.insert(OutData.end(), SizePtr, SizePtr + sizeof(PayloadSize));
+    AppendValueBE(OutData, FunctionId);
+    AppendValueBE(OutData, PayloadSize);
 
     if (PayloadSize > 0) {
         OutData.insert(OutData.end(), InPayload.begin(), InPayload.end());
@@ -66,10 +62,10 @@ bool SendServerRpcMessage(const TSharedPtr<INetConnection>& Connection, const TB
     return Connection ? SendServerRpcMessage(*Connection, RpcPayload) : false;
 }
 
-// Client↔Gateway 反射 envelope:不带 MessageType 字节。
+// Client↔Gateway 反射 envelope:以 magic 与服务器间 MessageType 严格分流。
 //
 // wire 形态(整包长度前缀由 MLengthPrefixedPacketCodec 处理,不在本函数范围内):
-//   [RequestId: 8B][FunctionId: 2B][PayloadSize: 4B][Payload: N]
+//   [Magic:1B][RequestId: 8B][FunctionId: 2B][PayloadSize: 4B][Payload: N]
 //
 // RequestId 由 UE 客户端唯一分配,Gateway 只透传不解释:
 //   - 普通上行请求:客户端给一个 id,Gateway 回包时原样带回同一个 id;
@@ -88,34 +84,36 @@ bool BuildClientEnvelopePacket(uint16 FunctionId, uint64 RequestId, const TByteA
     }
 
     OutPacket.clear();
-    OutPacket.reserve(sizeof(RequestId) + sizeof(FunctionId) + sizeof(uint32) + InPayload.size());
+    OutPacket.reserve(sizeof(CLIENT_ENVELOPE_MAGIC) + sizeof(RequestId) + sizeof(FunctionId) + sizeof(uint32) + InPayload.size());
+    OutPacket.push_back(CLIENT_ENVELOPE_MAGIC);
 
-    const uint8* ReqPtr = reinterpret_cast<const uint8*>(&RequestId);
-    OutPacket.insert(OutPacket.end(), ReqPtr, ReqPtr + sizeof(RequestId));
-
-    const uint8* FuncPtr = reinterpret_cast<const uint8*>(&FunctionId);
-    OutPacket.insert(OutPacket.end(), FuncPtr, FuncPtr + sizeof(FunctionId));
-
-    AppendValue(OutPacket, static_cast<uint32>(InPayload.size()));
+    AppendValueBE(OutPacket, RequestId);
+    AppendValueBE(OutPacket, FunctionId);
+    AppendValueBE(OutPacket, static_cast<uint32>(InPayload.size()));
     OutPacket.insert(OutPacket.end(), InPayload.begin(), InPayload.end());
     return true;
 }
 
 /**
- * @brief 解反射 envelope 头(14 字节),并校验负载完整。
+ * @brief 解反射 envelope 头(15 字节),并校验 magic 与负载完整。
  * @return true 头完整且 Data 容得下声明的负载;否则 false(调用方应丢包)
  */
 bool ParseClientEnvelopePacket(const TByteArray& Data, uint16& OutFunctionId, uint64& OutRequestId, uint32& OutPayloadSize, size_t& OutPayloadOffset) {
-    const size_t HeaderSize = sizeof(uint64) + sizeof(uint16) + sizeof(uint32);
+    const size_t HeaderSize = sizeof(CLIENT_ENVELOPE_MAGIC) + sizeof(uint64) + sizeof(uint16) + sizeof(uint32);
     if (Data.size() < HeaderSize) {
         return false;
     }
 
-    std::memcpy(&OutRequestId, Data.data(), sizeof(OutRequestId));
-    std::memcpy(&OutFunctionId, Data.data() + sizeof(uint64), sizeof(OutFunctionId));
-    std::memcpy(&OutPayloadSize, Data.data() + sizeof(uint64) + sizeof(uint16), sizeof(OutPayloadSize));
+    if (Data[0] != CLIENT_ENVELOPE_MAGIC) {
+        return false;
+    }
+
+    size_t Offset = sizeof(CLIENT_ENVELOPE_MAGIC);
+    if (!ReadValueBE(Data, Offset, OutRequestId) || !ReadValueBE(Data, Offset, OutFunctionId) || !ReadValueBE(Data, Offset, OutPayloadSize)) {
+        return false;
+    }
     OutPayloadOffset = HeaderSize;
-    return Data.size() >= OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
+    return Data.size() == OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
 }
 
 // ---------------------------------------------------------------------------
@@ -176,9 +174,9 @@ bool BuildServerCallPacket(uint16 FunctionId, uint64 CallId, const TByteArray& I
 
     OutPayload.clear();
     OutPayload.reserve(sizeof(FunctionId) + sizeof(CallId) + sizeof(uint32) + InPayload.size());
-    AppendValue(OutPayload, FunctionId);
-    AppendValue(OutPayload, CallId);
-    AppendValue(OutPayload, static_cast<uint32>(InPayload.size()));
+    AppendValueBE(OutPayload, FunctionId);
+    AppendValueBE(OutPayload, CallId);
+    AppendValueBE(OutPayload, static_cast<uint32>(InPayload.size()));
     OutPayload.insert(OutPayload.end(), InPayload.begin(), InPayload.end());
     return true;
 }
@@ -191,10 +189,10 @@ bool BuildServerCallResponsePacket(uint16 FunctionId, uint64 CallId, bool bSucce
 
     OutPayload.clear();
     OutPayload.reserve(sizeof(FunctionId) + sizeof(CallId) + sizeof(uint8) + sizeof(uint32) + InPayload.size());
-    AppendValue(OutPayload, FunctionId);
-    AppendValue(OutPayload, CallId);
+    AppendValueBE(OutPayload, FunctionId);
+    AppendValueBE(OutPayload, CallId);
     AppendValue(OutPayload, static_cast<uint8>(bSuccess ? 1 : 0));
-    AppendValue(OutPayload, static_cast<uint32>(InPayload.size()));
+    AppendValueBE(OutPayload, static_cast<uint32>(InPayload.size()));
     OutPayload.insert(OutPayload.end(), InPayload.begin(), InPayload.end());
     return true;
 }
@@ -207,14 +205,11 @@ bool ParseServerCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64
     }
 
     size_t Offset = 0;
-    std::memcpy(&OutFunctionId, Data.data() + Offset, sizeof(OutFunctionId));
-    Offset += sizeof(OutFunctionId);
-    std::memcpy(&OutCallId, Data.data() + Offset, sizeof(OutCallId));
-    Offset += sizeof(OutCallId);
-    std::memcpy(&OutPayloadSize, Data.data() + Offset, sizeof(OutPayloadSize));
-    Offset += sizeof(OutPayloadSize);
+    if (!ReadValueBE(Data, Offset, OutFunctionId) || !ReadValueBE(Data, Offset, OutCallId) || !ReadValueBE(Data, Offset, OutPayloadSize)) {
+        return false;
+    }
     OutPayloadOffset = Offset;
-    return Data.size() >= OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
+    return Data.size() == OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
 }
 
 /// @brief 解 ServerCall 回包头(15 字节)并校验负载完整。
@@ -226,17 +221,17 @@ bool ParseServerCallResponsePacket(const TByteArray& Data, uint16& OutFunctionId
 
     size_t Offset      = 0;
     uint8  SuccessByte = 0;
-    std::memcpy(&OutFunctionId, Data.data() + Offset, sizeof(OutFunctionId));
-    Offset += sizeof(OutFunctionId);
-    std::memcpy(&OutCallId, Data.data() + Offset, sizeof(OutCallId));
-    Offset += sizeof(OutCallId);
+    if (!ReadValueBE(Data, Offset, OutFunctionId) || !ReadValueBE(Data, Offset, OutCallId)) {
+        return false;
+    }
     std::memcpy(&SuccessByte, Data.data() + Offset, sizeof(SuccessByte));
     Offset += sizeof(SuccessByte);
-    std::memcpy(&OutPayloadSize, Data.data() + Offset, sizeof(OutPayloadSize));
-    Offset += sizeof(OutPayloadSize);
+    if (!ReadValueBE(Data, Offset, OutPayloadSize)) {
+        return false;
+    }
     OutSuccess       = SuccessByte != 0;
     OutPayloadOffset = Offset;
-    return Data.size() >= OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
+    return Data.size() == OutPayloadOffset + static_cast<size_t>(OutPayloadSize);
 }
 
 /// @brief 走 MServerConnection::SendPacket(由它补 MT_FunctionCall 类型字节)。

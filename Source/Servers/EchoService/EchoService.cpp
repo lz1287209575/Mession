@@ -157,7 +157,7 @@ void MEchoService::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) {
             if (static_cast<EServerMessageType>(PacketType) == EServerMessageType::MT_FunctionCall) {
                 DispatchBackendServerCallPacketInbound(this, Conn, Data);
             } else if (static_cast<EServerMessageType>(PacketType) == EServerMessageType::MT_FunctionResponse) {
-                HandleServerCallResponse(Data);
+                HandleServerCallResponse(Data, Conn.get());
             }
         },
         [](uint64 /*Cid*/) {});

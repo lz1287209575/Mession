@@ -79,6 +79,15 @@ namespace mession::headercodegen {
             }
         }
 
+        /// 第三方实现不会定义 Mession 反射宏；跳过可避免把 vendored Lua 等 TU
+        /// 交给完整 libtooling 前端，且不影响业务头经真实业务 TU 的 include 解析。
+        bool IsIgnoredTranslationUnit(const fs::path& Path) {
+            const MString Normalized = Path.generic_string();
+            return Normalized.find("/ThirdParty/") != MString::npos ||
+                   Normalized.find("/Build/") != MString::npos ||
+                   Normalized.find("/Tools/") != MString::npos;
+        }
+
     } // namespace
 
     /**
@@ -379,13 +388,11 @@ namespace mession::headercodegen {
                 // Examples/ 下的源文件——反射类型要么在其中定义，要么被它们
                 // include 传递带入。
                 const MString F = fs::path(File).generic_string();
-                if (F.find("/Build/") != MString::npos)
+                if (IsIgnoredTranslationUnit(fs::path(F)))
                     continue;
                 // Protocol 测试 TU include 业务消息头(MSTRUCT 定义在其中)——需要
                 // 解析才能为消息生成反射注册,故豁免 /Protocol/Tests/。
                 if (F.find("/Tests/") != MString::npos && F.find("/Protocol/") == MString::npos)
-                    continue;
-                if (F.find("/Tools/") != MString::npos)
                     continue;
                 SourceFiles.push_back(File);
             }
@@ -402,7 +409,7 @@ namespace mession::headercodegen {
                     const MString P = fs::path(F).generic_string();
                     if (P.find("/Tests/") != MString::npos)
                         continue;
-                    if (P.find("/Tools/") != MString::npos)
+                    if (IsIgnoredTranslationUnit(fs::path(P)))
                         continue;
                     SourceFiles.push_back(P);
                 }

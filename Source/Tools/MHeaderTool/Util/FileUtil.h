@@ -36,12 +36,17 @@ namespace MHeaderTool {
     }
 
     /**
-     * @brief 覆盖写入整个文件(不创建父目录)。
+     * @brief 内容发生变化时才覆盖写入整个文件(不创建父目录)。
      * @param path    目标路径
      * @param content 待写入内容
      * @return true 写入并 flush 成功;false 打开失败或流状态异常
      */
     inline bool WriteFile(const fs::path& path, const MString& content) {
+        // 生成器会在每次 codegen 中访问全部输出。内容相同仍重写会更新 mtime，
+        // 从而让 CMake/Make 误以为所有生成 TU 都变了并触发整库重编译。
+        if (fs::exists(path) && ReadFile(path) == content) {
+            return true;
+        }
         std::ofstream output(path);
         if (!output) {
             return false;

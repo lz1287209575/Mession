@@ -7,8 +7,7 @@
  *     同一个 operator<< 既负责写也负责读,因此调用方不需要两套代码;
  *   - 读越界不抛异常,只置 bReadOverflow,由上层检查 —— 这样协议解析不会因为
  *     一个坏包直接终止进程;
- *   - 本文件的字节序是"本机序"(memcpy),只用于同进程/同构进程之间的快照与 RPC 参数,
- *     不是资产文件格式(资产走 MObjectAssetBinary 的显式小端)。
+ *   - 网络/RPC 参数使用固定网络字节序（大端）；不是资产文件格式。
  *   - 后半部分用成员函数指针 + 索引序列做编译期展开,把 RPC/原生方法包装成
  *     MFunction::NativeInvoke,使反射能真正调用到 C++ 方法。
  */
@@ -41,48 +40,44 @@ class MReflectArchive {
     explicit MReflectArchive(const TByteArray& InData) : Data(InData), ReadPos(0), bReading(true), bWriting(false) {
     }
 
-    // 基本类型统一转发到 WritePOD(按 sizeof(T) 原样 memcpy),方向由本对象状态决定。
+    // 基本数值统一使用固定网络字节序，方向由本对象状态决定。
     // 注意:这里特意按具体类型重载而不是模板,是为了给 MString / SVector / SRotator
     // 这些"非平凡或有专用格式"的类型留出优先匹配的普通函数。
     MReflectArchive& operator<<(uint8& Value) {
-        return WritePOD(Value);
+        return WriteScalar(Value);
     }
     MReflectArchive& operator<<(uint16& Value) {
-        return WritePOD(Value);
+        return WriteScalar(Value);
     }
     MReflectArchive& operator<<(uint32& Value) {
-        return WritePOD(Value);
+        return WriteScalar(Value);
     }
     MReflectArchive& operator<<(uint64& Value) {
-        return WritePOD(Value);
+        return WriteScalar(Value);
     }
     MReflectArchive& operator<<(int8& Value) {
-        return WritePOD(Value);
+        return WriteScalar(Value);
     }
     MReflectArchive& operator<<(int16& Value) {
-        return WritePOD(Value);
+        return WriteScalar(Value);
     }
     MReflectArchive& operator<<(int32& Value) {
-        return WritePOD(Value);
+        return WriteScalar(Value);
     }
     MReflectArchive& operator<<(int64& Value) {
-        return WritePOD(Value);
+        return WriteScalar(Value);
     }
     MReflectArchive& operator<<(float& Value) {
-        return WritePOD(Value);
+        return WriteScalar(Value);
     }
     MReflectArchive& operator<<(double& Value) {
-        return WritePOD(Value);
+        return WriteScalar(Value);
     }
     MReflectArchive& operator<<(MString& Value) {
         return WriteString(Value);
     }
-    MReflectArchive& operator<<(SVector& Value) {
-        return WritePOD(Value);
-    }
-    MReflectArchive& operator<<(SRotator& Value) {
-        return WritePOD(Value);
-    }
+    MReflectArchive& operator<<(SVector& Value) { *this << Value.X << Value.Y << Value.Z; return *this; }
+    MReflectArchive& operator<<(SRotator& Value) { *this << Value.Pitch << Value.Yaw << Value.Roll; return *this; }
     /**
      * @brief 平凡可拷贝类型的通配重载:直接按字节 memcpy。
      *
@@ -180,6 +175,31 @@ class MReflectArchive {
             bReadOverflow = true;
         }
         return *this;
+    }
+
+    /** @brief 按网络字节序读写整数/浮点的位表示，保持 IEEE 754 的既有约定。 */
+    template <typename T> MReflectArchive& WriteScalar(T& Value) {
+        static_assert(std::is_arithmetic_v<T> && !std::is_same_v<T, bool>, "WriteScalar only supports numeric types");
+        if constexpr (sizeof(T) == 1) {
+            return WritePOD(Value);
+        } else {
+            using TBits = std::conditional_t<sizeof(T) == 2, uint16, std::conditional_t<sizeof(T) == 4, uint32, uint64>>;
+            TBits Bits = 0;
+            if (bWriting) {
+                std::memcpy(&Bits, &Value, sizeof(Value));
+                Bits = HostToNetwork(Bits);
+                return WritePOD(Bits);
+            }
+            if (bReading && ReadPos + sizeof(TBits) <= Data.size()) {
+                std::memcpy(&Bits, Data.data() + ReadPos, sizeof(Bits));
+                ReadPos += sizeof(Bits);
+                Bits = NetworkToHost(Bits);
+                std::memcpy(&Value, &Bits, sizeof(Value));
+            } else if (bReading) {
+                bReadOverflow = true;
+            }
+            return *this;
+        }
     }
 
     /**

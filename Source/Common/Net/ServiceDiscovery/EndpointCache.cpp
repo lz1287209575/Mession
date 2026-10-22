@@ -72,7 +72,7 @@ namespace {
                 DispatchBackendServerCallPacket(Service, Sender, Data);
                 break;
             case EServerMessageType::MT_FunctionResponse:
-                HandleServerCallResponse(Data);
+                HandleServerCallResponse(Data, Sender.get());
                 break;
             case EServerMessageType::MT_ActorPost:
                 // actor Post 的远端入口:没有 CallId,server 处理完**发投递状态 ack**,
@@ -297,20 +297,22 @@ void MEndpointCache::UpdateLocalActorIds(const TVector<uint64>& InActorIds) {
 }
 
 TSharedPtr<MServerConnection> MEndpointCache::GetOrConnect(EServerType TargetServerType) {
-    std::lock_guard<std::mutex> Lock(Mutex);
-    auto                        It = Endpoints.find(TargetServerType);
-    if (It == Endpoints.end() || It->second.empty()) {
+    FServiceEndpoint Selected;
+    {
+        std::lock_guard<std::mutex> Lock(Mutex);
+        auto                        It = Endpoints.find(TargetServerType);
+        if (It == Endpoints.end() || It->second.empty()) {
         // 调试构建下用 WARN 提高可见性,发布构建降级为 DEBUG 避免刷日志
         if (MLogIsDebugBuild()) {
             LOG_WARN("MEndpointCache: no endpoints for type=%s", GetServerTypeDisplayName(TargetServerType));
         } else {
             LOG_DEBUG("MEndpointCache: no endpoints for type=%s", GetServerTypeDisplayName(TargetServerType));
         }
-        return nullptr;
-    }
+            return nullptr;
+        }
     // round-robin:起点放在 FRegistryClient 成员里,每个进程各自累计(各 Service 互不干扰)
-    const uint32 Start = Registry.RoundRobinIdx++;
-    for (size_t i = 0; i < It->second.size(); ++i) {
+        const uint32 Start = Registry.RoundRobinIdx++;
+        for (size_t i = 0; i < It->second.size(); ++i) {
         const FServiceEndpoint& Ep = It->second[(Start + i) % It->second.size()];
         if (!Ep.bHealthy)
             continue;
@@ -318,14 +320,23 @@ TSharedPtr<MServerConnection> MEndpointCache::GetOrConnect(EServerType TargetSer
         // (A 进程转发时连回自己的监听端口 → 再转发 → 连接反复重建,表现为不稳定)
         if (Ep.ServerId == Registry.LocalServerId)
             continue;
-        auto PoolIt = ConnectionPool.find(Ep.ServerId);
+            auto PoolIt = ConnectionPool.find(Ep.ServerId);
         if (PoolIt != ConnectionPool.end() && PoolIt->second && PoolIt->second->IsConnected()) {
-            return PoolIt->second;
+                return PoolIt->second;
+            }
+            Selected = Ep;
+            break;
         }
-        TSharedPtr<MServerConnection> Conn = LazyConnect(Ep);
-        if (Conn) {
-            return Conn;
-        }
+    }
+    if (Selected.ServerId != 0) {
+        // Connecting may block and invokes callbacks; never do it while holding Cache::Mutex.
+        TSharedPtr<MServerConnection> Conn = LazyConnect(Selected);
+        if (!Conn) return nullptr;
+        std::lock_guard<std::mutex> Lock(Mutex);
+        auto It = ConnectionPool.find(Selected.ServerId);
+        if (It != ConnectionPool.end() && It->second && It->second->IsConnected()) return It->second;
+        ConnectionPool[Selected.ServerId] = Conn;
+        return Conn;
     }
     if (MLogIsDebugBuild()) {
         LOG_WARN("MEndpointCache: all endpoints unhealthy for type=%s", GetServerTypeDisplayName(TargetServerType));
@@ -336,6 +347,7 @@ TSharedPtr<MServerConnection> MEndpointCache::GetOrConnect(EServerType TargetSer
 }
 
 void MEndpointCache::OnEndpointChange(EServerType ServerType, uint64 Seq, const TVector<FServiceEndpoint>& NewEndpoints) {
+    {
     std::lock_guard<std::mutex> Lock(Mutex);
     auto                        SeqIt = LastSeq.find(ServerType);
     // 只接受"不早于已记录序号"的推送:乱序到达的旧快照直接丢弃(否则会用旧数据覆盖新数据)
@@ -348,6 +360,7 @@ void MEndpointCache::OnEndpointChange(EServerType ServerType, uint64 Seq, const 
     }
     LastSeq[ServerType]   = Seq;
     Endpoints[ServerType] = NewEndpoints; // 全量替换语义
+    }
 
     TVector<uint32> Live;
     Live.reserve(NewEndpoints.size());
@@ -370,36 +383,36 @@ void MEndpointCache::OnEndpointChange(EServerType ServerType, uint64 Seq, const 
 }
 
 void MEndpointCache::Tick(float DeltaTime) {
+    TVector<TSharedPtr<MServerConnection>> Connections;
+    bool bReconnect = false;
+    {
     std::lock_guard<std::mutex> Lock(Mutex);
     if (!Registry.bConnected) {
         // 断线状态:累计到 5s 才重连一次,避免连接建立失败时无限打点
         Registry.ReconnectTimer += DeltaTime;
         if (Registry.ReconnectTimer >= 5.0f) {
             Registry.ReconnectTimer = 0.0f;
-            TryConnectRegistry();
+            bReconnect = true;
         }
+    } else {
+        // 心跳发送(5s 节拍):计时器放 FRegistryClient 成员里,每个进程独立累计
+        Registry.HeartbeatTimer += DeltaTime;
+        if (Registry.HeartbeatTimer >= 5.0f && Registry.LocalServerId != 0) {
+            Registry.HeartbeatTimer = 0.0f;
+            TByteArray Packet;
+            RegistryProtocol::BuildRegistryHeartbeatPacket(Registry.LocalServerId, NowMs(), Packet);
+            SendToRegistry(Packet);
+        }
+
+        // Snapshot the pool under the lock, then drive connections after releasing it.
+        for (auto& KV : ConnectionPool) if (KV.second) Connections.push_back(KV.second);
+    }
+    }
+    if (bReconnect) {
+        TryConnectRegistry();
         return;
     }
-
-    // 心跳发送(5s 节拍):计时器放 FRegistryClient 成员里,每个进程独立累计
-    Registry.HeartbeatTimer += DeltaTime;
-    if (Registry.HeartbeatTimer >= 5.0f && Registry.LocalServerId != 0) {
-        // 还没注册成功(ServerId == 0)时跳过:Registry 无法识别来源 ServerId
-        Registry.HeartbeatTimer = 0.0f;
-        TByteArray Packet;
-        RegistryProtocol::BuildRegistryHeartbeatPacket(Registry.LocalServerId, NowMs(), Packet);
-        SendToRegistry(Packet);
-    }
-
-    // 出站业务连接(LazyConnect 建的 MServerConnection,如 Gateway→Echo、Echo→Echo)
-    // 的收包驱动:它们没有 EventLoop 收包回调(只有入站连接走 OnAccept → RegisterConnection),
-    // 而 MServerConnection::Tick 里的 ProcessRecv 没有其他调用点 ——
-    // 不在这里每帧驱动,对端响应就永远收不到。
-    for (auto& KV : ConnectionPool) {
-        if (KV.second) {
-            KV.second->Tick(DeltaTime);
-        }
-    }
+    for (const auto& Connection : Connections) Connection->Tick(DeltaTime);
 }
 
 void MEndpointCache::DeregisterAndShutdown() {
@@ -558,13 +571,13 @@ TSharedPtr<MServerConnection> MEndpointCache::LazyConnect(const FServiceEndpoint
     if (!PeerConn->Connect()) {
         return nullptr;
     }
-    ConnectionPool[Ep.ServerId] = PeerConn;
     // P2:挂上入站包分发(MT_FunctionCall / MT_FunctionResponse)
     AttachDispatchToConnection(PeerConn, ServiceInstance);
     return PeerConn;
 }
 
 void MEndpointCache::PurgeDisappeared(const TVector<uint32>& LiveServerIds) {
+    std::lock_guard<std::mutex> Lock(Mutex);
     // 只清理"已消失 **且** 未连接"的池条目:不能单凭快照把它 erase 掉 ——
     // 进行中的 CallServerFunction 的活跃性探测持有 WeakConnection,
     // 提前销毁会让它在等待响应期间直接失效(表现为 server_call_disconnected)。
@@ -605,11 +618,11 @@ void MEndpointCache::SetServiceInstance(uint32 SubId, MObject* ServiceInstance) 
     //    这里需要再拿 SPerSubPool::Mutex,所以不能与全局 Mutex 同时持有
     {
         std::lock_guard<std::mutex> Lock(Mutex);
-        auto                        It = PerSubPools.find(SubId);
-        if (It != PerSubPools.end()) {
-            SPerSubPool&                Pool = It->second;
-            std::lock_guard<std::mutex> PoolLock(Pool.Mutex);
-            for (auto& KV : Pool.Connections) {
+        auto It = PerSubPools.find(SubId);
+        if (It != PerSubPools.end() && It->second) {
+            TSharedPtr<SPerSubPool> Pool = It->second;
+            std::lock_guard<std::mutex> PoolLock(Pool->Mutex);
+            for (auto& KV : Pool->Connections) {
                 AttachDispatchToConnection(KV.second, ServiceInstance);
             }
         }
@@ -633,21 +646,27 @@ TSharedPtr<MServerConnection> MEndpointCache::GetOrConnect(EServerType TargetSer
     //    不可移动/拷贝,operator[] 会触发 deleted operator=(典型多 Reactor 写法陷阱)
     {
         std::lock_guard<std::mutex> Lock(Mutex);
-        PerSubPools.try_emplace(SubId);
+        auto [It, Inserted] = PerSubPools.try_emplace(SubId, MakeShared<SPerSubPool>());
+        (void)It;
+        (void)Inserted;
     }
 
-    // 2. 取 per-Sub 池指针(指针只在插入新 Sub 时可能失效,故立即在锁内取好)
-    SPerSubPool* PoolPtr = nullptr;
+    // 2. 复制端点快照与稳定的 per-Sub 池引用。后续不能持全局锁执行建连，
+    // 因为 Connect / callback 可能重入 EndpointCache。
+    TSharedPtr<SPerSubPool> PoolPtr;
+    TVector<FServiceEndpoint> EndpointSnapshot;
+    uint64 LocalId = 0;
     {
         std::lock_guard<std::mutex> Lock(Mutex);
-        PoolPtr = &PerSubPools[SubId];
+        PoolPtr = PerSubPools[SubId];
+        auto It = Endpoints.find(TargetServerType);
+        if (It != Endpoints.end()) {
+            EndpointSnapshot = It->second;
+        }
+        LocalId = Registry.LocalServerId;
     }
 
-    std::lock_guard<std::mutex> PoolLock(PoolPtr->Mutex);
-
-    // 3. 选端点(与进程级版本同逻辑,只是端点表 Endpoints 是全局共享的)
-    auto It = Endpoints.find(TargetServerType);
-    if (It == Endpoints.end() || It->second.empty()) {
+    if (!PoolPtr || EndpointSnapshot.empty()) {
         if (MLogIsDebugBuild()) {
             LOG_WARN("MEndpointCache(per-Sub %u): no endpoints for type=%s", static_cast<unsigned>(SubId), GetServerTypeDisplayName(TargetServerType));
         } else {
@@ -656,11 +675,12 @@ TSharedPtr<MServerConnection> MEndpointCache::GetOrConnect(EServerType TargetSer
         return nullptr;
     }
 
-    // 4. per-Sub 独立的 round-robin 起点,避免各 Sub 长期打同一个端点
+    std::lock_guard<std::mutex> PoolLock(PoolPtr->Mutex);
+
+    // 3. per-Sub 独立的 round-robin 起点,避免各 Sub 长期打同一个端点
     const uint32 Start   = PoolPtr->RoundRobinIdx++;
-    const uint64 LocalId = Registry.LocalServerId; // 注册后只写一次,这里不做同步读取
-    for (size_t i = 0; i < It->second.size(); ++i) {
-        const FServiceEndpoint& Ep = It->second[(Start + i) % It->second.size()];
+    for (size_t i = 0; i < EndpointSnapshot.size(); ++i) {
+        const FServiceEndpoint& Ep = EndpointSnapshot[(Start + i) % EndpointSnapshot.size()];
         if (!Ep.bHealthy)
             continue;
         // 跳过本进程自己 —— 与进程级版本一致,避免自连环

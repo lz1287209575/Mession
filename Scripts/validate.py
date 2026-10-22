@@ -133,18 +133,19 @@ def compute_stable_id(scope: str, member: str) -> int:
 
 ECHO_FUNCTION_ID = compute_stable_id("MEchoService", "Echo")
 ECHOAWAIT_FUNCTION_ID = compute_stable_id("MEchoService", "EchoAwait")
+CLIENT_ENVELOPE_MAGIC = 0xC1
 
 
 def pack_string(value: str) -> bytes:
     encoded = value.encode("utf-8")
-    return struct.pack("<I", len(encoded)) + encoded
+    return struct.pack(">I", len(encoded)) + encoded
 
 
 def parse_packed_string(payload: bytes) -> Optional[str]:
     # 与 pack_string 对称：[len:4][utf8]
     if len(payload) < 4:
         return None
-    (length,) = struct.unpack_from("<I", payload, 0)
+    (length,) = struct.unpack_from(">I", payload, 0)
     if len(payload) < 4 + length:
         return None
     return payload[4:4 + length].decode("utf-8", errors="replace")
@@ -152,26 +153,27 @@ def parse_packed_string(payload: bytes) -> Optional[str]:
 
 def build_client_call_packet(function_id: int, call_id: int, payload: bytes) -> bytes:
     # step-2 新格式（Gateway ParseClientEnvelopePacket）:
-    #   [RequestId:8][FunctionId:2][PayloadSize:4][Payload]（无 MessageType 字节）
+    #   [Magic:1][RequestId:8][FunctionId:2][PayloadSize:4][Payload]
     return build_client_envelope_packet(function_id, call_id, payload)
 
 
 # step-1 引入:新 envelope builder / parser。先在 validate.py 这边准备好,
 # step-2 把 Gateway 切到 ParseClientEnvelopePacket 后开始用。
 def build_client_envelope_packet(function_id: int, request_id: int, payload: bytes) -> bytes:
-    body = struct.pack("<Q", request_id)
-    body += struct.pack("<H", function_id)
-    body += struct.pack("<I", len(payload))
+    body = struct.pack("<B", CLIENT_ENVELOPE_MAGIC)
+    body += struct.pack(">Q", request_id)
+    body += struct.pack(">H", function_id)
+    body += struct.pack(">I", len(payload))
     body += payload
-    return struct.pack("<I", len(body)) + body
+    return struct.pack(">I", len(body)) + body
 
 
 def parse_client_envelope(payload: bytes) -> Optional[dict]:
-    #   [RequestId:8B][FunctionId:2B][PayloadSize:4B][Payload:N]
-    if len(payload) < 8 + 2 + 4:
+    #   [Magic:1B][RequestId:8B][FunctionId:2B][PayloadSize:4B][Payload:N]
+    if len(payload) < 1 + 8 + 2 + 4 or payload[0] != CLIENT_ENVELOPE_MAGIC:
         return None
-    request_id, function_id, payload_size = struct.unpack_from("<QHI", payload, 0)
-    header_size = 8 + 2 + 4
+    request_id, function_id, payload_size = struct.unpack_from(">QHI", payload, 1)
+    header_size = 1 + 8 + 2 + 4
     if len(payload) < header_size + payload_size:
         return None
     return {
@@ -201,7 +203,7 @@ def recv_one_packet(sock: socket.socket, timeout: float) -> Optional[bytes]:
     header = recv_exact(sock, 4)
     if header is None:
         return None
-    length = struct.unpack("<I", header)[0]
+    length = struct.unpack(">I", header)[0]
     if length < 1:
         return None
     body = recv_exact(sock, length)
@@ -212,11 +214,11 @@ def recv_one_packet(sock: socket.socket, timeout: float) -> Optional[bytes]:
 
 def parse_client_response(payload: bytes) -> Optional[dict]:
     # step-2 新格式（Gateway BuildClientEnvelopePacket）:
-    #   [RequestId:8][FunctionId:2][PayloadSize:4][Payload]
-    if len(payload) < 8 + 2 + 4:
+    #   [Magic:1][RequestId:8][FunctionId:2][PayloadSize:4][Payload]
+    if len(payload) < 1 + 8 + 2 + 4 or payload[0] != CLIENT_ENVELOPE_MAGIC:
         return None
-    request_id, function_id, payload_size = struct.unpack_from("<QHI", payload, 0)
-    header_size = 8 + 2 + 4
+    request_id, function_id, payload_size = struct.unpack_from(">QHI", payload, 1)
+    header_size = 1 + 8 + 2 + 4
     if len(payload) < header_size + payload_size:
         return None
     response_body = payload[header_size:header_size + payload_size]
@@ -231,7 +233,7 @@ def parse_echo_response(payload: bytes) -> Optional[dict]:
     if len(payload) < 4:
         return None
     offset = 0
-    echo_len = struct.unpack_from("<I", payload, offset)[0]
+    echo_len = struct.unpack_from(">I", payload, offset)[0]
     offset += 4
     if len(payload) < offset + echo_len:
         return None
@@ -239,11 +241,11 @@ def parse_echo_response(payload: bytes) -> Optional[dict]:
     offset += echo_len
     if len(payload) < offset + 8:
         return None
-    source_actor_id = struct.unpack_from("<Q", payload, offset)[0]
+    source_actor_id = struct.unpack_from(">Q", payload, offset)[0]
     offset += 8
     if len(payload) < offset + 4:
         return None
-    name_len = struct.unpack_from("<I", payload, offset)[0]
+    name_len = struct.unpack_from(">I", payload, offset)[0]
     offset += 4
     if len(payload) < offset + name_len:
         return None
@@ -258,7 +260,7 @@ def parse_echo_response(payload: bytes) -> Optional[dict]:
 def parse_fapp_error(payload: bytes) -> Optional[dict]:
     if len(payload) < 4:
         return None
-    code_len = struct.unpack_from("<I", payload, 0)[0]
+    code_len = struct.unpack_from(">I", payload, 0)[0]
     offset = 4
     if len(payload) < offset + code_len:
         return None
@@ -266,7 +268,7 @@ def parse_fapp_error(payload: bytes) -> Optional[dict]:
     offset += code_len
     if len(payload) < offset + 4:
         return {"code": code, "message": ""}
-    msg_len = struct.unpack_from("<I", payload, offset)[0]
+    msg_len = struct.unpack_from(">I", payload, offset)[0]
     offset += 4
     if len(payload) < offset + msg_len:
         return {"code": code, "message": ""}
@@ -277,7 +279,7 @@ def parse_fapp_error(payload: bytes) -> Optional[dict]:
 def make_echo_request(target_actor_id: int, message: str) -> bytes:
     # 反射字段注册顺序（FSampleEchoMessages.h）：Message 先、TargetActorId 后——
     # MReflectArchive 按注册顺序读写，payload 必须同序。
-    return pack_string(message) + struct.pack("<Q", target_actor_id)
+    return pack_string(message) + struct.pack(">Q", target_actor_id)
 
 
 # ActorId 编码：[ServiceId: high 32][InstId: low 32]；与 ServiceId.h::MServiceId::Make 一致。
@@ -436,7 +438,7 @@ def run_test_dynamic_actor(sock: socket.socket) -> bool:
     """
     log("Test 6 (dynamic_actor): RegisterDynamicActor(1003) -> Registry 上报 -> Echo(1003) 路由命中")
     # 1. 注册动态 actor 1003（ActorId 打包 uint32）
-    reg = call_raw(sock, REGISTER_DYNAMIC_FUNCTION_ID, call_id=6, payload=struct.pack("<I", 1003))
+    reg = call_raw(sock, REGISTER_DYNAMIC_FUNCTION_ID, call_id=6, payload=struct.pack(">I", 1003))
     if reg is None:
         log("  FAIL: RegisterDynamicActor 无响应")
         return False

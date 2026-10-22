@@ -23,6 +23,8 @@
 #include "Servers/App/ServerCallAsyncSupport.h"
 #include "Servers/App/ServiceMain.h"
 
+#include <mutex>
+
 class MGatewayServer;
 extern MGatewayServer* GGlobalGateway;
 
@@ -31,6 +33,10 @@ MSTRUCT()
 struct SGatewayConfig {
     MPROPERTY(Meta = (Cli = "--listen"))
     uint16 ListenPort = 8001;
+
+    /// 内部服务间 RPC 端口；Registry 仅公布该端口，不能暴露给客户端。
+    MPROPERTY(Meta = (Cli = "--internal-listen"))
+    uint16 InternalListenPort = 8002;
 
     // Service 注册中心地址（"127.0.0.1:18000"）。PoC 阶段强制要求传
     // ——MEndpointCache 启动期就要连 Registry 取全量 endpoint。
@@ -67,8 +73,7 @@ struct SGatewayConfig {
  * @brief MGatewayServer - 客户端网关服务(ServerCall 路由 + 下行推送)。
  *
  * @detail 生命周期由 MServiceMain::Run<MGatewayServer, SGatewayConfig> 驱动。GGlobalGateway
- *   是本进程单例。线程模型:OnAccept 与所有业务回调都在主线程(MNetServerBase 保证),
- *   因此 ClientConnections 不需要加锁。
+ *   是本进程单例。连接回调与 ServerCall 回调可来自不同 reactor，因此客户端表受互斥量保护。
  */
 MCLASS(Type = Server)
 class MGatewayServer : public MNetServerBase, public MObject {
@@ -84,7 +89,9 @@ class MGatewayServer : public MNetServerBase, public MObject {
     }
 
     uint16 GetListenPort() const override;
+    uint16 GetInternalListenPort() const override;
     void   OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
+    void   OnInternalAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) override;
     void   TickBackends() override;
     void   ShutdownConnections() override;
     void   OnRunStarted() override;
@@ -139,7 +146,7 @@ class MGatewayServer : public MNetServerBase, public MObject {
 
     SGatewayConfig Config;
 
-    // 客户端连接表(connId -> 连接)。注意:服务器间连接在 OnAccept 里也会被注册进来,
-    // 因此广播下行可能也发给它们,但会被对端按非客户端包忽略,无害。
+    // 仅在收到客户端 envelope 后注册；服务器间连接不参与下行广播。
+    mutable std::mutex                          ClientConnectionsMutex;
     TMap<uint64, TSharedPtr<INetConnection>> ClientConnections;
 };

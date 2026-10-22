@@ -141,8 +141,10 @@ template <typename T> struct SFutureResult : MFuture<TResult<T, FAppError>> {
         // 调用方应先通过 Get()/Wait() 阻塞。
         return Super::Peek();
     }
-    TResult<T, FAppError> GetResult() const {
-        return Super::Get();
+    const TResult<T, FAppError>& GetResult() const {
+        // Result inspection must not consume the shared future value.  In particular,
+        // `IsOk()` followed by `Get()` is a normal and supported calling pattern.
+        return Super::Peek();
     }
 
     bool IsOk() const {

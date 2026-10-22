@@ -5,6 +5,8 @@
 
 #include "Common/Net/ClientCall/MClientTargetResolver.h"
 
+thread_local TSharedPtr<INetConnection> MClientTargetResolver::CurrentContext;
+
 MClientTargetResolver& MClientTargetResolver::Get() {
     // Meyers 单例——首次访问时构造，进程内生命周期。
     // 与 MEndpointCache::Get() / MActorRouter::Get() 同模式。
@@ -17,8 +19,7 @@ void MClientTargetResolver::RegisterConn(TSharedPtr<INetConnection> Conn) {
         return;
     }
 
-    // 键取业务绑定的 PlayerId(非连接 id);未绑定时为 0,详见头文件 NOTE。
-    const uint64                Id = Conn->GetPlayerId();
+    const INetConnection*       Id = Conn.Get();
     std::lock_guard<std::mutex> Lock(Mutex);
     Connections[Id] = std::move(Conn);
 }
@@ -28,7 +29,7 @@ void MClientTargetResolver::UnregisterConn(TSharedPtr<INetConnection> Conn) {
         return;
     }
 
-    const uint64                Id = Conn->GetPlayerId();
+    const INetConnection*       Id = Conn.Get();
     std::lock_guard<std::mutex> Lock(Mutex);
     Connections.erase(Id);
 
@@ -40,18 +41,20 @@ void MClientTargetResolver::UnregisterConn(TSharedPtr<INetConnection> Conn) {
 }
 
 void MClientTargetResolver::BindContext(TSharedPtr<INetConnection> Conn) {
-    std::lock_guard<std::mutex> Lock(Mutex);
     CurrentContext = std::move(Conn);
 }
 
 void MClientTargetResolver::ClearContext() {
-    std::lock_guard<std::mutex> Lock(Mutex);
     CurrentContext.reset();
 }
 
-TVector<TSharedPtr<INetConnection>> MClientTargetResolver::ResolveCurrentContext() {
-    std::lock_guard<std::mutex> Lock(Mutex);
+TSharedPtr<INetConnection> MClientTargetResolver::ExchangeContext(TSharedPtr<INetConnection> Conn) {
+    TSharedPtr<INetConnection> Previous = std::move(CurrentContext);
+    CurrentContext = std::move(Conn);
+    return Previous;
+}
 
+TVector<TSharedPtr<INetConnection>> MClientTargetResolver::ResolveCurrentContext() {
     TVector<TSharedPtr<INetConnection>> Result;
     if (CurrentContext && CurrentContext->IsConnected()) {
         Result.push_back(CurrentContext);

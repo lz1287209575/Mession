@@ -169,6 +169,7 @@ namespace MHeaderTool {
                 // 计数按"传入的头文件个数"而非去重后的个数,故 SkippedCount + RegeneratedCount
                 // 不一定等于去重后的头文件数(存在重复入参时)。
                 decision.SkippedCount = currentHeaders.size() - decision.RegeneratedCount;
+                decision.Reason = "Reflection input changes detected (" + std::to_string(decision.RegeneratedCount) + " files)";
                 return decision;
             }
 

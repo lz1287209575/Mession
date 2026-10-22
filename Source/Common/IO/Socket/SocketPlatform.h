@@ -171,6 +171,9 @@ class MSocketPlatform {
      */
     static int GetLastError();
 
+    /** Return the deferred result of a non-blocking connect (SO_ERROR). */
+    static int GetSocketError(TSocketFd SocketFd);
+
     /**
      * @brief GetLastErrorMessage - 错误码的可读形式。
      * @return Unix: strerror 文本;Windows: 仅十进制错误码字符串(本层未接 FormatMessage)

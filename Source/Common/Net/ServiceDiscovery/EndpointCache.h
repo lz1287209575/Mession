@@ -104,9 +104,8 @@ class MEndpointCache {
      * 同一 ServerId 因此可能在多个 Sub 桶里各有一条连接 —— 这是有意的,让每个 Sub 就近复用。
      * 锁粒度从全局 Mutex 降到 per-Sub Mutex。端点是全进程共享的:
      * 同一 ServerType 的端点表变化对所有 Sub 同时生效。
-     * 注意(现状):本函数读 Endpoints 与 Registry.LocalServerId 时未持全局锁,
-     * 与 OnEndpointChange 的写入不构成互斥;最坏后果是选中一个刚失效的端点。
-     * 当前仓库内暂无调用点,属 P5 预留接口。
+     * 端点表与本机 id 会在全局锁内复制出快照；随后只持该 Sub 自己的池锁完成
+     * 选点和建连，不会与 EndpointChange 的写入产生数据竞争。
      */
     TSharedPtr<MServerConnection> GetOrConnect(EServerType TargetServerType, uint32 SubId);
 
@@ -303,7 +302,8 @@ class MEndpointCache {
     MObject*           ServiceInstance = nullptr; // P2:非拥有,进程生命周期
 
     // 多 Reactor 扩展(P5):per-Sub 反射上下文 + per-Sub 连接池。启动期注入,运行期只读。
-    // PerSubPools 内每个 Sub 有自己的 Mutex;全局 Mutex 只保护 PerSubPools / PerSubService 自身。
-    TMap<uint32, MObject*>    PerSubService;
-    TMap<uint32, SPerSubPool> PerSubPools;
+    // value 用 shared_ptr 保证 map 扩容后 SPerSubPool 地址仍稳定；全局 Mutex 只保护
+    // PerSubPools / PerSubService 自身，池内容由各自 Mutex 保护。
+    TMap<uint32, MObject*>                     PerSubService;
+    TMap<uint32, TSharedPtr<SPerSubPool>> PerSubPools;
 };

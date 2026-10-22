@@ -31,12 +31,12 @@ class MClientTargetContextGuard {
     public:
     /** @brief 构造即绑定:把 Conn 设为当前目标(传 nullptr 等价于清空绑定)。 */
     explicit MClientTargetContextGuard(TSharedPtr<INetConnection> Conn) {
-        MClientTargetResolver::Get().BindContext(std::move(Conn));
+        PreviousContext = MClientTargetResolver::Get().ExchangeContext(std::move(Conn));
     }
 
     /** @brief 析构即解绑:无条件 ClearContext()。 */
     ~MClientTargetContextGuard() {
-        MClientTargetResolver::Get().ClearContext();
+        MClientTargetResolver::Get().ExchangeContext(std::move(PreviousContext));
     }
 
     // 禁拷贝 / 禁移动:复制守卫会让"绑定 vs 解绑"的配对关系失效。
@@ -44,4 +44,7 @@ class MClientTargetContextGuard {
     MClientTargetContextGuard& operator=(const MClientTargetContextGuard&) = delete;
     MClientTargetContextGuard(MClientTargetContextGuard&&)                 = delete;
     MClientTargetContextGuard& operator=(MClientTargetContextGuard&&)      = delete;
+
+    private:
+    TSharedPtr<INetConnection> PreviousContext;
 };

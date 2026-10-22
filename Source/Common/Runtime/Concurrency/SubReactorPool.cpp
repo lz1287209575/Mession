@@ -132,6 +132,14 @@ uint32 MSubReactorPool::PickSub(const MString& InRemoteAddr) const {
     return static_cast<uint32>(Hash % SubCount);
 }
 
+uint32 MSubReactorPool::PickSub(const MString& InRemoteAddr, uint64 InConnectionId) const {
+    // 远端地址通常不含端口；只按地址分桶会使同一 NAT/localhost 的所有连接
+    // 集中到一个 Sub。连接 id 在 accept 处全局唯一，混入后保持单连接亲和性。
+    const uint64 AddressHash = std::hash<MString>{}(InRemoteAddr);
+    const uint64 Mixed = AddressHash ^ (InConnectionId + 0x9e3779b97f4a7c15ull + (AddressHash << 6) + (AddressHash >> 2));
+    return static_cast<uint32>(Mixed % SubCount);
+}
+
 uint32 MSubReactorPool::PickSub(uint64 InActorId) const {
     return static_cast<uint32>(InActorId % SubCount);
 }

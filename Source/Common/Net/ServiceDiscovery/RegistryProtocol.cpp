@@ -3,60 +3,31 @@
  * @brief RegistryProtocol.h 的实现:手工拼装/解析各 Registry 报文。
  *
  * @detail 实现约定:
- *   - 整型统一用本机字节序 memcpy(命名中的 "LE" 隐含小端主机假设,未做字节序转换);
+ *   - 整型统一用网络字节序（大端）;
  *   - 先填包体、最后用 PrependType 把 1 字节类型插到最前面;
  *   - 所有 Parse* 在成功路径上都要求"消费字节数 == payload 长度",多余/缺失字节都判失败,
  *     避免把脏数据当合法包继续消费。
  */
 #include "Common/Net/ServiceDiscovery/RegistryProtocol.h"
 
-#include <cstring>
+#include "Common/Serialization/MessageUtils.h"
 
 namespace {
-    // AppendFixedLE* / ReadFixedLE* 与 Endpoint.cpp 中同名 helper 重复:
-    // 这是刻意不做共享头,保持两个 wire 模块各自独立演化(改动务必成对检查)。
+    inline void AppendFixedLE(TByteArray& Out, uint32 V) { AppendValueBE(Out, V); }
+    inline void AppendFixedLE16(TByteArray& Out, uint16 V) { AppendValueBE(Out, V); }
+    inline void AppendFixedLE64(TByteArray& Out, uint64 V) { AppendValueBE(Out, V); }
+    inline bool ReadFixedLE(const TByteArray& In, size_t& Off, uint32& Out) { return ReadValueBE(In, Off, Out); }
+    inline bool ReadFixedLE16(const TByteArray& In, size_t& Off, uint16& Out) { return ReadValueBE(In, Off, Out); }
+    inline bool ReadFixedLE64(const TByteArray& In, size_t& Off, uint64& Out) { return ReadValueBE(In, Off, Out); }
 
-    inline void AppendFixedLE(TByteArray& Out, uint32 V) {
-        const uint8* P = reinterpret_cast<const uint8*>(&V);
-        Out.insert(Out.end(), P, P + sizeof(V));
-    }
-    inline void AppendFixedLE16(TByteArray& Out, uint16 V) {
-        const uint8* P = reinterpret_cast<const uint8*>(&V);
-        Out.insert(Out.end(), P, P + sizeof(V));
-    }
-    inline void AppendFixedLE64(TByteArray& Out, uint64 V) {
-        const uint8* P = reinterpret_cast<const uint8*>(&V);
-        Out.insert(Out.end(), P, P + sizeof(V));
-    }
-    inline bool ReadFixedLE(const TByteArray& In, size_t& Off, uint32& Out) {
-        if (Off + sizeof(uint32) > In.size())
-            return false;
-        std::memcpy(&Out, In.data() + Off, sizeof(uint32));
-        Off += sizeof(uint32);
-        return true;
-    }
-    inline bool ReadFixedLE16(const TByteArray& In, size_t& Off, uint16& Out) {
-        if (Off + sizeof(uint16) > In.size())
-            return false;
-        std::memcpy(&Out, In.data() + Off, sizeof(uint16));
-        Off += sizeof(uint16);
-        return true;
-    }
-    inline bool ReadFixedLE64(const TByteArray& In, size_t& Off, uint64& Out) {
-        if (Off + sizeof(uint64) > In.size())
-            return false;
-        std::memcpy(&Out, In.data() + Off, sizeof(uint64));
-        Off += sizeof(uint64);
-        return true;
-    }
     // 字符串 = 2 字节长度 + 裸字节;超过 65535 会被截断成 16 位长度
     inline void AppendString_LE(TByteArray& Out, const MString& S) {
-        AppendFixedLE16(Out, static_cast<uint16>(S.size()));
+        AppendValueBE(Out, static_cast<uint16>(S.size()));
         Out.insert(Out.end(), S.begin(), S.end());
     }
     inline bool ReadString_LE(const TByteArray& In, size_t& Off, MString& Out) {
         uint16 Len = 0;
-        if (!ReadFixedLE16(In, Off, Len))
+        if (!ReadValueBE(In, Off, Len))
             return false;
         // 先验长度再拷贝:长度字段不可信,防止读越界
         if (Off + Len > In.size())

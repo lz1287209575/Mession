@@ -205,7 +205,7 @@ bool DispatchServerCall(MObject* TargetInstance, uint16 FunctionId, uint64 CallI
  *
  * @detail 负载会被拷贝一份再交给回调。CallId 未知(例如对端回得太晚、已被超时清掉)时静默返回 false。
  */
-bool HandleServerCallResponse(const TByteArray& Data);
+bool HandleServerCallResponse(const TByteArray& Data, const void* SourceConnectionIdentity = nullptr);
 
 /**
  * @brief RegisterServerCall - 登记一次待响应的调用。
@@ -214,7 +214,7 @@ bool HandleServerCallResponse(const TByteArray& Data);
  * @param LivenessProbe  可选的存活探测,返回 false 时立刻以 server_call_disconnected 结清
  * @return 新分配的 CallId(从 1 开始自增,0 永不使用);失败返回 0
  */
-uint64 RegisterServerCall(TFunction<void(const SServerCallResponse&)> Completion, double TimeoutSeconds = 5.0, TFunction<bool()> LivenessProbe = {});
+uint64 RegisterServerCall(TFunction<void(const SServerCallResponse&)> Completion, double TimeoutSeconds = 5.0, TFunction<bool()> LivenessProbe = {}, uint16 ExpectedFunctionId = 0, const void* ExpectedConnectionIdentity = nullptr);
 
 /**
  * @brief CancelServerCall - 撤销一个挂起调用(不再触发其回调)。
@@ -233,7 +233,7 @@ void CancelServerCall(uint64 CallId);
  * @detail 取出即删除,因此同一 CallId 的回调最多只会被触发一次。回调在锁外执行,
  *   允许在回调里安全地发起新的 RPC。
  */
-bool ConsumeServerCall(uint64 CallId, const SServerCallResponse* Response);
+bool ConsumeServerCall(uint64 CallId, uint16 FunctionId, const void* SourceConnectionIdentity, const SServerCallResponse* Response);
 
 /**
  * @brief PumpServerCallMaintenance - 结清已断线/已超时的挂起调用(主循环每帧调用)。
@@ -257,7 +257,7 @@ bool BuildServerCallPayload(const MFunction* Function, const TByteArray& Request
 /**
  * @brief BuildServerCallLivenessProbe - 用弱引用探测 MServerConnection 是否仍处于连接状态。
  * @param Connection 目标连接
- * @return 探测回调;连接已被销毁或 IsConnected() 为假时返回 false
+ * @return 探测回调;连接已被销毁或底层传输已断开时返回 false
  *
  * @detail 持弱引用,因此探测回调本身不会延长连接对象的生命周期。
  */
@@ -265,7 +265,9 @@ inline TFunction<bool()> BuildServerCallLivenessProbe(const TSharedPtr<MServerCo
     TWeakPtr<MServerConnection> WeakConnection = Connection;
     return [WeakConnection]() -> bool {
         const TSharedPtr<MServerConnection> Locked = WeakConnection.lock();
-        return Locked && Locked->IsConnected();
+        // 握手本身发生在 TCP 已通、尚未 Authenticated 的窗口；此时不能把
+        // 对应 ServerCall 误判成断线。
+        return Locked && Locked->IsTransportConnected();
     };
 }
 
@@ -281,6 +283,15 @@ inline TFunction<bool()> BuildServerCallLivenessProbe(const TSharedPtr<INetConne
 /// @brief BuildServerCallLivenessProbe - 兜底重载:对无法探测的连接形态返回空回调(不检测存活)。
 template <typename TConnection> inline TFunction<bool()> BuildServerCallLivenessProbe(const TConnection&) {
     return {};
+}
+
+/// @brief 用 shared_ptr 所持对象的稳定地址标识一条 RPC 连接；非 shared_ptr 连接不做来源校验。
+template <typename TConnection> inline const void* GetServerCallConnectionIdentity(const TSharedPtr<TConnection>& Connection) {
+    return Connection.get();
+}
+
+template <typename TConnection> inline const void* GetServerCallConnectionIdentity(const TConnection&) {
+    return nullptr;
 }
 
 // ============================ CallServerFunction:发起侧入口(4 个重载) ============================
@@ -395,7 +406,7 @@ inline MFuture<TResult<TResponse, FAppError>> CallServerFunction(TConnection&& C
 
             Promise.SetValue(MakeErrorResult<TResponse>(std::move(Error)));
         },
-        5.0, BuildServerCallLivenessProbe(Connection));
+        5.0, BuildServerCallLivenessProbe(Connection), Function->FunctionId, GetServerCallConnectionIdentity(Connection));
 
     if (CallId == 0) {
         Promise.SetValue(MakeRpcErrorResult<TResponse>("server_call_register_failed", Function->Name.c_str()));
@@ -483,7 +494,7 @@ inline MFuture<TResult<TResponse, FAppError>> CallServerFunction(TConnection&& C
 
             Promise.SetValue(MakeErrorResult<TResponse>(std::move(ErrorValue)));
         },
-        5.0, BuildServerCallLivenessProbe(Connection));
+        5.0, BuildServerCallLivenessProbe(Connection), FunctionId, GetServerCallConnectionIdentity(Connection));
 
     if (CallId == 0) {
         Promise.SetValue(MakeRpcErrorResult<TResponse>("server_call_register_failed", FunctionName));

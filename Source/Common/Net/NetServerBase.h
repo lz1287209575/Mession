@@ -99,7 +99,8 @@ class MNetServerBase {
     MEventLoopGroup MasterLoop;               ///< 主事件循环组:容纳下面的子循环
     MTaskEventLoop  TaskLoop;                 ///< 任务子循环:承载异步续体
     MNetEventLoop   EventLoop;                ///< 网络子循环。单 Reactor 模式下是唯一的网络 loop;多 Reactor 模式下改由 SubPool 持有 N 个独立 loop,本对象仍负责"管理连接"(见 Run())
-    uint64          ListenerId       = 0;     ///< 当前 listener 的 id;0 表示未注册
+    uint64          ListenerId       = 0;     ///< 公网 listener 的 id;0 表示未注册
+    uint64          InternalListenerId = 0;   ///< 可选内部 RPC listener 的 id;0 表示未启用
     bool            bRunning         = false; ///< false 时 Run() 会直接返回(等于"未初始化")
     bool            bShutdownDone    = false; ///< Shutdown() 的幂等标志
     bool            bStepsRegistered = false; ///< 子循环是否已挂到 MasterLoop(避免重复挂)
@@ -114,8 +115,21 @@ class MNetServerBase {
     /// @return 监听端口;由子类从配置返回。
     virtual uint16 GetListenPort() const = 0;
 
+    /// @return 内部 RPC 监听端口；0 表示该服务不分离 internal listener。
+    virtual uint16 GetInternalListenPort() const {
+        return 0;
+    }
+
     /// 新连接到达时调用。子类在此建立对端/客户端结构并调用 DispatchConnection 完成注册。
     virtual void OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) = 0;
+
+    /// 内部 RPC listener 的 accept 回调；默认复用公网处理，兼容单端口服务。
+    virtual void OnInternalAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) {
+        OnAccept(ConnId, std::move(Conn));
+    }
+
+    /** @brief 把 accept 回调投递至该连接所属 Sub，避免 Sub#0 成为业务状态所有者。 */
+    void DispatchAcceptedConnection(uint64 ConnId, TSharedPtr<INetConnection> Conn, bool bInternal);
 
     /// 每帧在 MasterLoop.RunOnce() 之后调用,用于后端 Tick、定时器、会话清理等;默认空实现。
     virtual void TickBackends() {

@@ -5,6 +5,8 @@
 
 #include "Common/Net/ServerConnection.h"
 #include "Common/Net/Rpc/RpcManifest.h"
+#include "Common/Net/Rpc/RpcServerCall.h"
+#include "Protocol/Messages/Common/ControlPlaneMessages.h"
 
 // MTcpMessageChannel:对 MTcpConnection 的纯转发,内部 Connection 允许为空。
 bool MTcpMessageChannel::Send(const void* Data, uint32 Size) {
@@ -77,7 +79,7 @@ bool MServerConnection::TryConnect() {
     State = EConnectionState::Connected;
     LOG_INFO("%s Connected to %s:%d!", LogPrefix.c_str(), Config.Address.c_str(), Config.Port);
 
-    // 握手:发送成功后 SendHandshake 会把状态推到 Authenticated(IsConnected() 才开始为真)
+    // 握手完成前保持 Connected；仅在收到 ServerCall 成功响应后才对外可用。
     SendHandshake();
 
     if (OnConnectCallback) {
@@ -175,11 +177,13 @@ void MServerConnection::Tick(float DeltaTime) {
     // 先把本轮能收的包全部收完,再考虑发心跳
     ProcessRecv();
 
-    // 心跳:按 HeartbeatInterval 节流
-    HeartbeatTimer += DeltaTime;
-    if (HeartbeatTimer >= HeartbeatInterval) {
-        HeartbeatTimer = 0.0f;
-        SendHeartbeat();
+    // 未认证连接只允许握手控制流，不能提前发送普通心跳或业务消息。
+    if (State == EConnectionState::Authenticated) {
+        HeartbeatTimer += DeltaTime;
+        if (HeartbeatTimer >= HeartbeatInterval) {
+            HeartbeatTimer = 0.0f;
+            SendHeartbeat();
+        }
     }
 }
 
@@ -228,20 +232,30 @@ void MServerConnection::SendHandshake() {
         return;
     }
 
-    // Rpc_OnServerHandshake 的反射签名只有 1 个参数(uint32 DummyServerId)——
-    // 若传 3 个参数,SerializeFunctionArgsByMeta 会因参数数量不匹配而失败(对端 BUILD failed),
-    // 结果是状态停在 Connected、IsConnected() 恒为 false,导致所有服务器间调用报
-    // connection_unavailable。
-    if (!MRpc::CallRemote(*this, ClassName, "Rpc_OnServerHandshake", LocalServerInfo.ServerId)) {
-        LOG_WARN("%s Handshake RPC send failed", LogPrefix.c_str());
-        return;
-    }
+    // 必须有回包才可进入 Authenticated：普通 MT_RPC 仅证明本端写入了缓冲，
+    // 不能证明对端收到了。CallServerFunction 会校验 FunctionId 与来源连接。
+    const TSharedPtr<MServerConnection> Self = shared_from_this();
+    auto Handshake = CallServerFunction<SEmptyServerMessage>(Self, ClassName, "Rpc_OnServerHandshake", LocalServerInfo.ServerId);
+    Handshake.Then([WeakConnection = TWeakPtr<MServerConnection>(Self)](MFuture<TResult<SEmptyServerMessage, FAppError>> ResultFuture) mutable {
+        const TSharedPtr<MServerConnection> Connection = WeakConnection.lock();
+        if (!Connection || Connection->State != EConnectionState::Connected) {
+            return;
+        }
 
-    State = EConnectionState::Authenticated;
-    LOG_INFO("%s Authentication successful!", LogPrefix.c_str());
-    if (OnServerAuthenticatedCallback) {
-        OnServerAuthenticatedCallback(shared_from_this(), GetRemoteServerInfo());
-    }
+        const TResult<SEmptyServerMessage, FAppError>& Result = ResultFuture.Peek();
+        if (Result.IsErr()) {
+            LOG_WARN("%s Handshake failed: %s", Connection->LogPrefix.c_str(), Result.GetError().Code.c_str());
+            Connection->Disconnect();
+            return;
+        }
+
+        Connection->State = EConnectionState::Authenticated;
+        Connection->ReconnectAttempts = 0;
+        LOG_INFO("%s Handshake acknowledged; connection authenticated", Connection->LogPrefix.c_str());
+        if (Connection->OnServerAuthenticatedCallback) {
+            Connection->OnServerAuthenticatedCallback(Connection, Connection->GetRemoteServerInfo());
+        }
+    });
 }
 
 void MServerConnection::SendHeartbeat() {

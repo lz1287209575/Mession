@@ -39,6 +39,10 @@ bool MGatewayServer::Init(int InPort) {
         LOG_ERROR("MGatewayServer: --registry=<host:port> is required");
         return false;
     }
+    if (Config.InternalListenPort == 0 || Config.InternalListenPort == Config.ListenPort) {
+        LOG_ERROR("MGatewayServer: --internal-listen must be non-zero and differ from --listen");
+        return false;
+    }
 
     bRunning       = true;
     GGlobalGateway = this;
@@ -61,7 +65,10 @@ bool MGatewayServer::Init(int InPort) {
         return false;
     }
     MEndpointCache::Get().BindRegistry(RegHost, RegPort);
-    MEndpointCache::Get().RegisterLocal(MakeLocalEndpoint(Config));
+    FServiceEndpoint LocalEndpoint = MakeLocalEndpoint(Config);
+    // 服务发现地址只用于服务间 RPC；公网 client listener 不进入 registry。
+    LocalEndpoint.Port = Config.InternalListenPort;
+    MEndpointCache::Get().RegisterLocal(LocalEndpoint);
 
     return true;
 }
@@ -83,12 +90,11 @@ uint16 MGatewayServer::GetListenPort() const {
     return Config.ListenPort;
 }
 
+uint16 MGatewayServer::GetInternalListenPort() const {
+    return Config.InternalListenPort;
+}
+
 void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) {
-    // 客户端连接注册（server→client 推送的目标解析）。服务器间连接（其他服务连
-    // Gateway）也会先注册（首包是 MT_* 服务器协议，不会走 HandleClientPacket；
-    // 广播下行发给它会被对端按非客户端包忽略，无害）。
-    ClientConnections[ConnId] = Conn;
-    MClientTargetResolver::Get().RegisterConn(Conn);
     LOG_INFO("Gateway skeleton accepted connection %llu", static_cast<unsigned long long>(ConnId));
     DispatchConnection(
         ConnId, Conn,
@@ -97,25 +103,48 @@ void MGatewayServer::OnAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) {
                 return;
             }
             const uint8 PacketType = Payload[0];
-            // 服务器间入站：其他服务（如 EchoService）经 MServerConnection 调
-            // Gateway 的 ServerCall（如 PushClientDownlink）。
-            if (static_cast<EServerMessageType>(PacketType) == EServerMessageType::MT_FunctionCall) {
-                TByteArray Data(Payload.begin() + 1, Payload.end());
-                DispatchBackendServerCallPacketInbound(this, Conn, Data);
+            if (PacketType == CLIENT_ENVELOPE_MAGIC) {
+                {
+                    std::lock_guard<std::mutex> Lock(ClientConnectionsMutex);
+                    ClientConnections[ConnectionId] = Conn;
+                }
+                MClientTargetResolver::Get().RegisterConn(Conn);
+                HandleClientPacket(ConnectionId, Payload);
                 return;
             }
-            if (static_cast<EServerMessageType>(PacketType) == EServerMessageType::MT_FunctionResponse) {
-                TByteArray Data(Payload.begin() + 1, Payload.end());
-                HandleServerCallResponse(Data);
-                return;
-            }
-            LOG_INFO("Gateway received client packet: conn=%llu size=%zu", static_cast<unsigned long long>(ConnectionId), Payload.size());
-            HandleClientPacket(ConnectionId, Payload);
+            LOG_WARN("Gateway rejected unknown protocol packet: conn=%llu first_byte=%u", static_cast<unsigned long long>(ConnectionId), static_cast<unsigned>(PacketType));
         },
         [this, Conn](uint64 ConnectionId) {
-            ClientConnections.erase(ConnectionId);
-            MClientTargetResolver::Get().UnregisterConn(Conn);
+            bool bWasClient = false;
+            {
+                std::lock_guard<std::mutex> Lock(ClientConnectionsMutex);
+                bWasClient = ClientConnections.erase(ConnectionId) != 0;
+            }
+            if (bWasClient) {
+                MClientTargetResolver::Get().UnregisterConn(Conn);
+            }
         });
+}
+
+void MGatewayServer::OnInternalAccept(uint64 ConnId, TSharedPtr<INetConnection> Conn) {
+    LOG_INFO("Gateway accepted internal connection %llu", static_cast<unsigned long long>(ConnId));
+    DispatchConnection(
+        ConnId, Conn,
+        [this, Conn](uint64 ConnectionId, const TByteArray& Payload) {
+            if (Payload.empty()) {
+                return;
+            }
+            const EServerMessageType PacketType = static_cast<EServerMessageType>(Payload[0]);
+            TByteArray Data(Payload.begin() + 1, Payload.end());
+            if (PacketType == EServerMessageType::MT_FunctionCall) {
+                DispatchBackendServerCallPacketInbound(this, Conn, Data);
+            } else if (PacketType == EServerMessageType::MT_FunctionResponse) {
+                HandleServerCallResponse(Data, Conn.get());
+            } else {
+                LOG_WARN("Gateway rejected non-RPC packet on internal listener: conn=%llu type=%u", static_cast<unsigned long long>(ConnectionId), static_cast<unsigned>(Payload[0]));
+            }
+        },
+        [](uint64 /*ConnectionId*/) {});
 }
 
 /**
@@ -128,13 +157,20 @@ void MGatewayServer::TickBackends() {
 }
 
 void MGatewayServer::ShutdownConnections() {
-    for (auto& [ConnId, Conn] : ClientConnections) {
-        (void)ConnId;
+    TVector<TSharedPtr<INetConnection>> Connections;
+    {
+        std::lock_guard<std::mutex> Lock(ClientConnectionsMutex);
+        for (auto& [ConnId, Conn] : ClientConnections) {
+            (void)ConnId;
+            Connections.push_back(Conn);
+        }
+        ClientConnections.clear();
+    }
+    for (const auto& Conn : Connections) {
         if (Conn) {
             Conn->Close();
         }
     }
-    ClientConnections.clear();
     MEndpointCache::Get().DeregisterAndShutdown();
 }
 
@@ -161,8 +197,16 @@ MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::PushClientDownl
     }
 
     if (bBroadcast) {
+        TVector<TSharedPtr<INetConnection>> Connections;
+        {
+            std::lock_guard<std::mutex> Lock(ClientConnectionsMutex);
+            for (const auto& [ConnId, Conn] : ClientConnections) {
+                (void)ConnId;
+                Connections.push_back(Conn);
+            }
+        }
         uint32 Sent = 0;
-        for (const auto& [ConnId, Conn] : ClientConnections) {
+        for (const auto& Conn : Connections) {
             if (Conn && Conn->IsConnected() && Conn->Send(Packet.data(), static_cast<uint32>(Packet.size()))) {
                 ++Sent;
             }
@@ -173,12 +217,19 @@ MFuture<TResult<SEmptyServerMessage, FAppError>> MGatewayServer::PushClientDownl
         return MServerCallAsyncSupport::MakeSuccessFuture(SEmptyServerMessage{});
     }
 
-    const auto It = ClientConnections.find(Request.GatewayConnectionId);
-    if (It == ClientConnections.end() || !It->second || !It->second->IsConnected()) {
+    TSharedPtr<INetConnection> Connection;
+    {
+        std::lock_guard<std::mutex> Lock(ClientConnectionsMutex);
+        const auto It = ClientConnections.find(Request.GatewayConnectionId);
+        if (It != ClientConnections.end()) {
+            Connection = It->second;
+        }
+    }
+    if (!Connection || !Connection->IsConnected()) {
         return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>("gateway_client_connection_missing", "PushClientDownlink");
     }
 
-    if (!It->second->Send(Packet.data(), static_cast<uint32>(Packet.size()))) {
+    if (!Connection->Send(Packet.data(), static_cast<uint32>(Packet.size()))) {
         return MServerCallAsyncSupport::MakeErrorFuture<SEmptyServerMessage>("client_downlink_send_failed", "PushClientDownlink");
     }
 
@@ -198,10 +249,19 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
     // step-2: Gateway 收到 envelope → 反射查 MClientManifest → 反射调对应
     // 绑定当前客户端连接为推送目标（MClientTargetContextGuard RAII——
     // 本次调用处理期间 CallClient 的下行解析到该连接）。
-    const auto ClientIt = ClientConnections.find(ConnectionId);
-    if (ClientIt != ClientConnections.end() && ClientIt->second) {
-        MClientTargetContextGuard TargetGuard(ClientIt->second);
+    TSharedPtr<INetConnection> ClientConnection;
+    {
+        std::lock_guard<std::mutex> Lock(ClientConnectionsMutex);
+        const auto ClientIt = ClientConnections.find(ConnectionId);
+        if (ClientIt != ClientConnections.end()) {
+            ClientConnection = ClientIt->second;
+        }
     }
+    if (!ClientConnection) {
+        LOG_WARN("Gateway client packet rejected for unregistered connection=%llu", static_cast<unsigned long long>(ConnectionId));
+        return;
+    }
+    MClientTargetContextGuard TargetGuard(ClientConnection);
     // MFUNCTION(ServerCall) → 反射回 envelope(无 MessageType 字节)。
     //
     // envelope 形态:[RequestId:8B][FunctionId:2B][PayloadSize:4B][Payload]
@@ -236,9 +296,16 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
     auto SendClientError = [&](const char* Code) {
         TByteArray ErrorPacket;
         if (BuildClientEnvelopePacket(FunctionId, RequestId, TByteArray{}, ErrorPacket)) {
-            const auto It = ClientConnections.find(ConnectionId);
-            if (It != ClientConnections.end() && It->second) {
-                It->second->Send(ErrorPacket.data(), static_cast<uint32>(ErrorPacket.size()));
+            TSharedPtr<INetConnection> Connection;
+            {
+                std::lock_guard<std::mutex> Lock(ClientConnectionsMutex);
+                const auto It = ClientConnections.find(ConnectionId);
+                if (It != ClientConnections.end()) {
+                    Connection = It->second;
+                }
+            }
+            if (Connection) {
+                Connection->Send(ErrorPacket.data(), static_cast<uint32>(ErrorPacket.size()));
             }
         }
         LOG_WARN("Gateway: forward failed code=%s function_id=%u", Code, static_cast<unsigned>(FunctionId));
@@ -265,13 +332,20 @@ void MGatewayServer::HandleClientPacket(uint64 ConnectionId, const TByteArray& D
         [this, ConnectionId, RequestId, FunctionId](const SServerCallResponse& Response) {
             TByteArray ClientPacket;
             if (BuildClientEnvelopePacket(FunctionId, RequestId, Response.Payload, ClientPacket)) {
-                const auto It = ClientConnections.find(ConnectionId);
-                if (It != ClientConnections.end() && It->second && It->second->IsConnected()) {
-                    It->second->Send(ClientPacket.data(), static_cast<uint32>(ClientPacket.size()));
+                TSharedPtr<INetConnection> Connection;
+                {
+                    std::lock_guard<std::mutex> Lock(ClientConnectionsMutex);
+                    const auto It = ClientConnections.find(ConnectionId);
+                    if (It != ClientConnections.end()) {
+                        Connection = It->second;
+                    }
+                }
+                if (Connection && Connection->IsConnected()) {
+                    Connection->Send(ClientPacket.data(), static_cast<uint32>(ClientPacket.size()));
                 }
             }
         },
-        5.0, BuildServerCallLivenessProbe(TargetConn));
+        5.0, BuildServerCallLivenessProbe(TargetConn), FunctionId, TargetConn.get());
 
     if (CallId == 0) {
         SendClientError("server_call_register_failed");

@@ -16,11 +16,8 @@
  *     连接生命周期回调);绑定/解绑由"知道当前玩家连接"的请求处理代码驱动。
  *   - 所有公开接口都由内部 std::mutex 保护,可从任意线程调用。
  *
- *   NOTE: 注册表的**键是 Conn->GetPlayerId()**,不是连接 id。而 INetConnection 的
- *   PlayerId 默认为 0(表示未绑定),且当前代码库里 SetPlayerId 没有任何调用点 ——
- *   因此实践中所有客户端连接都以 0 为键,注册表最多只保留最后注册的那一条连接,
- *   ResolveBroadcast 也就只会返回一条。等业务侧真正调用 SetPlayerId 之后,广播才会
- *   按玩家粒度生效。若需要按连接区分,应先给连接绑定唯一的 PlayerId。
+ *   注册表以连接对象身份为键，而非尚未完成鉴权前常为 0 的 PlayerId；因此每条已接入
+ *   连接都会参与广播。当前目标上下文是 thread_local，避免不同 reactor 线程互相覆盖。
  */
 
 #pragma once
@@ -45,10 +42,7 @@ class MClientTargetResolver {
      * @brief RegisterConn - 注册一个已连接客户端。
      * @param Conn 客户端连接;传 nullptr 为空操作
      *
-     * @detail 以 Conn->GetPlayerId() 为键写入,因此**不是**按连接去重:
-     *   - 同一连接重复注册 = 覆盖同键同值,效果幂等;
-     *   - 不同连接若 PlayerId 相同(默认都是 0),后注册的会顶掉先注册的(见文件头 NOTE)。
-     *   调用方应保证连接的身份 id 已正确设置后再注册。
+     * @detail 以 Conn 的对象地址为键：同一连接重复注册幂等，不同连接互不覆盖。
      */
     void RegisterConn(TSharedPtr<INetConnection> Conn);
 
@@ -75,6 +69,9 @@ class MClientTargetResolver {
      */
     void ClearContext();
 
+    /// @brief 原子替换当前线程的目标上下文，并返回先前绑定；供 RAII 守卫正确恢复嵌套上下文。
+    TSharedPtr<INetConnection> ExchangeContext(TSharedPtr<INetConnection> Conn);
+
     /**
      * @brief ResolveCurrentContext - 把当前绑定上下文解析为连接列表。
      * @return 0 个元素:没有绑定,或绑定连接已断开;1 个元素:可用的绑定连接
@@ -95,7 +92,7 @@ class MClientTargetResolver {
     private:
     MClientTargetResolver() = default;
 
-    mutable std::mutex                       Mutex;          ///< 保护下面两个成员;所有公开接口都在它下面操作
-    TMap<uint64, TSharedPtr<INetConnection>> Connections;    ///< 键 = Conn->GetPlayerId()
-    TSharedPtr<INetConnection>               CurrentContext; ///< 当前绑定目标,可为空
+    mutable std::mutex                                      Mutex;       ///< 保护 Connections
+    TMap<const INetConnection*, TSharedPtr<INetConnection>> Connections; ///< 键 = 连接对象身份
+    static thread_local TSharedPtr<INetConnection>          CurrentContext;
 };

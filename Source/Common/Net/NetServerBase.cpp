@@ -27,7 +27,7 @@ void MNetServerBase::DispatchConnection(uint64 InConnId, TSharedPtr<INetConnecti
     if (SubPool != nullptr && SubCount > 0) {
         // 多 Reactor 模式:按 remote_addr hash 选 Sub,Post 到该 Sub 注册
         const MString RemoteAddr = InConn->GetRemoteAddress();
-        const uint32  SubId      = SubPool->PickSub(RemoteAddr);
+        const uint32  SubId      = SubPool->PickSub(RemoteAddr, InConnId);
         SubPool->Post(SubId, [this, SubId, InConnId, InConn, InOnRead = std::move(InOnRead), InOnClose = std::move(InOnClose)]() mutable {
             MNetEventLoop* Loop = SubPool->GetLoop(SubId);
             if (Loop == nullptr) {
@@ -43,6 +43,25 @@ void MNetServerBase::DispatchConnection(uint64 InConnId, TSharedPtr<INetConnecti
     EventLoop.RegisterConnection(InConnId, InConn, InOnRead, InOnClose);
 }
 
+void MNetServerBase::DispatchAcceptedConnection(uint64 ConnId, TSharedPtr<INetConnection> Conn, bool bInternal) {
+    if (SubPool != nullptr && SubCount > 0) {
+        const uint32 SubId = SubPool->PickSub(Conn->GetRemoteAddress(), ConnId);
+        SubPool->Post(SubId, [this, ConnId, Conn, bInternal] {
+            if (bInternal) {
+                OnInternalAccept(ConnId, Conn);
+            } else {
+                OnAccept(ConnId, Conn);
+            }
+        });
+        return;
+    }
+    if (bInternal) {
+        OnInternalAccept(ConnId, std::move(Conn));
+    } else {
+        OnAccept(ConnId, std::move(Conn));
+    }
+}
+
 void MNetServerBase::Run() {
     if (!bRunning) {
         LOG_ERROR("Server not initialized (bRunning false)");
@@ -50,6 +69,11 @@ void MNetServerBase::Run() {
     }
 
     const uint16 Port = GetListenPort();
+    const uint16 InternalPort = GetInternalListenPort();
+    if (InternalPort != 0 && InternalPort == Port) {
+        LOG_ERROR("MNetServerBase: internal listener port must differ from public listener port");
+        return;
+    }
 
     if (SubPool != nullptr && SubCount > 0) {
         // 多 Reactor 模式:在 Sub #0 上注册 listener(由 Sub #0 的 EventLoop 跑 accept + poll)。
@@ -61,10 +85,19 @@ void MNetServerBase::Run() {
             LOG_ERROR("MNetServerBase: SubPool Sub #0 is null");
             return;
         }
-        ListenerId = Sub0->RegisterListener(Port, [this](uint64 ConnId, TSharedPtr<INetConnection> Conn) { OnAccept(ConnId, Conn); });
+        ListenerId = Sub0->RegisterListener(Port, [this](uint64 ConnId, TSharedPtr<INetConnection> Conn) { DispatchAcceptedConnection(ConnId, std::move(Conn), false); });
         if (ListenerId == 0) {
             LOG_ERROR("Failed to register listener on Sub #0, port %d", Port);
             return;
+        }
+        if (InternalPort != 0) {
+            InternalListenerId = Sub0->RegisterListener(InternalPort, [this](uint64 ConnId, TSharedPtr<INetConnection> Conn) { DispatchAcceptedConnection(ConnId, std::move(Conn), true); });
+            if (InternalListenerId == 0) {
+                LOG_ERROR("Failed to register internal listener on Sub #0, port %d", InternalPort);
+                Sub0->UnregisterListener(ListenerId);
+                ListenerId = 0;
+                return;
+            }
         }
         // 必须等 listener 注册完成后才启动 Sub 线程,否则会跨线程访问 Loop 内部容器
         // (Listeners / Connections),造成数据竞争(典型症状:free(): invalid pointer)。
@@ -75,6 +108,15 @@ void MNetServerBase::Run() {
         if (ListenerId == 0) {
             LOG_ERROR("Failed to register listener on port %d", Port);
             return;
+        }
+        if (InternalPort != 0) {
+            InternalListenerId = EventLoop.RegisterListener(InternalPort, [this](uint64 ConnId, TSharedPtr<INetConnection> Conn) { OnInternalAccept(ConnId, Conn); });
+            if (InternalListenerId == 0) {
+                LOG_ERROR("Failed to register internal listener on port %d", InternalPort);
+                EventLoop.UnregisterListener(ListenerId);
+                ListenerId = 0;
+                return;
+            }
         }
     }
 
@@ -115,19 +157,19 @@ void MNetServerBase::Run() {
     LoopContext.reset();
 
     if (SubPool != nullptr && SubCount > 0) {
-        MNetEventLoop* Sub0 = SubPool->GetLoop(0);
-        if (Sub0 != nullptr) {
-            Sub0->UnregisterListener(ListenerId);
-        }
-    } else {
-        EventLoop.UnregisterListener(ListenerId);
-    }
-    ListenerId = 0;
-
-    if (SubPool != nullptr) {
+        // Sub loop 的容器只允许 Sub 线程访问。Shutdown 会先 join，再析构 loop，
+        // 由 RAII 关闭 listener，不能在主线程直接 Unregister 造成 data race。
         SubPool->Shutdown();
         SubPool.reset();
+    } else {
+        EventLoop.UnregisterListener(ListenerId);
+        if (InternalListenerId != 0) {
+            EventLoop.UnregisterListener(InternalListenerId);
+        }
     }
+    ListenerId = 0;
+    InternalListenerId = 0;
+
 }
 
 void MNetServerBase::RequestShutdown() {
@@ -152,15 +194,29 @@ void MNetServerBase::Shutdown() {
     bShutdownDone = true;
     bRunning      = false;
     ShutdownConnections();
-    if (ListenerId != 0) {
+    if (ListenerId != 0 && !(SubPool != nullptr && SubCount > 0)) {
         if (SubPool != nullptr && SubCount > 0) {
             MNetEventLoop* Sub0 = SubPool->GetLoop(0);
             if (Sub0 != nullptr) {
                 Sub0->UnregisterListener(ListenerId);
+                if (InternalListenerId != 0) {
+                    Sub0->UnregisterListener(InternalListenerId);
+                }
             }
         } else {
             EventLoop.UnregisterListener(ListenerId);
+            if (InternalListenerId != 0) {
+                EventLoop.UnregisterListener(InternalListenerId);
+            }
         }
         ListenerId = 0;
+        InternalListenerId = 0;
+    }
+    if (SubPool != nullptr && SubCount > 0) {
+        // 不从当前线程触碰 Sub loop 的 listener/connection 容器；pool 析构负责关闭 fd。
+        SubPool->Shutdown();
+        SubPool.reset();
+        ListenerId = 0;
+        InternalListenerId = 0;
     }
 }

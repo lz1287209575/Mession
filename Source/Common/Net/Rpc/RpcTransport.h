@@ -2,13 +2,12 @@
  * @file RpcTransport.h
  * @brief RpcTransport - 服务器间 / Client↔Gateway 报文的 wire 编解码与发送助手。
  *
- * @detail 集中三类报文的包装(负载部分一律用 memcpy / AppendValue 走**主机字节序**,
- *   与 AppendValueBE 的大端相对 —— 仅在 little-endian 同架构集群内互通,不做跨端序兼容):
+ * @detail 集中三类报文的包装。所有多字节整数均走网络字节序（大端）。
  *   1. MT_RPC              负载 [FunctionId:2B][PayloadSize:4B][Payload:N]
  *   2. MT_FunctionCall     负载 [FunctionId:2B][CallId:8B][PayloadSize:4B][Payload:N]         (ServerCall 请求)
  *   3. MT_FunctionResponse 负载 [FunctionId:2B][CallId:8B][Success:1B][PayloadSize:4B][Payload:N] (ServerCall 回包)
- *   另有 Client↔Gateway 的反射 envelope(不带 MessageType 字节):
- *      [RequestId:8B][FunctionId:2B][PayloadSize:4B][Payload:N]
+ *   另有 Client↔Gateway 的反射 envelope(以独立 magic 区分于服务器协议):
+ *      [Magic:1B][RequestId:8B][FunctionId:2B][PayloadSize:4B][Payload:N]
  *
  *   所有 Parse* 都会校验 header 长度以及 HeaderSize + PayloadSize <= Data.size(),
  *   长度不足一律返回 false(不抛异常、不越界读);调用方在 false 时应直接丢弃该包。
@@ -21,6 +20,9 @@
 #include "Common/Serialization/MessageUtils.h"
 
 #include <cstddef>
+
+/// Client↔Gateway envelope 的固定首字节；不得与 EServerMessageType 混用。
+constexpr uint8 CLIENT_ENVELOPE_MAGIC = 0xC1;
 
 /**
  * @brief BuildServerRpcPayload - 拼 MT_RPC 的负载 [FunctionId:2B][PayloadSize:4B][Payload:N]。
@@ -71,7 +73,7 @@ bool ParseClientCallPacket(const TByteArray& Data, uint16& OutFunctionId, uint64
 
 /**
  * @brief BuildClientEnvelopePacket - 拼 Client↔Gateway 反射 envelope。
- * @param FunctionId 反射函数 id;为 0 时直接失败(信封无类型字节,0 无法区分"空包")
+ * @param FunctionId 反射函数 id;为 0 时直接失败
  * @param RequestId  客户端请求 id;下行推送固定写 0
  * @param InPayload  已序列化参数
  * @param OutPacket  输出 envelope(先 clear)

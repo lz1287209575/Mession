@@ -206,6 +206,19 @@ int MSocketPlatform::GetLastError() {
 #endif
 }
 
+int MSocketPlatform::GetSocketError(TSocketFd SocketFd) {
+    int       Error = 0;
+#if defined(_WIN32) || defined(_WIN64) || defined(WIN32) || defined(WIN64)
+    int       Length = sizeof(Error);
+#else
+    socklen_t Length = sizeof(Error);
+#endif
+    if (getsockopt(SocketFd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&Error), &Length) != 0) {
+        return GetLastError();
+    }
+    return Error;
+}
+
 MString MSocketPlatform::GetLastErrorMessage() {
     const int Error = GetLastError();
     // Windows 分支只给十进制码:本层不引入 FormatMessage 依赖,可读文本由上层/日志补

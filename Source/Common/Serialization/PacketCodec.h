@@ -3,7 +3,7 @@
  * @brief MLengthPrefixedPacketCodec —— 4 字节长度前缀的拆包/封包编解码。
  *
  * @detail 线格式:[uint32 PacketSize][PacketSize 字节 Payload]。
- *   - 长度字段走**主机字节序**(直接 memcpy),不是网络字节序;仅限同架构对端。
+ *   - 长度字段走网络字节序（大端），可跨端序传输。
  *   - 长度上下界由 MAX_PACKET_SIZE(65535)约束;0 长度视为非法包。
  *   - 本类是纯静态工具,不持有状态;线程安全性取决于调用方对收发缓冲的独占访问。
  */
@@ -37,8 +37,9 @@ class MLengthPrefixedPacketCodec {
         }
 
         const uint32 PacketSize = static_cast<uint32>(Payload.size());
+        const uint32 NetworkSize = HostToNetwork(PacketSize);
         OutBytes.resize(sizeof(PacketSize) + PacketSize);
-        memcpy(OutBytes.data(), &PacketSize, sizeof(PacketSize));
+        memcpy(OutBytes.data(), &NetworkSize, sizeof(NetworkSize));
         memcpy(OutBytes.data() + sizeof(PacketSize), Payload.data(), PacketSize);
         return true;
     }
@@ -63,6 +64,7 @@ class MLengthPrefixedPacketCodec {
 
         uint32 PacketSize = 0;
         memcpy(&PacketSize, InOutRecvBuffer.data(), sizeof(PacketSize));
+        PacketSize = NetworkToHost(PacketSize);
 
         if (PacketSize == 0 || PacketSize > MAX_PACKET_SIZE) {
             return EPacketDecodeResult::InvalidPacket;

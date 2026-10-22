@@ -21,6 +21,9 @@
 #include <stdexcept>
 
 #include "AST/ASTPipeline.h"
+#include "Cache/CacheReader.h"
+#include "Cache/CacheWriter.h"
+#include "Cache/IncrementalDriver.h"
 #include "Core/Types.h"
 #include "Generation/CodeGenerator.h"
 #include "Generation/LuaStdlibHintEmitter.h"
@@ -34,6 +37,86 @@
 
 namespace {
     namespace fs = std::filesystem;
+
+    constexpr const char* CACHE_FILE_PREFIX = "@file:";
+
+    /** @brief 收集会决定反射 IR 的输入头与 Async codegen 源。普通 .cpp 不在此列，
+     *  因为它们的改动不应迫使反射器重新建 AST。 */
+    TVector<fs::path> CollectReflectionInputs(const fs::path& SourceRoot) {
+        TVector<fs::path> Result;
+        std::error_code Ec;
+        for (fs::recursive_directory_iterator It(SourceRoot, fs::directory_options::skip_permission_denied, Ec), End; It != End; It.increment(Ec)) {
+            if (Ec || It->is_directory()) {
+                Ec.clear();
+                continue;
+            }
+            const MString Name = It->path().filename().string();
+            const MString Ext  = It->path().extension().string();
+            if (Ext == ".h" || Ext == ".hpp" || (Name.size() >= 10 && Name.compare(Name.size() - 10, 10, ".Async.cpp") == 0)) {
+                Result.push_back(fs::absolute(It->path()));
+            }
+        }
+        return Result;
+    }
+
+    /** @brief 缓存命中还需确认每个已反射类型的两个主生成物均存在。 */
+    bool HasAllCachedOutputs(const MHeaderTool::SOptions& Options) {
+        MHeaderTool::SBuildCache Cache;
+        MHeaderTool::CacheReader Reader(Options.CacheDir);
+        if (!Reader.Load(Cache)) {
+            return false;
+        }
+        for (const auto& Entry : Cache.TypeEntries) {
+            if (Entry.TypeName.rfind(CACHE_FILE_PREFIX, 0) == 0) {
+                continue;
+            }
+            if (!MHeaderTool::FileExists(Entry.OutputHeader) || !MHeaderTool::FileExists(Entry.OutputSource)) {
+                return false;
+            }
+        }
+        return MHeaderTool::FileExists(Options.CMakeManifestPath);
+    }
+
+    /** @brief 保存当前输入的指纹；用 @file 条目覆盖“无反射类型的头也必须参与失效”的场景。 */
+    void SaveIncrementalCache(const MHeaderTool::SOptions& Options, const mession::headercodegen::SParseIR& IR, const TVector<fs::path>& Inputs) {
+        MHeaderTool::SBuildCache Cache;
+        Cache.Version_  = MHeaderTool::SBuildCache::Version;
+        Cache.CreatedAt = std::chrono::system_clock::now();
+        MHeaderTool::IncrementalDriver Driver(Options);
+
+        TSet<fs::path> Covered;
+        auto AddEntry = [&](const MString& TypeName, const fs::path& Header) {
+            const fs::path AbsoluteHeader = fs::absolute(Header);
+            const fs::path RelativeHeader = Driver.MakeRelativePath(AbsoluteHeader);
+            MHeaderTool::STypeCacheEntry Entry;
+            Entry.TypeName          = TypeName;
+            Entry.HeaderPath        = RelativeHeader;
+            Entry.HeaderFingerprint = Driver.ComputeFingerprint(AbsoluteHeader);
+            Entry.OutputHeader      = Options.OutputDir / (MHeaderTool::SanitizeIdentifier(TypeName) + ".mgenerated.h");
+            Entry.OutputSource      = Options.OutputDir / (MHeaderTool::SanitizeIdentifier(TypeName) + ".mgenerated.cpp");
+            Cache.TypeEntries.push_back(std::move(Entry));
+            Covered.insert(RelativeHeader);
+        };
+        for (const auto& Record : IR.Records) {
+            AddEntry(Record.Name, Record.HeaderPath);
+        }
+        for (const auto& Enum : IR.Enums) {
+            AddEntry(Enum.Name, Enum.HeaderPath);
+        }
+        for (const fs::path& Input : Inputs) {
+            const fs::path Relative = Driver.MakeRelativePath(Input);
+            if (Covered.find(Relative) != Covered.end()) {
+                continue;
+            }
+            MHeaderTool::STypeCacheEntry Entry;
+            Entry.TypeName          = MString(CACHE_FILE_PREFIX) + Relative.generic_string();
+            Entry.HeaderPath        = Relative;
+            Entry.HeaderFingerprint = Driver.ComputeFingerprint(Input);
+            Cache.TypeEntries.push_back(std::move(Entry));
+        }
+        Cache.BuildIndices();
+        MHeaderTool::CacheWriter(Options.CacheDir).Save(Cache);
+    }
 
     /**
      * @brief 把用法与全部选项打到 stderr。
@@ -163,11 +246,28 @@ int main(int argc, char** argv) {
     // ClangTool 解析时会 chdir 到 compile_commands 的 directory——相对 OutputDir
     // 会在错误 cwd 下写文件（ofstream 失败静默）。统一绝对化，任何调用方式都稳。
     Options.OutputDir                  = fs::absolute(Options.OutputDir);
+    Options.SourceRoot                 = fs::absolute(Options.SourceRoot);
+    Options.CacheDir                   = fs::absolute(Options.CacheDir);
     Options.CMakeManifestPath          = fs::absolute(Options.CMakeManifestPath);
     Options.ClientManifestPath         = fs::absolute(Options.ClientManifestPath);
     Options.ClientDownlinkManifestPath = fs::absolute(Options.ClientDownlinkManifestPath);
     Options.ClientDownlinkHeaderPath   = fs::absolute(Options.ClientDownlinkHeaderPath);
     Options.MemberRpcManifestPath      = fs::absolute(Options.MemberRpcManifestPath);
+
+    const TVector<fs::path> ReflectionInputs = CollectReflectionInputs(Options.SourceRoot);
+    if (Options.bIncremental && !Options.bForceFull) {
+        IncrementalDriver Driver(Options);
+        const SIncrementalDecision Decision = Driver.Decide(ReflectionInputs);
+        if (Decision.Action == EIncrementalAction::Skip && HasAllCachedOutputs(Options)) {
+            if (Options.bVerbose) {
+                std::cout << "MHeaderTool incremental cache hit: " << Decision.SkippedCount << " reflection inputs unchanged\n";
+            }
+            return 0;
+        }
+        if (Options.bVerbose) {
+            std::cout << "MHeaderTool reflection cache miss: " << Decision.Reason << ", parsing " << ReflectionInputs.size() << " inputs\n";
+        }
+    }
 
     SParseIR IR = MASTPipeline::Run(Options);
 
@@ -372,6 +472,11 @@ int main(int argc, char** argv) {
     // (注解源是 MLuaVector/Map/Log/Format/Rpc.cpp 里的 /// @lua-* 块)。
     if (!Options.LuaStdlibHintLuaPath.empty() && !Options.LuaStdlibHintTealPath.empty()) {
         LuaStdlibHintEmitter::Run(Options.SourceRoot, Options.LuaStdlibHintLuaPath, Options.LuaStdlibHintTealPath);
+    }
+
+    // 必须在全部生成物成功写出之后才更新缓存；中途失败时保留旧缓存，下次保守全量。
+    if (Options.bIncremental && !Options.bDryRun) {
+        SaveIncrementalCache(Options, IR, ReflectionInputs);
     }
 
     return 0;
